@@ -9,7 +9,7 @@ from _path import ensure_project_root
 ensure_project_root()
 
 from core.evaluation import evaluate_search, load_eval_queries  # noqa: E402
-from core.search_engine import MemeSearchEngine, SearchOptions  # noqa: E402
+from core.search_engine import IrisEngine, SearchOptions  # noqa: E402
 
 
 def main() -> None:
@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("--no-translate", action="store_true")
     args = parser.parse_args()
 
-    engine = MemeSearchEngine(db_path=args.db, media_root=args.media_root)
+    engine = IrisEngine(db_path=args.db, media_root=args.media_root)
     queries = load_eval_queries(Path(args.queries))
     options = SearchOptions(
         top_k=args.top_k,

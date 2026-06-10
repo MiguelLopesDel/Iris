@@ -1,11 +1,12 @@
---extra-index-url https://download.pytorch.org/whl/cu118
-torch==2.7.1+cu118
-torchvision==0.22.1+cu118
-torchaudio==2.7.1+cu118
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.7.1+cu126
+torchvision==0.22.1+cu126
+torchaudio==2.7.1+cu126
 transformers==4.44.2
 sentence-transformers==5.4.1
 easyocr==1.7.2
 pillow==12.1.1
+imagehash==4.3.2
 tqdm==4.67.3
 faiss-cpu==1.13.2
 numpy==2.4.3
@@ -18,5 +19,7 @@ psutil==7.1.3
 streamlit==1.56.0
 deep-translator==1.11.4
 Send2Trash==1.8.3
+pyacoustid==1.3.0
+cairosvg>=2.7.0
 pytest==9.0.2
 ruff==0.14.9

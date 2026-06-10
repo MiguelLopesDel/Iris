@@ -1,0 +1,20 @@
+services:
+  iris:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./media:/app/media
+      - huggingface_cache:/root/.cache/huggingface
+      - whisper_cache:/root/.cache/whisper
+    environment:
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - PYTHONPATH=/app
+    restart: unless-stopped
+
+volumes:
+  huggingface_cache:
+  whisper_cache:

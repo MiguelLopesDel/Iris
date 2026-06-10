@@ -5,7 +5,7 @@ from sentence_transformers import util
 import os
 
 
-DB_FILE = "meme_compass_v9.db"
+DB_FILE = "iris.db"
 SIMILARITY_THRESHOLD = 0.985  
 
 def find_duplicates():

@@ -10,7 +10,7 @@ from _path import ensure_project_root
 ensure_project_root()
 
 from core.evaluation import aggregate_metrics, load_eval_queries  # noqa: E402
-from core.search_engine import MemeSearchEngine, SearchOptions  # noqa: E402
+from core.search_engine import IrisEngine, SearchOptions  # noqa: E402
 
 
 def parse_values(value: str) -> list[float]:
@@ -26,7 +26,7 @@ def score_metrics(metrics: dict[str, float]) -> tuple[float, float, float, float
     )
 
 
-def evaluate_cached(engine: MemeSearchEngine, encoded_queries: list[dict], options: SearchOptions) -> dict:
+def evaluate_cached(engine: IrisEngine, encoded_queries: list[dict], options: SearchOptions) -> dict:
     results = []
     for row in encoded_queries:
         found = engine.search_by_embedding(
@@ -78,7 +78,7 @@ def main() -> None:
     parser.add_argument("--no-translate", action="store_true")
     args = parser.parse_args()
 
-    engine = MemeSearchEngine(db_path=args.db, media_root=args.media_root)
+    engine = IrisEngine(db_path=args.db, media_root=args.media_root)
     queries = load_eval_queries(Path(args.queries))
     encoded_queries = []
     for query in queries:

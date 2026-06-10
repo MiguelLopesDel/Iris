@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Migra arquivos do banco legado para biblioteca gerenciada."
     )
-    parser.add_argument("--db", default="data/meme_compass_full_v1.db")
+    parser.add_argument("--db", default="data/iris.db")
     parser.add_argument("--media-root", default="media")
     parser.add_argument("--library", default=DEFAULT_LIBRARY_NAME)
     parser.add_argument("--library-root", default=str(DEFAULT_LIBRARY_ROOT))

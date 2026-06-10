@@ -9,7 +9,7 @@ from _path import ensure_project_root
 ensure_project_root()
 
 from core.duplicates import find_duplicate_groups  # noqa: E402
-from core.search_engine import MemeSearchEngine  # noqa: E402
+from core.search_engine import IrisEngine  # noqa: E402
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument("--output", default="data/reports/duplicates.json")
     args = parser.parse_args()
 
-    engine = MemeSearchEngine(db_path=args.db, media_root=args.media_root, load_model=False)
+    engine = IrisEngine(db_path=args.db, media_root=args.media_root, load_model=False)
     groups = find_duplicate_groups(
         engine,
         threshold=args.threshold,

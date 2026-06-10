@@ -9,7 +9,7 @@ from _path import ensure_project_root
 ensure_project_root()
 
 from core.evaluation import evaluate_search, load_eval_queries  # noqa: E402
-from core.search_engine import MemeSearchEngine, SearchOptions  # noqa: E402
+from core.search_engine import IrisEngine, SearchOptions  # noqa: E402
 
 
 def parse_ks(value: str) -> tuple[int, ...]:
@@ -36,7 +36,7 @@ def main() -> None:
     args = parser.parse_args()
 
     recall_ks = parse_ks(args.recall_ks)
-    engine = MemeSearchEngine(db_path=args.db, media_root=args.media_root)
+    engine = IrisEngine(db_path=args.db, media_root=args.media_root)
     options = SearchOptions(
         top_k=args.top_k,
         threshold=args.threshold,

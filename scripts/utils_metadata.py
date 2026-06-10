@@ -4,7 +4,7 @@ import piexif
 from tqdm import tqdm
 
 
-DB_FILE = "meme_compass_v9.db"
+DB_FILE = "iris.db"
 
 def sync_metadata():
     """

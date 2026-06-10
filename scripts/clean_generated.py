@@ -33,7 +33,7 @@ def remove_target(path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Lista ou remove artefatos gerados pelo Meme Compass."
+        description="Lista ou remove artefatos gerados pelo Iris."
     )
     parser.add_argument("--apply", action="store_true", help="Remove os arquivos listados.")
     parser.add_argument(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gc
 import json
 import os
 import shutil
@@ -9,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +27,19 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoProcessor
 from transformers import logging as transformers_logging
 
-from core.concepts import create_concept_tables
+from core.deleted_registry import (
+    is_phash_deleted,
+    load_deleted_content_hashes,
+    load_deleted_phashes,
+)
+from core.indexer_db import (
+    ensure_unique_destination,
+    existing_hashes,
+    find_or_create_collection,
+    get_or_create_library,
+    init_db,
+    now_iso,
+)
 from core.media_inventory import (
     file_sha256,
     iter_media_files,
@@ -39,7 +53,9 @@ from core.taxonomy import (
     values_for_field,
 )
 
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")   # suppress mmco/unref ffmpeg noise
+os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
 torch.backends.cudnn.benchmark = True
 warnings.filterwarnings("ignore", category=UserWarning)
 transformers_logging.set_verbosity_error()
@@ -66,6 +82,8 @@ class IndexerConfig:
     library_root: Path
     copy_to_library: bool
     collection_name: str | None = None
+    clap_model: str = "none"
+    force_reimport_video_audio: bool = False
 
 
 @dataclass
@@ -78,15 +96,17 @@ class LoadedModels:
     dtype: torch.dtype
     taxonomy_rows: list[dict[str, str]]
     taxonomy_embeddings: np.ndarray | None
+    clap_model: object | None = None
+    clap_processor: object | None = None
 
 
 def parse_arguments() -> IndexerConfig:
     parser = argparse.ArgumentParser(
-        description="Indexador de Memes para o Meme Compass",
+        description="Indexador de midia do Iris",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--dir", "-d", default="./media", help="Pasta com imagens e videos.")
-    parser.add_argument("--db", "-b", default="meme_compass_v10.db", help="Banco SQLite de saida.")
+    parser.add_argument("--db", "-b", default="iris.db", help="Banco SQLite de saida.")
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL, help="Modelo CLIP.")
     parser.add_argument("--batch-size", "-bs", type=int, default=8, help="Tamanho do lote.")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
@@ -133,6 +153,11 @@ def parse_arguments() -> IndexerConfig:
         default=None,
         help="Adiciona os arquivos indexados a esta colecao (cria se nao existir).",
     )
+    parser.add_argument(
+        "--clap-model",
+        default="none",
+        help="Modelo CLAP para embeddings de audio. Use 'none' para desativar.",
+    )
     args = parser.parse_args()
 
     db_path = Path(args.db)
@@ -155,6 +180,7 @@ def parse_arguments() -> IndexerConfig:
         library_root=Path(args.library_root),
         copy_to_library=args.copy_to_library,
         collection_name=args.collection,
+        clap_model=args.clap_model,
     )
 
 
@@ -167,271 +193,6 @@ def resolve_device(requested: str) -> str:
         return "mps"
     return "cpu"
 
-
-def init_db(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    create_media_libraries_table(conn)
-    create_memes_table(conn)
-    rebuild_memes_if_legacy_unique(conn)
-    migrate_schema(conn)
-    ensure_memes_indexes(conn)
-    create_collections_table(conn)
-    create_media_collections_table(conn)
-    create_concept_tables(conn)
-    conn.commit()
-    return conn
-
-
-def create_collections_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS collections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            description TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-
-
-def create_media_collections_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS media_collections (
-            meme_id INTEGER NOT NULL,
-            collection_id INTEGER NOT NULL,
-            added_at TEXT NOT NULL,
-            PRIMARY KEY (meme_id, collection_id),
-            FOREIGN KEY (meme_id) REFERENCES memes(id) ON DELETE CASCADE,
-            FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
-        )
-        """
-    )
-
-
-def find_or_create_collection(conn: sqlite3.Connection, name: str) -> int:
-    row = conn.execute("SELECT id FROM collections WHERE name = ?", (name,)).fetchone()
-    if row:
-        return int(row[0])
-    cursor = conn.execute(
-        "INSERT INTO collections (name, description, created_at) VALUES (?, '', ?)",
-        (name, now_iso()),
-    )
-    return int(cursor.lastrowid)
-
-
-def create_media_libraries_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS media_libraries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            root_path TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-
-
-def create_memes_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS memes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            arquivo TEXT,
-            caminho TEXT,
-            relative_path TEXT,
-            storage_path TEXT,
-            source_path TEXT,
-            library_id INTEGER,
-            imported_at TEXT,
-            file_size INTEGER,
-            file_mtime REAL,
-            texto_extraido TEXT,
-            descricao_ia TEXT,
-            tags TEXT,
-            content_hash TEXT,
-            ocr_normalized TEXT,
-            visual_json TEXT,
-            objects TEXT,
-            style TEXT,
-            source_work TEXT,
-            humor TEXT,
-            context TEXT,
-            error_message TEXT,
-            model_name TEXT,
-            embedding_dim INTEGER,
-            schema_version INTEGER,
-            embedding BLOB,
-            desc_embedding BLOB
-        )
-        """
-    )
-
-
-def rebuild_memes_if_legacy_unique(conn: sqlite3.Connection) -> None:
-    table_sql = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='memes'"
-    ).fetchone()
-    if not table_sql or not table_sql[0]:
-        return
-    if "ARQUIVO TEXT UNIQUE" not in table_sql[0].upper().replace("\n", " "):
-        return
-
-    conn.execute(
-        """
-        CREATE TABLE memes_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            arquivo TEXT,
-            caminho TEXT,
-            relative_path TEXT,
-            storage_path TEXT,
-            source_path TEXT,
-            library_id INTEGER,
-            imported_at TEXT,
-            file_size INTEGER,
-            file_mtime REAL,
-            texto_extraido TEXT,
-            descricao_ia TEXT,
-            tags TEXT,
-            content_hash TEXT,
-            ocr_normalized TEXT,
-            visual_json TEXT,
-            objects TEXT,
-            style TEXT,
-            source_work TEXT,
-            humor TEXT,
-            context TEXT,
-            error_message TEXT,
-            model_name TEXT,
-            embedding_dim INTEGER,
-            schema_version INTEGER,
-            embedding BLOB,
-            desc_embedding BLOB
-        )
-        """
-    )
-
-    old_columns = [row[1] for row in conn.execute("PRAGMA table_info(memes)")]
-    new_columns = [row[1] for row in conn.execute("PRAGMA table_info(memes_new)")]
-    common = [column for column in old_columns if column in new_columns]
-    if common:
-        columns = ", ".join(common)
-        conn.execute(f"INSERT INTO memes_new ({columns}) SELECT {columns} FROM memes")
-    conn.execute("DROP TABLE memes")
-    conn.execute("ALTER TABLE memes_new RENAME TO memes")
-
-
-def migrate_schema(conn: sqlite3.Connection) -> None:
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(memes)")}
-    additions = {
-        "relative_path": "TEXT",
-        "storage_path": "TEXT",
-        "source_path": "TEXT",
-        "library_id": "INTEGER",
-        "imported_at": "TEXT",
-        "file_size": "INTEGER",
-        "file_mtime": "REAL",
-        "tags": "TEXT",
-        "content_hash": "TEXT",
-        "ocr_normalized": "TEXT",
-        "visual_json": "TEXT",
-        "objects": "TEXT",
-        "style": "TEXT",
-        "source_work": "TEXT",
-        "humor": "TEXT",
-        "context": "TEXT",
-        "error_message": "TEXT",
-        "model_name": "TEXT",
-        "embedding_dim": "INTEGER",
-        "schema_version": "INTEGER",
-    }
-    for column, column_type in additions.items():
-        if column not in columns:
-            conn.execute(f"ALTER TABLE memes ADD COLUMN {column} {column_type}")
-
-
-def ensure_memes_indexes(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_memes_content_hash ON memes(content_hash)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_memes_library_storage ON memes(library_id, storage_path)"
-    )
-
-
-def now_iso() -> str:
-    return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
-
-def get_or_create_library(conn: sqlite3.Connection, name: str, root_path: Path) -> int:
-    root_path = root_path.resolve()
-    root_path.mkdir(parents=True, exist_ok=True)
-    row = conn.execute(
-        "SELECT id FROM media_libraries WHERE name = ?",
-        (name,),
-    ).fetchone()
-    if row:
-        conn.execute(
-            "UPDATE media_libraries SET root_path = ? WHERE id = ?",
-            (str(root_path), int(row[0])),
-        )
-        return int(row[0])
-    cursor = conn.execute(
-        "INSERT INTO media_libraries (name, root_path, created_at) VALUES (?, ?, ?)",
-        (name, str(root_path), now_iso()),
-    )
-    return int(cursor.lastrowid)
-
-
-def existing_hashes(conn: sqlite3.Connection) -> set[str]:
-    return {
-        row[0]
-        for row in conn.execute("SELECT content_hash FROM memes WHERE content_hash IS NOT NULL")
-        if row[0]
-    }
-
-
-def sanitize_storage_name(relative_path: str) -> str:
-    candidate = relative_path.strip().replace("\\", "/").lstrip("/")
-    if not candidate:
-        return "imported.bin"
-    parts = [part for part in candidate.split("/") if part not in {"", ".", ".."}]
-    return "/".join(parts) if parts else "imported.bin"
-
-
-def ensure_unique_destination(
-    library_root: Path,
-    relative_path: str,
-    content_hash: str,
-) -> Path:
-    preferred = library_root / sanitize_storage_name(relative_path)
-    if not preferred.exists():
-        preferred.parent.mkdir(parents=True, exist_ok=True)
-        return preferred
-
-    try:
-        if preferred.is_file() and file_sha256(preferred) == content_hash:
-            return preferred
-    except Exception:
-        pass
-
-    stem = preferred.stem
-    suffix = preferred.suffix
-    directory = preferred.parent
-    for counter in range(1, 10000):
-        candidate = directory / f"{stem}_{counter:04d}{suffix}"
-        if not candidate.exists():
-            candidate.parent.mkdir(parents=True, exist_ok=True)
-            return candidate
-        try:
-            if candidate.is_file() and file_sha256(candidate) == content_hash:
-                return candidate
-        except Exception:
-            continue
-    raise RuntimeError(f"Nao foi possivel definir destino unico para {relative_path}")
 
 
 def load_models(config: IndexerConfig) -> LoadedModels:
@@ -479,6 +240,19 @@ def load_models(config: IndexerConfig) -> LoadedModels:
             print(f"  ! Falha ao carregar Whisper: {exc}")
             print("  -> Videos serao indexados sem transcricao.")
 
+    clap_model_inst = None
+    clap_processor_inst = None
+    if config.clap_model.lower() != "none":
+        print(f"  -> CLAP: {config.clap_model}")
+        try:
+            from transformers import ClapModel, ClapProcessor
+            clap_model_inst = ClapModel.from_pretrained(
+                config.clap_model, torch_dtype=torch.float32
+            ).to(config.device).eval()
+            clap_processor_inst = ClapProcessor.from_pretrained(config.clap_model)
+        except Exception as exc:
+            print(f"  ! CLAP nao disponivel: {exc}")
+
     return LoadedModels(
         reader=reader,
         florence_model=florence_model,
@@ -488,6 +262,8 @@ def load_models(config: IndexerConfig) -> LoadedModels:
         dtype=dtype,
         taxonomy_rows=taxonomy_rows,
         taxonomy_embeddings=taxonomy_embeddings,
+        clap_model=clap_model_inst,
+        clap_processor=clap_processor_inst,
     )
 
 
@@ -497,7 +273,10 @@ def already_processed(conn: sqlite3.Connection) -> set[str]:
     return {row[0] for row in conn.execute(f"SELECT {column} FROM memes WHERE {column} IS NOT NULL")}
 
 
-def process_images(config: IndexerConfig) -> None:
+def process_images(
+    config: IndexerConfig,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> None:
     if not config.media_dir.exists():
         print(f"Erro: diretorio '{config.media_dir}' nao encontrado.")
         sys.exit(1)
@@ -505,17 +284,31 @@ def process_images(config: IndexerConfig) -> None:
     conn = init_db(config.db_path)
     processed = already_processed(conn)
     known_hashes = existing_hashes(conn)
+    _deleted_hashes = load_deleted_content_hashes(conn)
+    _deleted_phashes = load_deleted_phashes(conn)
     media_files = media_files_from_config(config)
     if config.limit:
         media_files = media_files[: config.limit]
 
     if config.copy_to_library:
-        pending = media_files
+        if config.force_reimport_video_audio:
+            # Video/audio: always included (force re-process even if already indexed).
+            # Images: only new ones (not already in processed) — don't re-process existing.
+            pending = [
+                path for path in media_files
+                if path.suffix.lower() in _FORCE_REIMPORT_EXTS
+                or (path.relative_to(config.media_dir).as_posix() not in processed
+                    and path.name not in processed)
+            ]
+        else:
+            pending = media_files
     else:
         pending = [
-            path
-            for path in media_files
-            if path.relative_to(config.media_dir).as_posix() not in processed and path.name not in processed
+            path for path in media_files
+            if (path.relative_to(config.media_dir).as_posix() not in processed
+                and path.name not in processed)
+            or (config.force_reimport_video_audio
+                and path.suffix.lower() in _FORCE_REIMPORT_EXTS)
         ]
 
     print(f"Diretorio: {config.media_dir}")
@@ -526,28 +319,63 @@ def process_images(config: IndexerConfig) -> None:
         conn.close()
         return
 
-    max_id_before = 0
+    # Log de falhas — ao lado do banco de dados
+    _failed_log: Path = config.db_path.with_name(config.db_path.stem + "_failed.txt")
+    _failed_entries: list[str] = []
+
+    # Configura o álbum antes do loop — assim cada batch é atribuído imediatamente ao commit
+    _collection_id: int | None = None
+    _last_assigned_id: int = 0
     if config.collection_name:
         row = conn.execute("SELECT MAX(id) FROM memes").fetchone()
-        max_id_before = int(row[0]) if row and row[0] is not None else 0
+        _last_assigned_id = int(row[0]) if row and row[0] is not None else 0
+        _collection_id = find_or_create_collection(conn, config.collection_name)
 
     library_root = (config.library_root / config.library_name).resolve()
     library_id = get_or_create_library(conn, config.library_name, library_root)
     models = load_models(config)
     cursor = conn.cursor()
 
+    _proc_done = 0
+    _proc_total = len(pending)
+
     try:
         with torch.inference_mode():
-            for start in tqdm(range(0, len(pending), config.batch_size), desc="Indexando"):
+            for start in tqdm(range(0, _proc_total, config.batch_size), desc="Indexando"):
                 batch_files = pending[start : start + config.batch_size]
                 batch_images: list[Image.Image] = []
                 batch_metadata: list[dict[str, object]] = []
+                _existing_col_ids: list[int] = []  # IDs já indexados a adicionar ao álbum
 
                 for path in batch_files:
+                    if progress_callback is not None:
+                        progress_callback(_proc_done, _proc_total, path.name)
+                    _proc_done += 1
                     try:
                         source_path = path.resolve()
                         content_hash = file_sha256(source_path)
+                        _is_force = (
+                            config.force_reimport_video_audio
+                            and source_path.suffix.lower() in _FORCE_REIMPORT_EXTS
+                        )
                         if content_hash in known_hashes:
+                            if _is_force:
+                                # Remove the old record so the new INSERT creates a fresh one
+                                conn.execute(
+                                    "DELETE FROM memes WHERE content_hash = ?", (content_hash,)
+                                )
+                                known_hashes.discard(content_hash)
+                            else:
+                                if _collection_id is not None:
+                                    row = conn.execute(
+                                        "SELECT id FROM memes WHERE content_hash = ?", (content_hash,)
+                                    ).fetchone()
+                                    if row:
+                                        _existing_col_ids.append(int(row[0]))
+                                continue
+                        if content_hash in _deleted_hashes and not _is_force:
+                            continue
+                        if _deleted_phashes and not _is_force and is_phash_deleted(str(source_path), _deleted_phashes):
                             continue
 
                         try:
@@ -579,7 +407,45 @@ def process_images(config: IndexerConfig) -> None:
                             tags=tags,
                         )
                         stat = path.stat()
-                        batch_images.append(image)
+                        # Videos: pre-compute multi-frame embedding instead of batching
+                        # the single midpoint frame. Audio files use the placeholder image
+                        # (all same embedding) and are added to the batch as-is.
+                        _file_suffix = indexed_path.suffix.lower()
+                        _audio_fp: str | None = None
+                        _audio_emb: np.ndarray | None = None
+                        if _file_suffix in (_AUDIO_ONLY_EXTS | frozenset({".ogg", ".og"})):
+                            _audio_fp = _chromaprint_file(indexed_path)
+                            if models.clap_model is not None and models.clap_processor is not None:
+                                _audio_emb = _compute_clap_embedding(
+                                    indexed_path, models.clap_model,
+                                    models.clap_processor, config.device,
+                                )
+                        _is_video_file = _file_suffix in (_VIDEO_EXTS | frozenset({".ogg"}))
+                        if _is_video_file:
+                            _precomp = _compute_video_multi_frame_embedding(
+                                indexed_path, models.clip_model
+                            )
+                        else:
+                            _precomp = None
+
+                        # Perceptual hash — images only (not video/audio)
+                        _perceptual_hash: str | None = None
+                        _is_audio = _file_suffix in (_AUDIO_ONLY_EXTS | frozenset({".ogg", ".og"}))
+                        if not _is_video_file and not _is_audio:
+                            try:
+                                import imagehash as _imagehash
+                                _perceptual_hash = str(_imagehash.phash(image))
+                            except Exception:
+                                pass
+
+                        if _precomp is None:
+                            # Image, audio, or video with no useful frames → normal batch
+                            batch_images.append(image)
+                        else:
+                            # Video with multi-frame embedding: add a sentinel so batch
+                            # index stays aligned; real embedding comes from _precomp
+                            batch_images.append(None)
+
                         batch_metadata.append(
                             {
                                 "path": indexed_path,
@@ -595,19 +461,55 @@ def process_images(config: IndexerConfig) -> None:
                                 "content_hash": content_hash,
                                 "file_size": stat.st_size,
                                 "file_mtime": stat.st_mtime,
+                                "precomp_embedding": _precomp,
+                                "audio_fingerprint": _audio_fp,
+                                "audio_embedding": _audio_emb,
+                                "perceptual_hash": _perceptual_hash,
                             }
                         )
                     except Exception as exc:
-                        print(f"\nErro ao processar {path.name}: {exc}")
+                        msg = f"{path.name}: {exc}"
+                        print(f"\nErro ao processar {msg}")
+                        _failed_entries.append(str(path))
+                    finally:
+                        if config.device == "cuda":
+                            torch.cuda.empty_cache()
 
                 if not batch_images:
+                    # Nenhum arquivo novo, mas pode ter já-indexados para adicionar ao álbum
+                    if _collection_id is not None and _existing_col_ids:
+                        conn.executemany(
+                            "INSERT OR IGNORE INTO media_collections"
+                            " (meme_id, collection_id, added_at) VALUES (?,?,?)",
+                            [(_id, _collection_id, now_iso()) for _id in _existing_col_ids],
+                        )
+                        conn.commit()
                     continue
 
-                image_embeddings = models.clip_model.encode(
-                    batch_images,
-                    batch_size=len(batch_images),
-                    show_progress_bar=False,
-                )
+                # Encode only non-sentinel images (videos use pre-computed embeddings)
+                _batch_real = [(i, img) for i, img in enumerate(batch_images) if img is not None]
+                if _batch_real:
+                    _real_indices, _real_imgs = zip(*_batch_real, strict=True)
+                    _clip_out = models.clip_model.encode(
+                        list(_real_imgs),
+                        batch_size=len(_real_imgs),
+                        show_progress_bar=False,
+                    )
+                    _clip_map: dict[int, np.ndarray] = dict(zip(_real_indices, _clip_out, strict=True))
+                else:
+                    _clip_map = {}
+
+                # Merge: use pre-computed for videos, CLIP batch output for the rest
+                image_embeddings_list: list[np.ndarray] = []
+                for i, item in enumerate(batch_metadata):
+                    if item.get("precomp_embedding") is not None:
+                        image_embeddings_list.append(item["precomp_embedding"])
+                    else:
+                        image_embeddings_list.append(_clip_map[i].astype(np.float32))
+                image_embeddings = np.array(image_embeddings_list, dtype=np.float32)
+
+                del batch_images, _clip_map
+
                 text_inputs = [
                     f"Meme Category/Tags: {item['tags']}. Text: {item['ocr_en']}. Context: {item['visual']}"
                     for item in batch_metadata
@@ -671,9 +573,10 @@ def process_images(config: IndexerConfig) -> None:
                             texto_extraido, descricao_ia, tags, content_hash,
                             ocr_normalized, visual_json, objects, style, source_work,
                             humor, context, error_message, model_name,
-                            embedding_dim, schema_version, embedding, desc_embedding
+                            embedding_dim, schema_version, embedding, desc_embedding,
+                            audio_fingerprint, audio_embedding, perceptual_hash
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             item["relative_path"],
@@ -702,28 +605,48 @@ def process_images(config: IndexerConfig) -> None:
                             SCHEMA_VERSION,
                             image_embedding.tobytes(),
                             desc_embedding.tobytes(),
+                            item.get("audio_fingerprint"),
+                            item["audio_embedding"].tobytes() if item.get("audio_embedding") is not None else None,
+                            item.get("perceptual_hash"),
                         ),
                     )
                     known_hashes.add(str(item["content_hash"]))
                 conn.commit()
+
+                # Atribui ao álbum — novos indexados + já existentes que foram pulados
+                if _collection_id is not None:
+                    batch_new_ids = [
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT id FROM memes WHERE id > ?", (_last_assigned_id,)
+                        )
+                    ]
+                    all_for_collection = batch_new_ids + _existing_col_ids
+                    if all_for_collection:
+                        conn.executemany(
+                            "INSERT OR IGNORE INTO media_collections"
+                            " (meme_id, collection_id, added_at) VALUES (?,?,?)",
+                            [(mid, _collection_id, now_iso()) for mid in all_for_collection],
+                        )
+                        conn.commit()
+                    if batch_new_ids:
+                        _last_assigned_id = max(batch_new_ids)
+
                 if config.device == "cuda":
                     torch.cuda.empty_cache()
-
-        if config.collection_name:
-            collection_id = find_or_create_collection(conn, config.collection_name)
-            new_ids = [
-                row[0]
-                for row in conn.execute("SELECT id FROM memes WHERE id > ?", (max_id_before,))
-            ]
-            if new_ids:
-                conn.executemany(
-                    "INSERT OR IGNORE INTO media_collections (meme_id, collection_id, added_at) VALUES (?, ?, ?)",
-                    [(meme_id, collection_id, now_iso()) for meme_id in new_ids],
-                )
-                conn.commit()
-                print(f"Colecao '{config.collection_name}': {len(new_ids)} arquivo(s) adicionado(s).")
     finally:
         conn.close()
+        # Release all model weights from VRAM now that indexing is done.
+        # Critical when running as a background thread in the same process as the Streamlit engine.
+        del models
+        gc.collect()
+        if config.device == "cuda":
+            torch.cuda.empty_cache()
+        if _failed_entries:
+            with _failed_log.open("a", encoding="utf-8") as fh:
+                fh.write(f"\n# Sessao {dt.datetime.now().isoformat(timespec='seconds')}\n")
+                fh.writelines(f"{p}\n" for p in _failed_entries)
+            print(f"\n{len(_failed_entries)} arquivo(s) com erro gravado(s) em: {_failed_log}")
 
 
 def media_files_from_config(config: IndexerConfig) -> list[Path]:
@@ -763,10 +686,150 @@ def has_audio_stream(path: Path) -> bool:
         return True
 
 
+_AUDIO_ONLY_EXTS = frozenset({".mp3"})
+_VIDEO_EXTS = frozenset({".mp4", ".webm", ".mkv", ".mov"})
+# Extensions eligible for force-reimport (video + audio — images are excluded by design)
+_FORCE_REIMPORT_EXTS = frozenset({
+    ".mp4", ".webm", ".mkv", ".mov", ".avi", ".flv", ".ogg", ".og",
+    ".mp3", ".opus", ".flac", ".wav", ".aac", ".m4a",
+})
+
+
+def _load_svg_as_image(path: Path) -> Image.Image:
+    """Rasteriza SVG para PIL Image usando cairosvg (ou fallback cinza)."""
+    try:
+        import io as _io
+
+        import cairosvg  # type: ignore[import-untyped]
+        png_bytes = cairosvg.svg2png(url=str(path), output_width=512, output_height=512)
+        return Image.open(_io.BytesIO(png_bytes)).convert("RGB")
+    except Exception:
+        pass
+    return Image.new("RGB", (512, 512), color=(200, 200, 210))
+
+
+def _audio_placeholder() -> Image.Image:
+    """Imagem placeholder 224x224 para arquivos de áudio sem vídeo."""
+    img = Image.new("RGB", (224, 224), color=(25, 25, 45))
+    return img
+
+
+def _compute_video_multi_frame_embedding(
+    path: Path,
+    clip_model: SentenceTransformer,
+    n_frames: int = 6,
+) -> np.ndarray | None:
+    """Average CLIP embedding of N evenly-spaced meaningful frames.
+
+    More robust than single-frame for:
+    - Videos where the midpoint is dark/black (ads, intros)
+    - Trimmed copies of the same video (shifted timeline)
+    - Re-encoded copies (same frames, different container/bitrate)
+
+    Returns None if no meaningful frames are found (video will fall back to placeholder).
+    """
+    cap = cv2.VideoCapture(str(path))
+    total = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
+    # Sample evenly, skip first/last 10 % to avoid title cards and fade-outs
+    margin = max(int(total * 0.10), 1)
+    positions = [
+        margin + int((total - 2 * margin) * i / max(n_frames - 1, 1))
+        for i in range(n_frames)
+    ]
+    frames: list[Image.Image] = []
+    for pos in positions:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(pos, 0))
+        ok, frame = cap.read()
+        if ok and _is_meaningful_frame(frame):
+            img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            _cap_image_size(img)
+            frames.append(img)
+    cap.release()
+    if not frames:
+        return None
+    embeddings = clip_model.encode(frames, batch_size=len(frames), show_progress_bar=False)
+    avg = np.array(embeddings, dtype=np.float32).mean(axis=0)
+    norm = float(np.linalg.norm(avg))
+    if norm > 0:
+        avg /= norm
+    return avg
+
+
+def _is_meaningful_frame(frame_bgr: object) -> bool:
+    """True if the frame has real visual content — not a blank/uniform/noise frame.
+    OGG OPUS audio files often report CAP_PROP_FRAME_COUNT > 0 in cv2 but return
+    a blank or garbage frame. Reject those so they fall back to _audio_placeholder(),
+    giving them the same CLIP embedding as other audio-only files.
+    """
+    try:
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        mean = float(gray.mean())
+        std = float(gray.std())
+        return std > 5.0 and 5.0 < mean < 250.0
+    except Exception:
+        return False
+
+
+def _chromaprint_file(path: Path) -> str | None:
+    """Generate Chromaprint fingerprint. Returns None if acoustid/fpcalc unavailable."""
+    try:
+        import acoustid
+        _dur, fp = acoustid.fingerprint_file(str(path))
+        return fp
+    except Exception:
+        return None
+
+
+def _compute_clap_embedding(
+    path: Path,
+    clap_model: object,
+    clap_processor: object,
+    device: str,
+) -> np.ndarray | None:
+    """Compute 512-dim CLAP audio embedding. Uses whisper.load_audio for format support."""
+    try:
+        import whisper as _whisper
+        audio_arr = _whisper.load_audio(str(path))  # mono float32 at 16kHz
+        inputs = clap_processor(
+            audios=[audio_arr],
+            sampling_rate=16000,
+            return_tensors="pt",
+        ).to(device)
+        import torch as _torch
+        with _torch.no_grad():
+            emb = clap_model.get_audio_features(**inputs)
+            emb = emb / emb.norm(dim=-1, keepdim=True)
+        return emb.cpu().float().numpy()[0]
+    except Exception:
+        return None
+
+
+def _whisper_transcribe(path: Path, models: LoadedModels, config: IndexerConfig) -> str:
+    if not models.whisper_model:
+        return ""
+    try:
+        result = models.whisper_model.transcribe(str(path), fp16=(config.device == "cuda"))
+        return result["text"].strip()
+    except Exception as exc:
+        print(f"  ! Whisper falhou em {path.name}: {exc}")
+        return ""
+
+
 def load_media_preview(
     path: Path, models: LoadedModels, config: IndexerConfig
 ) -> tuple[Image.Image, str]:
-    if path.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov"}:
+    suffix = path.suffix.lower()
+
+    if suffix == ".svg":
+        img = _load_svg_as_image(path)
+        _cap_image_size(img)
+        return img, ""
+
+    if suffix in _AUDIO_ONLY_EXTS:
+        text = _whisper_transcribe(path, models, config)
+        return _audio_placeholder(), f"[Audio: {text}]" if text else "[Audio]"
+
+    if suffix in _VIDEO_EXTS:
         cap = cv2.VideoCapture(str(path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.set(cv2.CAP_PROP_POS_FRAMES, max(total_frames // 2, 0))
@@ -775,23 +838,67 @@ def load_media_preview(
         if not ok:
             raise ValueError("falha ao ler frame do video")
         image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        _cap_image_size(image)
         audio_text = ""
         if models.whisper_model and has_audio_stream(path):
-            try:
-                result = models.whisper_model.transcribe(
-                    str(path), fp16=(config.device == "cuda")
-                )
-                audio_text = f" [Audio: {result['text'].strip()}]"
-            except Exception as exc:
-                print(f"  ! Whisper falhou em {path.name}: {exc}")
+            text = _whisper_transcribe(path, models, config)
+            if text:
+                audio_text = f" [Audio: {text}]"
         return image, audio_text
 
-    return Image.open(path).convert("RGB"), ""
+    if suffix == ".ogg":
+        cap = cv2.VideoCapture(str(path))
+        has_video = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) > 0
+        if has_video:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) // 2, 0))
+            ok, frame = cap.read()
+            cap.release()
+            # OGG OPUS audio files report non-zero frame count but return blank/garbage
+            # frames — reject those so all audio-only OGGs use the same placeholder
+            if ok and _is_meaningful_frame(frame):
+                image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                _cap_image_size(image)
+                text = _whisper_transcribe(path, models, config) if models.whisper_model else ""
+                return image, f" [Audio: {text}]" if text else ""
+        else:
+            cap.release()
+        text = _whisper_transcribe(path, models, config)
+        return _audio_placeholder(), f"[Audio: {text}]" if text else "[Audio]"
+
+    # Imagens estáticas e GIFs — abre apenas o frame 0
+    try:
+        img = Image.open(path)
+        if hasattr(img, "n_frames") and img.n_frames > 1:
+            img.seek(0)
+        img = img.convert("RGB")
+    except Exception:
+        # Fallback: alguns WebP/GIF com codificação incomum abrem via cv2
+        frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError(f"PIL e cv2 nao conseguiram abrir {path.name}") from None
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    _cap_image_size(img)
+    return img, ""
+
+
+_MAX_DIM = 1024  # limite para evitar OOM — reduzido para suportar GPU compartilhada com o engine
+
+
+def _cap_image_size(img: Image.Image) -> None:
+    """Redimensiona in-place se maior que _MAX_DIM (modifica o objeto PIL)."""
+    if max(img.size) > _MAX_DIM:
+        img.thumbnail((_MAX_DIM, _MAX_DIM), Image.LANCZOS)
 
 
 def extract_text(path: Path, image: Image.Image, audio_text: str, models: LoadedModels) -> str:
-    ocr_target = np.array(image) if path.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov"} else str(path)
-    text_results = models.reader.readtext(ocr_target, detail=0, paragraph=True)
+    suffix = path.suffix.lower()
+    if suffix in _AUDIO_ONLY_EXTS:
+        return audio_text.strip()
+    if suffix == ".ogg" and audio_text.startswith("[Audio"):
+        return audio_text.strip()
+    # Sempre usa o numpy array da imagem já carregada (RGB, frame único).
+    # Isso evita que EasyOCR tente abrir SVG/GIF animado/imagens de 2 canais via PIL.
+    text_results = models.reader.readtext(np.array(image), detail=0, paragraph=True)
     return (" ".join(text_results).strip() + audio_text).strip()
 
 

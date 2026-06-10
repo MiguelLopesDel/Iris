@@ -1,0 +1,1 @@
+"""Iris UI tabs — one module per tab, imported and orchestrated by main.py."""

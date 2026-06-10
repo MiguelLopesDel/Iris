@@ -9,7 +9,11 @@ from typing import Any
 
 from PIL import Image
 
-SUPPORTED_MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".mkv", ".mov")
+SUPPORTED_MEDIA_EXTS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",   # images / vector
+    ".mp4", ".webm", ".mkv", ".mov", ".ogg",            # video (ogg can be audio-only too)
+    ".mp3",                                              # audio-only
+)
 
 
 @dataclass(frozen=True)
@@ -44,7 +48,7 @@ def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def image_dimensions(path: Path) -> tuple[int | None, int | None]:
-    if path.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov"}:
+    if path.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov", ".ogg", ".mp3"}:
         return None, None
     try:
         with Image.open(path) as image:

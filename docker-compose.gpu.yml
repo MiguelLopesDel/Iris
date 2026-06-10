@@ -1,0 +1,27 @@
+services:
+  iris:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./media:/app/media
+      - huggingface_cache:/root/.cache/huggingface
+      - whisper_cache:/root/.cache/whisper
+    environment:
+      - STREAMLIT_BROWSER_USAGE_STATS=false
+      - PYTHONPATH=/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  huggingface_cache:
+  whisper_cache:

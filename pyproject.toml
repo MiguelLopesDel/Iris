@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "meme-compass"
-version = "0.2.0"
-description = "Busca semantica multimodal para memes locais."
+name = "iris-media"
+version = "0.3.0"
+description = "Local multimodal AI media intelligence — index, search, and organize your media library with AI."
 requires-python = ">=3.10"
 dependencies = [
     "deep-translator>=1.9,<2",
@@ -36,20 +36,20 @@ metadata = [
 ]
 
 [project.scripts]
-meme-compass-app = "scripts.run_streamlit:main"
-meme-compass-index = "core.indexer:main"
-meme-compass-benchmark = "scripts.benchmark:main"
-meme-compass-sample = "scripts.sample_media:main"
-meme-compass-eval-search = "scripts.evaluate_search:main"
-meme-compass-eval-captions = "scripts.evaluate_captions:main"
-meme-compass-gpu-probe = "scripts.gpu_probe:main"
-meme-compass-golden = "scripts.create_golden_set:main"
-meme-compass-eval-golden = "scripts.evaluate_golden_set:main"
-meme-compass-enrich-metadata = "scripts.enrich_metadata:main"
-meme-compass-find-duplicates = "scripts.find_duplicates:main"
-meme-compass-sync-index = "scripts.sync_index_after_trash:main"
-meme-compass-import-media = "scripts.import_media:main"
-meme-compass-migrate-library = "scripts.migrate_library:main"
+iris-app = "scripts.run_streamlit:main"
+iris-index = "core.indexer:main"
+iris-benchmark = "scripts.benchmark:main"
+iris-sample = "scripts.sample_media:main"
+iris-eval-search = "scripts.evaluate_search:main"
+iris-eval-captions = "scripts.evaluate_captions:main"
+iris-gpu-probe = "scripts.gpu_probe:main"
+iris-golden = "scripts.create_golden_set:main"
+iris-eval-golden = "scripts.evaluate_golden_set:main"
+iris-enrich-metadata = "scripts.enrich_metadata:main"
+iris-find-duplicates = "scripts.find_duplicates:main"
+iris-sync-index = "scripts.sync_index_after_trash:main"
+iris-import-media = "scripts.import_media:main"
+iris-migrate-library = "scripts.migrate_library:main"
 
 [tool.setuptools]
 packages = ["app", "core", "scripts", "utils"]

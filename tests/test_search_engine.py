@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from core.search_engine import MemeSearchEngine, SearchOptions, normalize_text, parse_query_terms
+from core.search_engine import IrisEngine, SearchOptions, normalize_text, parse_query_terms
 
 
 def make_db(path: Path, media_root: Path) -> None:
@@ -105,7 +105,7 @@ class SearchEngineTests(unittest.TestCase):
             db_path = root / "memes.db"
             make_db(db_path, media)
 
-            engine = MemeSearchEngine(db_path=db_path, media_root=media, load_model=False)
+            engine = IrisEngine(db_path=db_path, media_root=media, load_model=False)
             options = SearchOptions(top_k=5, threshold=-1.0, balance=0.5, text_bonus=2.0)
             query = np.array([1.0, 0.0, 0.0], dtype=np.float32)
             results = engine.search_by_embedding(
@@ -137,7 +137,7 @@ class SearchEngineTests(unittest.TestCase):
             db_path = root / "memes.db"
             make_db(db_path, media)
 
-            engine = MemeSearchEngine(db_path=db_path, media_root=root / "other", load_model=False)
+            engine = IrisEngine(db_path=db_path, media_root=root / "other", load_model=False)
             cat = next(record for record in engine.records if record.arquivo == "cat.jpg")
             self.assertEqual(Path(cat.resolved_path).resolve(), (media / "cat.jpg").resolve())
 

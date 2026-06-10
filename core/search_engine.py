@@ -2,135 +2,36 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
-import string
-import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import faiss
 import numpy as np
-import torch
-from deep_translator import GoogleTranslator
 from PIL import Image
+
+import torch
+from core.db_manager import DatabaseManager
+from core.search_types import (
+    STOP_WORDS,
+    IndexRecord,
+    SearchOptions,
+    SearchResult,
+    normalize_text,
+    parse_query_terms,
+)
+from core.vector_store import VectorStore
+from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer, util
 
 DEFAULT_MODEL = "sentence-transformers/clip-ViT-L-14"
 DEFAULT_WEIGHTS = {"balance": 0.5, "text_bonus": 2.0, "lexical_weight": 0.25}
-STOP_WORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "da",
-    "de",
-    "do",
-    "dos",
-    "das",
-    "e",
-    "em",
-    "for",
-    "in",
-    "is",
-    "na",
-    "no",
-    "of",
-    "on",
-    "or",
-    "para",
-    "the",
-    "to",
-    "um",
-    "uma",
-    "with",
-}
+
+VIDEO_EXTENSIONS = frozenset({".mp4", ".webm", ".mkv", ".mov", ".ogg"})
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"})
+AUDIO_EXTENSIONS = frozenset({".mp3"})
 
 
-VIDEO_EXTENSIONS = frozenset({".mp4", ".webm", ".mkv", ".mov"})
-IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
-
-
-@dataclass(frozen=True)
-class SearchOptions:
-    top_k: int = 50
-    threshold: float = 0.15
-    balance: float = 0.5
-    text_bonus: float = 1.0
-    lexical_weight: float = 0.25
-    translate: bool = True
-    candidate_pool: int = 3000
-    collection_ids: frozenset[int] = frozenset()
-    concept_ids: frozenset[int] = frozenset()
-    media_type: str = "all"  # "all" | "image" | "video"
-
-
-@dataclass(frozen=True)
-class IndexRecord:
-    index: int
-    arquivo: str
-    caminho: str
-    resolved_path: str | None
-    texto_extraido: str
-    descricao_ia: str
-    tags: str
-    embedding: np.ndarray
-    desc_embedding: np.ndarray | None
-    relative_path: str | None = None
-    visual_json: str = ""
-    objects: str = ""
-    style: str = ""
-    source_work: str = ""
-    humor: str = ""
-    context: str = ""
-    content_hash: str = ""
-    file_size: int | None = None
-    file_mtime: float | None = None
-    library_id: int | None = None
-    storage_path: str | None = None
-    source_path: str | None = None
-    db_id: int = 0
-
-
-@dataclass(frozen=True)
-class SearchResult:
-    score: float
-    index: int
-    arquivo: str
-    caminho: str
-    resolved_path: str | None
-    texto_extraido: str
-    descricao_ia: str
-    tags: str
-    embedding: np.ndarray
-    score_details: dict[str, float | str]
-
-
-def normalize_text(text: str | None) -> str:
-    if not text:
-        return ""
-    text = text.lower()
-    text = "".join(
-        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
-    )
-    return text.translate(str.maketrans("", "", string.punctuation)).strip()
-
-
-def parse_query_terms(query: str) -> tuple[str, list[str]]:
-    positive: list[str] = []
-    negative: list[str] = []
-    for word in query.split():
-        if word.startswith("-") and len(word) > 1:
-            negative.append(normalize_text(word[1:]))
-        else:
-            positive.append(word)
-    return " ".join(positive).strip(), [term for term in negative if term]
-
-
-class MemeSearchEngine:
+class IrisEngine:
     def __init__(
         self,
         db_path: str | os.PathLike[str] | None = None,
@@ -141,15 +42,26 @@ class MemeSearchEngine:
         device: str | None = None,
     ):
         self.db_path = Path(db_path or self._default_db_path())
+        self.db = DatabaseManager(self.db_path)
+        self.vector_store = VectorStore(self.db_path)
+        
         self.model_name = model_name
         self.media_root = Path(media_root or ".").resolve()
         self.device = device or self._detect_device()
         self.weights = self._load_weights(Path(weights_path))
-        self.library_roots = self._load_libraries()
+        
+        self.library_roots = self.db.get_library_roots()
         self.records = self._load_records()
         self.image_matrix = self._stack_embeddings("embedding")
         self.desc_matrix = self._stack_embeddings("desc_embedding")
-        self.image_index, self.desc_index = self._load_faiss_indices()
+        
+        self.image_index = self.vector_store.image_index
+        self.desc_index = self.vector_store.desc_index
+        self.audio_matrix, self.audio_record_indices = self.vector_store.build_audio_index(self.records)
+        self.audio_index = self.vector_store.audio_index
+        
+        self._clap_model = None
+        self._clap_processor = None
         self.model = self._load_model() if load_model else None
 
         # Backward-compatible attribute used by existing scripts.
@@ -167,7 +79,7 @@ class MemeSearchEngine:
     def _default_db_path() -> str:
         if Path("data/teste_playground.db").exists():
             return "data/teste_playground.db"
-        return "data/meme_compass_v10.db"
+        return "data/iris.db"
 
     def _load_model(self) -> SentenceTransformer:
         model = SentenceTransformer(self.model_name, device=self.device)
@@ -197,10 +109,9 @@ class MemeSearchEngine:
         if not self.db_path.exists():
             return []
 
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = self.db.get_connection()
         try:
-            columns = self._table_columns(conn, "memes")
+            columns = self.db.table_columns("memes")
             select_columns = [
                 "arquivo",
                 "caminho",
@@ -226,6 +137,9 @@ class MemeSearchEngine:
                 "library_id",
                 "storage_path",
                 "source_path",
+                "audio_fingerprint",
+                "audio_embedding",
+                "perceptual_hash",
             ]:
                 if optional in columns:
                     select_columns.append(optional)
@@ -236,7 +150,7 @@ class MemeSearchEngine:
             sql = f"SELECT {', '.join(select_columns)} FROM memes ORDER BY {order_column}"
             rows = conn.execute(sql).fetchall()
         finally:
-            conn.close()
+            pass
 
         records: list[IndexRecord] = []
         for idx, row in enumerate(rows):
@@ -262,9 +176,7 @@ class MemeSearchEngine:
                     descricao_ia=row["descricao_ia"] or "",
                     tags=row["tags"] if "tags" in row.keys() and row["tags"] else "",
                     embedding=np.frombuffer(embedding_blob, dtype=np.float32).copy(),
-                    desc_embedding=np.frombuffer(desc_blob, dtype=np.float32).copy()
-                    if desc_blob
-                    else None,
+                    desc_embedding=np.frombuffer(desc_blob, dtype=np.float32).copy() if desc_blob else None,
                     relative_path=relative_path,
                     visual_json=row["visual_json"] if "visual_json" in row.keys() else "",
                     objects=row["objects"] if "objects" in row.keys() else "",
@@ -279,64 +191,45 @@ class MemeSearchEngine:
                     storage_path=row["storage_path"] if "storage_path" in row.keys() else None,
                     source_path=row["source_path"] if "source_path" in row.keys() else None,
                     db_id=int(row["id"]) if "id" in row.keys() and row["id"] is not None else 0,
+                    audio_fingerprint=row["audio_fingerprint"] if "audio_fingerprint" in row.keys() and row["audio_fingerprint"] else "",
+                    audio_embedding=np.frombuffer(row["audio_embedding"], dtype=np.float32).copy() if "audio_embedding" in row.keys() and row["audio_embedding"] else None,
+                    perceptual_hash=row["perceptual_hash"] if "perceptual_hash" in row.keys() and row["perceptual_hash"] else "",
                 )
             )
         return records
 
-    def _load_libraries(self) -> dict[int, Path]:
-        if not self.db_path.exists():
-            return {}
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            tables = {
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            if "media_libraries" not in tables:
-                return {}
-            rows = conn.execute("SELECT id, root_path FROM media_libraries").fetchall()
-        finally:
-            conn.close()
-        mapping: dict[int, Path] = {}
-        for row in rows:
-            try:
-                mapping[int(row["id"])] = Path(str(row["root_path"])).resolve()
-            except Exception:
-                continue
-        return mapping
-
-    @staticmethod
-    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    def invalidate_table_cache(self) -> None:
+        self.db.invalidate_table_cache()
 
     def _has_collections_tables(self) -> bool:
-        conn = sqlite3.connect(self.db_path)
-        try:
-            tables = {
-                r[0]
-                for r in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            return "collections" in tables and "media_collections" in tables
-        finally:
-            conn.close()
+        return self.db.has_collections_tables()
 
     def _has_concept_tables(self) -> bool:
-        if not self.db_path.exists():
-            return False
-        conn = sqlite3.connect(self.db_path)
-        try:
-            tables = {
-                r[0]
-                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            }
-            return "concepts" in tables
-        finally:
-            conn.close()
+        return self.db.has_concept_tables()
+
+    def list_collections(self) -> list[dict[str, Any]]:
+        return self.db.list_collections()
+
+    def create_collection(self, name: str, description: str = "") -> int:
+        return self.db.create_collection(name, description)
+
+    def rename_collection(self, collection_id: int, new_name: str) -> None:
+        self.db.rename_collection(collection_id, new_name)
+
+    def delete_collection(self, collection_id: int) -> None:
+        self.db.delete_collection(collection_id)
+
+    def add_records_to_collection(self, db_ids: list[int], collection_id: int) -> int:
+        return self.db.add_records_to_collection(db_ids, collection_id)
+
+    def remove_records_from_collection(self, db_ids: list[int], collection_id: int) -> None:
+        self.db.remove_records_from_collection(db_ids, collection_id)
+
+    def get_record_collections(self, db_id: int) -> list[dict[str, Any]]:
+        return self.db.get_record_collections(db_id)
+
+    def _get_collection_db_ids(self, collection_ids: frozenset[int]) -> frozenset[int]:
+        return self.db.get_collection_db_ids(collection_ids)
 
     def _db_id_to_idx(self) -> dict[int, int]:
         return {r.db_id: r.index for r in self.records if r.db_id}
@@ -349,7 +242,7 @@ class MemeSearchEngine:
             get_rejected_meme_ids,
         )
 
-        conn = sqlite3.connect(self.db_path)
+        conn = self.db.get_connection()
         try:
             refs = get_references(conn, concept_id)
             if not refs:
@@ -357,7 +250,7 @@ class MemeSearchEngine:
             confirmed_ids = get_confirmed_meme_ids(conn, concept_id)
             rejected_ids = get_rejected_meme_ids(conn, concept_id)
         finally:
-            conn.close()
+            pass
 
         if self.image_matrix is None:
             from core.concepts import compute_centroid
@@ -381,45 +274,63 @@ class MemeSearchEngine:
     def _try_concept_embedding(self, query: str) -> np.ndarray | None:
         if not self._has_concept_tables():
             return None
-        from core.concepts import list_concepts
+        from core.concepts import (
+            compute_refined_centroid,
+            get_confirmed_meme_ids,
+            get_references,
+            get_rejected_meme_ids,
+            list_concepts,
+        )
 
-        conn = sqlite3.connect(self.db_path)
+        q = query.lower().strip()
+        conn = self.db.get_connection()
         try:
             concepts = list_concepts(conn)
-            q = query.lower().strip()
-            matched = None
-            for c in concepts:
-                names = [c["name"].lower()] + [
-                    t.strip().lower()
-                    for t in c["search_terms"].split(",")
-                    if t.strip()
-                ]
-                if q in names:
-                    matched = c
-                    break
+            matched = next(
+                (
+                    c for c in concepts
+                    if q in [c["name"].lower()]
+                    + [t.strip().lower() for t in c["search_terms"].split(",") if t.strip()]
+                ),
+                None,
+            )
+            if not matched:
+                return None
+            refs = get_references(conn, matched["id"])
+            if not refs:
+                return None
+            if self.image_matrix is None:
+                from core.concepts import compute_centroid
+                return compute_centroid([r["embedding"] for r in refs])
+            confirmed_ids = get_confirmed_meme_ids(conn, matched["id"])
+            rejected_ids = get_rejected_meme_ids(conn, matched["id"])
         finally:
-            conn.close()
+            pass
 
-        if not matched:
-            return None
-        return self._concept_refined_centroid(matched["id"])
+        db_to_idx = self._db_id_to_idx()
+        pos_extra = [self.image_matrix[db_to_idx[did]] for did in confirmed_ids if did in db_to_idx]
+        negatives = [self.image_matrix[db_to_idx[did]] for did in rejected_ids if did in db_to_idx]
+        return compute_refined_centroid([r["embedding"] for r in refs], pos_extra, negatives)
 
     def find_concept_matches(
         self, concept_id: int, top_k: int = 80, min_score: float = 0.65
     ) -> list[tuple[int, float]]:
         if self.image_matrix is None:
             return []
-        from core.concepts import get_rejected_meme_ids
+        from core.concepts import get_confirmed_meme_ids, get_rejected_meme_ids
 
         centroid = self._concept_refined_centroid(concept_id)
         if centroid is None:
             return []
 
-        conn = sqlite3.connect(self.db_path)
+        conn = self.db.get_connection()
         try:
+            confirmed_db_ids = get_confirmed_meme_ids(conn, concept_id)
             rejected_db_ids = get_rejected_meme_ids(conn, concept_id)
         finally:
-            conn.close()
+            pass
+
+        already_decided = confirmed_db_ids | rejected_db_ids
 
         if (
             self.image_index is not None
@@ -434,7 +345,7 @@ class MemeSearchEngine:
         results: list[tuple[int, float]] = []
         for idx in candidates:
             record = self.records[idx]
-            if record.db_id in rejected_db_ids:
+            if record.db_id in already_decided:
                 continue
             score = float(np.dot(centroid.reshape(-1), self.image_matrix[idx].reshape(-1)))
             if score >= min_score:
@@ -442,123 +353,6 @@ class MemeSearchEngine:
 
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
-
-    def list_collections(self) -> list[dict[str, Any]]:
-        if not self.db_path.exists() or not self._has_collections_tables():
-            return []
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = conn.execute(
-                """
-                SELECT c.id, c.name, c.description, COUNT(mc.meme_id) AS count
-                FROM collections c
-                LEFT JOIN media_collections mc ON mc.collection_id = c.id
-                GROUP BY c.id
-                ORDER BY c.name
-                """
-            ).fetchall()
-            return [dict(row) for row in rows]
-        finally:
-            conn.close()
-
-    def create_collection(self, name: str, description: str = "") -> int:
-        import datetime as _dt
-
-        conn = sqlite3.connect(self.db_path)
-        try:
-            cursor = conn.execute(
-                "INSERT INTO collections (name, description, created_at) VALUES (?, ?, ?)",
-                (name.strip(), description.strip(), _dt.datetime.now().isoformat()),
-            )
-            conn.commit()
-            return int(cursor.lastrowid)
-        finally:
-            conn.close()
-
-    def rename_collection(self, collection_id: int, new_name: str) -> None:
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.execute(
-                "UPDATE collections SET name = ? WHERE id = ?",
-                (new_name.strip(), collection_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    def delete_collection(self, collection_id: int) -> None:
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.execute("DELETE FROM media_collections WHERE collection_id = ?", (collection_id,))
-            conn.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
-            conn.commit()
-        finally:
-            conn.close()
-
-    def add_records_to_collection(self, db_ids: list[int], collection_id: int) -> int:
-        import datetime as _dt
-
-        if not db_ids:
-            return 0
-        now = _dt.datetime.now().isoformat()
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.executemany(
-                "INSERT OR IGNORE INTO media_collections (meme_id, collection_id, added_at) VALUES (?, ?, ?)",
-                [(db_id, collection_id, now) for db_id in db_ids],
-            )
-            conn.commit()
-            return len(db_ids)
-        finally:
-            conn.close()
-
-    def remove_records_from_collection(self, db_ids: list[int], collection_id: int) -> None:
-        if not db_ids:
-            return
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.executemany(
-                "DELETE FROM media_collections WHERE meme_id = ? AND collection_id = ?",
-                [(db_id, collection_id) for db_id in db_ids],
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    def get_record_collections(self, db_id: int) -> list[dict[str, Any]]:
-        if not self.db_path.exists() or not self._has_collections_tables():
-            return []
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = conn.execute(
-                """
-                SELECT c.id, c.name
-                FROM collections c
-                JOIN media_collections mc ON mc.collection_id = c.id
-                WHERE mc.meme_id = ?
-                ORDER BY c.name
-                """,
-                (db_id,),
-            ).fetchall()
-            return [dict(row) for row in rows]
-        finally:
-            conn.close()
-
-    def _get_collection_db_ids(self, collection_ids: frozenset[int]) -> frozenset[int]:
-        if not collection_ids or not self._has_collections_tables():
-            return frozenset()
-        placeholders = ",".join("?" * len(collection_ids))
-        conn = sqlite3.connect(self.db_path)
-        try:
-            rows = conn.execute(
-                f"SELECT meme_id FROM media_collections WHERE collection_id IN ({placeholders})",
-                list(collection_ids),
-            ).fetchall()
-            return frozenset(row[0] for row in rows)
-        finally:
-            conn.close()
 
     def resolve_media_path(
         self,
@@ -596,13 +390,44 @@ class MemeSearchEngine:
             return None
         return np.stack(values).astype("float32")
 
-    def _load_faiss_indices(self) -> tuple[Any | None, Any | None]:
-        prefix = self.db_path.with_suffix("")
-        image_path = prefix.with_name(f"{prefix.name}_image.faiss")
-        desc_path = prefix.with_name(f"{prefix.name}_desc.faiss")
-        image_index = faiss.read_index(str(image_path)) if image_path.exists() else None
-        desc_index = faiss.read_index(str(desc_path)) if desc_path.exists() else None
-        return image_index, desc_index
+    def search_audio_text(self, query: str, top_k: int = 20) -> list[SearchResult]:
+        if self.audio_index is None or not self.audio_record_indices:
+            return []
+        try:
+            if self._clap_model is None:
+                from transformers import ClapModel, ClapProcessor
+                self._clap_model = ClapModel.from_pretrained(
+                    "laion/clap-htsat-unfused", torch_dtype=torch.float32
+                ).to(self.device).eval()
+                self._clap_processor = ClapProcessor.from_pretrained("laion/clap-htsat-unfused")
+            inputs = self._clap_processor(text=[query], return_tensors="pt", padding=True).to(self.device)
+            with torch.no_grad():
+                text_emb = self._clap_model.get_text_features(**inputs)
+                text_emb = text_emb / text_emb.norm(dim=-1, keepdim=True)
+            text_vec = text_emb.cpu().float().numpy().reshape(1, -1)
+            k = min(top_k, len(self.audio_record_indices))
+            scores, indices = self.audio_index.search(text_vec, k)
+            results = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx < 0:
+                    continue
+                rec_idx = self.audio_record_indices[int(idx)]
+                rec = self.records[rec_idx]
+                results.append(SearchResult(
+                    score=float(score),
+                    index=rec_idx,
+                    arquivo=rec.arquivo,
+                    caminho=rec.caminho,
+                    resolved_path=rec.resolved_path,
+                    texto_extraido=rec.texto_extraido,
+                    descricao_ia=rec.descricao_ia,
+                    tags=rec.tags,
+                    embedding=rec.embedding,
+                    score_details={"clap_score": float(score)},
+                ))
+            return results
+        except Exception:
+            return []
 
     @staticmethod
     def _record_to_dict(record: IndexRecord) -> dict[str, Any]:
@@ -650,13 +475,8 @@ class MemeSearchEngine:
         embedding = self.model.encode(image.convert("RGB")).astype("float32")
         return self._normalize_vector(embedding)
 
-    @staticmethod
-    def _normalize_vector(vector: np.ndarray) -> np.ndarray:
-        vector = np.asarray(vector, dtype=np.float32)
-        if vector.ndim == 1:
-            vector = vector.reshape(1, -1)
-        faiss.normalize_L2(vector)
-        return vector
+    def _normalize_vector(self, vector: np.ndarray) -> np.ndarray:
+        return self.vector_store.normalize_vector(vector)
 
     def search_text(self, query: str, options: SearchOptions | None = None) -> list[SearchResult]:
         options = options or SearchOptions()
@@ -716,7 +536,7 @@ class MemeSearchEngine:
             return []
 
         if options.collection_ids:
-            allowed_db_ids = self._get_collection_db_ids(options.collection_ids)
+            allowed_db_ids = self.db.get_collection_db_ids(options.collection_ids)
             candidate_indices = [
                 idx for idx in candidate_indices
                 if self.records[idx].db_id in allowed_db_ids
@@ -726,11 +546,11 @@ class MemeSearchEngine:
 
         if options.concept_ids:
             from core.concepts import get_concept_meme_ids_for_filter
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection()
             try:
                 allowed_db_ids = get_concept_meme_ids_for_filter(conn, options.concept_ids)
             finally:
-                conn.close()
+                pass
             candidate_indices = [
                 idx for idx in candidate_indices
                 if self.records[idx].db_id in allowed_db_ids
@@ -743,6 +563,14 @@ class MemeSearchEngine:
             candidate_indices = [
                 idx for idx in candidate_indices
                 if os.path.splitext(self.records[idx].arquivo)[1].lower() in allowed_exts
+            ]
+            if not candidate_indices:
+                return []
+
+        if options.excluded_db_ids:
+            candidate_indices = [
+                idx for idx in candidate_indices
+                if self.records[idx].db_id not in options.excluded_db_ids
             ]
             if not candidate_indices:
                 return []
@@ -919,7 +747,7 @@ class MemeSearchEngine:
                     score += weight
 
         normalized_query = normalize_text(text_query)
-        full_content = normalize_text(" ".join(field for field, _ in weighted_fields))
+        full_content = normalize_text(" ".join(field for field, _ in weighted_fields if field))
         if normalized_query and normalized_query in full_content:
             score += 2.0
             max_score += 2.0
@@ -994,7 +822,6 @@ class MemeSearchEngine:
             )
         return results
 
-    # Backward-compatible method used by scripts/benchmark.py and scripts/optimize.py.
     def buscar(
         self,
         termo: str,

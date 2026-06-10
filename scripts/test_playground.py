@@ -57,7 +57,7 @@ def main():
     
     args = parser.parse_args()
     
-    print("--- 🧪 PLAYGROUND DE TESTE DO MEME COMPASS ---")
+    print("--- 🧪 PLAYGROUND DE TESTE DO IRIS ---")
     if setup_test_env(args.src, args.test_dir, args.num):
         if run_indexer(args.test_dir, args.test_db):
             run_cli_search(args.test_db)

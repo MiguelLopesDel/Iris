@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--db",
-        default="meme_compass_full_v1.db",
+        default="iris.db",
         help="Banco SQLite. Nome relativo simples sera resolvido dentro de data/.",
     )
     parser.add_argument(
@@ -121,6 +121,19 @@ def delete_ids(db_path: Path, ids: list[int]) -> None:
         return
     conn = sqlite3.connect(db_path)
     try:
+        # Save content hashes before removing records so the indexer can skip re-imports.
+        placeholders = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"SELECT content_hash FROM memes WHERE id IN ({placeholders}) AND content_hash IS NOT NULL",
+            ids,
+        ).fetchall()
+        if rows:
+            try:
+                from core.deleted_registry import register_deleted_hashes
+                register_deleted_hashes(conn, [r[0] for r in rows])
+            except Exception:
+                pass
+
         conn.executemany("DELETE FROM memes WHERE id = ?", [(id_value,) for id_value in ids])
         conn.commit()
     finally:

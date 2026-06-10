@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from core.duplicates import find_duplicate_groups
-from core.search_engine import MemeSearchEngine
+from core.search_engine import IrisEngine
 
 
 def make_duplicate_db(path: Path) -> None:
@@ -54,9 +54,9 @@ class DuplicateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "memes.db"
             make_duplicate_db(db_path)
-            engine = MemeSearchEngine(db_path=db_path, load_model=False)
+            engine = IrisEngine(db_path=db_path, load_model=False)
 
-            groups = find_duplicate_groups(engine, threshold=0.98, max_neighbors=2)
+            groups = find_duplicate_groups(engine, threshold=0.98, max_neighbors=2, require_existing_files=False)
             grouped_files = [sorted(item.arquivo for item in group.items) for group in groups]
 
             self.assertIn(["a.jpg", "b.jpg"], grouped_files)

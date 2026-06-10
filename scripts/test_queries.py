@@ -4,11 +4,11 @@ import os
 # Adiciona a pasta raiz ao path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.search_engine import MemeSearchEngine
+from core.search_engine import IrisEngine
 
 def run_tests():
     # Carrega o buscador com o banco de teste e os pesos otimizados
-    engine = MemeSearchEngine(db_path="data/teste_playground.db")
+    engine = IrisEngine(db_path="data/teste_playground.db")
     
     # Lista de buscas variadas baseadas no que encontramos no banco
     test_queries = [

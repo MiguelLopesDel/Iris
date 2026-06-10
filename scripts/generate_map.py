@@ -4,7 +4,7 @@ def is_ignored(name):
     """Define pastas e arquivos que não interessam para a arquitetura."""
     ignored = {
         'venv', '.git', '__pycache__', '.idea', '.vscode', 
-        'meme_compass_v9.db', '*.faiss', '*.png', '*.jpg', '*.mp4'
+        'iris.db', '*.faiss', '*.png', '*.jpg', '*.mp4'
     }
     return name in ignored or name.endswith(('.pyc', '.db', '.faiss', '.png', '.jpg', '.jpeg', '.mp4', '.webm'))
 

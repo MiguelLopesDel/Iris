@@ -2,7 +2,7 @@
 # test_release.sh - Simula uma nova instalação em um ambiente limpo
 
 # 1. Configuração do Diretório Temporário
-PROJECT_NAME="Meme_Compass_Release_Test"
+PROJECT_NAME="Iris_Release_Test"
 # Mudamos para um diretório local para evitar estourar o /tmp (RAM)
 TEMP_DIR="./build_test_release"
 

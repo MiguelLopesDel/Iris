@@ -9,7 +9,7 @@ from _path import ensure_project_root
 
 ensure_project_root()
 
-from core.search_engine import MemeSearchEngine  # noqa: E402
+from core.search_engine import IrisEngine  # noqa: E402
 
 
 def result_rank(results: list[dict], target_file: str) -> int:
@@ -21,7 +21,7 @@ def result_rank(results: list[dict], target_file: str) -> int:
 
 def run_benchmark(db_path: str, num_tests: int = 20, seed: int = 42) -> dict[str, float]:
     print(f"Iniciando benchmark no banco: {db_path}")
-    engine = MemeSearchEngine(db_path=db_path)
+    engine = IrisEngine(db_path=db_path)
     if not engine.dados:
         print("Erro: banco vazio ou inexistente.")
         return {"top1": 0.0, "top3": 0.0, "top5": 0.0, "latency_ms": 0.0}

@@ -4,7 +4,7 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== Instalador Automático do Meme Compass ===${NC}"
+echo -e "${GREEN}=== Instalador Automático do Iris ===${NC}"
 
 if ! command -v python3 &> /dev/null; then
     echo -e "${RED}Erro: Python 3 não encontrado. Por favor, instale o Python 3 antes de continuar.${NC}"

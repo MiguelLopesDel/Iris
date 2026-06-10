@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Importa arquivos/pastas para a biblioteca e indexa incrementalmente."
     )
-    parser.add_argument("--db", default="data/meme_compass_full_v1.db")
+    parser.add_argument("--db", default="data/iris.db")
     parser.add_argument("--source", action="append", required=True)
     parser.add_argument("--library", default=DEFAULT_LIBRARY_NAME)
     parser.add_argument("--library-root", default=str(DEFAULT_LIBRARY_ROOT))
@@ -51,7 +51,7 @@ def collect_directories(sources: list[Path]) -> list[Path]:
 def stage_files(files: list[Path]) -> Path | None:
     if not files:
         return None
-    temp_root = Path(tempfile.mkdtemp(prefix="meme_compass_import_"))
+    temp_root = Path(tempfile.mkdtemp(prefix="iris_import_"))
     for idx, file_path in enumerate(files, start=1):
         target = temp_root / f"{idx:05d}_{file_path.name}"
         shutil.copy2(file_path, target)

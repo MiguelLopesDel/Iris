@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 ensure_project_root()
 
-from core.search_engine import MemeSearchEngine  # noqa: E402
+from core.search_engine import IrisEngine  # noqa: E402
 
 
 def simplify_query(text: str) -> str:
@@ -19,7 +19,7 @@ def simplify_query(text: str) -> str:
     return " ".join(query.split()[:8])
 
 
-def evaluate(engine: MemeSearchEngine, weights: dict[str, float]) -> float:
+def evaluate(engine: IrisEngine, weights: dict[str, float]) -> float:
     hits = 0
     total = len(engine.dados)
     for sample in engine.dados:
@@ -36,7 +36,7 @@ def main() -> None:
     parser.add_argument("--output", type=str, default="data/best_weights.json")
     args = parser.parse_args()
 
-    engine = MemeSearchEngine(db_path=args.db)
+    engine = IrisEngine(db_path=args.db)
     if not engine.dados:
         print(f"Banco nao encontrado ou vazio: {args.db}")
         return

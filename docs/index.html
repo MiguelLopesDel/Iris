@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iris — Local AI Media Intelligence</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-dim: #1f6feb33;
+      --green: #3fb950;
+      --purple: #bc8cff;
+      --orange: #f0883e;
+      --red: #f85149;
+      --radius: 8px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Layout ─────────────────────────────────────────── */
+    .nav {
+      position: sticky; top: 0;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex; align-items: center; gap: 2rem;
+      height: 56px;
+      z-index: 100;
+    }
+    .nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); display: flex; align-items: center; gap: 0.5rem; }
+    .nav .logo span { color: var(--accent); }
+    .nav-links { display: flex; gap: 1.5rem; }
+    .nav-links a { color: var(--muted); font-size: 0.9rem; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-badge {
+      margin-left: auto;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 20px;
+      padding: 0.25rem 0.8rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .lang-toggle {
+      display: flex; gap: 4px; margin-left: 12px;
+    }
+    .lang-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      transition: all 0.15s;
+    }
+    .lang-btn:hover { color: var(--text); border-color: var(--muted); }
+    .lang-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+    .hero {
+      max-width: 900px;
+      margin: 5rem auto 4rem;
+      padding: 0 2rem;
+      text-align: center;
+    }
+    .hero-eyebrow { color: var(--accent); font-size: 0.85rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 1rem; }
+    .hero h1 { font-size: clamp(2.5rem, 6vw, 4rem); font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem; }
+    .hero h1 em { font-style: normal; color: var(--accent); }
+    .hero p { font-size: 1.15rem; color: var(--muted); max-width: 640px; margin: 0 auto 2.5rem; }
+    .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.65rem 1.4rem; border-radius: var(--radius); font-size: 0.95rem; font-weight: 600; cursor: pointer; border: none; }
+    .btn-primary { background: var(--accent); color: #0d1117; }
+    .btn-primary:hover { background: #79c0ff; text-decoration: none; }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface); text-decoration: none; }
+
+    main { max-width: 960px; margin: 0 auto; padding: 0 2rem 6rem; }
+    section { margin-bottom: 5rem; }
+    h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.5rem; padding-top: 2rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 0.5rem; }
+    .section-sub { color: var(--muted); margin-bottom: 2.5rem; }
+
+    /* ── Feature grid ───────────────────────────────────── */
+    .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+    }
+    .feature-card .icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
+    .feature-card h3 { font-size: 0.95rem; margin-bottom: 0.3rem; }
+    .feature-card p { font-size: 0.85rem; color: var(--muted); }
+
+    /* ── Code blocks ────────────────────────────────────── */
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      line-height: 1.7;
+      margin-bottom: 1rem;
+    }
+    .code-header {
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: var(--radius) var(--radius) 0 0;
+      padding: 0.5rem 1rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+    .code-header + pre { border-radius: 0 0 var(--radius) var(--radius); margin-top: 0; }
+    .kw { color: var(--purple); }
+    .cm { color: var(--muted); }
+    .str { color: var(--green); }
+    .flag { color: var(--orange); }
+
+    /* ── Tables ─────────────────────────────────────────── */
+    table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.5rem 0.75rem; }
+    td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+
+    /* ── Architecture diagram ───────────────────────────── */
+    .arch {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.9;
+    }
+    .arch .layer { color: var(--accent); font-weight: 700; }
+    .arch .arrow { color: var(--muted); }
+    .arch .component { color: var(--text); }
+    .arch .note { color: var(--muted); }
+    .arch .optional { color: var(--orange); }
+
+    /* ── Step list ──────────────────────────────────────── */
+    .steps { display: flex; flex-direction: column; gap: 1rem; }
+    .step { display: flex; gap: 1rem; align-items: flex-start; }
+    .step-num {
+      flex-shrink: 0;
+      width: 28px; height: 28px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8rem; font-weight: 700; color: var(--accent);
+    }
+    .step-body h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .step-body p { font-size: 0.85rem; color: var(--muted); }
+
+    /* ── Format pills ───────────────────────────────────── */
+    .pill-group { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+    .pill {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 0.2rem 0.75rem;
+      font-size: 0.8rem;
+      font-family: var(--mono);
+      color: var(--muted);
+    }
+    .pill.image { color: var(--green); border-color: #3fb95066; }
+    .pill.video { color: var(--purple); border-color: #bc8cff66; }
+    .pill.audio { color: var(--orange); border-color: #f0883e66; }
+
+    /* ── Footer ─────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    @media (max-width: 640px) {
+      .nav-links { display: none; }
+      .hero h1 { font-size: 2rem; }
+      .feature-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="logo">&#x1F300; <span>Iris</span></div>
+  <div class="nav-links">
+    <a href="#features" data-i18n="nav_features">Features</a>
+    <a href="#install" data-i18n="nav_install">Install</a>
+    <a href="#concepts" data-i18n="nav_concepts">Concepts</a>
+    <a href="#architecture" data-i18n="nav_arch">Architecture</a>
+  </div>
+  <span class="nav-badge">AGPL-3.0</span>
+  <div class="lang-toggle">
+    <button class="lang-btn active" onclick="setLang('en')" id="btn-en">EN</button>
+    <button class="lang-btn" onclick="setLang('pt')" id="btn-pt">PT</button>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="hero-eyebrow" data-i18n="hero_eyebrow">Local &bull; Private &bull; AI-powered</div>
+  <h1 data-i18n-html="hero_title">Your media library,<br><em>finally searchable.</em></h1>
+  <p data-i18n="hero_desc">Iris is a self-hosted AI tool that indexes, transcribes, describes, and semantically searches your images, videos, GIFs, and audio — all on your own machine.</p>
+  <div class="hero-actions">
+    <a href="#install" class="btn btn-primary" data-i18n="hero_cta">Get started</a>
+    <a href="https://github.com/yourusername/iris" class="btn btn-ghost">GitHub &rarr;</a>
+  </div>
+</div>
+
+<main>
+
+  <!-- Features -->
+  <section id="features">
+    <h2 data-i18n="feat_title">What Iris does</h2>
+    <p class="section-sub" data-i18n="feat_sub">A single tool that replaces manual file browsing with AI-powered intelligence.</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">&#x1F50D;</div>
+        <h3 data-i18n="feat_semantic">Semantic text search</h3>
+        <p data-i18n="feat_semantic_desc">Describe what you're looking for in natural language. CLIP embeddings find visual matches even without keyword overlap.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F5BC;&#xFE0F;</div>
+        <h3 data-i18n="feat_visual">Visual similarity search</h3>
+        <p data-i18n="feat_visual_desc">Upload a reference image and find visually similar files across your entire library instantly.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F3A7;</div>
+        <h3 data-i18n="feat_audio_search">Semantic audio search</h3>
+        <p data-i18n="feat_audio_search_desc">Search audio files by describing the sound in text — "male voice speaking", "electronic music". CLAP embeddings bridge text and audio semantics.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F4DD;</div>
+        <h3 data-i18n="feat_ocr">OCR</h3>
+        <p data-i18n="feat_ocr_desc">EasyOCR extracts text from images — memes, screenshots, documents — and makes it searchable.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F916;</div>
+        <h3 data-i18n="feat_captions">AI captions</h3>
+        <p data-i18n="feat_captions_desc">Florence-2-large describes scene content, objects, and context to enrich search signals.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F3A4;</div>
+        <h3 data-i18n="feat_whisper">Speech transcription</h3>
+        <p data-i18n="feat_whisper_desc">OpenAI Whisper transcribes audio and video files. Search spoken content the same way you search images.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F9E0;</div>
+        <h3 data-i18n="feat_concepts">Concept recognition</h3>
+        <p data-i18n="feat_concepts_desc">Teach Iris to recognize specific people, characters, or objects using a few reference images. It auto-tags your library.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F4C1;</div>
+        <h3 data-i18n="feat_collections">Collections &amp; albums</h3>
+        <p data-i18n="feat_collections_desc">Organize files into named albums. Assign during import or add later from search results.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F9F9;</div>
+        <h3 data-i18n="feat_dupes">Duplicate detection</h3>
+        <p data-i18n="feat_dupes_desc">Hash-exact, Chromaprint acoustic fingerprinting, and visual near-duplicate detection with centroid-based cluster filtering. Review and send duplicates to system trash safely.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F3AC;</div>
+        <h3 data-i18n="feat_video_emb">Multi-frame video embeddings</h3>
+        <p data-i18n="feat_video_emb_desc">Videos are indexed by averaging 6 CLIP embeddings across evenly-spaced frames. Trims, re-encodes, and resolution changes are detected reliably.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x1F6AB;</div>
+        <h3 data-i18n="feat_deleted">Deleted file registry</h3>
+        <p data-i18n="feat_deleted_desc">SHA-256 and perceptual hashes of trashed files are stored. Re-importing the same files is silently skipped — deleted content stays deleted.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">&#x23F3;</div>
+        <h3 data-i18n="feat_bg">Background indexing</h3>
+        <p data-i18n="feat_bg_desc">Import thousands of files without blocking the UI. Search and browse while indexing runs in the background.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Formats -->
+  <section>
+    <h2 data-i18n="fmt_title">Supported formats</h2>
+    <p class="section-sub" data-i18n="fmt_sub">Drop in any of these and Iris handles the rest.</p>
+    <div>
+      <strong style="color: var(--muted); font-size: 0.85rem;" data-i18n="fmt_images">IMAGES</strong>
+      <div class="pill-group">
+        <span class="pill image">.png</span>
+        <span class="pill image">.jpg</span>
+        <span class="pill image">.jpeg</span>
+        <span class="pill image">.webp</span>
+        <span class="pill image">.gif</span>
+        <span class="pill image">.svg</span>
+      </div>
+    </div>
+    <div style="margin-top: 1rem;">
+      <strong style="color: var(--muted); font-size: 0.85rem;" data-i18n="fmt_video">VIDEO</strong>
+      <div class="pill-group">
+        <span class="pill video">.mp4</span>
+        <span class="pill video">.webm</span>
+        <span class="pill video">.mkv</span>
+        <span class="pill video">.mov</span>
+        <span class="pill video">.avi</span>
+        <span class="pill video">.flv</span>
+        <span class="pill video">.ogg</span>
+      </div>
+    </div>
+    <div style="margin-top: 1rem;">
+      <strong style="color: var(--muted); font-size: 0.85rem;" data-i18n="fmt_audio">AUDIO</strong>
+      <div class="pill-group">
+        <span class="pill audio">.mp3</span>
+        <span class="pill audio">.ogg</span>
+        <span class="pill audio">.opus</span>
+        <span class="pill audio">.flac</span>
+        <span class="pill audio">.wav</span>
+        <span class="pill audio">.aac</span>
+        <span class="pill audio">.m4a</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install">
+    <h2 data-i18n="install_title">Installation</h2>
+    <p class="section-sub" data-i18n="install_sub">Runs locally on Linux with an NVIDIA GPU. CPU fallback is available but slower.</p>
+
+    <h3 data-i18n="install_req">Requirements</h3>
+    <table>
+      <thead><tr><th data-i18n="install_th_comp">Component</th><th data-i18n="install_th_min">Minimum</th><th data-i18n="install_th_rec">Recommended</th></tr></thead>
+      <tbody>
+        <tr><td>Python</td><td>3.10</td><td>3.12</td></tr>
+        <tr><td data-i18n="install_ram">RAM</td><td>8 GB</td><td>16 GB+</td></tr>
+        <tr><td>GPU</td><td>—</td><td>NVIDIA RTX 3060+ (CUDA 12.6)</td></tr>
+        <tr><td data-i18n="install_disk">Disk (models)</td><td>4 GB</td><td>12 GB (all models incl. CLAP)</td></tr>
+        <tr><td>OS</td><td>Linux / macOS</td><td>Linux + CUDA</td></tr>
+        <tr><td data-i18n="install_chromaprint">Chromaprint (audio dedup)</td><td>—</td><td><code>apt install libchromaprint-tools</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3 data-i18n="install_step1_title">Clone the repository</h3>
+          <div class="code-header">bash</div>
+          <pre>git clone https://github.com/yourusername/iris.git
+cd iris</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3 data-i18n="install_step2_title">Create a virtual environment and install dependencies</h3>
+          <div class="code-header">bash</div>
+          <pre>python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3 data-i18n="install_step3_title">Launch the app</h3>
+          <div class="code-header">bash</div>
+          <pre>./scripts/run_app.sh
+# or: streamlit run app/main.py</pre>
+          <p data-i18n-html="install_step3_desc">Open <strong>http://localhost:8501</strong> in your browser.</p>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 2rem;">
+      <h3 data-i18n="install_docker_cpu">Docker (CPU)</h3>
+      <div class="code-header">bash</div>
+      <pre>docker compose up</pre>
+
+      <h3 style="margin-top: 1.5rem;" data-i18n="install_docker_gpu">Docker (GPU — requires NVIDIA Container Toolkit)</h3>
+      <div class="code-header">bash</div>
+      <pre>docker compose -f docker-compose.gpu.yml up</pre>
+    </div>
+  </section>
+
+  <!-- Concept recognition -->
+  <section id="concepts">
+    <h2 data-i18n="concept_title">Concept recognition</h2>
+    <p class="section-sub" data-i18n="concept_sub">Teach Iris to recognize any visual entity using a handful of reference images.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3 data-i18n="concept_step1_title">Open the Concepts tab and click "Create new concept"</h3>
+          <p data-i18n="concept_step1_desc">Give it a name and category: Person, Character, Place, Object, Animal, or Other.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3 data-i18n="concept_step2_title">Upload 2–5 reference images</h3>
+          <p data-i18n="concept_step2_desc">Clear, varied images of the subject give better results. Iris embeds them with CLIP.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3 data-i18n="concept_step3_title">Click "Find auto matches"</h3>
+          <p data-i18n="concept_step3_desc">Iris scans the library and proposes candidates ranked by visual similarity to the centroid of your references.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3 data-i18n="concept_step4_title">Review and apply</h3>
+          <p data-i18n="concept_step4_desc">Reject false positives, then click Apply. Confirmed matches are stored and excluded from future auto-match runs.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <h3 data-i18n="concept_step5_title">Search by name</h3>
+          <p data-i18n="concept_step5_desc">Type the concept name in the search box. Iris uses the visual embedding of the concept — not text matching — to retrieve results.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture -->
+  <section id="architecture">
+    <h2 data-i18n="arch_title">Architecture</h2>
+    <p class="section-sub" data-i18n="arch_sub">Fully local stack — no cloud APIs, no telemetry.</p>
+    <div class="arch">
+      <div><span class="layer" data-i18n="arch_pipeline">Indexing pipeline</span> <span class="note">(core/indexer.py)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component">EasyOCR</span> <span class="note" data-i18n="arch_easyocr">— text extraction from images</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component">Florence-2-large</span> <span class="note" data-i18n="arch_florence">— scene description &amp; captions</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component">OpenAI Whisper</span> <span class="note" data-i18n="arch_whisper">— speech transcription (audio/video)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component">CLIP ViT-L/14</span> <span class="note" data-i18n="arch_clip">— 768-dim visual &amp; text embeddings (images + multi-frame video)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component optional">CLAP</span> <span class="note" data-i18n="arch_clap">— 512-dim semantic audio embeddings (optional, GPU recommended)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component optional">Chromaprint</span> <span class="note" data-i18n="arch_chromaprint">— acoustic fingerprinting for exact audio deduplication (optional, fpcalc required)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component">SQLite</span> <span class="note" data-i18n="arch_sqlite">— metadata, OCR text, embeddings, deleted registry (schema v4)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component">FAISS</span> <span class="note" data-i18n="arch_faiss">— IndexFlatIP for image embeddings + separate index for CLAP audio embeddings</span></div>
+      <br>
+      <div><span class="layer" data-i18n="arch_search">Search engine</span> <span class="note">(core/search_engine.py)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_hybrid">Hybrid ranking</span> <span class="note" data-i18n="arch_hybrid_note">— visual CLIP + description embedding + lexical bonus</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_audio_search">Audio semantic search</span> <span class="note" data-i18n="arch_audio_search_note">— text query encoded with CLAP, searched against audio FAISS index</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_concept_search">Concept search</span> <span class="note" data-i18n="arch_concept_search_note">— concept name resolves to centroid embedding</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_neg">Negative terms</span> <span class="note" data-i18n="arch_neg_note">— "-word" filters results post-ranking</span></div>
+      <br>
+      <div><span class="layer" data-i18n="arch_dupdetect">Duplicate detection</span> <span class="note">(core/duplicates.py)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_dup_hash">Exact hash</span> <span class="note" data-i18n="arch_dup_hash_note">— SHA-256 groups byte-identical files</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_dup_chroma">Chromaprint</span> <span class="note" data-i18n="arch_dup_chroma_note">— Hamming distance &lt; 0.20 groups acoustically identical audio</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_dup_faiss">FAISS cosine</span> <span class="note" data-i18n="arch_dup_faiss_note">— visual near-duplicates above configurable threshold (default 0.985)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_dup_centroid">Centroid filter</span> <span class="note" data-i18n="arch_dup_centroid_note">— removes outliers that joined clusters via transitive chains</span></div>
+      <br>
+      <div><span class="layer">UI</span> <span class="note">(app/main.py — Streamlit)</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_ui_search">Text &amp; image search</span> <span class="note" data-i18n="arch_ui_search_note">— gallery, grouped results, audio results section</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_ui_bg">Background indexing</span> <span class="note" data-i18n="arch_ui_bg_note">— thread + fragment polling, non-blocking</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_ui_concepts">Concept management</span> <span class="note" data-i18n="arch_ui_concepts_note">— reference upload, auto-match, confirmed/rejected</span></div>
+    </div>
+
+    <div style="margin-top: 2rem;">
+      <h3 data-i18n="arch_weights_title">Hybrid search weights</h3>
+      <table>
+        <thead><tr><th data-i18n="arch_weights_th_param">Parameter</th><th data-i18n="arch_weights_th_default">Default</th><th data-i18n="arch_weights_th_desc">Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>balance</code></td><td>0.65</td><td data-i18n="arch_weights_balance_desc">Weight between visual CLIP score (1.0) and description/text score (0.0)</td></tr>
+          <tr><td><code>text_bonus</code></td><td>1.0</td><td data-i18n="arch_weights_textbonus_desc">Multiplier applied when query terms match OCR/caption text lexically</td></tr>
+          <tr><td><code>lexical_weight</code></td><td>0.0</td><td data-i18n="arch_weights_lexical_desc">Weight of pure lexical (BM25-style) scoring</td></tr>
+        </tbody>
+      </table>
+      <p style="color: var(--muted); font-size: 0.85rem;" data-i18n="arch_weights_override">Override defaults by placing <code>data/best_weights.json</code> in the project root, or run <code>python scripts/optimize.py</code> to tune weights automatically.</p>
+    </div>
+  </section>
+
+  <!-- CLI reference -->
+  <section id="cli">
+    <h2 data-i18n="cli_title">CLI reference</h2>
+    <div class="code-header" data-i18n="cli_index">Index a media folder</div>
+    <pre>python -m core.indexer \
+  <span class="flag">--dir</span> /path/to/media \
+  <span class="flag">--db</span> data/library.db \
+  <span class="flag">--device</span> cuda \
+  <span class="flag">--recursive</span> \
+  <span class="flag">--batch-size</span> 8</pre>
+
+    <div class="code-header" data-i18n="cli_clap">Index with CLAP audio embeddings (semantic audio search)</div>
+    <pre>python -m core.indexer \
+  <span class="flag">--dir</span> /path/to/media \
+  <span class="flag">--db</span> data/library.db \
+  <span class="flag">--clap-model</span> laion/larger_clap_music_and_speech</pre>
+
+    <div class="code-header" data-i18n="cli_skip">Skip AI models for fast initial index</div>
+    <pre>python -m core.indexer \
+  <span class="flag">--dir</span> /path/to/media \
+  <span class="flag">--db</span> data/library.db \
+  <span class="flag">--caption-model</span> none \
+  <span class="flag">--whisper-model</span> none</pre>
+
+    <div class="code-header" data-i18n="cli_faiss">Rebuild FAISS index only</div>
+    <pre>python -m core.indexer <span class="flag">--db</span> data/library.db <span class="flag">--rebuild-faiss-only</span></pre>
+
+    <div class="code-header" data-i18n="cli_dupes">Find and review duplicates</div>
+    <pre>python scripts/find_duplicates.py \
+  <span class="flag">--db</span> data/library.db \
+  <span class="flag">--media-root</span> media \
+  <span class="flag">--threshold</span> 0.985</pre>
+  </section>
+
+  <!-- License -->
+  <section>
+    <h2 data-i18n="license_title">License</h2>
+    <p style="color: var(--muted);" data-i18n-html="license_text">
+      Iris is released under the <strong style="color: var(--text);">GNU Affero General Public License v3.0 (AGPL-3.0)</strong>.<br>
+      You may use, modify, and distribute Iris freely under these terms.<br>
+      If you run a modified version as a network service, you must make the source code available to users.
+    </p>
+  </section>
+
+</main>
+
+<footer>
+  <p>Iris &mdash; Local AI Media Intelligence &mdash; <a href="https://github.com/yourusername/iris">GitHub</a> &mdash; AGPL-3.0</p>
+</footer>
+
+<script>
+const T = {
+  en: {
+    nav_features: "Features",
+    nav_install: "Install",
+    nav_concepts: "Concepts",
+    nav_arch: "Architecture",
+    hero_eyebrow: "Local • Private • AI-powered",
+    hero_title: 'Your media library,<br><em>finally searchable.</em>',
+    hero_desc: "Iris is a self-hosted AI tool that indexes, transcribes, describes, and semantically searches your images, videos, GIFs, and audio — all on your own machine.",
+    hero_cta: "Get started",
+    feat_title: "What Iris does",
+    feat_sub: "A single tool that replaces manual file browsing with AI-powered intelligence.",
+    feat_semantic: "Semantic text search",
+    feat_semantic_desc: "Describe what you're looking for in natural language. CLIP embeddings find visual matches even without keyword overlap.",
+    feat_visual: "Visual similarity search",
+    feat_visual_desc: "Upload a reference image and find visually similar files across your entire library instantly.",
+    feat_audio_search: "Semantic audio search",
+    feat_audio_search_desc: 'Search audio files by describing the sound in text — "male voice speaking", "electronic music". CLAP embeddings bridge text and audio semantics.',
+    feat_ocr: "OCR",
+    feat_ocr_desc: "EasyOCR extracts text from images — memes, screenshots, documents — and makes it searchable.",
+    feat_captions: "AI captions",
+    feat_captions_desc: "Florence-2-large describes scene content, objects, and context to enrich search signals.",
+    feat_whisper: "Speech transcription",
+    feat_whisper_desc: "OpenAI Whisper transcribes audio and video files. Search spoken content the same way you search images.",
+    feat_concepts: "Concept recognition",
+    feat_concepts_desc: "Teach Iris to recognize specific people, characters, or objects using a few reference images. It auto-tags your library.",
+    feat_collections: "Collections & albums",
+    feat_collections_desc: "Organize files into named albums. Assign during import or add later from search results.",
+    feat_dupes: "Duplicate detection",
+    feat_dupes_desc: "Hash-exact, Chromaprint acoustic fingerprinting, and visual near-duplicate detection with centroid-based cluster filtering. Review and send duplicates to system trash safely.",
+    feat_video_emb: "Multi-frame video embeddings",
+    feat_video_emb_desc: "Videos are indexed by averaging 6 CLIP embeddings across evenly-spaced frames. Trims, re-encodes, and resolution changes are detected reliably.",
+    feat_deleted: "Deleted file registry",
+    feat_deleted_desc: "SHA-256 and perceptual hashes of trashed files are stored. Re-importing the same files is silently skipped — deleted content stays deleted.",
+    feat_bg: "Background indexing",
+    feat_bg_desc: "Import thousands of files without blocking the UI. Search and browse while indexing runs in the background.",
+    fmt_title: "Supported formats",
+    fmt_sub: "Drop in any of these and Iris handles the rest.",
+    fmt_images: "IMAGES",
+    fmt_video: "VIDEO",
+    fmt_audio: "AUDIO",
+    install_title: "Installation",
+    install_sub: "Runs locally on Linux with an NVIDIA GPU. CPU fallback is available but slower.",
+    install_req: "Requirements",
+    install_th_comp: "Component",
+    install_th_min: "Minimum",
+    install_th_rec: "Recommended",
+    install_ram: "RAM",
+    install_disk: "Disk (models)",
+    install_chromaprint: "Chromaprint (audio dedup)",
+    install_step1_title: "Clone the repository",
+    install_step2_title: "Create a virtual environment and install dependencies",
+    install_step3_title: "Launch the app",
+    install_step3_desc: 'Open <strong>http://localhost:8501</strong> in your browser.',
+    install_docker_cpu: "Docker (CPU)",
+    install_docker_gpu: "Docker (GPU — requires NVIDIA Container Toolkit)",
+    concept_title: "Concept recognition",
+    concept_sub: "Teach Iris to recognize any visual entity using a handful of reference images.",
+    concept_step1_title: 'Open the Concepts tab and click "Create new concept"',
+    concept_step1_desc: "Give it a name and category: Person, Character, Place, Object, Animal, or Other.",
+    concept_step2_title: "Upload 2–5 reference images",
+    concept_step2_desc: "Clear, varied images of the subject give better results. Iris embeds them with CLIP.",
+    concept_step3_title: 'Click "Find auto matches"',
+    concept_step3_desc: "Iris scans the library and proposes candidates ranked by visual similarity to the centroid of your references.",
+    concept_step4_title: "Review and apply",
+    concept_step4_desc: "Reject false positives, then click Apply. Confirmed matches are stored and excluded from future auto-match runs.",
+    concept_step5_title: "Search by name",
+    concept_step5_desc: "Type the concept name in the search box. Iris uses the visual embedding of the concept — not text matching — to retrieve results.",
+    arch_title: "Architecture",
+    arch_sub: "Fully local stack — no cloud APIs, no telemetry.",
+    arch_pipeline: "Indexing pipeline",
+    arch_easyocr: "— text extraction from images",
+    arch_florence: "— scene description & captions",
+    arch_whisper: "— speech transcription (audio/video)",
+    arch_clip: "— 768-dim visual & text embeddings (images + multi-frame video)",
+    arch_clap: "— 512-dim semantic audio embeddings (optional, GPU recommended)",
+    arch_chromaprint: "— acoustic fingerprinting for exact audio deduplication (optional, fpcalc required)",
+    arch_sqlite: "— metadata, OCR text, embeddings, deleted registry (schema v4)",
+    arch_faiss: "— IndexFlatIP for image embeddings + separate index for CLAP audio embeddings",
+    arch_search: "Search engine",
+    arch_hybrid: "Hybrid ranking",
+    arch_hybrid_note: "— visual CLIP + description embedding + lexical bonus",
+    arch_audio_search: "Audio semantic search",
+    arch_audio_search_note: "— text query encoded with CLAP, searched against audio FAISS index",
+    arch_concept_search: "Concept search",
+    arch_concept_search_note: "— concept name resolves to centroid embedding",
+    arch_neg: "Negative terms",
+    arch_neg_note: '— "-word" filters results post-ranking',
+    arch_dupdetect: "Duplicate detection",
+    arch_dup_hash: "Exact hash",
+    arch_dup_hash_note: "— SHA-256 groups byte-identical files",
+    arch_dup_chroma: "Chromaprint",
+    arch_dup_chroma_note: "— Hamming distance < 0.20 groups acoustically identical audio",
+    arch_dup_faiss: "FAISS cosine",
+    arch_dup_faiss_note: "— visual near-duplicates above configurable threshold (default 0.985)",
+    arch_dup_centroid: "Centroid filter",
+    arch_dup_centroid_note: "— removes outliers that joined clusters via transitive chains",
+    arch_ui_search: "Text & image search",
+    arch_ui_search_note: "— gallery, grouped results, audio results section",
+    arch_ui_bg: "Background indexing",
+    arch_ui_bg_note: "— thread + fragment polling, non-blocking",
+    arch_ui_concepts: "Concept management",
+    arch_ui_concepts_note: "— reference upload, auto-match, confirmed/rejected",
+    arch_weights_title: "Hybrid search weights",
+    arch_weights_th_param: "Parameter",
+    arch_weights_th_default: "Default",
+    arch_weights_th_desc: "Description",
+    arch_weights_balance_desc: "Weight between visual CLIP score (1.0) and description/text score (0.0)",
+    arch_weights_textbonus_desc: "Multiplier applied when query terms match OCR/caption text lexically",
+    arch_weights_lexical_desc: "Weight of pure lexical (BM25-style) scoring",
+    arch_weights_override: 'Override defaults by placing <code>data/best_weights.json</code> in the project root, or run <code>python scripts/optimize.py</code> to tune weights automatically.',
+    cli_title: "CLI reference",
+    cli_index: "Index a media folder",
+    cli_clap: "Index with CLAP audio embeddings (semantic audio search)",
+    cli_skip: "Skip AI models for fast initial index",
+    cli_faiss: "Rebuild FAISS index only",
+    cli_dupes: "Find and review duplicates",
+    license_title: "License",
+    license_text: 'Iris is released under the <strong style="color: var(--text);">GNU Affero General Public License v3.0 (AGPL-3.0)</strong>.<br>You may use, modify, and distribute Iris freely under these terms.<br>If you run a modified version as a network service, you must make the source code available to users.'
+  },
+  pt: {
+    nav_features: "Recursos",
+    nav_install: "Instalação",
+    nav_concepts: "Conceitos",
+    nav_arch: "Arquitetura",
+    hero_eyebrow: "Local • Privado • IA-powered",
+    hero_title: 'Sua biblioteca de mídia,<br><em>finalmente pesquisável.</em>',
+    hero_desc: "Iris é uma ferramenta de IA self-hosted que indexa, transcreve, descreve e pesquisa semanticamente suas imagens, vídeos, GIFs e áudios — tudo na sua própria máquina.",
+    hero_cta: "Comece agora",
+    feat_title: "O que o Iris faz",
+    feat_sub: "Uma única ferramenta que substitui navegação manual de arquivos por inteligência com IA.",
+    feat_semantic: "Busca semântica por texto",
+    feat_semantic_desc: "Descreva o que procura em linguagem natural. Embeddings CLIP encontram correspondências visuais mesmo sem sobreposição de palavras-chave.",
+    feat_visual: "Busca por similaridade visual",
+    feat_visual_desc: "Envie uma imagem de referência e encontre arquivos visualmente similares em toda sua biblioteca instantaneamente.",
+    feat_audio_search: "Busca semântica por áudio",
+    feat_audio_search_desc: 'Pesquise arquivos de áudio descrevendo o som em texto — "voz masculina falando", "música eletrônica". Embeddings CLAP conectam texto e semântica de áudio.',
+    feat_ocr: "OCR",
+    feat_ocr_desc: "EasyOCR extrai texto de imagens — memes, screenshots, documentos — e os torna pesquisáveis.",
+    feat_captions: "Legendas por IA",
+    feat_captions_desc: "Florence-2-large descreve conteúdo de cena, objetos e contexto para enriquecer os sinais de busca.",
+    feat_whisper: "Transcrição de fala",
+    feat_whisper_desc: "OpenAI Whisper transcreve arquivos de áudio e vídeo. Pesquise conteúdo falado da mesma forma que pesquisa imagens.",
+    feat_concepts: "Reconhecimento de conceitos",
+    feat_concepts_desc: "Ensine o Iris a reconhecer pessoas, personagens ou objetos específicos usando algumas imagens de referência. Auto-tagueamento da biblioteca.",
+    feat_collections: "Coleções e álbuns",
+    feat_collections_desc: "Organize arquivos em álbuns nomeados. Atribua durante a importação ou adicione depois pelos resultados de busca.",
+    feat_dupes: "Detecção de duplicatas",
+    feat_dupes_desc: "Detecção por hash exato, fingerprinting acústico Chromaprint e quase-duplicatas visuais com filtragem baseada em centroide. Revise e envie duplicatas para a lixeira com segurança.",
+    feat_video_emb: "Embeddings multi-frame de vídeo",
+    feat_video_emb_desc: "Vídeos são indexados pela média de 6 embeddings CLIP em frames espaçados uniformemente. Cortes, recodificações e mudanças de resolução são detectados de forma confiável.",
+    feat_deleted: "Registro de arquivos deletados",
+    feat_deleted_desc: "Hashes SHA-256 e perceptuais de arquivos enviados para a lixeira são armazenados. Re-importar os mesmos arquivos é ignorado silenciosamente — conteúdo deletado permanece deletado.",
+    feat_bg: "Indexação em segundo plano",
+    feat_bg_desc: "Importe milhares de arquivos sem bloquear a interface. Pesquise e navegue enquanto a indexação roda em background.",
+    fmt_title: "Formatos suportados",
+    fmt_sub: "Solte qualquer um destes e o Iris cuida do resto.",
+    fmt_images: "IMAGENS",
+    fmt_video: "VÍDEO",
+    fmt_audio: "ÁUDIO",
+    install_title: "Instalação",
+    install_sub: "Roda localmente no Linux com GPU NVIDIA. Fallback para CPU disponível, mas mais lento.",
+    install_req: "Requisitos",
+    install_th_comp: "Componente",
+    install_th_min: "Mínimo",
+    install_th_rec: "Recomendado",
+    install_ram: "RAM",
+    install_disk: "Disco (modelos)",
+    install_chromaprint: "Chromaprint (dedup de áudio)",
+    install_step1_title: "Clone o repositório",
+    install_step2_title: "Crie um ambiente virtual e instale as dependências",
+    install_step3_title: "Inicie o app",
+    install_step3_desc: 'Abra <strong>http://localhost:8501</strong> no seu navegador.',
+    install_docker_cpu: "Docker (CPU)",
+    install_docker_gpu: "Docker (GPU — requer NVIDIA Container Toolkit)",
+    concept_title: "Reconhecimento de conceitos",
+    concept_sub: "Ensine o Iris a reconhecer qualquer entidade visual usando algumas imagens de referência.",
+    concept_step1_title: 'Abra a aba Conceitos e clique em "Criar novo conceito"',
+    concept_step1_desc: "Dê um nome e categoria: Pessoa, Personagem, Lugar, Objeto, Animal ou Outro.",
+    concept_step2_title: "Envie 2–5 imagens de referência",
+    concept_step2_desc: "Imagens claras e variadas do assunto dão melhores resultados. O Iris as incorpora com CLIP.",
+    concept_step3_title: 'Clique em "Encontrar matches automáticos"',
+    concept_step3_desc: "O Iris varre a biblioteca e propõe candidatos ranqueados por similaridade visual ao centroide das suas referências.",
+    concept_step4_title: "Revise e aplique",
+    concept_step4_desc: "Rejeite falsos positivos e clique em Aplicar. Matches confirmados são armazenados e excluídos de futuras execuções de auto-match.",
+    concept_step5_title: "Busque pelo nome",
+    concept_step5_desc: "Digite o nome do conceito na caixa de busca. O Iris usa o embedding visual do conceito — não correspondência de texto — para recuperar resultados.",
+    arch_title: "Arquitetura",
+    arch_sub: "Stack totalmente local — sem APIs cloud, sem telemetria.",
+    arch_pipeline: "Pipeline de indexação",
+    arch_easyocr: "— extração de texto de imagens",
+    arch_florence: "— descrição de cena e legendas",
+    arch_whisper: "— transcrição de fala (áudio/vídeo)",
+    arch_clip: "— embeddings visuais e de texto 768-dim (imagens + vídeo multi-frame)",
+    arch_clap: "— embeddings semânticos de áudio 512-dim (opcional, GPU recomendado)",
+    arch_chromaprint: "— fingerprinting acústico para deduplicação exata de áudio (opcional, requer fpcalc)",
+    arch_sqlite: "— metadados, texto OCR, embeddings, registro de deletados (schema v4)",
+    arch_faiss: "— IndexFlatIP para embeddings de imagem + índice separado para embeddings CLAP de áudio",
+    arch_search: "Motor de busca",
+    arch_hybrid: "Ranking híbrido",
+    arch_hybrid_note: "— CLIP visual + embedding de descrição + bônus lexical",
+    arch_audio_search: "Busca semântica de áudio",
+    arch_audio_search_note: "— query de texto codificada com CLAP, pesquisada no índice FAISS de áudio",
+    arch_concept_search: "Busca por conceito",
+    arch_concept_search_note: "— nome do conceito resolve para embedding centroide",
+    arch_neg: "Termos negativos",
+    arch_neg_note: '— "-palavra" filtra resultados pós-ranking',
+    arch_dupdetect: "Detecção de duplicatas",
+    arch_dup_hash: "Hash exato",
+    arch_dup_hash_note: "— SHA-256 agrupa arquivos byte-idênticos",
+    arch_dup_chroma: "Chromaprint",
+    arch_dup_chroma_note: "— distância de Hamming < 0.20 agrupa áudios acusticamente idênticos",
+    arch_dup_faiss: "Cosseno FAISS",
+    arch_dup_faiss_note: "— quase-duplicatas visuais acima de threshold configurável (padrão 0.985)",
+    arch_dup_centroid: "Filtro de centroide",
+    arch_dup_centroid_note: "— remove outliers que entraram em clusters via cadeias transitivas",
+    arch_ui_search: "Busca por texto e imagem",
+    arch_ui_search_note: "— galeria, resultados agrupados, seção de resultados de áudio",
+    arch_ui_bg: "Indexação em segundo plano",
+    arch_ui_bg_note: "— thread + polling via fragment, não-bloqueante",
+    arch_ui_concepts: "Gestão de conceitos",
+    arch_ui_concepts_note: "— upload de referências, auto-match, confirmados/rejeitados",
+    arch_weights_title: "Pesos da busca híbrida",
+    arch_weights_th_param: "Parâmetro",
+    arch_weights_th_default: "Padrão",
+    arch_weights_th_desc: "Descrição",
+    arch_weights_balance_desc: "Peso entre score visual CLIP (1.0) e score de descrição/texto (0.0)",
+    arch_weights_textbonus_desc: "Multiplicador aplicado quando termos da busca batem com texto OCR/legenda lexicalmente",
+    arch_weights_lexical_desc: "Peso do scoring puramente lexical (estilo BM25)",
+    arch_weights_override: 'Sobrescreva os padrões colocando <code>data/best_weights.json</code> na raiz do projeto, ou execute <code>python scripts/optimize.py</code> para ajustar os pesos automaticamente.',
+    cli_title: "Referência CLI",
+    cli_index: "Indexar uma pasta de mídia",
+    cli_clap: "Indexar com embeddings CLAP de áudio (busca semântica de áudio)",
+    cli_skip: "Pular modelos de IA para indexação inicial rápida",
+    cli_faiss: "Apenas reconstruir índice FAISS",
+    cli_dupes: "Encontrar e revisar duplicatas",
+    license_title: "Licença",
+    license_text: 'Iris é distribuído sob a <strong style="color: var(--text);">GNU Affero General Public License v3.0 (AGPL-3.0)</strong>.<br>Você pode usar, modificar e distribuir o Iris livremente sob estes termos.<br>Se você executar uma versão modificada como serviço de rede, deve disponibilizar o código-fonte aos usuários.'
+  }
+};
+
+let currentLang = "en";
+
+function setLang(lang) {
+  currentLang = lang;
+  document.documentElement.lang = lang;
+  document.getElementById("btn-en").classList.toggle("active", lang === "en");
+  document.getElementById("btn-pt").classList.toggle("active", lang === "pt");
+  localStorage.setItem("iris-docs-lang", lang);
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    if (T[lang][key]) el.textContent = T[lang][key];
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => {
+    const key = el.getAttribute("data-i18n-html");
+    if (T[lang][key]) el.innerHTML = T[lang][key];
+  });
+}
+
+// Restore saved language preference
+const saved = localStorage.getItem("iris-docs-lang") || "en";
+setLang(saved);
+</script>
+
+</body>
+</html>

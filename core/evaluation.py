@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from core.search_engine import MemeSearchEngine, SearchOptions
+from core.search_engine import IrisEngine, SearchOptions
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,7 @@ def write_eval_template(path: Path, files: list[str]) -> None:
 
 
 def evaluate_search(
-    engine: MemeSearchEngine,
+    engine: IrisEngine,
     queries: list[EvalQuery],
     options: SearchOptions,
     recall_ks: tuple[int, ...] = (1, 5, 10, 20),

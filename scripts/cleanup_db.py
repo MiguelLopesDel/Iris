@@ -3,7 +3,7 @@ import sqlite3
 
 
 IMAGE_DIR = './minhas_imagens'
-DB_FILE = "meme_compass_v9.db" 
+DB_FILE = "iris.db" 
 
 def cleanup_database():
     """
