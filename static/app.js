@@ -139,6 +139,36 @@ function toast(msg, level = 'info') {
   setTimeout(() => { el.remove(); }, 3500);
 }
 
+// ── Search mode & parameter controls ────────────────────────────────────
+
+document.getElementById('search-mode').addEventListener('change', function() {
+  const custom = document.getElementById('search-custom-params');
+  custom.style.display = this.value === 'custom' ? 'block' : 'none';
+});
+
+['search-balance','search-textbonus','search-lexical','search-threshold','search-topk'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', function() {
+    const spanId = id.replace('search-', '') + '-val';
+    const span = document.getElementById(spanId);
+    if (span) span.textContent = parseFloat(this.value).toFixed(2);
+  });
+});
+
+// ── "Me surpreenda" / "Atualizar dados" buttons ────────────────────────
+
+document.getElementById('btn-surprise').addEventListener('click', () => {
+  switchTab('search');
+  doRandomSearch(parseInt(document.getElementById('search-topk').value) || 50);
+});
+
+document.getElementById('btn-refresh').addEventListener('click', () => {
+  invalidateCache();
+  window.dispatchEvent(new CustomEvent('iris:selection-changed'));
+  toast('Dados atualizados', 'info');
+});
+
 // ── Init ─────────────────────────────────────────────────────────────────
 
 (function init() {

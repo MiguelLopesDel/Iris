@@ -34,6 +34,39 @@
       <label class="filter-label">Conceitos</label>
       <div id="concepts-list"></div>
     </section>
+
+    <section class="filter-group">
+      <label class="filter-label">Busca</label>
+      <select id="search-mode">
+        <option value="hybrid">Hibrido</option>
+        <option value="text">Foco no Texto</option>
+        <option value="visual">Foco Visual</option>
+        <option value="custom">Personalizado</option>
+      </select>
+      <div id="search-custom-params" style="display:none;margin-top:6px;">
+        <label style="font-size:11px;">Visual vs conceitual: <span id="balance-val">0.50</span></label>
+        <input type="range" id="search-balance" min="0" max="1" step="0.05" value="0.5">
+        <label style="font-size:11px;">Peso do texto exato: <span id="textbonus-val">2.00</span></label>
+        <input type="range" id="search-textbonus" min="0" max="4" step="0.1" value="2.0">
+        <label style="font-size:11px;">Peso lexical: <span id="lexical-val">0.25</span></label>
+        <input type="range" id="search-lexical" min="0" max="1" step="0.05" value="0.25">
+      </div>
+    </section>
+
+    <section class="filter-group">
+      <label class="filter-label">Limiar: <span id="threshold-val">0.15</span></label>
+      <input type="range" id="search-threshold" min="-1" max="1" step="0.05" value="0.15">
+      <label class="filter-label">Resultados: <span id="topk-val">50</span></label>
+      <input type="range" id="search-topk" min="1" max="200" step="1" value="50">
+      <label class="filter-label" style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+        <input type="checkbox" id="search-translate" checked> Traduzir para ingles
+      </label>
+    </section>
+
+    <section class="filter-group">
+      <button id="btn-surprise" class="btn" style="width:100%;">🎲 Me surpreenda</button>
+      <button id="btn-refresh" class="btn" style="width:100%;margin-top:4px;">🔄 Atualizar dados</button>
+    </section>
   </div>
 
   <div id="sidebar-selection">
@@ -149,13 +182,13 @@
 <div id="toast-container"></div>
 
 <!-- Scripts -->
-<script type="module" src="/static/api.js?v=6"></script>
-<script type="module" src="/static/gallery.js?v=6"></script>
-<script type="module" src="/static/search.js?v=6"></script>
-<script type="module" src="/static/collections.js?v=6"></script>
-<script type="module" src="/static/concepts.js?v=6"></script>
-<script type="module" src="/static/duplicates.js?v=6"></script>
-<script type="module" src="/static/app.js?v=6"></script>
+<script type="module" src="/static/api.js?v=7"></script>
+<script type="module" src="/static/gallery.js?v=7"></script>
+<script type="module" src="/static/search.js?v=7"></script>
+<script type="module" src="/static/collections.js?v=7"></script>
+<script type="module" src="/static/concepts.js?v=7"></script>
+<script type="module" src="/static/duplicates.js?v=7"></script>
+<script type="module" src="/static/app.js?v=7"></script>
 
 </body>
 </html>

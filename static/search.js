@@ -6,6 +6,26 @@ import { searchText, searchImage, searchSimilar, searchRandom, debounce, escapeH
 let lastQuery = '';
 let searchMode = 'text'; // 'text' | 'image' | 'similar' | 'random'
 
+// ── Search options from sidebar ──────────────────────────────────────────
+
+function gatherSearchOptions() {
+  const mode = document.getElementById('search-mode')?.value || 'hybrid';
+  const top_k = parseInt(document.getElementById('search-topk')?.value) || 50;
+  const threshold = parseFloat(document.getElementById('search-threshold')?.value) || 0.15;
+  const translate = document.getElementById('search-translate')?.checked ?? true;
+
+  let balance = 0.5, text_bonus = 2.0, lexical_weight = 0.25;
+  if (mode === 'text') { balance = 0.0; text_bonus = 3.0; lexical_weight = 0.4; }
+  else if (mode === 'visual') { balance = 0.65; text_bonus = 0.5; lexical_weight = 0.0; }
+  else if (mode === 'custom') {
+    balance = parseFloat(document.getElementById('search-balance')?.value) || 0.5;
+    text_bonus = parseFloat(document.getElementById('search-textbonus')?.value) || 2.0;
+    lexical_weight = parseFloat(document.getElementById('search-lexical')?.value) || 0.25;
+  }
+
+  return { top_k, threshold, balance, text_bonus, lexical_weight, translate };
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────
 
 export function initSearch() {
@@ -47,7 +67,8 @@ async function doTextSearch(q) {
   const info = document.getElementById('search-results-info');
   grid.innerHTML = '<p style="color:var(--text-muted);">Buscando...</p>';
   try {
-    const data = await searchText(q);
+    const opts = gatherSearchOptions();
+    const data = await searchText(q, opts);
     info.textContent = `${data.total} resultado(s) para "${q}"`;
     renderResults(data.results);
     document.getElementById('btn-similar-back').style.display = 'none';
@@ -61,7 +82,8 @@ async function doImageSearch(file) {
   const info = document.getElementById('search-results-info');
   grid.innerHTML = '<p style="color:var(--text-muted);">Buscando por imagem...</p>';
   try {
-    const data = await searchImage(file);
+    const opts = gatherSearchOptions();
+    const data = await searchImage(file, opts);
     info.textContent = `${data.total} resultado(s) para "${data.filename}"`;
     renderResults(data.results);
   } catch (err) {
@@ -74,7 +96,8 @@ export async function doSimilarSearch(idx) {
   const info = document.getElementById('search-results-info');
   grid.innerHTML = '<p style="color:var(--text-muted);">Buscando similares...</p>';
   try {
-    const data = await searchSimilar(idx);
+    const opts = gatherSearchOptions();
+    const data = await searchSimilar(idx, opts);
     info.textContent = `${data.total} resultado(s) similares`;
     renderResults(data.results);
     document.getElementById('btn-similar-back').style.display = 'inline-block';
