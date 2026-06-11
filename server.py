@@ -486,7 +486,7 @@ async def add_collection_members(col_id: int, db_ids: str = Form(...)):
         return {"added": n}
 
 
-@app.delete("/api/collections/{col_id}/members")
+@app.post("/api/collections/{col_id}/members/remove")
 async def remove_collection_members(col_id: int, db_ids: str = Form(...)):
     backend = _get_backend()
     with trace("api.collections.remove_members"):
