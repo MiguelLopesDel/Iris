@@ -40,21 +40,73 @@ window.addEventListener('iris:similar', (e) => {
   doSimilarSearch(e.detail.index);
 });
 
-window.addEventListener('iris:detail', (e) => {
+window.addEventListener('iris:detail', async (e) => {
   const index = e.detail.index;
   const card = document.querySelector(`.media-card[data-index="${index}"]`);
   if (!card) return;
   const old = document.getElementById('detail-panel');
   if (old) old.remove();
+
   const panel = document.createElement('div');
   panel.id = 'detail-panel';
   panel.className = 'detail-panel';
-  const cap = card.querySelector('.caption')?.textContent || '';
-  panel.innerHTML = `
-    <h4>${cap}</h4>
-    <p style="font-size:12px;color:var(--text-secondary);">Indice: ${index}</p>
-    <button class="btn" onclick="this.parentElement.remove()">Fechar</button>`;
+  panel.innerHTML = '<p style="color:var(--text-muted);">Carregando...</p>';
   card.after(panel);
+
+  try {
+    const res = await fetch(`/api/records/${index}`);
+    if (!res.ok) throw new Error('Record not found');
+    const r = await res.json();
+
+    const hasFile = r.resolved_path && r.resolved_path !== 'None';
+    const ext = (r.arquivo || '').split('.').pop()?.toLowerCase();
+    const isVideo = ['mp4','webm','mkv','mov','ogg'].includes(ext);
+
+    const collections = (r.collections || []).map(c =>
+      `<span style="background:var(--bg-hover);padding:2px 8px;border-radius:10px;font-size:11px;">${c.name}</span>`
+    ).join(' ') || '(nenhuma)';
+
+    const concepts = (r.concepts || []).map(c =>
+      `<span style="background:var(--bg-hover);padding:2px 8px;border-radius:10px;font-size:11px;">${c.name} (${c.category})</span>`
+    ).join(' ') || '(nenhum)';
+
+    panel.innerHTML = `
+      <div style="display:flex;gap:12px;align-items:start;">
+        ${r.thumbnail_url ? `<img src="${r.thumbnail_url}" style="width:200px;border-radius:var(--radius);">` : ''}
+        <div style="flex:1;min-width:0;">
+          <h4 style="word-break:break-all;">${r.arquivo || '(sem nome)'}</h4>
+          ${hasFile ? `<pre style="font-size:10px;max-width:100%;overflow-x:auto;background:var(--bg-primary);padding:4px;border-radius:4px;">${r.resolved_path}</pre>` : ''}
+          <p style="font-size:11px;color:var(--text-muted);">Indice: ${index} · DB ID: ${r.db_id} · ${isVideo ? '🎬 Video' : '🖼️ Imagem'} · ${r.file_size ? (r.file_size/1024).toFixed(0)+'KB' : '?'}</p>
+        </div>
+      </div>
+
+      ${r.texto_extraido ? `<div style="margin-top:8px;"><strong style="font-size:11px;">Texto extraido:</strong><pre style="font-size:10px;max-height:80px;overflow-y:auto;">${r.texto_extraido}</pre></div>` : ''}
+      ${r.descricao_ia ? `<div style="margin-top:4px;"><strong style="font-size:11px;">Descricao IA:</strong><pre style="font-size:10px;max-height:60px;overflow-y:auto;">${r.descricao_ia}</pre></div>` : ''}
+      ${r.tags ? `<div style="margin-top:4px;"><strong style="font-size:11px;">Tags:</strong> <span style="font-size:11px;">${r.tags}</span></div>` : ''}
+
+      <div style="margin-top:8px;font-size:11px;">
+        <strong>Colecoes:</strong> ${collections}<br>
+        <strong>Conceitos:</strong> ${concepts}
+      </div>
+
+      ${r.style || r.source_work || r.context || r.humor ? `
+        <div style="margin-top:8px;font-size:11px;color:var(--text-secondary);">
+          ${r.style ? `Estilo: ${r.style} · ` : ''}
+          ${r.source_work ? `Obra: ${r.source_work} · ` : ''}
+          ${r.context ? `Contexto: ${r.context} · ` : ''}
+          ${r.humor ? `Humor: ${r.humor}` : ''}
+        </div>` : ''}
+
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+        ${hasFile ? `<a href="file://${r.resolved_path}" class="btn" style="font-size:11px;">📁 Abrir pasta</a>` : ''}
+        ${hasFile ? `<a href="/media/${r.resolved_path}" class="btn" style="font-size:11px;" target="_blank">📄 Abrir arquivo</a>` : ''}
+        <button class="btn" style="font-size:11px;" onclick="window.dispatchEvent(new CustomEvent('iris:similar',{detail:{index:${index}}}))">🔍 Similares</button>
+        <button class="btn" style="font-size:11px;" onclick="this.closest('#detail-panel').remove()">Fechar</button>
+      </div>`;
+  } catch (err) {
+    panel.innerHTML = `<p style="color:var(--accent);">Erro: ${err.message}</p>
+      <button class="btn" onclick="this.parentElement.remove()">Fechar</button>`;
+  }
 });
 
 // ── Sidebar build ────────────────────────────────────────────────────────

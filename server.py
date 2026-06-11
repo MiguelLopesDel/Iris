@@ -308,6 +308,36 @@ async def get_records(
         }
 
 
+# ── Single record detail ─────────────────────────────────────────────────────
+
+
+@app.get("/api/records/{idx}")
+async def get_record_detail(idx: int):
+    backend = _get_backend()
+    with trace("api.record_detail"):
+        r = backend.get_record(idx)
+        if r is None:
+            raise HTTPException(404, "Record not found")
+        d = _record_to_json(r)
+        # Add extra detail fields
+        d["caminho"] = r.caminho
+        d["score_details"] = {}
+        # Add collection memberships
+        try:
+            d["collections"] = backend.get_record_collections(r.db_id) if r.db_id else []
+        except Exception:
+            d["collections"] = []
+        # Add concept memberships
+        try:
+            if backend.has_concept_tables() and r.db_id:
+                d["concepts"] = backend.get_media_concepts(r.db_id)
+            else:
+                d["concepts"] = []
+        except Exception:
+            d["concepts"] = []
+        return d
+
+
 # ── Search ────────────────────────────────────────────────────────────────────
 
 
