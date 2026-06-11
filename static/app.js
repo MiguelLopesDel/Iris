@@ -2,8 +2,11 @@
    Tab routing, sidebar filters, selection state, floating panel. */
 
 import { fetchInfo, listCollections, listConcepts, trashRecords } from './api.js';
-import { initGallery } from './gallery.js';
+import { initGallery, invalidateCache } from './gallery.js';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js';
+import { initCollections } from './collections.js';
+import { initConcepts } from './concepts.js';
+import { initDuplicates } from './duplicates.js';
 
 // ── Global selection state ───────────────────────────────────────────────
 window.__irisSelection = window.__irisSelection || new Map();
@@ -23,6 +26,9 @@ function switchTab(name) {
 
   if (name === 'gallery') initGallery();
   if (name === 'search') initSearch();
+  if (name === 'collections') initCollections();
+  if (name === 'concepts') initConcepts();
+  if (name === 'duplicates') initDuplicates();
 
   window.location.hash = name;
 }
@@ -78,8 +84,9 @@ async function buildSidebar() {
       concList.innerHTML = '<span style="font-size:11px;color:var(--text-muted);">Nenhum conceito</span>';
     }
 
+    // Filter change → invalidate gallery cache
     document.querySelectorAll('.collection-filter, .concept-filter, #filtro-media-type').forEach(el => {
-      el.addEventListener('change', () => { window.location.reload(); });
+      el.addEventListener('change', () => invalidateCache());
     });
 
   } catch (err) {

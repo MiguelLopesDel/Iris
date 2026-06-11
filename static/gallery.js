@@ -18,6 +18,15 @@ const pageCache = new Map();
 /* Selection state is managed by app.js — gallery just renders checkboxes. */
 (window.__irisSelection = window.__irisSelection || new Map());
 
+// ── Filter helpers ──────────────────────────────────────────────────────
+
+function getFilterParams() {
+  const mediaType = document.getElementById('filtro-media-type')?.value || 'all';
+  const collections = [...document.querySelectorAll('.collection-filter:checked')].map(cb => cb.value).join(',');
+  const concepts = [...document.querySelectorAll('.concept-filter:checked')].map(cb => cb.value).join(',');
+  return { mediaType, collections, concepts };
+}
+
 // ── Initialization ────────────────────────────────────────────────────────
 
 export function initGallery() {
@@ -61,7 +70,8 @@ async function loadPage(page) {
   grid.innerHTML = renderSkeletons(perPage);
 
   try {
-    const data = await fetchRecords(page, perPage, sortBy, sortAsc);
+    const { mediaType, collections, concepts } = getFilterParams();
+    const data = await fetchRecords(page, perPage, sortBy, sortAsc, mediaType, collections, concepts);
     pageCache.set(data.page, data);
     currentPage = data.page;
     totalPages = data.total_pages;
@@ -74,9 +84,10 @@ async function loadPage(page) {
 }
 
 function prefetchAdjacent(page) {
+  const { mediaType, collections, concepts } = getFilterParams();
   for (const p of [page - 1, page + 1]) {
     if (p >= 1 && p <= totalPages && !pageCache.has(p)) {
-      fetchRecords(p, perPage, sortBy, sortAsc)
+      fetchRecords(p, perPage, sortBy, sortAsc, mediaType, collections, concepts)
         .then(d => { pageCache.set(d.page, d); })
         .catch(() => {}); // silent
     }
