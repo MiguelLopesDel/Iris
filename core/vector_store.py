@@ -50,20 +50,3 @@ class VectorStore:
             vector = vector.reshape(1, -1)
         faiss.normalize_L2(vector)
         return vector
-
-    def search_image_index(self, query_embedding: np.ndarray, limit: int) -> list[int]:
-        if self.image_index is None:
-            return []
-        _, indices = self.image_index.search(query_embedding, limit)
-        return [idx for idx in indices[0].tolist() if idx >= 0]
-
-    def search_desc_index(self, query_embedding: np.ndarray, limit: int) -> list[int]:
-        if self.desc_index is None:
-            return []
-        _, indices = self.desc_index.search(query_embedding, limit)
-        return [idx for idx in indices[0].tolist() if idx >= 0]
-
-    def search_audio_index(self, query_embedding: np.ndarray, limit: int) -> tuple[np.ndarray, np.ndarray]:
-        if self.audio_index is None:
-            return np.array([]), np.array([])
-        return self.audio_index.search(query_embedding, limit)

@@ -48,6 +48,7 @@ from core.backend import SearchBackend, create_backend
 from core.duplicates import find_duplicate_groups
 from core.file_ops import move_to_trash, to_file_uri
 from core.indexer import DEFAULT_LIBRARY_NAME, DEFAULT_LIBRARY_ROOT
+from core.perf import trace, dump as dump_perf
 from core.search_engine import (
     DEFAULT_MODEL,
     IMAGE_EXTENSIONS,
@@ -158,6 +159,7 @@ def trash_selected(backend: SearchBackend) -> None:
     clear_duplicate_state()
     st.session_state.pop("search_results", None)
     st.session_state.pop("search_results_key", None)
+    st.session_state.pop("_gallery_cache", None)
     st.rerun()
 
 
@@ -378,8 +380,9 @@ def main() -> None:
         st.session_state["random_mode"] = False
 
     # ── Sidebar: DB & model ──────────────────────────────────────────────
-    st.sidebar.title("Configuracoes")
-    databases = get_available_databases()
+    with trace("sidebar.config"):
+        st.sidebar.title("Configuracoes")
+        databases = get_available_databases()
     if not databases:
         st.sidebar.error("Nenhum banco encontrado. Rode `python -m core.indexer` primeiro.")
         st.stop()
@@ -395,11 +398,12 @@ def main() -> None:
     media_root = st.sidebar.text_input("Pasta de midias", value="media")
     model_name = st.sidebar.text_input("Modelo CLIP", value=DEFAULT_MODEL)
 
-    try:
-        backend = load_engine(db_path, model_name, media_root)
-    except Exception as exc:
-        st.error(f"Falha ao carregar o indice: {exc}")
-        st.stop()
+    with trace("sidebar.db_load"):
+        try:
+            backend = load_engine(db_path, model_name, media_root)
+        except Exception as exc:
+            st.error(f"Falha ao carregar o indice: {exc}")
+            st.stop()
 
     # ── Sidebar: status ──────────────────────────────────────────────────
     st.sidebar.title("Status")
@@ -409,7 +413,8 @@ def main() -> None:
         st.sidebar.warning(f"{missing} arquivos nao encontrados no disco")
 
     # ── Sidebar: filters ─────────────────────────────────────────────────
-    all_collections = backend.list_collections()
+    with trace("sidebar.filters"):
+        all_collections = backend.list_collections()
     collection_filter_ids: frozenset[int] = frozenset()
     if all_collections:
         st.sidebar.markdown("### Colecao")
@@ -463,6 +468,13 @@ def main() -> None:
     media_type = st.sidebar.radio("Mostrar", ["Tudo", "Imagens", "Videos"], index=0, horizontal=True)
     media_type_value = {"Tudo": "all", "Imagens": "image", "Videos": "video"}[media_type]
 
+    translate_enabled = st.sidebar.checkbox(
+        "Traduzir busca para ingles",
+        value=True,
+        help="Usa Google Translate para converter queries PT → EN. "
+             "Desmarque para privacidade total ou se estiver offline.",
+    )
+
     st.sidebar.markdown("### Estrategia")
     mode = st.sidebar.radio("Modo", ["Hibrido", "Foco no Texto", "Foco Visual", "Personalizado"], index=0)
     if mode == "Personalizado":
@@ -474,7 +486,7 @@ def main() -> None:
 
     options = SearchOptions(
         top_k=top_k, threshold=threshold, balance=balance,
-        text_bonus=text_bonus, lexical_weight=lexical_weight, translate=True,
+        text_bonus=text_bonus, lexical_weight=lexical_weight, translate=translate_enabled,
         collection_ids=collection_filter_ids, concept_ids=concept_filter_ids,
         media_type=media_type_value,
     )
@@ -488,6 +500,7 @@ def main() -> None:
         clear_duplicate_state()
         st.session_state.pop("search_results", None)
         st.session_state.pop("search_results_key", None)
+        st.session_state.pop("_gallery_cache", None)
         st.rerun()
 
     if st.sidebar.button("Me surpreenda"):
@@ -500,15 +513,17 @@ def main() -> None:
 
     # ── Main content ─────────────────────────────────────────────────────
     st.title("Iris")
-    _inject_video_volume_sync()
-    _build_floating_panel(backend)
-    render_trash_feedback()
-    render_import_feedback()
+    with trace("ui.floating_panel"):
+        _inject_video_volume_sync()
+        _build_floating_panel(backend)
+        render_trash_feedback()
+        render_import_feedback()
 
     # ── Tabs ─────────────────────────────────────────────────────────────
-    tab_text, tab_image, tab_gallery, tab_dupes, tab_import, tab_cols, tab_cpts, tab_bk = st.tabs(
-        ["Busca por texto", "Busca por imagem", "Galeria", "Duplicatas", "Importar", "Colecoes", "Conceitos", "Backup"]
-    )
+    with trace("ui.tabs"):
+        tab_text, tab_image, tab_gallery, tab_dupes, tab_import, tab_cols, tab_cpts, tab_bk = st.tabs(
+            ["Busca por texto", "Busca por imagem", "Galeria", "Duplicatas", "Importar", "Colecoes", "Conceitos", "Backup"]
+        )
     with tab_text:
         query = st.text_input(
             "Descreva o meme",
@@ -527,7 +542,8 @@ def main() -> None:
             preview = Image.open(uploaded_file).convert("RGB")
             st.image(preview, caption="Imagem de referencia", width=220)
     with tab_gallery:
-        render_gallery_tab(backend, options)
+        with trace("ui.tab_gallery"):
+            render_gallery_tab(backend, options)
     with tab_dupes:
         duplicate_threshold = st.slider("Similaridade minima", 0.90, 1.0, 0.985, 0.001)
         duplicate_neighbors = int(st.number_input("Vizinhos por imagem", min_value=2, max_value=50, value=12))
@@ -564,7 +580,8 @@ def main() -> None:
         render_backup_tab()
 
     # ── Search / results ─────────────────────────────────────────────────
-    results: list[SearchResult] = []
+    with trace("search.execute"):
+        results: list[SearchResult] = []
     try:
         if run_import:
             _execute_import(
@@ -675,6 +692,8 @@ def main() -> None:
             render_grouped_search_results(grouped, backend, image_group_show_singletons)
         else:
             render_results(results, backend)
+
+    dump_perf()
 
 
 def _execute_import(

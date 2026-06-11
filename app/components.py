@@ -6,8 +6,10 @@ All rendering primitives live here so tab modules stay focused on their domain.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import os
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -82,6 +84,37 @@ def video_thumbnail(file_path: str) -> bytes | None:
         return None
 
 
+_THUMB_DIR = Path("data/thumbnails")
+_THUMB_SIZE = (300, 300)
+
+
+def _ensure_thumbnail(file_path: str) -> str:
+    """Return path to a small cached thumbnail, generating it once.
+
+    High-performance galleries (Explorer, Finder, etc.) pre-render thumbnails
+    so the gallery grid only loads tiny files (~15KB vs ~2MB originals).
+    We store thumbs in data/thumbnails/ keyed by content hash so they survive
+    across sessions and reboots.
+    """
+    try:
+        stat = os.stat(file_path)
+        # Key: hash of file_path + mtime + size — invalidates if file changes
+        key = hashlib.md5(f"{file_path}:{stat.st_mtime}:{stat.st_size}".encode()).hexdigest()
+        thumb_path = _THUMB_DIR / f"{key}.jpg"
+
+        if thumb_path.exists():
+            return str(thumb_path)
+
+        # Generate thumbnail
+        _THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        img = Image.open(file_path).convert("RGB")
+        img.thumbnail(_THUMB_SIZE, Image.LANCZOS)
+        img.save(thumb_path, format="JPEG", quality=75, optimize=True)
+        return str(thumb_path)
+    except Exception:
+        return file_path  # fallback: use original
+
+
 @st.cache_data(max_entries=500)
 def thumb_b64(file_path: str, is_video: bool) -> str:
     """80×80 JPEG thumbnail as base64 string. Cached by path."""
@@ -104,10 +137,24 @@ def render_media(
     ext: str,
     item_key: str,
 ) -> None:
-    """Render an image or video with lazy loading and error handling."""
+    """Render an image or video with lazy loading and error handling.
+
+    Always renders a visible card — placeholder for missing files, thumbnail for
+    present ones — so the gallery grid never has invisible slots.
+    """
     if not exists or not file_path:
-        st.warning("Arquivo nao encontrado.")
+        icon = "🎬" if ext in VIDEO_EXTENSIONS else "🖼️"
+        st.markdown(
+            f"<div style='background:#1a1a2e;border-radius:10px;padding:20px 8px;"
+            f"text-align:center;min-height:160px;display:flex;flex-direction:column;"
+            f"align-items:center;justify-content:center;color:#888;font-size:13px;'>"
+            f"<span style='font-size:36px;'>{icon}</span>"
+            f"<span style='margin-top:6px;'>indisponível</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
         return
+
     if ext in VIDEO_EXTENSIONS:
         vid_key = f"vid_loaded_{item_key}"
         if not st.session_state.get(vid_key):
@@ -115,7 +162,12 @@ def render_media(
             if thumb:
                 st.image(thumb, use_container_width=True)
             else:
-                st.caption("🎬")
+                st.markdown(
+                    f"<div style='background:#1a1a2e;border-radius:10px;padding:20px 8px;"
+                    f"text-align:center;min-height:160px;display:flex;align-items:center;"
+                    f"justify-content:center;font-size:36px;'>🎬</div>",
+                    unsafe_allow_html=True,
+                )
             if st.button("▶ Reproduzir", key=f"play_{item_key}"):
                 st.session_state[vid_key] = True
                 st.rerun()
@@ -130,13 +182,18 @@ def render_media(
                     pass
     else:
         try:
-            st.image(file_path, use_container_width=True)
+            thumb = _ensure_thumbnail(file_path)
+            st.image(thumb, use_container_width=True)
         except Exception:
-            st.warning("Nao foi possivel exibir a imagem.")
-            try:
-                st.link_button("Abrir arquivo", to_file_uri(file_path))
-            except Exception:
-                pass
+            st.markdown(
+                f"<div style='background:#1a1a2e;border-radius:10px;padding:20px 8px;"
+                f"text-align:center;min-height:160px;display:flex;flex-direction:column;"
+                f"align-items:center;justify-content:center;color:#888;font-size:13px;'>"
+                f"<span style='font-size:36px;'>🖼️</span>"
+                f"<span style='margin-top:6px;'>erro ao carregar</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
 
 def render_floating_selection_panel(n_selected: int, thumbs_html: str) -> None:

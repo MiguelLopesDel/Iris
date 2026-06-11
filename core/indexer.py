@@ -270,6 +270,9 @@ def load_models(config: IndexerConfig) -> LoadedModels:
 def already_processed(conn: sqlite3.Connection) -> set[str]:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(memes)")}
     column = "relative_path" if "relative_path" in columns else "arquivo"
+    # Safety: column is derived from PRAGMA, but guard against future changes
+    if column not in {"relative_path", "arquivo", "caminho", "storage_path"}:
+        raise RuntimeError(f"Unexpected column: {column}")
     return {row[0] for row in conn.execute(f"SELECT {column} FROM memes WHERE {column} IS NOT NULL")}
 
 

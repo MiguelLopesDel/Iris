@@ -195,6 +195,10 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
 def ensure_memes_indexes(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memes_content_hash ON memes(content_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memes_library_id ON memes(library_id)")
+    # Collections: filter-by-collection queries need collection_id as leading column
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_media_collections_collection_id ON media_collections(collection_id)")
+    # Concepts: get_references(concept_id) needs concept_id indexed
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_concept_references_concept_id ON concept_references(concept_id)")
 
 
 def now_iso() -> str:

@@ -1,17 +1,26 @@
-"""Gallery browsing tab — paginated media gallery with sorting and search."""
+"""Gallery browsing tab — paginated media gallery with sorting and search.
+
+Uses st.fragment to isolate page navigation from the rest of the app,
+so clicking ← → only re-runs the gallery, not the sidebar or other tabs.
+"""
 
 from __future__ import annotations
 
 import os
 
 import streamlit as st
-
 from PIL import Image
 
-from app.components import render_media, selection_key
+from app.components import _ensure_thumbnail, render_media, selection_key
 from core.backend import SearchBackend
 from core.file_ops import to_file_uri
+from core.perf import trace
 from core.search_engine import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, IndexRecord, SearchOptions
+
+_frag = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None)
+
+
+# ── Record filtering ────────────────────────────────────────────────────────────
 
 
 def _filtered_records(backend: SearchBackend, options: SearchOptions) -> list[IndexRecord]:
@@ -32,6 +41,9 @@ def _filtered_records(backend: SearchBackend, options: SearchOptions) -> list[In
         records = [r for r in records if r.db_id in allowed]
 
     return records
+
+
+# ── Gallery card ────────────────────────────────────────────────────────────────
 
 
 def render_gallery_card(
@@ -66,14 +78,159 @@ def render_gallery_card(
         if record.db_id:
             from app.tabs.collections import _render_result_collections
             from app.tabs.concepts import _render_result_concepts
-            _render_result_collections(backend, record.db_id, record.index)
             _render_result_concepts(backend, record.db_id, record.index)
+            _render_result_collections(backend, record.db_id, record.index)
+
+
+# ── Pre-warming ─────────────────────────────────────────────────────────────────
+#
+# Thumbnails are generated upfront (before rendering) so the grid never blocks
+# on disk I/O. Adjacent pages are also pre-warmed so arrow clicks hit warm cache.
+
+
+def _prewarm_thumbnails(records: list[IndexRecord]) -> None:
+    """Touch every image thumbnail so _ensure_thumbnail cache is hot."""
+    for r in records:
+        fp = r.resolved_path
+        if not fp or not os.path.exists(fp):
+            continue
+        ext = os.path.splitext(fp)[1].lower()
+        if ext not in VIDEO_EXTENSIONS:
+            try:
+                _ensure_thumbnail(fp)
+            except Exception:
+                pass
+
+
+# ── Browse fragment ─────────────────────────────────────────────────────────────
+
+
+def _render_browse(backend: SearchBackend, options: SearchOptions) -> None:
+    """Paginated gallery grid. Wrapped in st.fragment so page nav is instant."""
+
+    # ── Controls ────────────────────────────────────────────────────────────
+    col_sort, col_dir, col_pp = st.columns([3, 1, 1])
+    with col_sort:
+        sort_by = st.selectbox(
+            "Ordenar por", ["Importacao", "Nome", "Data do arquivo", "Tamanho", "Tipo"],
+            key="gallery_sort",
+        )
+    with col_dir:
+        sort_asc = st.checkbox("Crescente", value=False, key="gallery_asc")
+    with col_pp:
+        per_page = st.number_input(
+            "Por pagina", min_value=12, max_value=500, value=24, step=12,
+            key="gallery_per_page",
+        )
+
+    # ── Data (cached — only recomputed when filters/sort change) ────────────
+    cache_key = (
+        f"{options.media_type}|{frozenset(options.collection_ids)}|{frozenset(options.concept_ids)}"
+        f"|{sort_by}|{int(sort_asc)}"
+    )
+    cached = st.session_state.get("_gallery_cache")
+    if cached and cached.get("key") == cache_key:
+        sorted_records = cached["records"]
+        missing_count = cached["missing"]
+    else:
+        with trace("gallery.filter_and_sort"):
+            records = _filtered_records(backend, options)
+        if not records:
+            st.info("Nenhum item com esse filtro de midia.")
+            st.session_state.pop("_gallery_cache", None)
+            return
+
+        def _sort_key(r: IndexRecord) -> object:
+            if sort_by == "Nome":
+                return r.arquivo.lower()
+            if sort_by == "Data do arquivo":
+                return r.file_mtime or 0.0
+            if sort_by == "Tamanho":
+                return r.file_size or 0
+            if sort_by == "Tipo":
+                return os.path.splitext(r.arquivo)[1].lower()
+            return r.db_id
+
+        with trace("gallery.sort"):
+            sorted_records = sorted(records, key=_sort_key, reverse=not sort_asc)
+        missing_count = sum(
+            1 for r in sorted_records
+            if not r.resolved_path or not os.path.exists(r.resolved_path)
+        )
+        st.session_state["_gallery_cache"] = {
+            "key": cache_key, "records": sorted_records, "missing": missing_count,
+        }
+
+    total = len(sorted_records)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    # ── Page navigation ─────────────────────────────────────────────────────
+    page_key = "gallery_page"
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 1
+
+    page = st.session_state[page_key]
+    if page > total_pages:
+        page = total_pages
+        st.session_state[page_key] = page
+
+    col_prev, col_info, col_next = st.columns([0.5, 5, 0.5])
+    with col_prev:
+        if st.button("←", key="gallery_prev", disabled=(page <= 1), use_container_width=True):
+            st.session_state[page_key] -= 1
+            st.rerun()
+    with col_next:
+        if st.button("→", key="gallery_next", disabled=(page >= total_pages), use_container_width=True):
+            st.session_state[page_key] += 1
+            st.rerun()
+    with col_info:
+        if missing_count:
+            st.caption(
+                f"Pagina {page} de {total_pages} · {total} itens no indice "
+                f"({total - missing_count} disponiveis)"
+            )
+        else:
+            st.caption(f"Pagina {page} de {total_pages} · {total} itens")
+
+    page_idx = page - 1
+    page_records = sorted_records[page_idx * per_page : (page_idx + 1) * per_page]
+
+    # ── Pre-buffer adjacent pages ──────────────────────────────────────────
+    with trace("gallery.prewarm"):
+        _prewarm_thumbnails(page_records)
+        if page < total_pages:
+            next_records = sorted_records[(page_idx + 1) * per_page : (page_idx + 2) * per_page]
+            _prewarm_thumbnails(next_records)
+        if page > 1:
+            prev_records = sorted_records[(page_idx - 1) * per_page : page_idx * per_page]
+            _prewarm_thumbnails(prev_records)
+
+    # ── Uniform 3-column grid ──────────────────────────────────────────────
+    with trace("gallery.render_cards"):
+        for row_start in range(0, len(page_records), 3):
+            row_records = page_records[row_start : row_start + 3]
+            row_cols = st.columns(3)
+            for col_idx, record in enumerate(row_records):
+                with row_cols[col_idx]:
+                    render_gallery_card(record, backend)
+
+
+# Decorate with fragment so page nav buttons only re-run this function,
+# not the entire app (sidebar, all tabs, DB queries).
+if _frag:
+    _render_browse = _frag(_render_browse)
+
+
+# ── Main tab entry point ────────────────────────────────────────────────────────
 
 
 def render_gallery_tab(backend: SearchBackend, options: SearchOptions) -> None:
     col_q, col_img = st.columns([4, 1])
     with col_q:
-        gallery_query = st.text_input("Buscar na galeria", placeholder="Deixe vazio para ver tudo", key="gallery_query")
+        gallery_query = st.text_input(
+            "Buscar na galeria", placeholder="Deixe vazio para ver tudo",
+            key="gallery_query",
+        )
     with col_img:
         gallery_img = st.file_uploader(
             "Buscar por imagem", type=["png", "jpg", "jpeg", "webp"],
@@ -95,52 +252,17 @@ def render_gallery_tab(backend: SearchBackend, options: SearchOptions) -> None:
             return
 
         st.caption(f"{len(results)} resultado(s)")
-        cols = st.columns(3)
-        for pos, result in enumerate(results):
-            if result.index < len(backend.get_all_records()):
-                with cols[pos % 3]:
-                    render_gallery_card(backend.get_all_records()[result.index], backend, score=result.score)
+        for row_start in range(0, len(results), 3):
+            row_results = results[row_start : row_start + 3]
+            row_cols = st.columns(3)
+            for col_idx, result in enumerate(row_results):
+                if result.index < len(backend.get_all_records()):
+                    with row_cols[col_idx]:
+                        render_gallery_card(
+                            backend.get_all_records()[result.index], backend,
+                            score=result.score,
+                        )
         return
 
-    # Browse mode
-    records = _filtered_records(backend, options)
-    if not records:
-        st.info("Nenhum item com esse filtro de midia.")
-        return
-
-    col_sort, col_dir, col_pp = st.columns([3, 1, 1])
-    with col_sort:
-        sort_by = st.selectbox("Ordenar por", ["Importacao", "Nome", "Data do arquivo", "Tamanho", "Tipo"], key="gallery_sort")
-    with col_dir:
-        sort_asc = st.checkbox("Crescente", value=False, key="gallery_asc")
-    with col_pp:
-        per_page = st.selectbox("Por pagina", [24, 48, 96], key="gallery_per_page")
-
-    def _sort_key(r: IndexRecord) -> object:
-        if sort_by == "Nome":
-            return r.arquivo.lower()
-        if sort_by == "Data do arquivo":
-            return r.file_mtime or 0.0
-        if sort_by == "Tamanho":
-            return r.file_size or 0
-        if sort_by == "Tipo":
-            return os.path.splitext(r.arquivo)[1].lower()
-        return r.db_id
-
-    sorted_records = sorted(records, key=_sort_key, reverse=not sort_asc)
-    total = len(sorted_records)
-    total_pages = max(1, (total + per_page - 1) // per_page)
-
-    col_info, col_page = st.columns([3, 1])
-    with col_info:
-        st.caption(f"{total} item(ns) — {total_pages} pagina(s)")
-    with col_page:
-        page = (
-            int(st.number_input("Pagina", min_value=1, max_value=total_pages, value=1, key="gallery_page")) - 1
-        )
-
-    page_records = sorted_records[page * per_page : (page + 1) * per_page]
-    cols = st.columns(3)
-    for pos, record in enumerate(page_records):
-        with cols[pos % 3]:
-            render_gallery_card(record, backend)
+    # Browse mode — isolated in fragment for fast page navigation
+    _render_browse(backend, options)

@@ -81,10 +81,13 @@ def render_results(results: list[SearchResult], backend: SearchBackend) -> None:
         st.info("Nenhum resultado encontrado com estes filtros.")
         return
 
-    columns = st.columns(3)
-    for pos, result in enumerate(results):
-        with columns[pos % 3]:
-            render_result(result, backend)
+    # Row-by-row fresh columns to avoid stale content when results shrink
+    for row_start in range(0, len(results), 3):
+        row_results = results[row_start : row_start + 3]
+        row_cols = st.columns(3)
+        for col_idx, result in enumerate(row_results):
+            with row_cols[col_idx]:
+                render_result(result, backend)
 
 
 # ── Grouping ─────────────────────────────────────────────────────────────────
@@ -147,8 +150,10 @@ def render_grouped_search_results(
     )
     for idx, group in enumerate(visible_groups, start=1):
         st.markdown(f"**Grupo {idx}** - {len(group)} imagem(ns)")
-        columns = st.columns(3)
-        for pos, result in enumerate(group):
-            with columns[pos % 3]:
-                render_result(result, backend)
+        for row_start in range(0, len(group), 3):
+            row_results = group[row_start : row_start + 3]
+            row_cols = st.columns(3)
+            for col_idx, result in enumerate(row_results):
+                with row_cols[col_idx]:
+                    render_result(result, backend)
         st.divider()

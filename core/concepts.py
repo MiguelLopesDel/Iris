@@ -64,17 +64,20 @@ def create_concept_tables(conn: sqlite3.Connection) -> None:
 
 
 def list_concepts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    conn.row_factory = sqlite3.Row
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     if "concepts" not in tables:
         return []
+    # Use LEFT JOINs instead of correlated subqueries — one pass, no per-row lookups
     rows = conn.execute(
         """
         SELECT
             c.id, c.name, c.category, c.description, c.search_terms, c.auto_threshold, c.created_at,
-            (SELECT COUNT(*) FROM concept_references cr WHERE cr.concept_id = c.id) AS ref_count,
-            (SELECT COUNT(*) FROM concept_media cm WHERE cm.concept_id = c.id AND cm.confirmed = 1) AS assoc_count
+            COUNT(DISTINCT cr.id) AS ref_count,
+            COUNT(DISTINCT cm.meme_id) AS assoc_count
         FROM concepts c
+        LEFT JOIN concept_references cr ON cr.concept_id = c.id
+        LEFT JOIN concept_media cm ON cm.concept_id = c.id AND cm.confirmed = 1
+        GROUP BY c.id
         ORDER BY c.name
         """
     ).fetchall()

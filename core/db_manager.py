@@ -12,6 +12,7 @@ class DatabaseManager:
         self._local = threading.local()
         self._known_tables: frozenset[str] = frozenset()
         self._library_roots: dict[int, Path] = {}
+        self._table_columns_cache: dict[str, frozenset[str]] = {}
         if self.db_path.exists():
             self._known_tables = self._load_known_tables()
             self._library_roots = self._load_libraries()
@@ -36,6 +37,7 @@ class DatabaseManager:
 
     def invalidate_table_cache(self) -> None:
         self._known_tables = self._load_known_tables()
+        self._table_columns_cache.clear()
 
     def has_collections_tables(self) -> bool:
         return "collections" in self._known_tables and "media_collections" in self._known_tables
@@ -59,9 +61,13 @@ class DatabaseManager:
                 continue
         return mapping
 
-    def table_columns(self, table: str) -> set[str]:
+    def table_columns(self, table: str) -> frozenset[str]:
+        if table in self._table_columns_cache:
+            return self._table_columns_cache[table]
         conn = self.get_connection()
-        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        cols = frozenset(row[1] for row in conn.execute(f"PRAGMA table_info({table})"))
+        self._table_columns_cache[table] = cols
+        return cols
 
     # -- Collections Operations --
     def list_collections(self) -> list[dict[str, Any]]:

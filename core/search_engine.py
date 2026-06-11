@@ -64,8 +64,8 @@ class IrisEngine:
         self._clap_processor = None
         self.model = self._load_model() if load_model else None
 
-        # Backward-compatible attribute used by existing scripts.
-        self.dados = [self._record_to_dict(record) for record in self.records]
+        # Lazy cache for backward-compatible .dados property (only computed on demand)
+        self._dados_cache: list[dict[str, Any]] | None = None
 
     @staticmethod
     def _detect_device() -> str:
@@ -454,6 +454,13 @@ class IrisEngine:
             "storage_path": record.storage_path,
             "source_path": record.source_path,
         }
+
+    @property
+    def dados(self) -> list[dict[str, Any]]:
+        """Lazy list-of-dicts for eval/benchmark scripts. Computed once on first read."""
+        if self._dados_cache is None:
+            self._dados_cache = [self._record_to_dict(r) for r in self.records]
+        return self._dados_cache
 
     def encode_text(self, query: str, translate: bool = True) -> tuple[np.ndarray, str]:
         if self.model is None:
