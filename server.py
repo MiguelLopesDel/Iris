@@ -474,7 +474,14 @@ async def delete_collection(col_id: int):
 async def get_collection_members(col_id: int):
     backend = _get_backend()
     with trace("api.collections.members"):
-        return {"db_ids": backend.get_collection_members(col_id)}
+        db_ids = backend.get_collection_members(col_id)
+        records = []
+        for db_id in db_ids:
+            for r in backend.get_all_records():
+                if r.db_id == db_id:
+                    records.append(_record_to_json(r))
+                    break
+        return {"db_ids": db_ids, "records": records}
 
 
 @app.post("/api/collections/{col_id}/members")
