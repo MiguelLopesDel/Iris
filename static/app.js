@@ -251,6 +251,59 @@ document.getElementById('btn-refresh').addEventListener('click', function() {
   toast('Dados atualizados', 'info');
 });
 
+// ── Video volume sync (matches Streamlit behavior) ──────────────────────
+
+var _videoVolume = 0.3;
+document.addEventListener('volumechange', function(e) {
+  if (e.target.matches('video')) {
+    _videoVolume = e.target.volume;
+    document.querySelectorAll('video').forEach(function(v) {
+      if (v !== e.target) v.volume = _videoVolume;
+    });
+  }
+}, true);
+
+// Set initial volume for any video that starts playing
+document.addEventListener('play', function(e) {
+  if (e.target.matches('video') && e.target.volume !== _videoVolume) {
+    e.target.volume = _videoVolume;
+  }
+}, true);
+
+// ── Statistics (extension chart) ──────────────────────────────────────────
+
+window.__showStats = async function() {
+  var el = document.getElementById('stats-container');
+  if (el.style.display === 'block') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<p style="color:var(--text-muted);">Carregando...</p>';
+  try {
+    var res = await fetch('/api/records?page=1&per_page=500&sort_by=importacao');
+    var data = await res.json();
+    // Count extensions client-side
+    var counts = {};
+    var allRecords = data.records;
+    // We need all records for accurate stats — use a large page
+    var res2 = await fetch('/api/records?page=1&per_page=500&sort_by=nome');
+    var data2 = await res2.json();
+    data2.records.forEach(function(r) {
+      var ext = (r.arquivo || '').split('.').pop().toLowerCase();
+      counts[ext] = (counts[ext] || 0) + 1;
+    });
+    var sorted = Object.entries(counts).sort(function(a, b) { return b[1] - a[1]; });
+    var maxCount = sorted.length ? sorted[0][1] : 1;
+    var html = '<p style="font-size:11px;margin-bottom:4px;">Extensoes (amostra de ' + data2.records.length + ')</p>';
+    sorted.slice(0, 15).forEach(function(e) {
+      var pct = Math.round(e[1] / maxCount * 100);
+      html += '<div style="font-size:10px;margin:2px 0;">'
+        + '<span style="display:inline-block;width:50px;">' + e[0] + '</span>'
+        + '<span style="display:inline-block;background:var(--accent);height:10px;border-radius:2px;width:' + pct + '%;min-width:2px;"></span> '
+        + '<span>' + e[1] + '</span></div>';
+    });
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML = '<p style="color:var(--accent);">Erro</p>'; }
+};
+
 // ── Init ─────────────────────────────────────────────────────────────────
 
 (function init() {
