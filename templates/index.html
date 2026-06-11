@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iris — Busca Multimodal</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ── Sidebar ──────────────────────────────────────────────────────────── -->
+<aside id="sidebar">
+  <div id="sidebar-header">
+    <h1>☿ Iris</h1>
+    <span id="status-badge" class="badge">carregando...</span>
+  </div>
+
+  <div id="sidebar-filters">
+    <section class="filter-group">
+      <label class="filter-label">Tipo de midia</label>
+      <select id="filtro-media-type">
+        <option value="all">Todos</option>
+        <option value="image">Imagens</option>
+        <option value="video">Videos</option>
+      </select>
+    </section>
+
+    <section class="filter-group" id="collections-group">
+      <label class="filter-label">Colecoes</label>
+      <div id="collections-list"></div>
+    </section>
+
+    <section class="filter-group" id="concepts-group">
+      <label class="filter-label">Conceitos</label>
+      <div id="concepts-list"></div>
+    </section>
+  </div>
+
+  <div id="sidebar-selection">
+    <div id="selection-summary" style="display:none;">
+      <strong id="selection-count">0</strong> selecionado(s)
+      <button id="btn-trash-selected" class="btn btn-danger">🗑 Lixeira</button>
+      <button id="btn-collection-selected" class="btn">📁 Colecao</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ── Main content ─────────────────────────────────────────────────────── -->
+<main id="main-content">
+
+  <!-- Top bar -->
+  <header id="top-bar">
+    <nav id="tabs">
+      <button class="tab-btn active" data-tab="gallery">🖼 Galeria</button>
+      <button class="tab-btn" data-tab="search">🔍 Busca</button>
+      <button class="tab-btn" data-tab="collections">📚 Colecoes</button>
+      <button class="tab-btn" data-tab="concepts">🏷 Conceitos</button>
+      <button class="tab-btn" data-tab="duplicates">🔄 Duplicatas</button>
+    </nav>
+
+    <div id="search-bar" style="display:none;">
+      <input type="text" id="search-input" placeholder="Buscar por texto...">
+      <label class="btn" for="search-image-input">📷 Imagem</label>
+      <input type="file" id="search-image-input" accept="image/*" style="display:none;">
+      <button id="btn-search-random" class="btn">🎲 Aleatorio</button>
+    </div>
+  </header>
+
+  <!-- Tab panes -->
+  <div id="tab-content">
+
+    <!-- Gallery tab -->
+    <section id="tab-gallery" class="tab-pane active">
+      <div id="gallery-controls">
+        <select id="gallery-sort">
+          <option value="importacao">Importacao</option>
+          <option value="nome">Nome</option>
+          <option value="data">Data do arquivo</option>
+          <option value="tamanho">Tamanho</option>
+          <option value="tipo">Tipo</option>
+        </select>
+        <label><input type="checkbox" id="gallery-sort-asc"> Crescente</label>
+        <select id="gallery-per-page">
+          <option value="12">12</option>
+          <option value="24" selected>24</option>
+          <option value="36">36</option>
+          <option value="48">48</option>
+          <option value="96">96</option>
+        </select>
+        <button id="gallery-prev" class="btn" disabled>←</button>
+        <span id="gallery-page-info">—</span>
+        <button id="gallery-next" class="btn" disabled>→</button>
+      </div>
+      <div id="gallery-grid" class="media-grid"></div>
+      <div id="gallery-pagination-bottom"></div>
+    </section>
+
+    <!-- Search tab -->
+    <section id="tab-search" class="tab-pane">
+      <div id="search-controls">
+        <input type="text" id="search-input2" placeholder="Buscar...">
+        <label class="btn" for="search-image-input2">📷 Imagem</label>
+        <input type="file" id="search-image-input2" accept="image/*" style="display:none;">
+        <button id="btn-similar-back" class="btn" style="display:none;">← Voltar</button>
+      </div>
+      <div id="search-results-info"></div>
+      <div id="search-results-grid" class="media-grid"></div>
+    </section>
+
+    <!-- Collections tab -->
+    <section id="tab-collections" class="tab-pane">
+      <div id="collections-tab-content">
+        <button id="btn-new-collection" class="btn">+ Nova colecao</button>
+        <div id="collections-tab-list"></div>
+      </div>
+    </section>
+
+    <!-- Concepts tab -->
+    <section id="tab-concepts" class="tab-pane">
+      <div id="concepts-tab-content">
+        <button id="btn-new-concept" class="btn">+ Novo conceito</button>
+        <div id="concepts-tab-list"></div>
+        <div id="concept-wizard" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- Duplicates tab -->
+    <section id="tab-duplicates" class="tab-pane">
+      <div id="duplicates-tab-content">
+        <label>Threshold: <input type="range" id="dup-threshold" min="0.8" max="1.0" step="0.005" value="0.985">
+          <span id="dup-threshold-val">0.985</span></label>
+        <button id="btn-find-duplicates" class="btn">Buscar duplicatas</button>
+        <div id="duplicates-results"></div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- Floating selection panel -->
+<div id="floating-panel" style="display:none;">
+  <div id="floating-badge" onclick="document.getElementById('floating-panel').classList.toggle('open')">
+    🗂 <span id="floating-count">0</span>
+  </div>
+  <div id="floating-thumbs"></div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- Scripts -->
+<script type="module" src="/static/api.js?v=4"></script>
+<script type="module" src="/static/gallery.js?v=4"></script>
+<script type="module" src="/static/search.js?v=4"></script>
+<script type="module" src="/static/collections.js?v=4"></script>
+<script type="module" src="/static/concepts.js?v=4"></script>
+<script type="module" src="/static/duplicates.js?v=4"></script>
+<script type="module" src="/static/app.js?v=4"></script>
+
+</body>
+</html>

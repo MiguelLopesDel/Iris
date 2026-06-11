@@ -2,16 +2,22 @@
 
 Uses st.fragment to isolate page navigation from the rest of the app,
 so clicking ← → only re-runs the gallery, not the sidebar or other tabs.
+
+Performance strategy:
+- Image grid: single st.html() with inline base64 thumbnails (1 element, not N widgets)
+- Video players: st.video() widgets below the grid (proper playback)
+- Pre-buffer: thumbnails for current + adjacent pages warmed before render
 """
 
 from __future__ import annotations
 
+import base64 as b64
 import os
 
 import streamlit as st
 from PIL import Image
 
-from app.components import _ensure_thumbnail, render_media, selection_key
+from app.components import _ensure_thumbnail, render_media, selection_key, video_thumbnail
 from core.backend import SearchBackend
 from core.file_ops import to_file_uri
 from core.perf import trace
@@ -43,7 +49,7 @@ def _filtered_records(backend: SearchBackend, options: SearchOptions) -> list[In
     return records
 
 
-# ── Gallery card ────────────────────────────────────────────────────────────────
+# ── Gallery card (used for search results, not browse) ──────────────────────────
 
 
 def render_gallery_card(
@@ -82,14 +88,21 @@ def render_gallery_card(
             _render_result_collections(backend, record.db_id, record.index)
 
 
-# ── Pre-warming ─────────────────────────────────────────────────────────────────
-#
-# Thumbnails are generated upfront (before rendering) so the grid never blocks
-# on disk I/O. Adjacent pages are also pre-warmed so arrow clicks hit warm cache.
+# ── Thumbnail helpers ───────────────────────────────────────────────────────────
+
+
+def _thumb_b64(file_path: str) -> str:
+    """Read disk-cached 300×300 thumbnail as base64 data URI."""
+    try:
+        thumb_path = _ensure_thumbnail(file_path)
+        with open(thumb_path, "rb") as fh:
+            return b64.b64encode(fh.read()).decode()
+    except Exception:
+        return ""
 
 
 def _prewarm_thumbnails(records: list[IndexRecord]) -> None:
-    """Touch every image thumbnail so _ensure_thumbnail cache is hot."""
+    """Touch every image thumbnail so _ensure_thumbnail cache is hot before render."""
     for r in records:
         fp = r.resolved_path
         if not fp or not os.path.exists(fp):
@@ -100,6 +113,91 @@ def _prewarm_thumbnails(records: list[IndexRecord]) -> None:
                 _ensure_thumbnail(fp)
             except Exception:
                 pass
+
+
+def _placeholder_div(icon: str) -> str:
+    """Grey placeholder div for missing files."""
+    return (
+        f'<div style="aspect-ratio:1;background:#1a1a2e;border-radius:8px;'
+        f'display:flex;flex-direction:column;align-items:center;justify-content:center;'
+        f'color:#888;font-size:11px;">'
+        f'<span style="font-size:28px;">{icon}</span>'
+        f'<span>indisponivel</span></div>'
+    )
+
+
+# ── HTML grid renderer ──────────────────────────────────────────────────────────
+#
+# Key performance insight: each st.image() call creates a Streamlit widget with
+# serialization overhead. 24 st.image() ≈ 1400-1600ms.  A single st.html() with
+# inline base64 thumbnails sends one HTML string — one element, one message.
+
+
+def _render_html_grid(records: list[IndexRecord]) -> None:
+    """Render all records as a single st.html() grid with inline base64 thumbnails.
+
+    Images → cached 300×300 thumb as data:image/jpeg;base64,...
+    Videos → video_thumbnail() as base64 with ▶ overlay
+    Missing → placeholder div
+    """
+    if not records:
+        return
+
+    rows: list[str] = []
+    for row_start in range(0, len(records), 3):
+        cells: list[str] = []
+        for record in records[row_start : row_start + 3]:
+            fp = record.resolved_path
+            ex = bool(fp and os.path.exists(fp))
+            ext = os.path.splitext(fp or record.caminho)[1].lower()
+            is_vid = ext in VIDEO_EXTENSIONS
+
+            if ex and is_vid:
+                thumb_bytes = video_thumbnail(fp)
+                if thumb_bytes:
+                    vid_b64 = b64.b64encode(thumb_bytes).decode()
+                    img_el = (
+                        f'<div style="position:relative;">'
+                        f'<img src="data:image/jpeg;base64,{vid_b64}" '
+                        f'style="width:100%;border-radius:8px;aspect-ratio:1;object-fit:cover;">'
+                        f'<div style="position:absolute;inset:0;display:flex;'
+                        f'align-items:center;justify-content:center;border-radius:8px;'
+                        f'background:rgba(0,0,0,0.25);pointer-events:none;">'
+                        f'<span style="font-size:40px;color:#fff;text-shadow:0 0 8px rgba(0,0,0,0.8);'
+                        f'opacity:0.9;">▶</span></div></div>'
+                    )
+                else:
+                    img_el = _placeholder_div("🎬")
+            elif ex and not is_vid:
+                img_b64_str = _thumb_b64(fp)
+                if img_b64_str:
+                    img_el = (
+                        f'<img src="data:image/jpeg;base64,{img_b64_str}" '
+                        f'style="width:100%;border-radius:8px;aspect-ratio:1;object-fit:cover;" '
+                        f'loading="lazy">'
+                    )
+                else:
+                    img_el = _placeholder_div("🖼️")
+            else:
+                icon = "🎬" if is_vid else "🖼️"
+                img_el = _placeholder_div(icon)
+
+            nome = record.arquivo[:45]
+            cells.append(
+                f'<div style="display:flex;flex-direction:column;gap:2px;">'
+                f'{img_el}'
+                f'<div style="font-size:10px;color:#aaa;text-align:center;'
+                f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+                f'padding:0 2px;" title="{record.arquivo}">{nome}</div>'
+                f'</div>'
+            )
+
+        rows.append(
+            f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">'
+            f'{"".join(cells)}</div>'
+        )
+
+    st.html(f'<div style="font-family:sans-serif;">{"".join(rows)}</div>')
 
 
 # ── Browse fragment ─────────────────────────────────────────────────────────────
@@ -118,8 +216,8 @@ def _render_browse(backend: SearchBackend, options: SearchOptions) -> None:
     with col_dir:
         sort_asc = st.checkbox("Crescente", value=False, key="gallery_asc")
     with col_pp:
-        per_page = st.number_input(
-            "Por pagina", min_value=12, max_value=500, value=24, step=12,
+        per_page = st.selectbox(
+            "Por pagina", [12, 24, 36, 48, 96], index=1,
             key="gallery_per_page",
         )
 
@@ -174,6 +272,21 @@ def _render_browse(backend: SearchBackend, options: SearchOptions) -> None:
         page = total_pages
         st.session_state[page_key] = page
 
+    page_idx = page - 1
+    page_records = sorted_records[page_idx * per_page : (page_idx + 1) * per_page]
+
+    # ── Pre-buffer adjacent pages ──────────────────────────────────────────
+    with trace("gallery.prewarm"):
+        _prewarm_thumbnails(page_records)
+        if page < total_pages:
+            _prewarm_thumbnails(
+                sorted_records[(page_idx + 1) * per_page : (page_idx + 2) * per_page]
+            )
+        if page > 1:
+            _prewarm_thumbnails(
+                sorted_records[(page_idx - 1) * per_page : page_idx * per_page]
+            )
+
     col_prev, col_info, col_next = st.columns([0.5, 5, 0.5])
     with col_prev:
         if st.button("←", key="gallery_prev", disabled=(page <= 1), use_container_width=True):
@@ -184,35 +297,69 @@ def _render_browse(backend: SearchBackend, options: SearchOptions) -> None:
             st.session_state[page_key] += 1
             st.rerun()
     with col_info:
-        if missing_count:
-            st.caption(
-                f"Pagina {page} de {total_pages} · {total} itens no indice "
-                f"({total - missing_count} disponiveis)"
-            )
-        else:
-            st.caption(f"Pagina {page} de {total_pages} · {total} itens")
+        disk_info = f" ({total - missing_count} no disco)" if missing_count else ""
+        st.caption(f"Pagina {page} de {total_pages} · {total} itens{disk_info}")
 
-    page_idx = page - 1
-    page_records = sorted_records[page_idx * per_page : (page_idx + 1) * per_page]
-
-    # ── Pre-buffer adjacent pages ──────────────────────────────────────────
-    with trace("gallery.prewarm"):
-        _prewarm_thumbnails(page_records)
-        if page < total_pages:
-            next_records = sorted_records[(page_idx + 1) * per_page : (page_idx + 2) * per_page]
-            _prewarm_thumbnails(next_records)
-        if page > 1:
-            prev_records = sorted_records[(page_idx - 1) * per_page : page_idx * per_page]
-            _prewarm_thumbnails(prev_records)
-
-    # ── Uniform 3-column grid ──────────────────────────────────────────────
+    # ── Fast HTML grid (single st.html block, no Streamlit widgets) ────────
     with trace("gallery.render_cards"):
-        for row_start in range(0, len(page_records), 3):
-            row_records = page_records[row_start : row_start + 3]
-            row_cols = st.columns(3)
-            for col_idx, record in enumerate(row_records):
-                with row_cols[col_idx]:
-                    render_gallery_card(record, backend)
+        _render_html_grid(page_records)
+
+    # ── Video players ─────────────────────────────────────────────────────
+    video_recs = [
+        r for r in page_records
+        if os.path.splitext(r.resolved_path or r.caminho)[1].lower() in VIDEO_EXTENSIONS
+    ]
+    if video_recs:
+        with trace("gallery.video_players"):
+            # Compact video row: thumbnail + ▶ button per video
+            vid_cols = st.columns(min(len(video_recs), 4))
+            for i, r in enumerate(video_recs):
+                with vid_cols[i % 4]:
+                    fp = r.resolved_path
+                    vid_key = f"vid_loaded_gal_{r.index}"
+                    if st.session_state.get(vid_key):
+                        try:
+                            st.video(fp)
+                        except Exception:
+                            st.warning(f"Nao foi possivel reproduzir: {r.arquivo}")
+                        if st.button("⏹ Fechar", key=f"close_vid_{r.index}"):
+                            del st.session_state[vid_key]
+                            st.rerun()
+                    else:
+                        thumb = video_thumbnail(fp)
+                        if thumb:
+                            st.image(thumb, use_container_width=True)
+                        st.caption(r.arquivo[:35])
+                        if st.button("▶ Reproduzir", key=f"play_vid_{r.index}"):
+                            st.session_state[vid_key] = True
+                            st.rerun()
+
+    # ── Selection & actions row ────────────────────────────────────────────
+    with st.expander("Acoes em lote", expanded=False):
+        show_selection = st.checkbox("Modo selecao", key="gallery_select_mode")
+        if show_selection:
+            sel_cols = st.columns(3)
+            for i, r in enumerate(page_records):
+                with sel_cols[i % 3]:
+                    st.checkbox(r.arquivo[:40], key=selection_key(r.index))
+
+            n_selected = sum(
+                1 for r in page_records
+                if st.session_state.get(selection_key(r.index), False)
+            )
+            if n_selected:
+                st.info(f"{n_selected} item(ns) selecionado(s) nesta pagina")
+
+    # ── Bottom page nav ────────────────────────────────────────────────────
+    col_bprev, col_binfo, col_bnext = st.columns([0.5, 5, 0.5])
+    with col_bprev:
+        if st.button("←", key="gallery_prev2", disabled=(page <= 1), use_container_width=True):
+            st.session_state[page_key] -= 1
+            st.rerun()
+    with col_bnext:
+        if st.button("→", key="gallery_next2", disabled=(page >= total_pages), use_container_width=True):
+            st.session_state[page_key] += 1
+            st.rerun()
 
 
 # Decorate with fragment so page nav buttons only re-run this function,
