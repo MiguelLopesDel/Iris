@@ -6,12 +6,18 @@ from core.concepts import create_concept_tables
 from core.web_enrichment import (
     EnrichmentSuggestion,
     HeuristicDistiller,
+    PlaywrightLensProvider,
+    SerpApiLensProvider,
     WebSource,
     apply_suggestion,
+    build_reverse_image_provider,
+    count_cached_ids,
     create_web_enrichment_tables,
+    find_existing_suggestion,
     insert_suggestion,
     list_suggestions,
     normalize_serpapi_sources,
+    parse_lens_results,
 )
 
 
@@ -115,3 +121,54 @@ def test_apply_suggestion_updates_metadata_and_creates_concepts() -> None:
     media = conn.execute("SELECT COUNT(*) FROM concept_media WHERE meme_id = 1").fetchone()[0]
     assert media == 2
     assert list_suggestions(conn, "pending") == []
+
+
+def test_parse_lens_results_dedupes_and_skips_empty() -> None:
+    sources = parse_lens_results(
+        [
+            {"title": "Gojo Satoru", "url": "https://jujutsu-kaisen.fandom.com/wiki/Gojo"},
+            {"title": "Gojo Satoru", "url": "https://jujutsu-kaisen.fandom.com/wiki/Gojo"},
+            {"title": "", "url": ""},
+            {"title": "Discussion", "url": "https://reddit.com/r/x"},
+        ]
+    )
+
+    assert len(sources) == 2
+    assert sources[0].domain == "jujutsu-kaisen.fandom.com"
+    assert sources[0].match_type == "lens_visual_match"
+
+
+def test_playwright_provider_uses_injected_scraper() -> None:
+    captured: list[str] = []
+
+    def fake_scraper(path: str) -> list[dict[str, str]]:
+        captured.append(str(path))
+        return [{"title": "Pepe the Frog", "url": "https://knowyourmeme.com/memes/pepe"}]
+
+    provider = PlaywrightLensProvider(scraper=fake_scraper)
+
+    assert provider.missing_config() == []
+    sources = provider.search_path("/tmp/meme.jpg")
+
+    assert captured == ["/tmp/meme.jpg"]
+    assert sources[0].domain == "knowyourmeme.com"
+
+
+def test_build_provider_selects_by_env(monkeypatch) -> None:
+    monkeypatch.setenv("IRIS_ENRICHMENT_PROVIDER", "playwright")
+    assert isinstance(build_reverse_image_provider(), PlaywrightLensProvider)
+    monkeypatch.setenv("IRIS_ENRICHMENT_PROVIDER", "serpapi")
+    assert isinstance(build_reverse_image_provider(), SerpApiLensProvider)
+
+
+def test_cache_guard_detects_existing_suggestion() -> None:
+    conn = _make_conn()
+    assert find_existing_suggestion(conn, 1) is None
+    assert count_cached_ids(conn, [1]) == 0
+
+    insert_suggestion(
+        conn, "job1", 1, EnrichmentSuggestion(provider="test", summary="x", confidence=0.5)
+    )
+
+    assert find_existing_suggestion(conn, 1) is not None
+    assert count_cached_ids(conn, [1, 2]) == 1

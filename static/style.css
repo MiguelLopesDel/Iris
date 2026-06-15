@@ -950,6 +950,13 @@ img[data-lightbox-src] {
   font-size: 12px;
 }
 
+.web-enrichment-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .web-enrichment-list {
   min-height: 0;
   overflow-y: auto;

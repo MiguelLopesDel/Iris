@@ -85,8 +85,52 @@ Deduplica por `(título, url)` e limita a 30 fontes.
   llama.cpp, LM Studio) — ver recomendações abaixo.
 
 ### 5. `WebEnrichmentService`
-Orquestra publisher → provider → distiller. `missing_config()` reúne o que
-falta de S3 + SerpApi. `enrich_path(path)` roda o pipeline para um arquivo.
+Orquestra provider → distiller, desacoplado do fornecedor concreto.
+`enrich_path(path)` roda o pipeline para um arquivo e `missing_config()`
+delega ao provider ativo.
+
+## Abstração de providers (baixo acoplamento)
+
+A busca reversa é uma interface (`ReverseImageProvider`, um `Protocol`):
+
+```python
+class ReverseImageProvider(Protocol):
+    provider_name: str
+    def missing_config(self) -> list[str]: ...
+    def search_path(self, path) -> list[WebSource]: ...
+```
+
+Todo provider recebe um **caminho local** e devolve `WebSource`. Como ele chega
+ao motor de busca é detalhe interno. Implementações:
+
+- **`SerpApiLensProvider`** (padrão): encapsula o `S3TemporaryImagePublisher`
+  internamente — publica a imagem, depois consulta a SerpApi. Requer
+  `SERPAPI_KEY` + config S3.
+- **`PlaywrightLensProvider`** (local, sem custo): dirige o Google Lens num
+  browser headless e **faz upload do arquivo local direto** — não precisa de
+  SerpApi nem de S3. Frágil por natureza (depende do DOM do Google) e voltado a
+  volume baixo/pessoal. A interação com o browser fica isolada em
+  `_scrape_lens`; o parsing puro está em `parse_lens_results` (testável sem
+  browser). Requer `pip install playwright && playwright install chromium`.
+
+A seleção é por env `IRIS_ENRICHMENT_PROVIDER` (`serpapi` | `playwright`),
+resolvida em `build_reverse_image_provider()`. A lógica S3 permanece intacta
+para quem quiser voltar ao SerpApi.
+
+Variáveis do provider local: `IRIS_LENS_HEADLESS` (padrão `1`),
+`IRIS_LENS_TIMEOUT_MS` (padrão `45000`).
+
+## Cache (evita re-pesquisar e gastar de novo)
+
+Antes de pesquisar uma imagem, `_run_web_enrichment_job` checa
+`find_existing_suggestion(conn, meme_id)`: se já existe sugestão `pending` ou
+`applied` para aquele registro, **pula a busca** (não republica no S3 nem chama
+a API) e marca como `reaproveitado (cache)`. Sugestões já obtidas ficam
+persistidas — sair antes de revisar não perde nada nem custa de novo.
+
+Para refazer de propósito, o endpoint aceita `force=1` (botão **Forçar
+re-pesquisa** no painel, com confirmação). `POST /api/enrichment/jobs` retorna
+`cached` (quantas foram reaproveitadas) para a UI avisar o usuário.
 
 ## Persistência (tabelas)
 
@@ -108,7 +152,7 @@ Criadas por `create_web_enrichment_tables`:
 
 | Método | Rota | Função |
 |---|---|---|
-| POST | `/api/enrichment/jobs` | Cria job para `db_ids` (CSV). Valida config; roda em thread daemon |
+| POST | `/api/enrichment/jobs` | Cria job para `db_ids` (CSV). Param `force` ignora o cache. Retorna `cached`. Roda em thread daemon |
 | GET | `/api/enrichment/jobs/{job_id}` | Progresso do job |
 | GET | `/api/enrichment/suggestions?status=pending` | Lista sugestões (`pending`/`applied`/`rejected`/`all`) |
 | POST | `/api/enrichment/suggestions/{id}/apply` | Aplica (campo `fields` CSV opcional limita o que escrever) |
@@ -143,3 +187,15 @@ export IRIS_LLM_MODEL="qwen2.5:7b"
 
 Sem S3 ou sem `SERPAPI_KEY`, `POST /api/enrichment/jobs` retorna 400 listando o
 que falta. Sem config de LLM, o pipeline funciona só com a heurística.
+
+### Alternativa local (sem SerpApi e sem S3)
+
+```bash
+export IRIS_ENRICHMENT_PROVIDER="playwright"
+pip install playwright && playwright install chromium
+# (opcional) export IRIS_LENS_HEADLESS=0  # ver o browser
+```
+
+Nesse modo não há custo de API nem upload para nuvem — o Lens é dirigido
+localmente. Em troca, é mais lento (um browser por imagem) e sensível a
+mudanças no DOM do Google; recomendado para volume baixo.

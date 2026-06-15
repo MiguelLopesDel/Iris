@@ -15,7 +15,7 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=29';
+} from './api.js?v=30';
 import { initGallery, invalidateCache } from './gallery.js?v=27';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
 import { initCollections } from './collections.js?v=27';
@@ -382,10 +382,7 @@ document.getElementById('btn-enrich-selected').addEventListener('click', async f
   if (!window.__irisSelection.size) return;
   try {
     var ids = await resolveSelectedDbIds();
-    var job = await createEnrichmentJob(ids);
-    showWebEnrichmentPanel();
-    toast('Busca web iniciada para ' + job.total + ' item(ns)', 'success');
-    pollWebEnrichmentJob(job.job_id);
+    await runWebEnrichment(ids, false);
   } catch (err) {
     showWebEnrichmentPanel();
     document.getElementById('web-enrichment-status').textContent = 'Erro: ' + err.message;
@@ -393,11 +390,36 @@ document.getElementById('btn-enrich-selected').addEventListener('click', async f
   }
 });
 
+async function runWebEnrichment(ids, force) {
+  window.__irisLastEnrichIds = ids;
+  var job = await createEnrichmentJob(ids, force);
+  showWebEnrichmentPanel();
+  if (!force && job.cached > 0) {
+    toast(job.cached + ' de ' + job.total
+      + ' ja tinham sugestao e foram reaproveitadas (sem custo).', 'info');
+  } else {
+    toast('Busca web iniciada para ' + job.total + ' item(ns)', 'success');
+  }
+  var forceBtn = document.getElementById('web-enrichment-force');
+  forceBtn.hidden = force || !(job.cached > 0);
+  pollWebEnrichmentJob(job.job_id);
+}
+
 function showWebEnrichmentPanel() {
   var panel = document.getElementById('web-enrichment-panel');
   panel.hidden = false;
   loadWebEnrichmentSuggestions();
 }
+
+document.getElementById('web-enrichment-force').addEventListener('click', function() {
+  var ids = window.__irisLastEnrichIds || [];
+  if (!ids.length) return;
+  if (!confirm('Re-pesquisar ' + ids.length + ' imagem(ns)? Isso ignora o cache e '
+    + 'pode consumir creditos da API de busca.')) return;
+  runWebEnrichment(ids, true).catch(function(err) {
+    toast('Erro: ' + err.message, 'error');
+  });
+});
 
 document.getElementById('web-enrichment-close').addEventListener('click', function() {
   document.getElementById('web-enrichment-panel').hidden = true;

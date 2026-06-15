@@ -44,8 +44,10 @@ from core.web_enrichment import (
     EnrichmentSuggestion,
     WebEnrichmentService,
     apply_suggestion,
+    count_cached_ids,
     create_job,
     create_web_enrichment_tables,
+    find_existing_suggestion,
     get_job,
     insert_suggestion,
     list_suggestions,
@@ -1260,7 +1262,7 @@ def _record_by_db_id(db_id: int) -> IndexRecord | None:
     return next((record for record in _get_backend().get_all_records() if record.db_id == db_id), None)
 
 
-def _run_web_enrichment_job(job_id: str, db_ids: list[int]) -> None:
+def _run_web_enrichment_job(job_id: str, db_ids: list[int], force: bool = False) -> None:
     conn = _backend_connection()
     try:
         service = _create_web_enrichment_service()
@@ -1269,6 +1271,10 @@ def _run_web_enrichment_job(job_id: str, db_ids: list[int]) -> None:
         for db_id in db_ids:
             record = _record_by_db_id(db_id)
             label = record.arquivo if record else f"DB {db_id}"
+            if not force and find_existing_suggestion(conn, db_id) is not None:
+                done += 1
+                update_job(conn, job_id, done=done, message=f"{label}: reaproveitado (cache)")
+                continue
             update_job(conn, job_id, done=done, message=f"Pesquisando {label}")
             try:
                 if record is None or not record.resolved_path:
@@ -1299,7 +1305,7 @@ def _run_web_enrichment_job(job_id: str, db_ids: list[int]) -> None:
 
 
 @app.post("/api/enrichment/jobs")
-async def create_enrichment_job(db_ids: str = Form(...)):
+async def create_enrichment_job(db_ids: str = Form(...), force: str = Form("")):
     conn = _backend_connection()
     ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
     if not ids:
@@ -1308,10 +1314,14 @@ async def create_enrichment_job(db_ids: str = Form(...)):
     missing = service.missing_config()
     if missing:
         raise HTTPException(400, "Configuração ausente: " + ", ".join(missing))
+    force_flag = force.strip().lower() in {"1", "true", "yes", "on"}
+    cached = 0 if force_flag else count_cached_ids(conn, ids)
     job_id = create_job(conn, ids)
-    thread = threading.Thread(target=_run_web_enrichment_job, args=(job_id, ids), daemon=True)
+    thread = threading.Thread(
+        target=_run_web_enrichment_job, args=(job_id, ids, force_flag), daemon=True
+    )
     thread.start()
-    return {"job_id": job_id, "total": len(ids)}
+    return {"job_id": job_id, "total": len(ids), "cached": cached, "force": force_flag}
 
 
 @app.get("/api/enrichment/jobs/{job_id}")

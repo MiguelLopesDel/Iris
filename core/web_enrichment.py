@@ -10,10 +10,11 @@ import os
 import re
 import sqlite3
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 from urllib import parse, request
 
 
@@ -241,14 +242,49 @@ def _llm_content(data: dict[str, Any]) -> str:
     raise ValueError("Resposta LLM sem texto")
 
 
+@runtime_checkable
+class ReverseImageProvider(Protocol):
+    """Common contract for every reverse-image-search backend.
+
+    A provider receives a *local file path* and returns web sources. How it
+    reaches the search engine (uploading to S3 + REST API, or driving a browser
+    locally) is an internal detail, keeping ``WebEnrichmentService`` decoupled
+    from any specific vendor.
+    """
+
+    provider_name: str
+
+    def missing_config(self) -> list[str]: ...
+
+    def search_path(self, path: str | os.PathLike[str]) -> list[WebSource]: ...
+
+
 class SerpApiLensProvider:
+    """Reverse search via SerpApi's Google Lens engine.
+
+    SerpApi only accepts a *public image URL*, so this provider owns an image
+    publisher (S3 by default) used to upload the local file before searching.
+    """
+
     provider_name = "serpapi_google_lens"
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        publisher: S3TemporaryImagePublisher | None = None,
+    ):
         self.api_key = api_key or os.environ.get("SERPAPI_KEY", "")
+        self.publisher = publisher or S3TemporaryImagePublisher()
 
     def missing_config(self) -> list[str]:
-        return [] if self.api_key else ["SERPAPI_KEY"]
+        missing = list(self.publisher.missing_config())
+        if not self.api_key:
+            missing.append("SERPAPI_KEY")
+        return missing
+
+    def search_path(self, path: str | os.PathLike[str]) -> list[WebSource]:
+        image_url = self.publisher.publish(path)
+        return self.search(image_url)
 
     def search(self, image_url: str) -> list[WebSource]:
         if not self.api_key:
@@ -310,6 +346,141 @@ def normalize_serpapi_sources(payload: dict[str, Any]) -> list[WebSource]:
         seen.add(key)
         deduped.append(source)
     return deduped[:30]
+
+
+def parse_lens_results(items: list[dict[str, Any]], limit: int = 30) -> list[WebSource]:
+    """Turn raw ``{title, url, source_url}`` rows scraped from the Lens page
+    into deduplicated :class:`WebSource` objects.
+
+    Kept pure (no browser) so the parsing can be unit-tested on its own.
+    """
+    sources: list[WebSource] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items or []:
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        source_url = str(item.get("source_url") or url).strip()
+        if not title and not url:
+            continue
+        key = (title.lower(), source_url or url)
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append(
+            WebSource(
+                title=title,
+                url=url,
+                source_url=source_url,
+                domain=_domain(source_url or url),
+                match_type="lens_visual_match",
+                score=0.0,
+            )
+        )
+    return sources[:limit]
+
+
+class PlaywrightLensProvider:
+    """Local reverse search by driving Google Lens in a headless browser.
+
+    No SerpApi key and no S3 upload required: the local file is sent straight
+    into the Lens upload form, exactly like dropping it in the browser. This is
+    fragile by nature -- it depends on Google's DOM, which changes without
+    notice -- and intended for low-volume, personal use.
+
+    The browser interaction is isolated in ``_scrape_lens`` and can be swapped
+    via the ``scraper`` argument, so the provider stays unit-testable.
+    """
+
+    provider_name = "playwright_google_lens"
+    upload_url = "https://lens.google.com/upload"
+
+    def __init__(
+        self,
+        *,
+        headless: bool | None = None,
+        timeout_ms: int | None = None,
+        max_results: int = 30,
+        scraper: Callable[[str | os.PathLike[str]], list[dict[str, Any]]] | None = None,
+    ):
+        env_headless = os.environ.get("IRIS_LENS_HEADLESS", "1").strip().lower()
+        self.headless = headless if headless is not None else env_headless not in {"0", "false", "no"}
+        self.timeout_ms = timeout_ms or int(os.environ.get("IRIS_LENS_TIMEOUT_MS", "45000"))
+        self.max_results = max_results
+        self._scraper = scraper
+
+    def missing_config(self) -> list[str]:
+        if self._scraper is not None:
+            return []
+        try:
+            import playwright.sync_api  # noqa: F401
+        except Exception:
+            return ["playwright (pip install playwright && playwright install chromium)"]
+        return []
+
+    def search_path(self, path: str | os.PathLike[str]) -> list[WebSource]:
+        scraper = self._scraper or self._scrape_lens
+        return parse_lens_results(scraper(path), limit=self.max_results)
+
+    def _scrape_lens(self, path: str | os.PathLike[str]) -> list[dict[str, Any]]:
+        from playwright.sync_api import sync_playwright
+
+        file_path = str(Path(path))
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=self.headless)
+            try:
+                page = browser.new_page()
+                page.set_default_timeout(self.timeout_ms)
+                page.goto(self.upload_url, wait_until="domcontentloaded")
+                self._dismiss_consent(page)
+                page.locator("input[type=file]").first.set_input_files(file_path)
+                page.wait_for_load_state("networkidle")
+                return self._extract_results(page)
+            finally:
+                browser.close()
+
+    @staticmethod
+    def _dismiss_consent(page: Any) -> None:
+        for label in ("Aceitar tudo", "Accept all", "I agree", "Concordo", "Aceito"):
+            try:
+                button = page.get_by_role("button", name=label)
+                if button.count():
+                    button.first.click(timeout=2000)
+                    return
+            except Exception:
+                continue
+
+    @staticmethod
+    def _extract_results(page: Any) -> list[dict[str, Any]]:
+        return page.evaluate(
+            """
+            () => {
+              const out = [];
+              const seen = new Set();
+              for (const a of document.querySelectorAll('a[href^="http"]')) {
+                const url = a.href;
+                if (!url || seen.has(url)) continue;
+                if (/google\\.com|gstatic\\.com|googleusercontent\\.com/.test(url)) continue;
+                const title = (a.innerText || a.getAttribute('aria-label') || '').trim();
+                if (!title) continue;
+                seen.add(url);
+                out.push({ title, url, source_url: url });
+              }
+              return out;
+            }
+            """
+        )
+
+
+def build_reverse_image_provider() -> ReverseImageProvider:
+    """Select the reverse-image provider from ``IRIS_ENRICHMENT_PROVIDER``.
+
+    ``serpapi`` (default) keeps the paid SerpApi + S3 path; ``playwright``
+    (aliases ``lens``/``local``) drives Google Lens locally with no API cost.
+    """
+    kind = os.environ.get("IRIS_ENRICHMENT_PROVIDER", "serpapi").strip().lower()
+    if kind in {"playwright", "lens", "local"}:
+        return PlaywrightLensProvider()
+    return SerpApiLensProvider()
 
 
 class HeuristicDistiller:
@@ -457,20 +628,24 @@ class HybridDistiller:
 class WebEnrichmentService:
     def __init__(
         self,
-        publisher: S3TemporaryImagePublisher | None = None,
-        provider: SerpApiLensProvider | None = None,
+        provider: ReverseImageProvider | None = None,
         distiller: HybridDistiller | HeuristicDistiller | None = None,
+        *,
+        publisher: S3TemporaryImagePublisher | None = None,
     ):
-        self.publisher = publisher or S3TemporaryImagePublisher()
-        self.provider = provider or SerpApiLensProvider()
+        if provider is None:
+            provider = build_reverse_image_provider()
+            # A custom S3 publisher only applies to the SerpApi path.
+            if publisher is not None and isinstance(provider, SerpApiLensProvider):
+                provider.publisher = publisher
+        self.provider = provider
         self.distiller = distiller or HybridDistiller()
 
     def missing_config(self) -> list[str]:
-        return self.publisher.missing_config() + self.provider.missing_config()
+        return list(self.provider.missing_config())
 
     def enrich_path(self, path: str | os.PathLike[str]) -> EnrichmentSuggestion:
-        image_url = self.publisher.publish(path)
-        sources = self.provider.search(image_url)
+        sources = self.provider.search_path(path)
         suggestion = self.distiller.distill(sources)
         return EnrichmentSuggestion(
             provider=self.provider.provider_name,
@@ -534,6 +709,29 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:
     create_web_enrichment_tables(conn)
     row = conn.execute("SELECT * FROM web_enrichment_jobs WHERE id = ?", (job_id,)).fetchone()
     return dict(row) if row else None
+
+
+def find_existing_suggestion(conn: sqlite3.Connection, meme_id: int) -> dict[str, Any] | None:
+    """Return the latest non-rejected suggestion for a meme, if any.
+
+    Used as a cache guard: an image that already has a ``pending`` or
+    ``applied`` suggestion does not need a fresh (paid) web search.
+    """
+    create_web_enrichment_tables(conn)
+    row = conn.execute(
+        """
+        SELECT id, status FROM web_enrichment_suggestions
+        WHERE meme_id = ? AND status IN ('pending', 'applied')
+        ORDER BY id DESC LIMIT 1
+        """,
+        (meme_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def count_cached_ids(conn: sqlite3.Connection, meme_ids: list[int]) -> int:
+    """How many of these memes already have a reusable suggestion."""
+    return sum(1 for meme_id in meme_ids if find_existing_suggestion(conn, meme_id) is not None)
 
 
 def insert_suggestion(

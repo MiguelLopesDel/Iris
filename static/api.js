@@ -245,8 +245,8 @@ export async function trashRecords(dbIds) {
 
 // ── Web enrichment ────────────────────────────────────────────────────────
 
-export async function createEnrichmentJob(dbIds) {
-  return apiPost('/api/enrichment/jobs', { db_ids: dbIds.join(',') });
+export async function createEnrichmentJob(dbIds, force = false) {
+  return apiPost('/api/enrichment/jobs', { db_ids: dbIds.join(','), force: force ? '1' : '' });
 }
 
 export async function getEnrichmentJob(jobId) {
