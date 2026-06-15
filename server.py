@@ -9,6 +9,7 @@ import hashlib
 import mimetypes
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -101,6 +102,16 @@ def _available_databases() -> list[str]:
         (path.as_posix() for path in _DATA_DIR.rglob("*.db")),
         reverse=True,
     )
+
+
+def _open_folder_in_file_manager(path: Path) -> None:
+    if sys.platform.startswith("darwin"):
+        subprocess.Popen(["open", str(path)])
+        return
+    if os.name == "nt":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+        return
+    subprocess.Popen(["xdg-open", str(path)])
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -558,6 +569,26 @@ async def browse_filesystem(path: str = Query("")):
         "parent": str(current.parent),
         "directories": directories,
     }
+
+
+@app.post("/api/open-folder")
+async def open_folder(path: str = Form(...)):
+    target = Path(path).expanduser()
+    try:
+        target = target.resolve()
+    except OSError as exc:
+        raise HTTPException(400, "Caminho inválido") from exc
+    if target.is_file():
+        target = target.parent
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(404, "Pasta não encontrada")
+    try:
+        await run_in_threadpool(_open_folder_in_file_manager, target)
+    except FileNotFoundError as exc:
+        raise HTTPException(500, "Gerenciador de arquivos não encontrado neste ambiente") from exc
+    except OSError as exc:
+        raise HTTPException(500, f"Não foi possível abrir a pasta: {exc}") from exc
+    return {"ok": True, "path": str(target)}
 
 
 @app.get("/api/import/status")

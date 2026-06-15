@@ -8,8 +8,9 @@ import {
   listCollections,
   listConcepts,
   mediaUrl,
+  openFolder,
   trashRecords
-} from './api.js?v=27';
+} from './api.js?v=28';
 import { initGallery, invalidateCache } from './gallery.js?v=27';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
 import { initCollections } from './collections.js?v=27';
@@ -58,6 +59,21 @@ document.getElementById('image-lightbox-close').addEventListener('click', closeI
 lightbox.addEventListener('click', function(event) {
   if (event.target === lightbox || event.target.classList.contains('image-lightbox-stage')) {
     closeImageLightbox();
+  }
+});
+
+document.addEventListener('click', async function(event) {
+  var button = event.target.closest('button[data-open-folder]');
+  if (!button) return;
+  event.preventDefault();
+  button.disabled = true;
+  try {
+    await openFolder(button.dataset.openFolder);
+    toast('Pasta aberta', 'success');
+  } catch (err) {
+    toast('Erro ao abrir pasta: ' + err.message, 'error');
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -203,9 +219,8 @@ window.addEventListener('iris:detail', async function(e) {
 
     html += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);">';
     if (hasFile) {
-      var folder = r.resolved_path.replace(/\/[^/]+$/, '');
-      html += '<a href="file://' + folder + '" class="btn" style="font-size:12px;padding:6px 12px;">📁 Abrir pasta</a>';
-      html += '<a href="/media/' + r.resolved_path + '" class="btn" style="font-size:12px;padding:6px 12px;" target="_blank">📄 Abrir arquivo</a>';
+      html += '<button type="button" class="btn" data-open-folder="' + escapeHtml(r.resolved_path) + '" style="font-size:12px;padding:6px 12px;">📁 Abrir pasta</button>';
+      html += '<a href="' + escapeHtml(mediaUrl(r.resolved_path)) + '" class="btn" style="font-size:12px;padding:6px 12px;" target="_blank">📄 Abrir arquivo</a>';
     }
     html += '<button class="btn" style="font-size:12px;padding:6px 12px;" onclick="window.dispatchEvent(new CustomEvent(\'iris:similar\',{detail:{index:' + index + '}}))">🔍 Similares</button>';
     html += '<button class="btn" style="font-size:12px;padding:6px 12px;" onclick="this.closest(\'#detail-panel\').remove()">✕ Fechar</button>';

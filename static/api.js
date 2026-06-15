@@ -51,6 +51,10 @@ export async function browseFilesystem(path = '') {
   return apiGet('/api/filesystem', { path });
 }
 
+export async function openFolder(path) {
+  return apiPost('/api/open-folder', { path });
+}
+
 // ── Records ───────────────────────────────────────────────────────────────
 
 export async function fetchRecords(page = 1, perPage = 24, sortBy = 'importacao', sortAsc = 0, mediaType = 'all', collectionIds = '', conceptIds = '') {

@@ -113,6 +113,24 @@ class TestSystemEndpoints:
         assert r.status_code == 200
         assert r.json()["directories"][0]["name"] == "child"
 
+    def test_open_folder_uses_file_parent(self, client, tmp_path, monkeypatch):
+        import server
+
+        opened = []
+
+        def fake_open(path):
+            opened.append(path)
+
+        monkeypatch.setattr(server, "_open_folder_in_file_manager", fake_open)
+        media_file = tmp_path / "image.png"
+        media_file.write_bytes(b"fake")
+
+        r = client.post("/api/open-folder", data={"path": str(media_file)})
+
+        assert r.status_code == 200
+        assert r.json()["path"] == str(tmp_path)
+        assert opened == [tmp_path]
+
 
 class TestRecordsValidation:
     def test_per_page_minimum(self, client):
