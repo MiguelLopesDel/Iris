@@ -1,6 +1,6 @@
 /* ── Iris Duplicates module ───────────────────────────────────────────────── */
 
-import { escapeHtml, fetchDuplicates } from './api.js?v=26';
+import { escapeHtml, fetchDuplicates, mediaUrl } from './api.js?v=27';
 
 var viewMode = 'groups'; // 'groups' | 'flat'
 
@@ -127,9 +127,7 @@ function installThumbnailFallbacks(container) {
 }
 
 function mediaUrlFromPath(path) {
-  if (!path) return '';
-  var normalized = String(path).replace(/^\/+/, '');
-  return '/media/' + normalized.split('/').map(encodeURIComponent).join('/');
+  return mediaUrl(path);
 }
 
 function renderGroups(groups) {
@@ -162,7 +160,10 @@ function renderItem(item) {
       ? ' data-fallback-src="' + escapeHtml(originalUrl) + '"'
       : '';
     thumbHtml = '<img src="' + escapeHtml(imageUrl) + '" loading="lazy" data-duplicate-thumb'
-      + fallbackAttr + ' style="width:100%;height:100%;object-fit:cover;">';
+      + fallbackAttr
+      + ' data-lightbox-src="' + escapeHtml(originalUrl) + '"'
+      + ' data-lightbox-title="' + escapeHtml(item.arquivo || '') + '"'
+      + ' style="width:100%;height:100%;object-fit:cover;">';
   } else {
     thumbHtml = '<div class="duplicate-thumb-fallback">Imagem indisponivel</div>';
   }

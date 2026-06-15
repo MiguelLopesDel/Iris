@@ -2,7 +2,7 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, searchImage, searchText } from './api.js?v=26';
+import { debounce, escapeHtml, fetchRecords, mediaUrl, searchImage, searchText } from './api.js?v=27';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -31,15 +31,33 @@ function getFilterParams() {
 // ── Initialization ────────────────────────────────────────────────────────
 
 export function initGallery() {
-  perPage = parseInt(document.getElementById('gallery-per-page').value) || 24;
+  perPage = readPerPage();
   sortBy = document.getElementById('gallery-sort').value;
   sortAsc = document.getElementById('gallery-sort-asc').checked ? 1 : 0;
 
   document.getElementById('gallery-sort').onchange = () => { sortBy = document.getElementById('gallery-sort').value; invalidateCache(); };
   document.getElementById('gallery-sort-asc').onchange = () => { sortAsc = document.getElementById('gallery-sort-asc').checked ? 1 : 0; invalidateCache(); };
-  document.getElementById('gallery-per-page').onchange = () => { perPage = parseInt(document.getElementById('gallery-per-page').value); invalidateCache(); };
+  document.getElementById('gallery-per-page').onchange = () => {
+    syncCustomPerPage();
+    applyPerPage();
+  };
+  document.getElementById('gallery-per-page-custom').onchange = applyPerPage;
+  document.getElementById('gallery-per-page-custom').onkeydown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applyPerPage();
+    }
+  };
   document.getElementById('gallery-prev').onclick = () => goToPage(currentPage - 1);
   document.getElementById('gallery-next').onclick = () => goToPage(currentPage + 1);
+  document.getElementById('gallery-page-go').onclick = jumpToTypedPage;
+  document.getElementById('gallery-page-jump').onkeydown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      jumpToTypedPage();
+    }
+  };
+  syncCustomPerPage();
   const searchInput = document.getElementById('gallery-search');
   const imageInput = document.getElementById('gallery-image-search');
   const clearButton = document.getElementById('gallery-clear-search');
@@ -59,6 +77,29 @@ export function initGallery() {
   }
 
   if (!searchActive) loadPage(currentPage);
+}
+
+function syncCustomPerPage() {
+  const select = document.getElementById('gallery-per-page');
+  const customInput = document.getElementById('gallery-per-page-custom');
+  const custom = select.value === 'custom';
+  customInput.hidden = !custom;
+  if (custom) customInput.focus();
+}
+
+function readPerPage() {
+  const select = document.getElementById('gallery-per-page');
+  const customInput = document.getElementById('gallery-per-page-custom');
+  const rawValue = select.value === 'custom' ? customInput.value : select.value;
+  return Math.min(500, Math.max(12, parseInt(rawValue, 10) || 24));
+}
+
+function applyPerPage() {
+  perPage = readPerPage();
+  if (document.getElementById('gallery-per-page').value === 'custom') {
+    document.getElementById('gallery-per-page-custom').value = perPage;
+  }
+  invalidateCache();
 }
 
 function invalidateCache() {
@@ -118,6 +159,13 @@ function goToPage(page) {
   loadPage(page);
 }
 
+function jumpToTypedPage() {
+  const input = document.getElementById('gallery-page-jump');
+  const page = Math.min(totalPages, Math.max(1, parseInt(input.value, 10) || 1));
+  input.value = page;
+  goToPage(page);
+}
+
 // ── Render ────────────────────────────────────────────────────────────────
 
 function renderGrid(records) {
@@ -154,7 +202,11 @@ function renderCard(record) {
     </div>`;
   }
 
-  const imgTag = `<img src="${thumb}" loading="lazy" alt="${name}">`;
+  const fullSrc = record.media_type === 'image' ? mediaUrl(record.resolved_path) : '';
+  const lightboxAttrs = fullSrc
+    ? ` data-lightbox-src="${escapeHtml(fullSrc)}" data-lightbox-title="${escapeHtml(record.arquivo)}"`
+    : '';
+  const imgTag = `<img src="${thumb}" loading="lazy" alt="${name}"${lightboxAttrs}>`;
   const playBtn = record.media_type === 'video'
     ? `<button class="play-overlay" data-index="${record.index}" data-path="${escapeHtml(record.resolved_path || '')}">▶</button>`
     : '';
@@ -261,6 +313,9 @@ function updatePaginationUI() {
     `Pag ${currentPage} / ${totalPages}`;
   document.getElementById('gallery-prev').disabled = currentPage <= 1;
   document.getElementById('gallery-next').disabled = currentPage >= totalPages;
+  const pageInput = document.getElementById('gallery-page-jump');
+  pageInput.max = totalPages;
+  pageInput.value = currentPage;
 }
 
 // ── Lazy image loading ───────────────────────────────────────────────────
@@ -337,6 +392,7 @@ document.addEventListener('keydown', (e) => {
   // Only when gallery tab is active
   const galleryPane = document.getElementById('tab-gallery');
   if (!galleryPane.classList.contains('active')) return;
+  if (e.target.matches('input, textarea, select, [contenteditable="true"]')) return;
 
   if (e.key === 'ArrowLeft') { e.preventDefault(); goToPage(currentPage - 1); }
   if (e.key === 'ArrowRight') { e.preventDefault(); goToPage(currentPage + 1); }

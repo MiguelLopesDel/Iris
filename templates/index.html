@@ -205,7 +205,18 @@
             <option value="36">36</option>
             <option value="48">48</option>
             <option value="96">96</option>
+            <option value="custom">Personalizado</option>
           </select>
+          <input id="gallery-per-page-custom" class="gallery-number-input" type="number"
+                 min="12" max="500" step="1" value="120" aria-label="Itens personalizados por página" hidden>
+        </div>
+        <div class="control-field control-field-page">
+          <label for="gallery-page-jump">Página</label>
+          <div class="page-jump">
+            <input id="gallery-page-jump" class="gallery-number-input" type="number"
+                   min="1" step="1" value="1" inputmode="numeric">
+            <button id="gallery-page-go" class="btn btn-subtle" type="button">Ir</button>
+          </div>
         </div>
         <div class="pagination-actions">
           <button id="gallery-prev" class="icon-btn" disabled aria-label="Página anterior">←</button>
@@ -415,9 +426,20 @@
   </button>
 </div>
 
+<div id="image-lightbox" class="image-lightbox" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="image-lightbox-toolbar">
+    <span id="image-lightbox-title"></span>
+    <a id="image-lightbox-original" class="btn btn-subtle" target="_blank" rel="noopener">Abrir original</a>
+    <button id="image-lightbox-close" class="icon-btn" type="button" aria-label="Fechar imagem">×</button>
+  </div>
+  <div class="image-lightbox-stage">
+    <img id="image-lightbox-image" alt="">
+  </div>
+</div>
+
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=26"></script>
+<script type="module" src="/static/app.js?v=27"></script>
 
 </body>
 </html>

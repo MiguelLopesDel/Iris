@@ -254,3 +254,9 @@ export function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+export function mediaUrl(path) {
+  if (!path) return '';
+  const normalized = String(path).replace(/^\/+/, '');
+  return '/media/' + normalized.split('/').map(encodeURIComponent).join('/');
+}

@@ -774,6 +774,10 @@ input[type="range"] {
   backdrop-filter: blur(16px);
 }
 
+#gallery-controls {
+  flex-wrap: wrap;
+}
+
 .control-field {
   min-width: 170px;
 }
@@ -796,6 +800,34 @@ input[type="range"] {
   min-height: 36px;
 }
 
+.control-field-page {
+  min-width: 126px;
+}
+
+.gallery-number-input {
+  min-width: 0;
+  height: 36px;
+}
+
+#gallery-per-page-custom {
+  width: 108px;
+  margin-top: 6px;
+}
+
+.page-jump {
+  display: flex;
+  gap: 6px;
+}
+
+.page-jump input {
+  width: 72px;
+}
+
+.page-jump .btn {
+  min-height: 36px;
+  padding-inline: 11px;
+}
+
 .sort-direction {
   display: inline-flex;
   align-items: center;
@@ -809,6 +841,71 @@ input[type="range"] {
   display: flex;
   gap: 6px;
   margin-left: auto;
+}
+
+/* Full-screen image viewer */
+
+body.lightbox-open {
+  overflow: hidden;
+}
+
+img[data-lightbox-src] {
+  cursor: zoom-in;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  visibility: hidden;
+  flex-direction: column;
+  background: rgba(5, 7, 11, 0.96);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ease), visibility var(--ease);
+}
+
+.image-lightbox.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.image-lightbox-toolbar {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(10, 13, 19, 0.9);
+}
+
+#image-lightbox-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-lightbox-stage {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.image-lightbox-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: 0 18px 80px rgba(0, 0, 0, 0.45);
 }
 
 /* Media grid and cards */
@@ -1758,8 +1855,30 @@ input[type="range"] {
   }
 
   .control-field,
-  .control-field-small {
+  .control-field-small,
+  .control-field-page {
     min-width: 0;
+  }
+
+  #gallery-per-page-custom,
+  .page-jump input {
+    width: 100%;
+  }
+
+  .page-jump input {
+    min-width: 0;
+  }
+
+  .image-lightbox-toolbar {
+    padding-inline: 10px;
+  }
+
+  #image-lightbox-title {
+    display: none;
+  }
+
+  .image-lightbox-stage {
+    padding: 8px;
   }
 
   .media-grid {

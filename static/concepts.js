@@ -14,7 +14,8 @@ import {
   listConcepts,
   rejectConceptMedia,
   updateConcept,
-} from './api.js?v=26';
+  mediaUrl,
+} from './api.js?v=27';
 
 var wizardStep = 0;
 var wizardData = {};
@@ -264,7 +265,10 @@ window.__runAutoMatch = async function(conceptId) {
     var html = '<p style="font-size:11px;margin-bottom:4px;">' + data.matches.length + ' candidato(s)</p>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;">';
     data.matches.forEach(function(m) {
-      var thumb = m.thumbnail_url ? '<img src="' + escapeHtml(m.thumbnail_url) + '" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">' : '<div style="aspect-ratio:1;background:var(--bg-card);border-radius:4px;">🖼️</div>';
+      var lightboxAttrs = m.media_type === 'image'
+        ? ' data-lightbox-src="' + escapeHtml(mediaUrl(m.resolved_path)) + '" data-lightbox-title="' + escapeHtml(m.arquivo || '') + '"'
+        : '';
+      var thumb = m.thumbnail_url ? '<img src="' + escapeHtml(m.thumbnail_url) + '" loading="lazy"' + lightboxAttrs + ' style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">' : '<div style="aspect-ratio:1;background:var(--bg-card);border-radius:4px;">🖼️</div>';
       html += '<div style="font-size:10px;text-align:center;">' + thumb
         + '<div>' + (m.score != null ? m.score.toFixed(3) : '?') + '</div>'
         + '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml((m.arquivo || '').slice(0, 20)) + '</div>'
@@ -310,7 +314,10 @@ window.__viewAssoc = async function(conceptId, page) {
     var html = '<p style="font-size:11px;">' + data.total + ' associado(s) · página ' + data.page + '/' + data.total_pages + '</p>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;">';
     data.records.forEach(function(m) {
-      var thumb = m.thumbnail_url ? '<img src="' + escapeHtml(m.thumbnail_url) + '" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">' : '<div style="aspect-ratio:1;background:var(--bg-card);border-radius:4px;">🖼️</div>';
+      var lightboxAttrs = m.media_type === 'image'
+        ? ' data-lightbox-src="' + escapeHtml(mediaUrl(m.resolved_path)) + '" data-lightbox-title="' + escapeHtml(m.arquivo || '') + '"'
+        : '';
+      var thumb = m.thumbnail_url ? '<img src="' + escapeHtml(m.thumbnail_url) + '" loading="lazy"' + lightboxAttrs + ' style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">' : '<div style="aspect-ratio:1;background:var(--bg-card);border-radius:4px;">🖼️</div>';
       html += '<div style="font-size:10px;text-align:center;">' + thumb
         + '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml((m.arquivo || '').slice(0, 20)) + '</div>'
         + '<label style="font-size:9px;"><input type="checkbox" class="assoc-reject" data-dbid="' + m.db_id + '"> Remover</label></div>';

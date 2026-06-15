@@ -7,16 +7,59 @@ import {
   fetchInfo,
   listCollections,
   listConcepts,
+  mediaUrl,
   trashRecords
-} from './api.js?v=26';
-import { initGallery, invalidateCache } from './gallery.js?v=26';
-import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=26';
-import { initCollections } from './collections.js?v=26';
-import { initConcepts } from './concepts.js?v=26';
-import { initDuplicates } from './duplicates.js?v=26';
-import { initSystem } from './system.js?v=26';
+} from './api.js?v=27';
+import { initGallery, invalidateCache } from './gallery.js?v=27';
+import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
+import { initCollections } from './collections.js?v=27';
+import { initConcepts } from './concepts.js?v=27';
+import { initDuplicates } from './duplicates.js?v=27';
+import { initSystem } from './system.js?v=27';
 
 window.__irisSelection = window.__irisSelection || new Map();
+
+// ── Full-screen image viewer ─────────────────────────────────────────────
+
+var lightbox = document.getElementById('image-lightbox');
+var lightboxImage = document.getElementById('image-lightbox-image');
+var lightboxTitle = document.getElementById('image-lightbox-title');
+var lightboxOriginal = document.getElementById('image-lightbox-original');
+
+function openImageLightbox(src, title) {
+  if (!src) return;
+  lightboxImage.src = src;
+  lightboxImage.alt = title || 'Imagem ampliada';
+  lightboxTitle.textContent = title || '';
+  lightboxOriginal.href = src;
+  lightbox.classList.add('open');
+  lightbox.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('lightbox-open');
+  document.getElementById('image-lightbox-close').focus();
+}
+
+function closeImageLightbox() {
+  lightbox.classList.remove('open');
+  lightbox.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('lightbox-open');
+  lightboxImage.removeAttribute('src');
+}
+
+document.addEventListener('click', function(event) {
+  var image = event.target.closest('img[data-lightbox-src]');
+  if (image) {
+    event.preventDefault();
+    event.stopPropagation();
+    openImageLightbox(image.dataset.lightboxSrc, image.dataset.lightboxTitle || image.alt);
+  }
+});
+
+document.getElementById('image-lightbox-close').addEventListener('click', closeImageLightbox);
+lightbox.addEventListener('click', function(event) {
+  if (event.target === lightbox || event.target.classList.contains('image-lightbox-stage')) {
+    closeImageLightbox();
+  }
+});
 
 // ── Tab routing ──────────────────────────────────────────────────────────
 
@@ -121,7 +164,12 @@ window.addEventListener('iris:detail', async function(e) {
     (r.concepts || []).forEach(function(c) { if (c.confirmed) inConcIds[c.id] = true; });
 
     var html = '<div style="display:flex;gap:16px;align-items:start;flex-wrap:wrap;">';
-    if (r.thumbnail_url) html += '<img src="' + escapeHtml(r.thumbnail_url) + '" style="width:260px;max-width:100%;border-radius:8px;flex-shrink:0;">';
+    if (r.thumbnail_url) {
+      var detailLightbox = !isVideo && hasFile
+        ? ' data-lightbox-src="' + escapeHtml(mediaUrl(r.resolved_path)) + '" data-lightbox-title="' + escapeHtml(r.arquivo || '') + '"'
+        : '';
+      html += '<img src="' + escapeHtml(r.thumbnail_url) + '"' + detailLightbox + ' style="width:260px;max-width:100%;border-radius:8px;flex-shrink:0;">';
+    }
     html += '<div style="flex:1;min-width:280px;">';
     html += '<h3 style="word-break:break-all;margin-bottom:6px;">' + escapeHtml(r.arquivo || '(sem nome)') + '</h3>';
     if (hasFile) html += '<pre style="font-size:11px;max-width:100%;overflow-x:auto;background:var(--bg-primary);padding:6px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(r.resolved_path) + '</pre>';
@@ -395,7 +443,12 @@ sidebarScrim.addEventListener('click', function() {
 });
 
 document.addEventListener('keydown', function(event) {
-  if (event.key === 'Escape') setSidebarOpen(false);
+  if (event.key !== 'Escape') return;
+  if (lightbox.classList.contains('open')) {
+    closeImageLightbox();
+    return;
+  }
+  setSidebarOpen(false);
 });
 
 // ── Video volume sync ───────────────────────────────────────────────────

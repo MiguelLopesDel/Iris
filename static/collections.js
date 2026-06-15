@@ -1,6 +1,6 @@
 /* ── Iris Collections module ──────────────────────────────────────────────── */
 
-import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml } from './api.js?v=26';
+import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml, mediaUrl } from './api.js?v=27';
 
 var currentColId = null;
 
@@ -71,7 +71,9 @@ window.__viewMembers = async function(colId) {
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
     data.records.forEach(function(r) {
       var thumb = r.thumbnail_url
-        ? '<img src="' + escapeHtml(r.thumbnail_url) + '" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">'
+        ? '<img src="' + escapeHtml(r.thumbnail_url) + '" loading="lazy"'
+          + (r.media_type === 'image' ? ' data-lightbox-src="' + escapeHtml(mediaUrl(r.resolved_path)) + '" data-lightbox-title="' + escapeHtml(r.arquivo || '') + '"' : '')
+          + ' style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">'
         : '<div style="aspect-ratio:1;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:24px;">' + (r.media_type === 'video' ? '🎬' : '🖼️') + '</div>';
       html += '<div style="font-size:10px;text-align:center;">'
         + thumb

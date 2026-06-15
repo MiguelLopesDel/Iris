@@ -1,6 +1,6 @@
 /* ── Iris Search module ──────────────────────────────────────────────────── */
 
-import { searchText, searchImage, searchSimilar, searchRandom, debounce, escapeHtml } from './api.js?v=26';
+import { searchText, searchImage, searchSimilar, searchRandom, debounce, escapeHtml, mediaUrl } from './api.js?v=27';
 
 // ── State ────────────────────────────────────────────────────────────────
 let lastQuery = '';
@@ -178,7 +178,11 @@ function renderResultCard(r) {
     </div>`;
   }
 
-  const imgTag = `<img src="${thumb}" loading="lazy" alt="${name}">`;
+  const fullSrc = r.media_type === 'image' ? mediaUrl(r.resolved_path) : '';
+  const lightboxAttrs = fullSrc
+    ? ` data-lightbox-src="${escapeHtml(fullSrc)}" data-lightbox-title="${escapeHtml(r.arquivo)}"`
+    : '';
+  const imgTag = `<img src="${thumb}" loading="lazy" alt="${name}"${lightboxAttrs}>`;
   const playBtn = r.media_type === 'video'
     ? `<button class="play-overlay" data-index="${r.index}" data-path="${escapeHtml(r.resolved_path || '')}">▶</button>`
     : '';
