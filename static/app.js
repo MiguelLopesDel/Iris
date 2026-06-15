@@ -1,18 +1,59 @@
 /* ── Iris App controller ───────────────────────────────────────────────────
    Tab routing, sidebar filters, selection state, floating panel. */
 
-import { fetchInfo, listCollections, listConcepts, trashRecords } from './api.js';
-import { initGallery, invalidateCache } from './gallery.js';
-import { initSearch, doSimilarSearch, doRandomSearch } from './search.js';
-import { initCollections } from './collections.js';
-import { initConcepts } from './concepts.js';
-import { initDuplicates } from './duplicates.js';
+import {
+  addCollectionMembers,
+  escapeHtml,
+  fetchInfo,
+  listCollections,
+  listConcepts,
+  trashRecords
+} from './api.js?v=24';
+import { initGallery, invalidateCache } from './gallery.js?v=24';
+import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=24';
+import { initCollections } from './collections.js?v=24';
+import { initConcepts } from './concepts.js?v=24';
+import { initDuplicates } from './duplicates.js?v=24';
+import { initSystem } from './system.js?v=24';
 
 window.__irisSelection = window.__irisSelection || new Map();
 
 // ── Tab routing ──────────────────────────────────────────────────────────
 
 function switchTab(name) {
+  var viewMeta = {
+    gallery: {
+      kicker: 'Biblioteca',
+      title: 'Galeria',
+      description: 'Navegue por toda a sua colecao visual.'
+    },
+    search: {
+      kicker: 'Descoberta',
+      title: 'Busca multimodal',
+      description: 'Encontre midias por texto, imagem ou similaridade.'
+    },
+    collections: {
+      kicker: 'Organizacao',
+      title: 'Colecoes',
+      description: 'Agrupe e mantenha seus conjuntos importantes por perto.'
+    },
+    concepts: {
+      kicker: 'Semantica',
+      title: 'Conceitos',
+      description: 'Ensine entidades e contextos recorrentes ao Iris.'
+    },
+    duplicates: {
+      kicker: 'Manutencao',
+      title: 'Duplicatas',
+      description: 'Revise arquivos visualmente proximos com seguranca.'
+    },
+    system: {
+      kicker: 'Operacao',
+      title: 'Sistema',
+      description: 'Configure, importe, indexe e proteja a biblioteca.'
+    }
+  };
+  var meta = viewMeta[name] || viewMeta.gallery;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   var btn = document.querySelector('[data-tab="' + name + '"]');
   if (btn) btn.classList.add('active');
@@ -25,6 +66,12 @@ function switchTab(name) {
   if (name === 'collections') initCollections();
   if (name === 'concepts') initConcepts();
   if (name === 'duplicates') initDuplicates();
+  if (name === 'system') initSystem();
+  document.getElementById('view-kicker').textContent = meta.kicker;
+  document.getElementById('view-title').textContent = meta.title;
+  document.getElementById('view-description').textContent = meta.description;
+  document.body.classList.remove('sidebar-open');
+  document.getElementById('sidebar-toggle').setAttribute('aria-expanded', 'false');
   window.location.hash = name;
 }
 
@@ -37,15 +84,28 @@ window.addEventListener('iris:similar', function(e) {
 
 window.addEventListener('iris:detail', async function(e) {
   var index = e.detail.index;
+
+  // Toggle: if detail panel already open for the same item, close it
+  var old = document.getElementById('detail-panel');
+  if (old) {
+    var currentIndex = parseInt(old.dataset.detailIndex);
+    if (currentIndex === index) {
+      old.remove();
+      return;
+    }
+    old.remove();
+  }
+
   var card = document.querySelector('.media-card[data-index="' + index + '"]');
   if (!card) return;
-  var old = document.getElementById('detail-panel');
-  if (old) old.remove();
 
   var panel = document.createElement('div');
   panel.id = 'detail-panel';
   panel.className = 'detail-panel';
+  panel.dataset.detailIndex = index;
   panel.innerHTML = '<p style="color:var(--text-muted);">Carregando...</p>';
+
+  // Insert after the card; CSS grid-column: 1/-1 makes it span full width
   card.after(panel);
 
   try {
@@ -60,38 +120,47 @@ window.addEventListener('iris:detail', async function(e) {
     var inConcIds = {};
     (r.concepts || []).forEach(function(c) { if (c.confirmed) inConcIds[c.id] = true; });
 
-    var html = '<div style="display:flex;gap:12px;align-items:start;">';
-    if (r.thumbnail_url) html += '<img src="' + r.thumbnail_url + '" style="width:200px;border-radius:8px;">';
-    html += '<div style="flex:1;min-width:0;">';
-    html += '<h4 style="word-break:break-all;">' + (r.arquivo || '(sem nome)') + '</h4>';
-    if (hasFile) html += '<pre style="font-size:10px;max-width:100%;overflow-x:auto;background:var(--bg-primary);padding:4px;border-radius:4px;">' + r.resolved_path + '</pre>';
-    html += '<p style="font-size:11px;color:var(--text-muted);">Indice: ' + index + ' · DB ID: ' + r.db_id + ' · ' + (isVideo ? '🎬 Video' : '🖼️ Imagem') + ' · ' + (r.file_size ? Math.round(r.file_size/1024) + 'KB' : '?') + '</p>';
+    var html = '<div style="display:flex;gap:16px;align-items:start;flex-wrap:wrap;">';
+    if (r.thumbnail_url) html += '<img src="' + escapeHtml(r.thumbnail_url) + '" style="width:260px;max-width:100%;border-radius:8px;flex-shrink:0;">';
+    html += '<div style="flex:1;min-width:280px;">';
+    html += '<h3 style="word-break:break-all;margin-bottom:6px;">' + escapeHtml(r.arquivo || '(sem nome)') + '</h3>';
+    if (hasFile) html += '<pre style="font-size:11px;max-width:100%;overflow-x:auto;background:var(--bg-primary);padding:6px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(r.resolved_path) + '</pre>';
+    html += '<p style="font-size:12px;color:var(--text-muted);margin-top:4px;">Indice: ' + index + ' · DB ID: ' + r.db_id + ' · ' + (isVideo ? '🎬 Video' : '🖼️ Imagem') + ' · ' + (r.file_size != null ? Math.round(r.file_size/1024) + 'KB' : '?') + '</p>';
     html += '</div></div>';
 
-    if (r.texto_extraido) html += '<div style="margin-top:8px;"><strong style="font-size:11px;">Texto extraido:</strong><pre style="font-size:10px;max-height:80px;overflow-y:auto;">' + r.texto_extraido + '</pre></div>';
-    if (r.descricao_ia) html += '<div style="margin-top:4px;"><strong style="font-size:11px;">Descricao IA:</strong><pre style="font-size:10px;max-height:60px;overflow-y:auto;">' + r.descricao_ia + '</pre></div>';
-    if (r.tags) html += '<div style="margin-top:4px;"><strong style="font-size:11px;">Tags:</strong> <span style="font-size:11px;">' + r.tags + '</span></div>';
+    // Metadata rows — use a two-column layout for better readability
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;">';
 
-    html += '<div style="margin-top:8px;font-size:11px;"><strong>Colecoes:</strong><div id="detail-cols" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;">Carregando...</div></div>';
-    html += '<div style="margin-top:8px;font-size:11px;"><strong>Conceitos:</strong><div id="detail-concs" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;">Carregando...</div></div>';
+    if (r.texto_extraido) {
+      html += '<div><strong style="font-size:12px;">📝 Texto extraido:</strong><pre style="font-size:11px;max-height:120px;overflow-y:auto;margin-top:4px;line-height:1.5;">' + escapeHtml(r.texto_extraido) + '</pre></div>';
+    }
+    if (r.descricao_ia) {
+      html += '<div><strong style="font-size:12px;">🤖 Descricao IA:</strong><pre style="font-size:11px;max-height:120px;overflow-y:auto;margin-top:4px;line-height:1.5;">' + escapeHtml(r.descricao_ia) + '</pre></div>';
+    }
+    html += '</div>';
+
+    if (r.tags) html += '<div style="margin-top:8px;"><strong style="font-size:12px;">🏷 Tags:</strong> <span style="font-size:12px;">' + escapeHtml(r.tags) + '</span></div>';
 
     if (r.style || r.source_work || r.context || r.humor) {
-      html += '<div style="margin-top:8px;font-size:11px;color:var(--text-secondary);">';
-      if (r.style) html += 'Estilo: ' + r.style + ' · ';
-      if (r.source_work) html += 'Obra: ' + r.source_work + ' · ';
-      if (r.context) html += 'Contexto: ' + r.context + ' · ';
-      if (r.humor) html += 'Humor: ' + r.humor;
+      html += '<div style="margin-top:8px;font-size:12px;color:var(--text-secondary);display:flex;flex-wrap:wrap;gap:4px 16px;">';
+      if (r.style) html += '<span>🎨 Estilo: <strong>' + escapeHtml(r.style) + '</strong></span>';
+      if (r.source_work) html += '<span>📖 Obra: <strong>' + escapeHtml(r.source_work) + '</strong></span>';
+      if (r.context) html += '<span>🌍 Contexto: <strong>' + escapeHtml(r.context) + '</strong></span>';
+      if (r.humor) html += '<span>😂 Humor: <strong>' + escapeHtml(r.humor) + '</strong></span>';
       html += '</div>';
     }
 
-    html += '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">';
+    html += '<div style="margin-top:10px;font-size:12px;"><strong>📁 Colecoes:</strong><div id="detail-cols" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">Carregando...</div></div>';
+    html += '<div style="margin-top:8px;font-size:12px;"><strong>🏷 Conceitos:</strong><div id="detail-concs" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">Carregando...</div></div>';
+
+    html += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);">';
     if (hasFile) {
       var folder = r.resolved_path.replace(/\/[^/]+$/, '');
-      html += '<a href="file://' + folder + '" class="btn" style="font-size:11px;">📁 Abrir pasta</a>';
-      html += '<a href="/media/' + r.resolved_path + '" class="btn" style="font-size:11px;" target="_blank">📄 Abrir arquivo</a>';
+      html += '<a href="file://' + folder + '" class="btn" style="font-size:12px;padding:6px 12px;">📁 Abrir pasta</a>';
+      html += '<a href="/media/' + r.resolved_path + '" class="btn" style="font-size:12px;padding:6px 12px;" target="_blank">📄 Abrir arquivo</a>';
     }
-    html += '<button class="btn" style="font-size:11px;" onclick="window.dispatchEvent(new CustomEvent(\'iris:similar\',{detail:{index:' + index + '}}))">🔍 Similares</button>';
-    html += '<button class="btn" style="font-size:11px;" onclick="this.closest(\'#detail-panel\').remove()">Fechar</button>';
+    html += '<button class="btn" style="font-size:12px;padding:6px 12px;" onclick="window.dispatchEvent(new CustomEvent(\'iris:similar\',{detail:{index:' + index + '}}))">🔍 Similares</button>';
+    html += '<button class="btn" style="font-size:12px;padding:6px 12px;" onclick="this.closest(\'#detail-panel\').remove()">✕ Fechar</button>';
     html += '</div>';
 
     panel.innerHTML = html;
@@ -105,21 +174,30 @@ window.addEventListener('iris:detail', async function(e) {
       if (colsEl && colData.collections) {
         colsEl.innerHTML = colData.collections.map(function(c) {
           var inCol = inColIds[c.id];
-          return '<button class="btn" style="font-size:10px;padding:2px 6px;" onclick="window.__toggleCollection(' + c.id + ',' + r.db_id + ',' + (!inCol) + ',' + index + ')">' + (inCol ? '[x]' : '[ ]') + ' ' + c.name + '</button>';
-        }).join('') || '(nenhuma)';
+          return '<button class="btn" style="font-size:11px;padding:4px 10px;" onclick="window.__toggleCollection(' + c.id + ',' + r.db_id + ',' + (!inCol) + ',' + index + ')">' + (inCol ? '✓' : '＋') + ' ' + escapeHtml(c.name) + '</button>';
+        }).join('') || '<span style="color:var(--text-muted);font-size:11px;">(nenhuma)</span>';
       }
 
       var concsEl = document.getElementById('detail-concs');
       if (concsEl && concData.concepts) {
         concsEl.innerHTML = concData.concepts.map(function(c) {
           var inConc = inConcIds[c.id];
-          return '<button class="btn" style="font-size:10px;padding:2px 6px;" onclick="window.__toggleConcept(' + c.id + ',' + r.db_id + ',' + (!inConc) + ',' + index + ')">' + (inConc ? '[x]' : '[ ]') + ' ' + c.name + '</button>';
-        }).join('') || '(nenhum)';
+          return '<button class="btn" style="font-size:11px;padding:4px 10px;" onclick="window.__toggleConcept(' + c.id + ',' + r.db_id + ',' + (!inConc) + ',' + index + ')">' + (inConc ? '✓' : '＋') + ' ' + escapeHtml(c.name) + '</button>';
+        }).join('') || '<span style="color:var(--text-muted);font-size:11px;">(nenhum)</span>';
       }
     } catch(e) { console.warn('toggle load failed', e); }
 
   } catch (err) {
-    panel.innerHTML = '<p style="color:var(--accent);">Erro: ' + err.message + '</p><button class="btn" onclick="this.parentElement.remove()">Fechar</button>';
+    panel.textContent = '';
+    var errP = document.createElement('p');
+    errP.style.color = 'var(--accent)';
+    errP.textContent = 'Erro: ' + err.message;
+    panel.appendChild(errP);
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'btn';
+    closeBtn.textContent = 'Fechar';
+    closeBtn.onclick = function() { panel.remove(); };
+    panel.appendChild(closeBtn);
   }
 });
 
@@ -128,29 +206,34 @@ window.addEventListener('iris:detail', async function(e) {
 async function buildSidebar() {
   try {
     var info = await fetchInfo();
-    document.getElementById('status-badge').textContent = info.total_records + ' itens';
+    document.getElementById('status-badge').innerHTML =
+      '<i></i>' + info.total_records + ' itens';
 
     var colData = await listCollections();
     var colList = document.getElementById('collections-list');
     if (colData.collections && colData.collections.length) {
       colList.innerHTML = colData.collections.map(function(c) {
-        return '<label class="filter-checkbox"><input type="checkbox" value="' + c.id + '" class="collection-filter"> ' + c.name + ' (' + (c.count || 0) + ')</label>';
+        return '<label class="filter-checkbox"><input type="checkbox" value="' + c.id + '" class="collection-filter"> ' + escapeHtml(c.name) + ' (' + (c.count || 0) + ')</label>';
       }).join('');
+    } else {
+      colList.innerHTML = '<span class="filter-empty">Nenhuma colecao criada</span>';
     }
 
     var concData = await listConcepts();
     var concList = document.getElementById('concepts-list');
     if (concData.concepts && concData.concepts.length) {
       concList.innerHTML = concData.concepts.map(function(c) {
-        return '<label class="filter-checkbox"><input type="checkbox" value="' + c.id + '" class="concept-filter"> ' + c.name + ' (' + (c.assoc_count || 0) + ')</label>';
+        return '<label class="filter-checkbox"><input type="checkbox" value="' + c.id + '" class="concept-filter"> ' + escapeHtml(c.name) + ' (' + (c.assoc_count || 0) + ')</label>';
       }).join('');
+    } else {
+      concList.innerHTML = '<span class="filter-empty">Nenhum conceito criado</span>';
     }
 
     document.querySelectorAll('.collection-filter, .concept-filter, #filtro-media-type').forEach(function(el) {
       el.addEventListener('change', function() { invalidateCache(); });
     });
   } catch (err) {
-    document.getElementById('status-badge').textContent = 'offline';
+    document.getElementById('status-badge').innerHTML = '<i></i>offline';
   }
 }
 
@@ -159,6 +242,11 @@ async function buildSidebar() {
 window.addEventListener('iris:selection-changed', function() {
   var n = window.__irisSelection.size;
   var panel = document.getElementById('floating-panel');
+  var summary = document.getElementById('selection-summary');
+  var empty = document.getElementById('selection-empty');
+  summary.style.display = n ? 'flex' : 'none';
+  empty.style.display = n ? 'none' : 'block';
+  document.getElementById('selection-count').textContent = n;
   if (n === 0) { panel.style.display = 'none'; return; }
   panel.style.display = 'flex';
   document.getElementById('floating-count').textContent = n + ' selecionado(s)';
@@ -172,16 +260,51 @@ window.addEventListener('iris:selection-changed', function() {
 
 // ── Trash selected ───────────────────────────────────────────────────────
 
+async function resolveSelectedDbIds() {
+  var indices = Array.from(window.__irisSelection.keys());
+  var records = await Promise.all(indices.map(function(index) {
+    return fetch('/api/records/' + index).then(function(response) {
+      if (!response.ok) throw new Error('Item ' + index + ' nao encontrado');
+      return response.json();
+    });
+  }));
+  return records.map(function(record) { return record.db_id; }).filter(Boolean);
+}
+
 document.getElementById('btn-trash-selected').addEventListener('click', async function() {
-  var ids = Array.from(window.__irisSelection.keys());
-  if (!ids.length) return;
-  if (!confirm('Mover ' + ids.length + ' item(ns) para lixeira?')) return;
+  var count = window.__irisSelection.size;
+  if (!count) return;
+  if (!confirm('Mover ' + count + ' item(ns) para lixeira?')) return;
   try {
+    var ids = await resolveSelectedDbIds();
     var result = await trashRecords(ids);
     toast('Movidos: ' + result.moved + ', Falhas: ' + result.failed, result.failed ? 'error' : 'success');
     window.__irisSelection.clear();
     window.dispatchEvent(new CustomEvent('iris:selection-changed'));
     window.location.reload();
+  } catch (err) {
+    toast('Erro: ' + err.message, 'error');
+  }
+});
+
+document.getElementById('btn-collection-selected').addEventListener('click', async function() {
+  if (!window.__irisSelection.size) return;
+  try {
+    var data = await listCollections();
+    var collections = data.collections || [];
+    if (!collections.length) {
+      toast('Crie uma colecao antes de adicionar itens', 'info');
+      return;
+    }
+    var menu = collections.map(function(collection, index) {
+      return (index + 1) + '. ' + collection.name;
+    }).join('\n');
+    var answer = prompt('Escolha a colecao:\n\n' + menu);
+    var position = parseInt(answer, 10) - 1;
+    if (!answer || position < 0 || position >= collections.length) return;
+    var ids = await resolveSelectedDbIds();
+    await addCollectionMembers(collections[position].id, ids);
+    toast(ids.length + ' item(ns) adicionados a ' + collections[position].name, 'success');
   } catch (err) {
     toast('Erro: ' + err.message, 'error');
   }
@@ -251,7 +374,31 @@ document.getElementById('btn-refresh').addEventListener('click', function() {
   toast('Dados atualizados', 'info');
 });
 
-// ── Video volume sync (matches Streamlit behavior) ──────────────────────
+document.getElementById('btn-search-random').addEventListener('click', function() {
+  doRandomSearch(parseInt(document.getElementById('search-topk').value) || 50);
+});
+
+var sidebarToggle = document.getElementById('sidebar-toggle');
+var sidebarScrim = document.getElementById('sidebar-scrim');
+
+function setSidebarOpen(open) {
+  document.body.classList.toggle('sidebar-open', open);
+  sidebarToggle.setAttribute('aria-expanded', String(open));
+}
+
+sidebarToggle.addEventListener('click', function() {
+  setSidebarOpen(!document.body.classList.contains('sidebar-open'));
+});
+
+sidebarScrim.addEventListener('click', function() {
+  setSidebarOpen(false);
+});
+
+document.addEventListener('keydown', function(event) {
+  if (event.key === 'Escape') setSidebarOpen(false);
+});
+
+// ── Video volume sync ───────────────────────────────────────────────────
 
 var _videoVolume = 0.3;
 document.addEventListener('volumechange', function(e) {
@@ -278,21 +425,15 @@ window.__showStats = async function() {
   el.style.display = 'block';
   el.innerHTML = '<p style="color:var(--text-muted);">Carregando...</p>';
   try {
-    var res = await fetch('/api/records?page=1&per_page=500&sort_by=importacao');
-    var data = await res.json();
-    // Count extensions client-side
-    var counts = {};
-    var allRecords = data.records;
-    // We need all records for accurate stats — use a large page
-    var res2 = await fetch('/api/records?page=1&per_page=500&sort_by=nome');
-    var data2 = await res2.json();
-    data2.records.forEach(function(r) {
-      var ext = (r.arquivo || '').split('.').pop().toLowerCase();
-      counts[ext] = (counts[ext] || 0) + 1;
-    });
+    var info = await fetchInfo();
+    var counts = info.extension_counts || {};
     var sorted = Object.entries(counts).sort(function(a, b) { return b[1] - a[1]; });
     var maxCount = sorted.length ? sorted[0][1] : 1;
-    var html = '<p style="font-size:11px;margin-bottom:4px;">Extensoes (amostra de ' + data2.records.length + ')</p>';
+    var html = '<p style="font-size:11px;margin-bottom:4px;">Extensoes · ' + info.total_records + ' itens</p>';
+    if (info.missing_count) {
+      html += '<p class="danger-text" style="font-size:10px;margin-bottom:6px;">'
+        + info.missing_count + ' arquivo(s) ausente(s)</p>';
+    }
     sorted.slice(0, 15).forEach(function(e) {
       var pct = Math.round(e[1] / maxCount * 100);
       html += '<div style="font-size:10px;margin:2px 0;">'

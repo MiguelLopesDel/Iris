@@ -39,6 +39,18 @@ export async function fetchInfo() {
   return apiGet('/api/info');
 }
 
+export async function updateSettings(data) {
+  return apiPost('/api/settings', data);
+}
+
+export async function reloadBackend() {
+  return apiPost('/api/reload', {});
+}
+
+export async function browseFilesystem(path = '') {
+  return apiGet('/api/filesystem', { path });
+}
+
 // ── Records ───────────────────────────────────────────────────────────────
 
 export async function fetchRecords(page = 1, perPage = 24, sortBy = 'importacao', sortAsc = 0, mediaType = 'all', collectionIds = '', conceptIds = '') {
@@ -100,7 +112,7 @@ export async function addCollectionMembers(id, dbIds) {
 }
 
 export async function removeCollectionMembers(id, dbIds) {
-  return apiDelete(`/api/collections/${id}/members`, { db_ids: dbIds.join(',') });
+  return apiPost(`/api/collections/${id}/members/remove`, { db_ids: dbIds.join(',') });
 }
 
 export async function getCollectionFilter(ids) {
@@ -115,6 +127,15 @@ export async function listConcepts() {
 
 export async function createConcept(data) {
   return apiPost('/api/concepts', data);
+}
+
+export async function createConceptWithReferences(data, files) {
+  const fd = new FormData();
+  for (const [key, value] of Object.entries(data)) fd.append(key, value);
+  Array.from(files).forEach(file => fd.append('files', file));
+  const res = await fetch('/api/concepts/with-references', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
 export async function updateConcept(id, data) {
@@ -141,12 +162,24 @@ export async function addConceptReference(conceptId, file) {
   return res.json();
 }
 
+export async function addConceptReferences(conceptId, files) {
+  const fd = new FormData();
+  Array.from(files).forEach(file => fd.append('files', file));
+  const res = await fetch(`/api/concepts/${conceptId}/references/batch`, { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 export async function deleteConceptReference(conceptId, refId) {
   return apiPost(`/api/concepts/${conceptId}/references/${refId}/delete`);
 }
 
 export async function getConceptFilter(ids) {
   return apiGet('/api/concepts/filter', { ids: ids.join(',') });
+}
+
+export async function getConceptAssociations(id, page = 1, perPage = 30) {
+  return apiGet(`/api/concepts/${id}/associations`, { page, per_page: perPage });
 }
 
 export async function confirmConceptMedia(conceptId, dbIds) {
@@ -159,8 +192,45 @@ export async function rejectConceptMedia(conceptId, dbIds) {
 
 // ── Duplicates ────────────────────────────────────────────────────────────
 
-export async function fetchDuplicates(threshold = 0.985, maxNeighbors = 12) {
-  return apiGet('/api/duplicates', { threshold, max_neighbors: maxNeighbors });
+export async function fetchDuplicates(threshold = 0.985, maxNeighbors = 12, minGroupSize = 2) {
+  return apiGet('/api/duplicates', {
+    threshold,
+    max_neighbors: maxNeighbors,
+    min_group_size: minGroupSize,
+  });
+}
+
+// ── System operations ────────────────────────────────────────────────────
+
+export async function startImport(formData) {
+  const res = await fetch('/api/import', { method: 'POST', body: formData });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function getImportStatus() {
+  return apiGet('/api/import/status');
+}
+
+export async function getBackupInfo() {
+  return apiGet('/api/backup/info');
+}
+
+export async function inspectBackup(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch('/api/backup/inspect', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function restoreBackup(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('confirm', 'true');
+  const res = await fetch('/api/backup/restore', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
 // ── Trash ─────────────────────────────────────────────────────────────────

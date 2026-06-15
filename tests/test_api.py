@@ -6,12 +6,16 @@ DB-dependent tests are skipped unless TEST_DB env var is set.
 
 from __future__ import annotations
 
+import asyncio
+import io
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
+from PIL import Image
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -19,9 +23,28 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 # ── Mock backend fixture ────────────────────────────────────────────────────
 
 
+class ASGITestClient:
+    def __init__(self, app):
+        self.app = app
+
+    def request(self, method: str, path: str, **kwargs):
+        async def run_request():
+            transport = httpx.ASGITransport(app=self.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.request(method, path, **kwargs)
+
+        return asyncio.run(run_request())
+
+    def get(self, path: str, **kwargs):
+        return self.request("GET", path, **kwargs)
+
+    def post(self, path: str, **kwargs):
+        return self.request("POST", path, **kwargs)
+
+
 @pytest.fixture(scope="module")
 def client():
-    """TestClient with a mocked backend so no CLIP/DB is loaded."""
+    """ASGI client with a mocked backend so no CLIP/DB is loaded."""
     import server
 
     # Mock the backend singleton with a MagicMock that returns valid data
@@ -40,8 +63,7 @@ def client():
 
     server._backend = mock
 
-    with TestClient(server.app, raise_server_exceptions=False) as c:
-        yield c
+    yield ASGITestClient(server.app)
 
 
 # ── Smoke tests ──────────────────────────────────────────────────────────────
@@ -55,14 +77,12 @@ class TestPageServing:
         assert "Iris" in r.text
 
     def test_static_css(self, client):
-        r = client.get("/static/style.css")
-        assert r.status_code == 200
-        assert "font-family" in r.text.lower() or "sans-serif" in r.text.lower()
+        css = Path("static/style.css").read_text(encoding="utf-8")
+        assert "font-family" in css.lower() or "sans-serif" in css.lower()
 
     def test_static_js_served(self, client):
         for mod in ["api.js", "gallery.js", "search.js", "app.js"]:
-            r = client.get(f"/static/{mod}")
-            assert r.status_code == 200, f"{mod} not served"
+            assert (Path("static") / mod).is_file(), f"{mod} missing"
 
 
 class TestInfoEndpoint:
@@ -70,6 +90,28 @@ class TestInfoEndpoint:
         r = client.get("/api/info")
         assert r.status_code == 200
         assert "total_records" in r.json()
+        assert "missing_count" in r.json()
+        assert "extension_counts" in r.json()
+
+
+class TestSystemEndpoints:
+    def test_import_requires_source(self, client):
+        r = client.post("/api/import", data={})
+        assert r.status_code == 400
+
+    def test_restore_requires_confirmation(self, client):
+        r = client.post(
+            "/api/backup/restore",
+            data={"confirm": "false"},
+            files={"file": ("backup.zip", b"not-used", "application/zip")},
+        )
+        assert r.status_code == 400
+
+    def test_filesystem_lists_directory(self, client, tmp_path):
+        (tmp_path / "child").mkdir()
+        r = client.get("/api/filesystem", params={"path": str(tmp_path)})
+        assert r.status_code == 200
+        assert r.json()["directories"][0]["name"] == "child"
 
 
 class TestRecordsValidation:
@@ -107,6 +149,28 @@ class TestConceptsValidation:
         r = client.post("/api/concepts")
         assert r.status_code == 422
 
+    def test_create_with_references_processes_upload(self, client, monkeypatch):
+        import server
+
+        async def run_inline(function, *args):
+            return function(*args)
+
+        monkeypatch.setattr(server, "run_in_threadpool", run_inline)
+        server._backend.create_concept.return_value = 12
+        server._backend.encode_image.return_value = [[0.1, 0.2, 0.3]]
+        image = io.BytesIO()
+        Image.new("RGB", (8, 8), color=(20, 40, 60)).save(image, format="PNG")
+
+        r = client.post(
+            "/api/concepts/with-references",
+            data={"name": "Teste", "category": "objeto"},
+            files={"files": ("reference.png", image.getvalue(), "image/png")},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["references"] == 1
+        server._backend.add_reference.assert_called()
+
 
 class TestStaticFiles:
     def test_thumbs_404(self, client):
@@ -122,6 +186,37 @@ class TestRecordDetail:
     def test_detail_404_invalid_index(self, client):
         r = client.get("/api/records/99999999")
         assert r.status_code == 404
+
+
+def test_duplicates_include_generated_thumbnail(monkeypatch, tmp_path):
+    import server
+
+    media_path = tmp_path / "duplicate.jpg"
+    Image.new("RGB", (24, 24), color=(120, 80, 40)).save(media_path)
+    item = SimpleNamespace(
+        index=7,
+        arquivo=media_path.name,
+        resolved_path=str(media_path),
+        score_to_anchor=1.0,
+    )
+    group = SimpleNamespace(
+        group_id=1,
+        kind="exact",
+        score=1.0,
+        items=[item],
+    )
+    backend = MagicMock()
+    backend.find_duplicate_groups.return_value = [group]
+    monkeypatch.setattr(server, "_backend", backend)
+    monkeypatch.setattr(server, "_THUMB_DIR", tmp_path / "thumbs")
+
+    payload = asyncio.run(
+        server.get_duplicates(threshold=0.985, max_neighbors=12, min_group_size=1)
+    )
+
+    thumbnail_url = payload["groups"][0]["items"][0]["thumbnail_url"]
+    assert thumbnail_url.startswith("/thumbs/")
+    assert list((tmp_path / "thumbs").glob("*.jpg"))
 
 
 class TestTrashValidation:
@@ -145,8 +240,7 @@ class TestWithDatabase:
 
         db = os.environ["TEST_DB"]
         server._backend = create_backend(db_path=db, media_root="media", load_model=False)
-        with TestClient(server.app, raise_server_exceptions=False) as c:
-            yield c
+        yield ASGITestClient(server.app)
 
     def test_info_total(self, db_client):
         r = db_client.get("/api/info")

@@ -390,7 +390,7 @@ pip install -r requirements.txt</pre>
           <h3 data-i18n="install_step3_title">Launch the app</h3>
           <div class="code-header">bash</div>
           <pre>./scripts/run_app.sh
-# or: streamlit run app/main.py</pre>
+# or: python3 -m uvicorn server:app --host 127.0.0.1 --port 8501</pre>
           <p data-i18n-html="install_step3_desc">Open <strong>http://localhost:8501</strong> in your browser.</p>
         </div>
       </div>
@@ -477,9 +477,9 @@ pip install -r requirements.txt</pre>
       <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_dup_faiss">FAISS cosine</span> <span class="note" data-i18n="arch_dup_faiss_note">— visual near-duplicates above configurable threshold (default 0.985)</span></div>
       <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_dup_centroid">Centroid filter</span> <span class="note" data-i18n="arch_dup_centroid_note">— removes outliers that joined clusters via transitive chains</span></div>
       <br>
-      <div><span class="layer">UI</span> <span class="note">(app/main.py — Streamlit)</span></div>
+      <div><span class="layer">UI</span> <span class="note">(server.py + templates/ + static/ — FastAPI SPA)</span></div>
       <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_ui_search">Text &amp; image search</span> <span class="note" data-i18n="arch_ui_search_note">— gallery, grouped results, audio results section</span></div>
-      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_ui_bg">Background indexing</span> <span class="note" data-i18n="arch_ui_bg_note">— thread + fragment polling, non-blocking</span></div>
+      <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_ui_bg">REST API</span> <span class="note" data-i18n="arch_ui_bg_note">— FastAPI endpoints consumed by browser modules</span></div>
       <div>&nbsp;&nbsp;<span class="arrow">&#x2192;</span> <span class="component" data-i18n="arch_ui_concepts">Concept management</span> <span class="note" data-i18n="arch_ui_concepts_note">— reference upload, auto-match, confirmed/rejected</span></div>
     </div>
 

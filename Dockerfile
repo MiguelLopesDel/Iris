@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     ffmpeg \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -23,12 +24,10 @@ RUN mkdir -p data media
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+    CMD curl -f http://localhost:8501/api/info || exit 1
 
 ENV PYTHONPATH=/app
-ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
-CMD ["streamlit", "run", "app/main.py", \
-     "--server.port=8501", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true"]
+CMD ["python3", "-m", "uvicorn", "server:app", \
+     "--host=0.0.0.0", \
+     "--port=8501"]

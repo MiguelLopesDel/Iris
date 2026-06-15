@@ -30,14 +30,12 @@ RUN mkdir -p data media
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+    CMD curl -f http://localhost:8501/api/info || exit 1
 
 ENV PYTHONPATH=/app
-ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-CMD ["python3", "-m", "streamlit", "run", "app/main.py", \
-     "--server.port=8501", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true"]
+CMD ["python3", "-m", "uvicorn", "server:app", \
+     "--host=0.0.0.0", \
+     "--port=8501"]

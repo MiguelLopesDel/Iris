@@ -1,6 +1,6 @@
 /* ── Iris Collections module ──────────────────────────────────────────────── */
 
-import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers } from './api.js';
+import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml } from './api.js?v=24';
 
 var currentColId = null;
 
@@ -24,7 +24,7 @@ async function loadCollections() {
     }
     container.innerHTML = data.collections.map(function(c) {
       return '<div class="detail-panel" style="margin-bottom:8px;" id="col-panel-' + c.id + '">'
-        + '<strong>' + c.name + '</strong> (' + (c.count || 0) + ' itens) '
+        + '<strong>' + escapeHtml(c.name) + '</strong> (' + (c.count || 0) + ' itens) '
         + '<div style="display:flex;gap:6px;margin:6px 0;">'
         + '<button class="btn" onclick="window.__renameCol(' + c.id + ')">Renomear</button>'
         + '<button class="btn" onclick="window.__deleteCol(' + c.id + ')">Deletar</button>'
@@ -71,11 +71,11 @@ window.__viewMembers = async function(colId) {
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
     data.records.forEach(function(r) {
       var thumb = r.thumbnail_url
-        ? '<img src="' + r.thumbnail_url + '" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">'
+        ? '<img src="' + escapeHtml(r.thumbnail_url) + '" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">'
         : '<div style="aspect-ratio:1;background:var(--bg-card);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:24px;">' + (r.media_type === 'video' ? '🎬' : '🖼️') + '</div>';
       html += '<div style="font-size:10px;text-align:center;">'
         + thumb
-        + '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px;" title="' + r.arquivo + '">' + r.arquivo.slice(0, 30) + '</div>'
+        + '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px;" title="' + escapeHtml(r.arquivo || '') + '">' + escapeHtml((r.arquivo || '(sem nome)').slice(0, 30)) + '</div>'
         + '<button class="btn btn-danger" style="font-size:10px;padding:2px 6px;margin-top:2px;" onclick="window.__removeMember(' + colId + ',' + r.db_id + ')">Remover</button>'
         + '</div>';
     });

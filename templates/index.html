@@ -3,128 +3,214 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Iris — Busca Multimodal</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta name="theme-color" content="#0b0d12">
+  <title>Iris — Biblioteca visual inteligente</title>
+  <link rel="stylesheet" href="/static/style.css?v=25">
 </head>
 <body>
 
-<!-- ── Sidebar ──────────────────────────────────────────────────────────── -->
+<div class="ambient-glow ambient-glow-one"></div>
+<div class="ambient-glow ambient-glow-two"></div>
+<button id="sidebar-scrim" aria-label="Fechar filtros"></button>
+
+<!-- Sidebar -->
 <aside id="sidebar">
   <div id="sidebar-header">
-    <h1>☿ Iris</h1>
-    <span id="status-badge" class="badge">carregando...</span>
+    <div class="brand-lockup">
+      <div class="brand-mark" aria-hidden="true"><span></span></div>
+      <div>
+        <h1>Iris</h1>
+        <p>Media intelligence</p>
+      </div>
+    </div>
+    <span id="status-badge" class="badge"><i></i> carregando</span>
   </div>
 
   <div id="sidebar-filters">
+    <div class="sidebar-intro">
+      <span class="eyebrow">Refine a biblioteca</span>
+      <p>Combine filtros e estratégia para encontrar a mídia certa.</p>
+    </div>
+
     <section class="filter-group">
-      <label class="filter-label">Tipo de midia</label>
+      <div class="filter-heading">
+        <span class="filter-step">01</span>
+        <label class="filter-label" for="filtro-media-type">Formato</label>
+      </div>
       <select id="filtro-media-type">
-        <option value="all">Todos</option>
-        <option value="image">Imagens</option>
-        <option value="video">Videos</option>
+        <option value="all">Todos os formatos</option>
+        <option value="image">Somente imagens</option>
+        <option value="video">Somente vídeos</option>
       </select>
     </section>
 
     <section class="filter-group" id="collections-group">
-      <label class="filter-label">Colecoes</label>
-      <div id="collections-list"></div>
+      <div class="filter-heading">
+        <span class="filter-step">02</span>
+        <label class="filter-label">Coleções</label>
+      </div>
+      <div id="collections-list" class="filter-list">
+        <span class="filter-empty">Nenhuma coleção carregada</span>
+      </div>
     </section>
 
     <section class="filter-group" id="concepts-group">
-      <label class="filter-label">Conceitos</label>
-      <div id="concepts-list"></div>
-    </section>
-
-    <section class="filter-group">
-      <label class="filter-label">Busca</label>
-      <select id="search-mode">
-        <option value="hybrid">Hibrido</option>
-        <option value="text">Foco no Texto</option>
-        <option value="visual">Foco Visual</option>
-        <option value="custom">Personalizado</option>
-      </select>
-      <div id="search-custom-params" style="display:none;margin-top:6px;">
-        <label style="font-size:11px;">Visual vs conceitual: <span id="balance-val">0.50</span></label>
-        <input type="range" id="search-balance" min="0" max="1" step="0.05" value="0.5">
-        <label style="font-size:11px;">Peso do texto exato: <span id="textbonus-val">2.00</span></label>
-        <input type="range" id="search-textbonus" min="0" max="4" step="0.1" value="2.0">
-        <label style="font-size:11px;">Peso lexical: <span id="lexical-val">0.25</span></label>
-        <input type="range" id="search-lexical" min="0" max="1" step="0.05" value="0.25">
+      <div class="filter-heading">
+        <span class="filter-step">03</span>
+        <label class="filter-label">Conceitos</label>
+      </div>
+      <div id="concepts-list" class="filter-list">
+        <span class="filter-empty">Nenhum conceito carregado</span>
       </div>
     </section>
 
     <section class="filter-group">
-      <label class="filter-label">Limiar: <span id="threshold-val">0.15</span></label>
+      <div class="filter-heading">
+        <span class="filter-step">04</span>
+        <label class="filter-label" for="search-mode">Estratégia de busca</label>
+      </div>
+      <select id="search-mode">
+        <option value="hybrid">Híbrida</option>
+        <option value="text">Foco no texto</option>
+        <option value="visual">Foco visual</option>
+        <option value="custom">Personalizada</option>
+      </select>
+      <div id="search-custom-params" class="custom-params" style="display:none;">
+        <label>Visual vs. conceitual <output id="balance-val">0.50</output></label>
+        <input type="range" id="search-balance" min="0" max="1" step="0.05" value="0.5">
+        <label>Texto exato <output id="textbonus-val">2.00</output></label>
+        <input type="range" id="search-textbonus" min="0" max="4" step="0.1" value="2.0">
+        <label>Peso lexical <output id="lexical-val">0.25</output></label>
+        <input type="range" id="search-lexical" min="0" max="1" step="0.05" value="0.25">
+      </div>
+    </section>
+
+    <section class="filter-group filter-group-compact">
+      <div class="range-row">
+        <label class="filter-label" for="search-threshold">Similaridade</label>
+        <output id="threshold-val">0.15</output>
+      </div>
       <input type="range" id="search-threshold" min="-1" max="1" step="0.05" value="0.15">
-      <label class="filter-label">Resultados: <span id="topk-val">50</span></label>
+
+      <div class="range-row">
+        <label class="filter-label" for="search-topk">Resultados</label>
+        <output id="topk-val">50</output>
+      </div>
       <input type="range" id="search-topk" min="1" max="200" step="1" value="50">
-      <label class="filter-label" style="display:flex;align-items:center;gap:4px;cursor:pointer;">
-        <input type="checkbox" id="search-translate" checked> Traduzir para ingles
+
+      <label class="switch-row">
+        <input type="checkbox" id="search-translate" checked>
+        <span class="switch-control"></span>
+        <span>Traduzir busca para inglês</span>
       </label>
     </section>
 
-    <section class="filter-group">
-      <button id="btn-surprise" class="btn" style="width:100%;">🎲 Me surpreenda</button>
-      <button id="btn-refresh" class="btn" style="width:100%;margin-top:4px;">🔄 Atualizar dados</button>
-      <button id="btn-stats" class="btn" style="width:100%;margin-top:4px;" onclick="window.__showStats()">📊 Estatisticas</button>
+    <section class="filter-group sidebar-actions">
+      <button id="btn-surprise" class="btn btn-primary">
+        <span>Explorar aleatoriamente</span><b aria-hidden="true">↗</b>
+      </button>
+      <div class="sidebar-action-grid">
+        <button id="btn-refresh" class="btn btn-subtle">Atualizar</button>
+        <button id="btn-stats" class="btn btn-subtle" onclick="window.__showStats()">Estatísticas</button>
+      </div>
     </section>
-    <div id="stats-container" style="display:none;padding:8px;"></div>
+    <div id="stats-container" class="stats-container" style="display:none;"></div>
   </div>
 
   <div id="sidebar-selection">
     <div id="selection-summary" style="display:none;">
-      <strong id="selection-count">0</strong> selecionado(s)
-      <button id="btn-trash-selected" class="btn btn-danger">🗑 Lixeira</button>
-      <button id="btn-collection-selected" class="btn">📁 Colecao</button>
+      <div>
+        <span class="eyebrow">Seleção</span>
+        <strong><span id="selection-count">0</span> itens</strong>
+      </div>
+      <div class="selection-actions">
+        <button id="btn-collection-selected" class="btn btn-subtle">Coleção</button>
+        <button id="btn-trash-selected" class="btn btn-danger">Lixeira</button>
+      </div>
     </div>
+    <p id="selection-empty">Selecione cards para organizar em lote.</p>
   </div>
 </aside>
 
-<!-- ── Main content ─────────────────────────────────────────────────────── -->
+<!-- Main content -->
 <main id="main-content">
-
-  <!-- Top bar -->
   <header id="top-bar">
-    <nav id="tabs">
-      <button class="tab-btn active" data-tab="gallery">🖼 Galeria</button>
-      <button class="tab-btn" data-tab="search">🔍 Busca</button>
-      <button class="tab-btn" data-tab="collections">📚 Colecoes</button>
-      <button class="tab-btn" data-tab="concepts">🏷 Conceitos</button>
-      <button class="tab-btn" data-tab="duplicates">🔄 Duplicatas</button>
-    </nav>
+    <div class="topbar-title">
+      <button id="sidebar-toggle" class="icon-btn" aria-label="Abrir filtros" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <div>
+        <span id="view-kicker" class="eyebrow">Biblioteca</span>
+        <h2 id="view-title">Galeria</h2>
+        <p id="view-description">Navegue por toda a sua coleção visual.</p>
+      </div>
+    </div>
 
     <div id="search-bar" style="display:none;">
-      <input type="text" id="search-input" placeholder="Buscar por texto...">
-      <label class="btn" for="search-image-input">📷 Imagem</label>
-      <input type="file" id="search-image-input" accept="image/*" style="display:none;">
-      <button id="btn-search-random" class="btn">🎲 Aleatorio</button>
+      <button id="btn-search-random" class="btn btn-subtle">Busca aleatória</button>
     </div>
+
+    <nav id="tabs" aria-label="Navegação principal">
+      <button class="tab-btn active" data-tab="gallery"><span class="tab-icon">▦</span><span>Galeria</span></button>
+      <button class="tab-btn" data-tab="search"><span class="tab-icon">⌕</span><span>Busca</span></button>
+      <button class="tab-btn" data-tab="collections"><span class="tab-icon">◇</span><span>Coleções</span></button>
+      <button class="tab-btn" data-tab="concepts"><span class="tab-icon">✦</span><span>Conceitos</span></button>
+      <button class="tab-btn" data-tab="duplicates"><span class="tab-icon">≋</span><span>Duplicatas</span></button>
+      <button class="tab-btn" data-tab="system"><span class="tab-icon">⚙</span><span>Sistema</span></button>
+    </nav>
   </header>
 
-  <!-- Tab panes -->
   <div id="tab-content">
-
     <!-- Gallery tab -->
     <section id="tab-gallery" class="tab-pane active">
-      <div id="gallery-controls">
-        <select id="gallery-sort">
-          <option value="importacao">Importacao</option>
-          <option value="nome">Nome</option>
-          <option value="data">Data do arquivo</option>
-          <option value="tamanho">Tamanho</option>
-          <option value="tipo">Tipo</option>
-        </select>
-        <label><input type="checkbox" id="gallery-sort-asc"> Crescente</label>
-        <select id="gallery-per-page">
-          <option value="12">12</option>
-          <option value="24" selected>24</option>
-          <option value="36">36</option>
-          <option value="48">48</option>
-          <option value="96">96</option>
-        </select>
-        <button id="gallery-prev" class="btn" disabled>←</button>
-        <span id="gallery-page-info">—</span>
-        <button id="gallery-next" class="btn" disabled>→</button>
+      <div class="section-lead">
+        <div>
+          <span class="eyebrow">Visão geral</span>
+          <h3>Sua biblioteca, em foco.</h3>
+          <p>Explore, compare e organize cada arquivo indexado pelo Iris.</p>
+        </div>
+        <div class="page-status">
+          <span>Página atual</span>
+          <strong id="gallery-page-info">—</strong>
+        </div>
+      </div>
+
+      <div id="gallery-controls" class="control-surface">
+        <div class="control-field control-field-wide">
+          <label for="gallery-search">Buscar nesta galeria</label>
+          <input type="text" id="gallery-search" placeholder="Texto, contexto ou descrição">
+        </div>
+        <label class="btn btn-subtle" for="gallery-image-search">Imagem</label>
+        <input type="file" id="gallery-image-search" accept="image/*" hidden>
+        <button id="gallery-clear-search" class="btn btn-subtle" hidden>Limpar busca</button>
+        <div class="control-field">
+          <label for="gallery-sort">Ordenar por</label>
+          <select id="gallery-sort">
+            <option value="importacao">Importação</option>
+            <option value="nome">Nome</option>
+            <option value="data">Data do arquivo</option>
+            <option value="tamanho">Tamanho</option>
+            <option value="tipo">Tipo</option>
+          </select>
+        </div>
+        <label class="sort-direction">
+          <input type="checkbox" id="gallery-sort-asc">
+          <span>Ordem crescente</span>
+        </label>
+        <div class="control-field control-field-small">
+          <label for="gallery-per-page">Por página</label>
+          <select id="gallery-per-page">
+            <option value="12">12</option>
+            <option value="24" selected>24</option>
+            <option value="36">36</option>
+            <option value="48">48</option>
+            <option value="96">96</option>
+          </select>
+        </div>
+        <div class="pagination-actions">
+          <button id="gallery-prev" class="icon-btn" disabled aria-label="Página anterior">←</button>
+          <button id="gallery-next" class="icon-btn" disabled aria-label="Próxima página">→</button>
+        </div>
       </div>
       <div id="gallery-grid" class="media-grid"></div>
       <div id="gallery-pagination-bottom"></div>
@@ -132,65 +218,206 @@
 
     <!-- Search tab -->
     <section id="tab-search" class="tab-pane">
-      <div id="search-controls">
-        <input type="text" id="search-input2" placeholder="Buscar...">
-        <label class="btn" for="search-image-input2">📷 Imagem</label>
-        <input type="file" id="search-image-input2" accept="image/*" style="display:none;">
-        <button id="btn-similar-back" class="btn" style="display:none;">← Voltar</button>
+      <div class="search-hero">
+        <span class="eyebrow">Busca multimodal</span>
+        <h3>Descreva uma ideia.<br>Encontre a imagem.</h3>
+        <p>Pesquise por texto, contexto ou use uma imagem como referência visual.</p>
+        <div id="search-controls">
+          <div class="search-input-wrap">
+            <span aria-hidden="true">⌕</span>
+            <input type="text" id="search-input2" placeholder="Ex: gato bravo olhando para a câmera" autocomplete="off">
+          </div>
+          <label class="btn btn-primary" for="search-image-input2">Usar imagem</label>
+          <input type="file" id="search-image-input2" accept="image/*" style="display:none;">
+          <button id="btn-similar-back" class="btn btn-subtle" style="display:none;">← Voltar</button>
+        </div>
+        <div class="image-group-controls">
+          <label class="switch-row">
+            <input type="checkbox" id="image-group-enabled" checked>
+            <span class="switch-control"></span>
+            <span>Agrupar resultados visualmente parecidos</span>
+          </label>
+          <label>Limiar <output id="image-group-threshold-val">0.90</output>
+            <input type="range" id="image-group-threshold" min="0.75" max="0.99" step="0.01" value="0.90">
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" id="image-group-singletons">
+            <span class="switch-control"></span>
+            <span>Mostrar grupos com um item</span>
+          </label>
+        </div>
       </div>
-      <div id="search-results-info"></div>
+      <div id="search-results-info" class="results-info"></div>
       <div id="search-results-grid" class="media-grid"></div>
     </section>
 
     <!-- Collections tab -->
     <section id="tab-collections" class="tab-pane">
       <div id="collections-tab-content">
-        <button id="btn-new-collection" class="btn">+ Nova colecao</button>
-        <div id="collections-tab-list"></div>
+        <div class="section-lead section-lead-compact">
+          <div>
+            <span class="eyebrow">Curadoria manual</span>
+            <h3>Coleções</h3>
+            <p>Organize mídias em grupos que façam sentido para você.</p>
+          </div>
+          <button id="btn-new-collection" class="btn btn-primary">+ Nova coleção</button>
+        </div>
+        <div id="collections-tab-list" class="entity-list"></div>
       </div>
     </section>
 
     <!-- Concepts tab -->
     <section id="tab-concepts" class="tab-pane">
       <div id="concepts-tab-content">
-        <button id="btn-new-concept" class="btn">+ Novo conceito</button>
-        <div id="concepts-tab-list"></div>
-        <div id="concept-wizard" style="display:none;"></div>
+        <div class="section-lead section-lead-compact">
+          <div>
+            <span class="eyebrow">Inteligência semântica</span>
+            <h3>Conceitos</h3>
+            <p>Ensine ao Iris pessoas, objetos e contextos recorrentes.</p>
+          </div>
+          <button id="btn-new-concept" class="btn btn-primary">+ Novo conceito</button>
+        </div>
+        <div id="concept-wizard" class="wizard-panel" style="display:none;"></div>
+        <div id="concepts-tab-list" class="entity-list"></div>
       </div>
     </section>
 
     <!-- Duplicates tab -->
     <section id="tab-duplicates" class="tab-pane">
       <div id="duplicates-tab-content">
-        <label>Threshold: <input type="range" id="dup-threshold" min="0.8" max="1.0" step="0.005" value="0.985">
-          <span id="dup-threshold-val">0.985</span></label>
-        <button id="btn-find-duplicates" class="btn">Buscar duplicatas</button>
+        <div class="section-lead section-lead-compact">
+          <div>
+            <span class="eyebrow">Limpeza inteligente</span>
+            <h3>Duplicatas</h3>
+            <p>Compare arquivos visualmente próximos antes de limpar a biblioteca.</p>
+          </div>
+        </div>
+        <div class="control-surface duplicates-controls">
+          <label class="duplicate-similarity-control">
+            <span>Similaridade <output id="dup-threshold-val">0.985</output></span>
+            <input type="range" id="dup-threshold" min="0.8" max="1.0" step="0.005" value="0.985">
+          </label>
+          <label>Vizinhos
+            <input type="number" id="dup-neighbors" value="12" min="2" max="50">
+          </label>
+          <label>Grupo mínimo
+            <input type="number" id="dup-min-group" value="2" min="2" max="500">
+          </label>
+          <label>Ordenação
+            <select id="dup-sort">
+              <option value="similarity">Similaridade</option>
+              <option value="newest">Mais novas</option>
+              <option value="oldest">Mais antigas</option>
+            </select>
+          </label>
+          <label>Visualização
+            <select id="dup-view-mode">
+              <option value="groups">Por grupos</option>
+              <option value="flat">Lista única</option>
+            </select>
+          </label>
+          <button id="btn-find-duplicates" class="btn btn-primary">Analisar biblioteca</button>
+        </div>
         <div id="duplicates-results"></div>
       </div>
     </section>
 
+    <!-- System tab -->
+    <section id="tab-system" class="tab-pane">
+      <div class="section-lead section-lead-compact">
+        <div>
+          <span class="eyebrow">Operação local</span>
+          <h3>Sistema</h3>
+          <p>Configure a biblioteca, importe mídias e proteja seus dados.</p>
+        </div>
+      </div>
+
+      <div class="system-grid">
+        <section class="detail-panel system-card">
+          <span class="eyebrow">Configuração ativa</span>
+          <h4>Banco e modelos</h4>
+          <label>Banco de dados
+            <select id="system-db"></select>
+          </label>
+          <label>Pasta de mídias
+            <input type="text" id="system-media-root" placeholder="/caminho/das/midias">
+          </label>
+          <label>Modelo CLIP
+            <input type="text" id="system-model">
+          </label>
+          <div id="system-health" class="system-status"></div>
+          <button id="system-save" class="btn btn-primary">Aplicar e recarregar</button>
+        </section>
+
+        <section class="detail-panel system-card system-card-wide">
+          <span class="eyebrow">Entrada de mídia</span>
+          <h4>Importar e indexar</h4>
+          <div class="folder-browser">
+            <label>Pasta
+              <input type="text" id="import-folder" placeholder="/caminho/da/pasta">
+            </label>
+            <div class="folder-actions">
+              <button id="folder-go" class="btn btn-subtle">Abrir</button>
+              <button id="folder-up" class="btn btn-subtle">Subir</button>
+            </div>
+            <div id="folder-list" class="folder-list"></div>
+          </div>
+          <label>Ou envie arquivos
+            <input type="file" id="import-files" accept="image/*,video/*,audio/*,.svg" multiple>
+          </label>
+          <div class="form-grid">
+            <label>Biblioteca<input type="text" id="import-library" value="default"></label>
+            <label>Raiz gerenciada<input type="text" id="import-library-root" value="data/library"></label>
+            <label>Batch size<input type="number" id="import-batch" value="8" min="1" max="64"></label>
+            <label>Dispositivo
+              <select id="import-device">
+                <option value="auto">Auto</option>
+                <option value="cuda">CUDA</option>
+                <option value="mps">MPS</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </label>
+            <label>Caption model<input type="text" id="import-caption" value="microsoft/Florence-2-large"></label>
+            <label>Whisper model<input type="text" id="import-whisper" value="tiny"></label>
+          </div>
+          <div class="inline-switches">
+            <label class="switch-row"><input type="checkbox" id="import-use-folder"><span class="switch-control"></span><span>Importar a pasta exibida acima</span></label>
+            <label class="switch-row"><input type="checkbox" id="import-recursive" checked><span class="switch-control"></span><span>Incluir subpastas</span></label>
+            <label class="switch-row"><input type="checkbox" id="import-copy" checked><span class="switch-control"></span><span>Copiar para biblioteca gerenciada</span></label>
+          </div>
+          <button id="import-start" class="btn btn-primary">Importar e indexar</button>
+          <div id="import-status" class="system-status"></div>
+        </section>
+
+        <section class="detail-panel system-card system-card-wide">
+          <span class="eyebrow">Portabilidade</span>
+          <h4>Backup e restauração</h4>
+          <div id="backup-info" class="metric-grid"></div>
+          <label class="switch-row"><input type="checkbox" id="backup-library" checked><span class="switch-control"></span><span>Incluir mídias gerenciadas</span></label>
+          <a id="backup-download" class="btn btn-primary" href="/api/backup">Baixar backup</a>
+          <hr>
+          <label>Arquivo de backup
+            <input type="file" id="restore-file" accept=".zip,application/zip">
+          </label>
+          <div id="restore-info" class="system-status"></div>
+          <button id="restore-start" class="btn btn-danger" disabled>Restaurar backup</button>
+        </section>
+      </div>
+    </section>
   </div>
 </main>
 
 <!-- Floating selection panel -->
 <div id="floating-panel" style="display:none;">
-  <div id="floating-badge" onclick="document.getElementById('floating-panel').classList.toggle('open')">
-    🗂 <span id="floating-count">0</span>
-  </div>
   <div id="floating-thumbs"></div>
+  <button id="floating-badge" onclick="document.getElementById('floating-panel').classList.toggle('open')">
+    <span id="floating-count">0 selecionados</span><b aria-hidden="true">⌃</b>
+  </button>
 </div>
 
-<!-- Toast container -->
 <div id="toast-container"></div>
 
-<!-- Scripts -->
-<script type="module" src="/static/api.js?v=15"></script>
-<script type="module" src="/static/gallery.js?v=15"></script>
-<script type="module" src="/static/search.js?v=15"></script>
-<script type="module" src="/static/collections.js?v=15"></script>
-<script type="module" src="/static/concepts.js?v=15"></script>
-<script type="module" src="/static/duplicates.js?v=15"></script>
-<script type="module" src="/static/app.js?v=15"></script>
+<script type="module" src="/static/app.js?v=24"></script>
 
 </body>
 </html>

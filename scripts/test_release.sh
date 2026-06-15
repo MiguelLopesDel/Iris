@@ -24,16 +24,17 @@ mkdir -p "$TEMP_DIR"
 echo "Copiando arquivos do projeto..."
 
 # Copia pastas de código
-cp -r app "$TEMP_DIR/"
 cp -r core "$TEMP_DIR/"
-cp -r utils "$TEMP_DIR/"
 cp -r scripts "$TEMP_DIR/"
+cp -r static "$TEMP_DIR/"
+cp -r templates "$TEMP_DIR/"
 
 # Copia arquivos da raiz
 cp requirements.txt "$TEMP_DIR/"
 cp pyproject.toml "$TEMP_DIR/"
 cp README.md "$TEMP_DIR/"
 cp .gitignore "$TEMP_DIR/"
+cp server.py "$TEMP_DIR/"
 
 # Cria uma pasta vazia de imagens só para o teste não quebrar se for rodado
 mkdir -p "$TEMP_DIR/minhas_imagens"
@@ -60,7 +61,7 @@ source venv/bin/activate
 
 echo ">>> Verificando se os módulos principais importam corretamente..."
 # Tenta importar as libs mais pesadas para ver se quebra
-python -c "import torch; import cv2; import easyocr; import sentence_transformers; print('Módulos carregados com sucesso!')"
+python -c "import torch; import cv2; import easyocr; import fastapi; import uvicorn; import sentence_transformers; import server; print('Módulos carregados com sucesso!')"
 
 if [ $? -eq 0 ]; then
     echo "✅ Teste de Importação: SUCESSO. O ambiente está funcional."

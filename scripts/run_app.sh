@@ -1,5 +1,4 @@
-#!/bin/bash
-export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
+#!/usr/bin/env bash
 set -euo pipefail
 
 if [ -f "venv/bin/activate" ]; then
@@ -9,9 +8,12 @@ fi
 echo "Iniciando Iris..."
 export HOME="${HOME:-/tmp}"
 export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
-export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 export PYTHONWARNINGS="ignore::FutureWarning:transformers,ignore::UserWarning:torch"
 if [ ! -w "$HOME" ]; then
     export HOME=/tmp
 fi
-streamlit run app/main.py "$@"
+
+exec python3 -m uvicorn server:app \
+    --host "${IRIS_HOST:-127.0.0.1}" \
+    --port "${IRIS_PORT:-8501}" \
+    "$@"

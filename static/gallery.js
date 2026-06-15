@@ -2,7 +2,7 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { fetchRecords, escapeHtml } from './api.js';
+import { debounce, escapeHtml, fetchRecords, searchImage, searchText } from './api.js?v=24';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -10,6 +10,7 @@ let totalPages = 1;
 let perPage = 24;
 let sortBy = 'importacao';
 let sortAsc = 0;
+let searchActive = false;
 
 /* Page cache: Map<number, { records, total, total_pages, missing_count }>
    Pre-fetched pages are stored here so arrow clicks hit memory, not network. */
@@ -39,8 +40,23 @@ export function initGallery() {
   document.getElementById('gallery-per-page').onchange = () => { perPage = parseInt(document.getElementById('gallery-per-page').value); invalidateCache(); };
   document.getElementById('gallery-prev').onclick = () => goToPage(currentPage - 1);
   document.getElementById('gallery-next').onclick = () => goToPage(currentPage + 1);
+  const searchInput = document.getElementById('gallery-search');
+  const imageInput = document.getElementById('gallery-image-search');
+  const clearButton = document.getElementById('gallery-clear-search');
+  if (searchInput.dataset.initialized !== 'true') {
+    searchInput.dataset.initialized = 'true';
+    searchInput.addEventListener('input', debounce(() => {
+      const query = searchInput.value.trim();
+      if (query) runGalleryTextSearch(query);
+      else if (searchActive) clearGallerySearch();
+    }, 350));
+    imageInput.addEventListener('change', () => {
+      if (imageInput.files[0]) runGalleryImageSearch(imageInput.files[0]);
+    });
+    clearButton.addEventListener('click', clearGallerySearch);
+  }
 
-  loadPage(currentPage);
+  if (!searchActive) loadPage(currentPage);
 }
 
 function invalidateCache() {
@@ -115,6 +131,9 @@ function renderCard(record) {
   const sel = window.__irisSelection.has(record.index) ? 'checked' : '';
   const thumb = record.thumbnail_url || '';
   const name = escapeHtml(record.arquivo).slice(0, 50);
+  const score = record.score != null
+    ? `<span class="score-badge">${Number(record.score).toFixed(3)}</span>`
+    : '';
 
   if (!thumb) {
     return `<div class="media-card" data-index="${record.index}">
@@ -141,6 +160,7 @@ function renderCard(record) {
     <div class="media-card-img" id="card-img-${record.index}">
       ${imgTag}
       ${playBtn}
+      ${score}
       <input type="checkbox" class="media-checkbox" id="sel_${record.index}" data-index="${record.index}" ${sel}>
     </div>
     <div class="media-card-body">
@@ -151,6 +171,74 @@ function renderCard(record) {
       </div>
     </div>
   </div>`;
+}
+
+function gallerySearchOptions() {
+  const mode = document.getElementById('search-mode')?.value || 'hybrid';
+  let balance = 0.5;
+  let text_bonus = 2.0;
+  let lexical_weight = 0.25;
+  if (mode === 'text') {
+    balance = 0.0;
+    text_bonus = 3.0;
+    lexical_weight = 0.4;
+  } else if (mode === 'visual') {
+    balance = 0.65;
+    text_bonus = 0.5;
+    lexical_weight = 0.0;
+  } else if (mode === 'custom') {
+    balance = parseFloat(document.getElementById('search-balance').value);
+    text_bonus = parseFloat(document.getElementById('search-textbonus').value);
+    lexical_weight = parseFloat(document.getElementById('search-lexical').value);
+  }
+  const filters = getFilterParams();
+  return {
+    top_k: parseInt(document.getElementById('search-topk').value) || 50,
+    threshold: parseFloat(document.getElementById('search-threshold').value),
+    balance,
+    text_bonus,
+    lexical_weight,
+    translate: document.getElementById('search-translate').checked,
+    media_type: filters.mediaType,
+    collection_ids: filters.collections,
+    concept_ids: filters.concepts,
+  };
+}
+
+async function runGalleryTextSearch(query) {
+  searchActive = true;
+  document.getElementById('gallery-clear-search').hidden = false;
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Buscando...</p>';
+  try {
+    const data = await searchText(query, gallerySearchOptions());
+    document.getElementById('gallery-page-info').textContent = `${data.total} resultados`;
+    renderGrid(data.results);
+  } catch (error) {
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function runGalleryImageSearch(file) {
+  searchActive = true;
+  document.getElementById('gallery-clear-search').hidden = false;
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Buscando por imagem...</p>';
+  try {
+    const data = await searchImage(file, gallerySearchOptions());
+    document.getElementById('gallery-page-info').textContent = `${data.total} resultados`;
+    renderGrid(data.results);
+  } catch (error) {
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function clearGallerySearch() {
+  searchActive = false;
+  document.getElementById('gallery-search').value = '';
+  document.getElementById('gallery-image-search').value = '';
+  document.getElementById('gallery-clear-search').hidden = true;
+  loadPage(1);
 }
 
 function renderSkeletons(n) {

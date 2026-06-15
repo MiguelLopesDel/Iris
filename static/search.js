@@ -1,6 +1,6 @@
 /* ── Iris Search module ──────────────────────────────────────────────────── */
 
-import { searchText, searchImage, searchSimilar, searchRandom, debounce, escapeHtml } from './api.js';
+import { searchText, searchImage, searchSimilar, searchRandom, debounce, escapeHtml } from './api.js?v=24';
 
 // ── State ────────────────────────────────────────────────────────────────
 let lastQuery = '';
@@ -32,6 +32,16 @@ export function initSearch() {
   const input = document.getElementById('search-input2');
   const fileInput = document.getElementById('search-image-input2');
   const backBtn = document.getElementById('btn-similar-back');
+  const groupThreshold = document.getElementById('image-group-threshold');
+  if (groupThreshold && groupThreshold.dataset.initialized !== 'true') {
+    groupThreshold.dataset.initialized = 'true';
+    groupThreshold.addEventListener('input', () => {
+      document.getElementById('image-group-threshold-val').textContent =
+        Number(groupThreshold.value).toFixed(2);
+    });
+  }
+  if (input.dataset.initialized === 'true') return;
+  input.dataset.initialized = 'true';
 
   // Text search with debounce
   input.addEventListener('input', debounce(() => {
@@ -82,13 +92,33 @@ async function doImageSearch(file) {
   const info = document.getElementById('search-results-info');
   grid.innerHTML = '<p style="color:var(--text-muted);">Buscando por imagem...</p>';
   try {
-    const opts = gatherSearchOptions();
+    const opts = {
+      ...gatherSearchOptions(),
+      group_results: document.getElementById('image-group-enabled').checked,
+      group_threshold: document.getElementById('image-group-threshold').value,
+      show_singletons: document.getElementById('image-group-singletons').checked,
+    };
     const data = await searchImage(file, opts);
     info.textContent = `${data.total} resultado(s) para "${data.filename}"`;
-    renderResults(data.results);
+    if (Array.isArray(data.groups)) renderGroupedResults(data.groups);
+    else renderResults(data.results);
   } catch (err) {
     grid.innerHTML = `<p style="color:var(--accent);">Erro: ${escapeHtml(err.message)}</p>`;
   }
+}
+
+function renderGroupedResults(groups) {
+  const grid = document.getElementById('search-results-grid');
+  if (!groups.length) {
+    grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Nenhum grupo encontrado.</p>';
+    return;
+  }
+  grid.innerHTML = groups.map((group, index) => `
+    <section class="search-result-group">
+      <div class="search-result-group-title">Grupo ${index + 1} · ${group.length} item(ns)</div>
+      <div class="media-grid">${group.map(renderResultCard).join('')}</div>
+    </section>
+  `).join('');
 }
 
 export async function doSimilarSearch(idx) {

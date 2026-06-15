@@ -58,10 +58,20 @@ pip install -r requirements.txt
 ```bash
 ./scripts/run_app.sh
 # or:
-streamlit run app/main.py
+python3 -m uvicorn server:app --host 127.0.0.1 --port 8501
 ```
 
-Open **http://localhost:8501** in your browser. Select or create a database, then go to the **Importar** tab to start indexing your media.
+Open **http://localhost:8501** in your browser.
+
+By default Iris opens `data/meme_compass_full_v1.db` and resolves media under `media/`.
+Use the **Sistema** tab to switch databases and media roots, import/index folders or
+uploaded files, choose CPU/CUDA/MPS, and create or restore complete backups.
+
+You can also override the startup paths through environment variables:
+
+```bash
+IRIS_DB=data/library.db IRIS_MEDIA_ROOT=/path/to/media ./scripts/run_app.sh
+```
 
 ---
 
@@ -135,7 +145,9 @@ core/indexer.py       — indexing pipeline: OCR → captions → Whisper → CL
 core/search_engine.py — hybrid ranking: visual CLIP + description embeddings + lexical bonus
 core/concepts.py      — concept store: reference embeddings, auto-tagging, confirmed/rejected
 core/taxonomy.py      — zero-shot CLIP classification (style, source work, humor, context)
-app/main.py           — Streamlit UI: search, gallery, duplicates, collections, concepts
+server.py             — FastAPI application and REST API
+templates/index.html  — browser application shell
+static/               — CSS and JavaScript frontend modules
 ```
 
 **Embedding model**: `sentence-transformers/clip-ViT-L-14` (512-dim, stored in FAISS)  

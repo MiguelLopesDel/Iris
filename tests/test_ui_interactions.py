@@ -9,6 +9,7 @@ para operações CRUD. Testes que precisam do modelo usam `load_model=True` com 
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -484,8 +485,8 @@ class TestFullInteractionFlows(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    __import__('torch').cuda.is_available() is False,
-    "Requer CPU — modelo CLIP ocupa ~2GB VRAM e GPU pode estar ocupada",
+    os.environ.get("IRIS_RUN_MODEL_TESTS") == "1",
+    "Defina IRIS_RUN_MODEL_TESTS=1 para executar testes que carregam o CLIP",
 )
 class TestSearchWithModel(unittest.TestCase):
     """Testes de busca que precisam do modelo CLIP carregado (CPU)."""

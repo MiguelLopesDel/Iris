@@ -640,7 +640,7 @@ def process_images(
     finally:
         conn.close()
         # Release all model weights from VRAM now that indexing is done.
-        # Critical when running as a background thread in the same process as the Streamlit engine.
+        # Critical when indexing runs in a background thread beside the application server.
         del models
         gc.collect()
         if config.device == "cuda":
