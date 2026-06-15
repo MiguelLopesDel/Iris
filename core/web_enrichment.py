@@ -393,6 +393,15 @@ class PlaywrightLensProvider:
 
     provider_name = "playwright_google_lens"
     upload_url = "https://lens.google.com/upload"
+    _user_agent = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+    )
+    _launch_args = (
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+    )
 
     def __init__(
         self,
@@ -400,11 +409,13 @@ class PlaywrightLensProvider:
         headless: bool | None = None,
         timeout_ms: int | None = None,
         max_results: int = 30,
+        locale: str | None = None,
         scraper: Callable[[str | os.PathLike[str]], list[dict[str, Any]]] | None = None,
     ):
         env_headless = os.environ.get("IRIS_LENS_HEADLESS", "1").strip().lower()
         self.headless = headless if headless is not None else env_headless not in {"0", "false", "no"}
         self.timeout_ms = timeout_ms or int(os.environ.get("IRIS_LENS_TIMEOUT_MS", "45000"))
+        self.locale = locale or os.environ.get("IRIS_LENS_LOCALE", "en-US")
         self.max_results = max_results
         self._scraper = scraper
 
@@ -425,18 +436,51 @@ class PlaywrightLensProvider:
         from playwright.sync_api import sync_playwright
 
         file_path = str(Path(path))
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=self.headless)
+        with self._stealth(sync_playwright()) as pw:
+            browser = pw.chromium.launch(headless=self.headless, args=list(self._launch_args))
             try:
-                page = browser.new_page()
+                context = browser.new_context(
+                    user_agent=self._user_agent,
+                    locale=self.locale,
+                    viewport={"width": 1366, "height": 768},
+                )
+                page = context.new_page()
                 page.set_default_timeout(self.timeout_ms)
                 page.goto(self.upload_url, wait_until="domcontentloaded")
                 self._dismiss_consent(page)
-                page.locator("input[type=file]").first.set_input_files(file_path)
-                page.wait_for_load_state("networkidle")
+                # The visible upload control is the last file input on the page;
+                # selecting it triggers a client-side navigation to the results.
+                page.locator("input[type=file]").last.set_input_files(file_path)
+                try:
+                    page.wait_for_url("**/search**", timeout=self.timeout_ms)
+                except Exception:
+                    pass
+                if "/sorry/" in page.url:
+                    raise RuntimeError(
+                        "Google Lens exigiu CAPTCHA (tráfego sinalizado). Tente de um IP "
+                        "residencial, reduza o volume ou use IRIS_ENRICHMENT_PROVIDER=serpapi."
+                    )
+                if "/search" not in page.url:
+                    raise RuntimeError("Google Lens não retornou página de resultados.")
+                try:
+                    page.wait_for_load_state("networkidle", timeout=self.timeout_ms)
+                except Exception:
+                    pass
                 return self._extract_results(page)
             finally:
                 browser.close()
+
+    @staticmethod
+    def _stealth(playwright_cm: Any) -> Any:
+        """Wrap the Playwright context manager with stealth evasions if the
+        optional ``playwright-stealth`` package is installed; otherwise return
+        the plain context manager."""
+        try:
+            from playwright_stealth import Stealth
+
+            return Stealth().use_sync(playwright_cm)
+        except Exception:
+            return playwright_cm
 
     @staticmethod
     def _dismiss_consent(page: Any) -> None:

@@ -111,7 +111,15 @@ ao motor de busca é detalhe interno. Implementações:
   SerpApi nem de S3. Frágil por natureza (depende do DOM do Google) e voltado a
   volume baixo/pessoal. A interação com o browser fica isolada em
   `_scrape_lens`; o parsing puro está em `parse_lens_results` (testável sem
-  browser). Requer `pip install playwright && playwright install chromium`.
+  browser). Requer `pip install playwright && playwright install chromium`
+  (opcional: `pip install playwright-stealth` reduz detecção de bot).
+
+> ⚠️ **CAPTCHA / IP**: validado ao vivo. O fluxo de upload funciona e chega à
+> página de resultados do Lens, **mas o Google bloqueia com CAPTCHA
+> (`/sorry/`) a partir de IPs de datacenter/VPS** — e, uma vez sinalizado, o IP
+> fica soft-bloqueado. De um **IP residencial** (PC de casa) e em **volume
+> baixo** o risco é muito menor. O provider detecta o muro e lança erro claro
+> em vez de retornar vazio. Para volume alto ou IP de servidor, use o SerpApi.
 
 A seleção é por env `IRIS_ENRICHMENT_PROVIDER` (`serpapi` | `playwright`),
 resolvida em `build_reverse_image_provider()`. A lógica S3 permanece intacta
