@@ -243,6 +243,28 @@ export async function trashRecords(dbIds) {
   return apiPost('/api/trash', { db_ids: dbIds.join(',') });
 }
 
+// ── Web enrichment ────────────────────────────────────────────────────────
+
+export async function createEnrichmentJob(dbIds) {
+  return apiPost('/api/enrichment/jobs', { db_ids: dbIds.join(',') });
+}
+
+export async function getEnrichmentJob(jobId) {
+  return apiGet(`/api/enrichment/jobs/${jobId}`);
+}
+
+export async function listEnrichmentSuggestions(status = 'pending') {
+  return apiGet('/api/enrichment/suggestions', { status });
+}
+
+export async function applyEnrichmentSuggestion(id, fields) {
+  return apiPost(`/api/enrichment/suggestions/${id}/apply`, { fields: fields.join(',') });
+}
+
+export async function rejectEnrichmentSuggestion(id) {
+  return apiPost(`/api/enrichment/suggestions/${id}/reject`, {});
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────
 
 export function debounce(fn, ms) {

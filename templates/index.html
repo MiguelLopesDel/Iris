@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
-  <link rel="stylesheet" href="/static/style.css?v=25">
+  <link rel="stylesheet" href="/static/style.css?v=26">
 </head>
 <body>
 
@@ -124,6 +124,7 @@
         <strong><span id="selection-count">0</span> itens</strong>
       </div>
       <div class="selection-actions">
+        <button id="btn-enrich-selected" class="btn btn-subtle">Web</button>
         <button id="btn-collection-selected" class="btn btn-subtle">Coleção</button>
         <button id="btn-trash-selected" class="btn btn-danger">Lixeira</button>
       </div>
@@ -426,6 +427,18 @@
   </button>
 </div>
 
+<section id="web-enrichment-panel" class="web-enrichment-panel" hidden>
+  <div class="web-enrichment-header">
+    <div>
+      <span class="eyebrow">Enriquecimento web</span>
+      <h3>Revisar sugestões</h3>
+      <p id="web-enrichment-status">Nenhuma busca em andamento.</p>
+    </div>
+    <button id="web-enrichment-close" class="icon-btn" type="button" aria-label="Fechar painel">×</button>
+  </div>
+  <div id="web-enrichment-list" class="web-enrichment-list"></div>
+</section>
+
 <div id="image-lightbox" class="image-lightbox" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="image-lightbox-toolbar">
     <span id="image-lightbox-title"></span>
@@ -439,7 +452,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=28"></script>
+<script type="module" src="/static/app.js?v=29"></script>
 
 </body>
 </html>

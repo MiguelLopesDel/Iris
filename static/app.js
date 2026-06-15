@@ -3,14 +3,19 @@
 
 import {
   addCollectionMembers,
+  applyEnrichmentSuggestion,
+  createEnrichmentJob,
   escapeHtml,
   fetchInfo,
+  getEnrichmentJob,
+  listEnrichmentSuggestions,
   listCollections,
   listConcepts,
   mediaUrl,
   openFolder,
+  rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=28';
+} from './api.js?v=29';
 import { initGallery, invalidateCache } from './gallery.js?v=27';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
 import { initCollections } from './collections.js?v=27';
@@ -370,6 +375,135 @@ document.getElementById('btn-collection-selected').addEventListener('click', asy
     toast(ids.length + ' item(ns) adicionados a ' + collections[position].name, 'success');
   } catch (err) {
     toast('Erro: ' + err.message, 'error');
+  }
+});
+
+document.getElementById('btn-enrich-selected').addEventListener('click', async function() {
+  if (!window.__irisSelection.size) return;
+  try {
+    var ids = await resolveSelectedDbIds();
+    var job = await createEnrichmentJob(ids);
+    showWebEnrichmentPanel();
+    toast('Busca web iniciada para ' + job.total + ' item(ns)', 'success');
+    pollWebEnrichmentJob(job.job_id);
+  } catch (err) {
+    showWebEnrichmentPanel();
+    document.getElementById('web-enrichment-status').textContent = 'Erro: ' + err.message;
+    toast('Erro: ' + err.message, 'error');
+  }
+});
+
+function showWebEnrichmentPanel() {
+  var panel = document.getElementById('web-enrichment-panel');
+  panel.hidden = false;
+  loadWebEnrichmentSuggestions();
+}
+
+document.getElementById('web-enrichment-close').addEventListener('click', function() {
+  document.getElementById('web-enrichment-panel').hidden = true;
+});
+
+async function pollWebEnrichmentJob(jobId) {
+  try {
+    var job = await getEnrichmentJob(jobId);
+    document.getElementById('web-enrichment-status').textContent =
+      job.status + ' · ' + job.done + '/' + job.total + ' · ' + (job.message || '');
+    await loadWebEnrichmentSuggestions();
+    if (job.status === 'queued' || job.status === 'running') {
+      setTimeout(function() { pollWebEnrichmentJob(jobId); }, 1400);
+    } else if (job.status === 'completed') {
+      toast('Enriquecimento concluido', 'success');
+    } else if (job.status === 'failed') {
+      toast('Erro no enriquecimento: ' + (job.error_message || job.message), 'error');
+    }
+  } catch (err) {
+    document.getElementById('web-enrichment-status').textContent = 'Erro: ' + err.message;
+  }
+}
+
+async function loadWebEnrichmentSuggestions() {
+  var list = document.getElementById('web-enrichment-list');
+  try {
+    var data = await listEnrichmentSuggestions('pending');
+    var suggestions = data.suggestions || [];
+    if (!suggestions.length) {
+      list.innerHTML = '<p class="filter-empty">Nenhuma sugestao pendente.</p>';
+      return;
+    }
+    list.innerHTML = suggestions.map(renderWebEnrichmentSuggestion).join('');
+  } catch (err) {
+    list.innerHTML = '<p style="color:var(--accent);">Erro: ' + escapeHtml(err.message) + '</p>';
+  }
+}
+
+function renderWebEnrichmentSuggestion(item) {
+  var sources = (item.sources || []).slice(0, 5).map(function(source) {
+    var href = source.source_url || source.url;
+    var label = source.title || source.domain || href;
+    var sourceLabel = href
+      ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener">' + escapeHtml(label || 'fonte') + '</a>'
+      : '<span>' + escapeHtml(label || 'fonte sem link') + '</span>';
+    return '<li>' + sourceLabel
+      + (source.domain ? ' <span>' + escapeHtml(source.domain) + '</span>' : '')
+      + '</li>';
+  }).join('');
+  var fields = [
+    ['character', 'Personagem', item.character],
+    ['source_work', 'Serie/obra', item.source_work],
+    ['style', 'Estilo', item.style],
+    ['meme_archetype', 'Arquétipo', item.meme_archetype],
+    ['context', 'Contexto', item.context],
+    ['tags', 'Tags', item.tags],
+    ['summary', 'Descricao IA', item.summary],
+  ].map(function(field) {
+    var hasValue = field[2] && String(field[2]).trim();
+    return '<label class="web-field' + (hasValue ? '' : ' muted') + '">'
+      + '<input type="checkbox" data-field="' + field[0] + '"' + (hasValue ? ' checked' : ' disabled') + '>'
+      + '<span><strong>' + field[1] + '</strong>' + escapeHtml(field[2] || 'sem sugestao') + '</span>'
+      + '</label>';
+  }).join('');
+  return '<article class="web-suggestion-card" data-suggestion-id="' + item.id + '">'
+    + '<div class="web-suggestion-main">'
+    + '<h4>' + escapeHtml(item.arquivo || ('Registro ' + item.meme_id)) + '</h4>'
+    + '<p>' + escapeHtml(item.summary || item.error_message || 'Sem resumo.') + '</p>'
+    + '<span class="score-badge">conf ' + Number(item.confidence || 0).toFixed(2) + '</span>'
+    + '</div>'
+    + '<div class="web-fields">' + fields + '</div>'
+    + '<details class="web-sources"><summary>Fontes (' + ((item.sources || []).length) + ')</summary><ul>' + sources + '</ul></details>'
+    + '<div class="web-actions">'
+    + '<button class="btn btn-primary" data-action="apply-web-suggestion">Aplicar marcados</button>'
+    + '<button class="btn btn-subtle" data-action="reject-web-suggestion">Rejeitar</button>'
+    + '</div>'
+    + '</article>';
+}
+
+document.addEventListener('click', async function(event) {
+  var applyButton = event.target.closest('button[data-action="apply-web-suggestion"]');
+  var rejectButton = event.target.closest('button[data-action="reject-web-suggestion"]');
+  var button = applyButton || rejectButton;
+  if (!button) return;
+  var card = button.closest('.web-suggestion-card');
+  if (!card) return;
+  var id = parseInt(card.dataset.suggestionId);
+  button.disabled = true;
+  try {
+    if (applyButton) {
+      var fields = Array.from(card.querySelectorAll('input[data-field]:checked')).map(function(input) {
+        return input.dataset.field;
+      });
+      await applyEnrichmentSuggestion(id, fields);
+      toast('Sugestao aplicada', 'success');
+      invalidateCache();
+      buildSidebar();
+    } else {
+      await rejectEnrichmentSuggestion(id);
+      toast('Sugestao rejeitada', 'info');
+    }
+    await loadWebEnrichmentSuggestions();
+  } catch (err) {
+    toast('Erro: ' + err.message, 'error');
+  } finally {
+    button.disabled = false;
   }
 });
 

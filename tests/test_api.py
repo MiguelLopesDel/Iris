@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -130,6 +131,34 @@ class TestSystemEndpoints:
         assert r.status_code == 200
         assert r.json()["path"] == str(tmp_path)
         assert opened == [tmp_path]
+
+    def test_enrichment_job_requires_external_config(self, client, monkeypatch):
+        import server
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+
+        class FakeDb:
+            def get_connection(self):
+                return conn
+
+            def invalidate_table_cache(self):
+                return None
+
+        class FakeEngine:
+            db = FakeDb()
+
+        class FakeBackend:
+            engine = FakeEngine()
+
+        monkeypatch.setattr(server, "_backend", FakeBackend())
+        monkeypatch.setenv("SERPAPI_KEY", "")
+        monkeypatch.setenv("IRIS_S3_ENDPOINT_URL", "")
+
+        r = client.post("/api/enrichment/jobs", data={"db_ids": "1"})
+
+        assert r.status_code == 400
+        assert "Configuração ausente" in r.text
 
 
 class TestRecordsValidation:

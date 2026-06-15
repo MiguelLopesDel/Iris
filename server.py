@@ -40,6 +40,18 @@ from core.file_ops import move_to_trash
 from core.perf import dump, trace
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult
+from core.web_enrichment import (
+    EnrichmentSuggestion,
+    WebEnrichmentService,
+    apply_suggestion,
+    create_job,
+    create_web_enrichment_tables,
+    get_job,
+    insert_suggestion,
+    list_suggestions,
+    reject_suggestion,
+    update_job,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 _THUMB_DIR = Path("data/thumbnails")
@@ -88,6 +100,7 @@ def _reload_backend(config: dict[str, Any] | None = None) -> SearchBackend:
                 model_name=str(_active_config["model_name"]),
                 load_model=bool(_active_config["load_model"]),
             )
+            _ensure_web_enrichment_tables(backend)
             _backend = backend
             return backend
     except Exception:
@@ -102,6 +115,39 @@ def _available_databases() -> list[str]:
         (path.as_posix() for path in _DATA_DIR.rglob("*.db")),
         reverse=True,
     )
+
+
+def _backend_connection(backend: SearchBackend | None = None):
+    backend = backend or _get_backend()
+    engine = getattr(backend, "engine", None)
+    if engine is None:
+        raise HTTPException(503, "Backend local indisponível para enriquecimento web")
+    return engine.db.get_connection()
+
+
+def _ensure_web_enrichment_tables(backend: SearchBackend | None = None) -> None:
+    try:
+        conn = _backend_connection(backend)
+    except HTTPException:
+        return
+    create_web_enrichment_tables(conn)
+    engine = getattr(backend or _get_backend(), "engine", None)
+    if engine is not None:
+        engine.db.invalidate_table_cache()
+
+
+def _create_web_enrichment_service() -> WebEnrichmentService:
+    return WebEnrichmentService()
+
+
+def _refresh_backend_metadata() -> None:
+    backend = _get_backend()
+    engine = getattr(backend, "engine", None)
+    if engine is None:
+        return
+    engine.db.invalidate_table_cache()
+    engine.records = engine._load_records()
+    engine._dados_cache = None
 
 
 def _open_folder_in_file_manager(path: Path) -> None:
@@ -1205,6 +1251,100 @@ async def reject_concept_media(concept_id: int, db_ids: str = Form(...)):
         ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
         backend.set_media_rejected(concept_id, ids)
         return {"ok": True}
+
+
+# ── Web enrichment ───────────────────────────────────────────────────────────
+
+
+def _record_by_db_id(db_id: int) -> IndexRecord | None:
+    return next((record for record in _get_backend().get_all_records() if record.db_id == db_id), None)
+
+
+def _run_web_enrichment_job(job_id: str, db_ids: list[int]) -> None:
+    conn = _backend_connection()
+    try:
+        service = _create_web_enrichment_service()
+        update_job(conn, job_id, status="running", message="Iniciando busca web")
+        done = 0
+        for db_id in db_ids:
+            record = _record_by_db_id(db_id)
+            label = record.arquivo if record else f"DB {db_id}"
+            update_job(conn, job_id, done=done, message=f"Pesquisando {label}")
+            try:
+                if record is None or not record.resolved_path:
+                    raise RuntimeError("Registro sem arquivo resolvido")
+                path = Path(record.resolved_path)
+                if not path.exists() or not path.is_file():
+                    raise RuntimeError("Arquivo não encontrado")
+                suggestion = service.enrich_path(path)
+            except Exception as exc:
+                suggestion = EnrichmentSuggestion(
+                    provider="web_enrichment",
+                    summary="Falha ao enriquecer esta imagem.",
+                    confidence=0,
+                    error_message=str(exc),
+                )
+            insert_suggestion(conn, job_id, db_id, suggestion)
+            done += 1
+            update_job(conn, job_id, done=done, message=f"{done}/{len(db_ids)} concluído")
+        update_job(conn, job_id, status="completed", done=done, message="Enriquecimento concluído")
+    except Exception as exc:
+        update_job(
+            conn,
+            job_id,
+            status="failed",
+            message="Falha no enriquecimento",
+            error_message=str(exc),
+        )
+
+
+@app.post("/api/enrichment/jobs")
+async def create_enrichment_job(db_ids: str = Form(...)):
+    conn = _backend_connection()
+    ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
+    if not ids:
+        raise HTTPException(400, "Selecione pelo menos uma imagem")
+    service = _create_web_enrichment_service()
+    missing = service.missing_config()
+    if missing:
+        raise HTTPException(400, "Configuração ausente: " + ", ".join(missing))
+    job_id = create_job(conn, ids)
+    thread = threading.Thread(target=_run_web_enrichment_job, args=(job_id, ids), daemon=True)
+    thread.start()
+    return {"job_id": job_id, "total": len(ids)}
+
+
+@app.get("/api/enrichment/jobs/{job_id}")
+async def get_enrichment_job(job_id: str):
+    job = get_job(_backend_connection(), job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado")
+    return job
+
+
+@app.get("/api/enrichment/suggestions")
+async def get_enrichment_suggestions(status: str = Query("pending")):
+    return {"suggestions": list_suggestions(_backend_connection(), status=status)}
+
+
+@app.post("/api/enrichment/suggestions/{suggestion_id}/apply")
+async def apply_enrichment_suggestion(
+    suggestion_id: int,
+    fields: str = Form(""),
+):
+    selected = [field.strip() for field in fields.split(",") if field.strip()]
+    try:
+        result = apply_suggestion(_backend_connection(), suggestion_id, selected)
+        _refresh_backend_metadata()
+        return result
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/enrichment/suggestions/{suggestion_id}/reject")
+async def reject_enrichment_suggestion(suggestion_id: int):
+    reject_suggestion(_backend_connection(), suggestion_id)
+    return {"ok": True}
 
 
 # ── Duplicates ────────────────────────────────────────────────────────────────
