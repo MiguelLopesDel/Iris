@@ -8,13 +8,13 @@ import {
   listCollections,
   listConcepts,
   trashRecords
-} from './api.js?v=24';
-import { initGallery, invalidateCache } from './gallery.js?v=24';
-import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=24';
-import { initCollections } from './collections.js?v=24';
-import { initConcepts } from './concepts.js?v=24';
-import { initDuplicates } from './duplicates.js?v=24';
-import { initSystem } from './system.js?v=24';
+} from './api.js?v=26';
+import { initGallery, invalidateCache } from './gallery.js?v=26';
+import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=26';
+import { initCollections } from './collections.js?v=26';
+import { initConcepts } from './concepts.js?v=26';
+import { initDuplicates } from './duplicates.js?v=26';
+import { initSystem } from './system.js?v=26';
 
 window.__irisSelection = window.__irisSelection || new Map();
 

@@ -8,7 +8,7 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=24';
+} from './api.js?v=26';
 
 let initialized = false;
 let importPoll = null;

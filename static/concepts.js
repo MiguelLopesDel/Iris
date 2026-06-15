@@ -14,7 +14,7 @@ import {
   listConcepts,
   rejectConceptMedia,
   updateConcept,
-} from './api.js?v=24';
+} from './api.js?v=26';
 
 var wizardStep = 0;
 var wizardData = {};

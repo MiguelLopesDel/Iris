@@ -2,7 +2,7 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, searchImage, searchText } from './api.js?v=24';
+import { debounce, escapeHtml, fetchRecords, searchImage, searchText } from './api.js?v=26';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -51,7 +51,9 @@ export function initGallery() {
       else if (searchActive) clearGallerySearch();
     }, 350));
     imageInput.addEventListener('change', () => {
-      if (imageInput.files[0]) runGalleryImageSearch(imageInput.files[0]);
+      const file = imageInput.files[0];
+      imageInput.value = '';
+      if (file) runGalleryImageSearch(file);
     });
     clearButton.addEventListener('click', clearGallerySearch);
   }
@@ -62,6 +64,7 @@ export function initGallery() {
 function invalidateCache() {
   pageCache.clear();
   currentPage = 1;
+  resetGallerySearchState();
   loadPage(1);
 }
 
@@ -234,11 +237,15 @@ async function runGalleryImageSearch(file) {
 }
 
 function clearGallerySearch() {
+  resetGallerySearchState();
+  loadPage(1);
+}
+
+function resetGallerySearchState() {
   searchActive = false;
   document.getElementById('gallery-search').value = '';
   document.getElementById('gallery-image-search').value = '';
   document.getElementById('gallery-clear-search').hidden = true;
-  loadPage(1);
 }
 
 function renderSkeletons(n) {

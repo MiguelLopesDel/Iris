@@ -1,6 +1,6 @@
 /* ── Iris Search module ──────────────────────────────────────────────────── */
 
-import { searchText, searchImage, searchSimilar, searchRandom, debounce, escapeHtml } from './api.js?v=24';
+import { searchText, searchImage, searchSimilar, searchRandom, debounce, escapeHtml } from './api.js?v=26';
 
 // ── State ────────────────────────────────────────────────────────────────
 let lastQuery = '';
@@ -55,9 +55,11 @@ export function initSearch() {
 
   // Image upload
   fileInput.addEventListener('change', () => {
-    if (fileInput.files.length) {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (file) {
       searchMode = 'image';
-      doImageSearch(fileInput.files[0]);
+      doImageSearch(file);
     }
   });
 
