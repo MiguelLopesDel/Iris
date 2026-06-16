@@ -22,6 +22,8 @@ from core.web_enrichment import (
     build_distiller,
     build_reverse_image_provider,
     build_webchat_url,
+    clean_concept_name,
+    clean_tag_string,
     count_cached_ids,
     create_web_enrichment_tables,
     find_existing_suggestion,
@@ -565,6 +567,47 @@ def test_gather_vocabulary_cleans_duplicates_and_florence_junk() -> None:
     assert vocab["styles"] == ["anime/manga"]  # deduped despite trailing space
     assert "frieren" in vocab["tags"]
     assert not any("loc_" in t or "VQA" in t or t.lower() == "n/a" for t in vocab["tags"])
+
+
+def test_clean_concept_name_shortens_verbose_names() -> None:
+    assert clean_concept_name(
+        "Frieren: Beyond Journey's End (Sousou no Frieren)"
+    ) == "Frieren: Beyond Journey's End"
+    assert clean_concept_name("Yes Chad (também conhecido como Nordic Gamer)") == "Yes Chad"
+    assert clean_concept_name("Upward Angle Frieren Drawing / Frieren Looking Up") == (
+        "Upward Angle Frieren Drawing"
+    )
+    assert clean_concept_name("  Frieren  ") == "Frieren"
+
+
+def test_clean_tag_string_drops_junk_and_dedupes() -> None:
+    out = clean_tag_string("frieren, VQA>What is this<loc_0>, N/A, frieren, anime")
+    tags = [t.strip() for t in out.split(",")]
+
+    assert "frieren" in tags and "anime" in tags
+    assert tags.count("frieren") == 1
+    assert not any("loc_" in t or "VQA" in t for t in tags)
+
+
+def test_llm_distiller_cleans_verbose_names_and_tags() -> None:
+    class VerboseBackend:
+        name = "v"
+
+        def available(self) -> bool:
+            return True
+
+        def complete(self, system, user, sources=None, vocabulary=None) -> str:
+            return (
+                '{"character": "Frieren (Sousou no Frieren) personagem overpower", '
+                '"tags": "frieren, VQA>x<loc_0>, frieren"}'
+            )
+
+    suggestion = LLMDistiller(VerboseBackend()).distill(
+        [WebSource(title="x", url="https://x.fandom.com")]
+    )
+
+    assert suggestion.character == "Frieren"  # verbose -> canonical name
+    assert "loc_" not in suggestion.tags and suggestion.tags.count("frieren") == 1
 
 
 def test_format_vocabulary_instructs_reuse_and_is_empty_when_blank() -> None:

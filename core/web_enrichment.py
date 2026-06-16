@@ -828,10 +828,13 @@ _DISTILL_SYSTEM_PROMPT = (
     "'looking up', 'staring', 'pointing').\n"
     "Return ONLY compact JSON with keys: character, source_work, style, "
     "meme_archetype, context, tags, summary, confidence. "
-    "'tags' is a comma-separated keyword list (character, work, meme name, "
-    "pose/action, style). 'summary' is one or two sentences in Portuguese "
-    "explaining what the image is and why it is a meme. Use empty strings "
-    "for unknowns and confidence between 0 and 1 reflecting evidence strength."
+    "IMPORTANT: 'character', 'source_work' and 'meme_archetype' must be SHORT "
+    "canonical NAMES only (no descriptions, no parentheses, no 'A vs B'); put any "
+    "explanation in 'summary'/'context' instead. "
+    "'tags' is 3-8 short keywords, comma-separated (no sentences). "
+    "'summary' is one or two sentences in Portuguese explaining what the image is "
+    "and why it is a meme. Use empty strings for unknowns and confidence between 0 "
+    "and 1 reflecting evidence strength."
 )
 
 
@@ -918,6 +921,23 @@ def gather_vocabulary(
         )[: limits.get(key, max_each)]
         for key, values in vocab.items()
     }
+
+
+def clean_concept_name(name: str) -> str:
+    """Reduce a verbose LLM 'name' to a short canonical one: drop parenthetical
+    descriptions, take the first alternative, collapse whitespace, cap length.
+    'Frieren: Beyond... (Sousou no Frieren)' -> 'Frieren: Beyond...'."""
+    name = re.sub(r"\s+", " ", name or "").strip()
+    name = re.sub(r"\s*\(.*$", "", name)  # drop '(...)' descriptions to the end
+    name = re.split(r"\s*[/;]\s*| [-–—] ", name)[0]  # first of several alternatives
+    return name.strip(" -–—:,.").strip()[:60].strip()
+
+
+def clean_tag_string(tags: str, *, max_tags: int = 12) -> str:
+    """Normalize a comma-separated tag string: drop Florence-2 junk/duplicates,
+    cap count -- so we stop persisting garbage tags."""
+    parts = [t.strip() for t in (tags or "").replace(";", ",").split(",")]
+    return ", ".join(_clean_vocab_tokens(parts, max_len=40, drop_junk=True)[:max_tags])
 
 
 def _clean_vocab_tokens(values: list[str], *, max_len: int, drop_junk: bool) -> list[str]:
@@ -1093,8 +1113,10 @@ _WEBCHAT_INSTRUCTION = (
     "conhecido e qual o contexto/piada, o estilo, e palavras-chave (inclusive a "
     "pose/ação, ex.: 'olhando para cima', 'encarando'). Responda APENAS com um "
     "JSON com as chaves: character, source_work, style, meme_archetype, context, "
-    "tags, summary, confidence. 'tags' = lista separada por vírgula; 'summary' em "
-    "português explicando o que é e por que é meme.\n\nFontes:\n"
+    "tags, summary, confidence. IMPORTANTE: character, source_work e meme_archetype "
+    "devem ser NOMES curtos e canônicos (sem descrições, sem parênteses, sem 'A vs "
+    "B') — coloque explicações em summary/context. 'tags' = 3 a 8 palavras-chave "
+    "curtas; 'summary' em português explicando o que é e por que é meme.\n\nFontes:\n"
 )
 
 
@@ -1355,12 +1377,16 @@ class LLMDistiller:
             parsed = _extract_json(self.backend.complete(system, user, sources, vocabulary))
             return EnrichmentSuggestion(
                 provider=f"llm:{self.backend.name}",
-                character=str(parsed.get("character") or fallback.character),
-                source_work=str(parsed.get("source_work") or fallback.source_work),
+                # Normalize the LLM's verbose output so we stop persisting
+                # full-sentence "names" and junk tags as concepts/tags.
+                character=clean_concept_name(str(parsed.get("character") or fallback.character)),
+                source_work=clean_concept_name(str(parsed.get("source_work") or fallback.source_work)),
                 style=str(parsed.get("style") or fallback.style),
-                meme_archetype=str(parsed.get("meme_archetype") or fallback.meme_archetype),
+                meme_archetype=clean_concept_name(
+                    str(parsed.get("meme_archetype") or fallback.meme_archetype)
+                ),
                 context=str(parsed.get("context") or fallback.context),
-                tags=str(parsed.get("tags") or fallback.tags),
+                tags=clean_tag_string(str(parsed.get("tags") or fallback.tags)),
                 summary=str(parsed.get("summary") or fallback.summary),
                 confidence=float(parsed.get("confidence") or fallback.confidence),
                 sources=fallback.sources,
