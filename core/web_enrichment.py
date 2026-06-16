@@ -783,7 +783,9 @@ class LLMBackend(Protocol):
     name: str
 
     def available(self) -> bool: ...
-    def complete(self, system: str, user: str) -> str: ...
+    def complete(
+        self, system: str, user: str, sources: list[WebSource] | None = None
+    ) -> str: ...
 
 
 class OpenAICompatBackend:
@@ -801,7 +803,9 @@ class OpenAICompatBackend:
     def available(self) -> bool:
         return bool(self.endpoint and self.api_key and self.model)
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(
+        self, system: str, user: str, sources: list[WebSource] | None = None
+    ) -> str:
         payload = {
             "model": self.model,
             "temperature": 0,
@@ -839,7 +843,9 @@ class GeminiAPIBackend:
     def available(self) -> bool:
         return bool(self.api_key and self.model)
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(
+        self, system: str, user: str, sources: list[WebSource] | None = None
+    ) -> str:
         url = f"{self.base_url}/{self.model}:generateContent?key={parse.quote(self.api_key)}"
         body = {
             "system_instruction": {"parts": [{"text": system}]},
@@ -861,30 +867,63 @@ class GeminiAPIBackend:
         return text
 
 
-class WebChatBackend:
-    """Send the prompt to a logged-in web chat (chatgpt.com / gemini.com) by
-    driving a browser. Free and uses the user's account (more context, leaves a
-    log in the chat history), but fragile: depends on the site DOM and login.
+_WEBCHAT_INSTRUCTION = (
+    "Identifique a imagem a partir destes resultados de busca reversa do Google "
+    "Lens (cada item é um título e a URL da página que casou visualmente). Abra "
+    "com a busca web as fontes mais confiáveis (knowyourmeme, fandom, wikipedia, "
+    "reddit), leia, e descubra: personagem/sujeito, obra de origem, se é um meme "
+    "conhecido e qual o contexto/piada, o estilo, e palavras-chave (inclusive a "
+    "pose/ação, ex.: 'olhando para cima', 'encarando'). Responda APENAS com um "
+    "JSON com as chaves: character, source_work, style, meme_archetype, context, "
+    "tags, summary, confidence. 'tags' = lista separada por vírgula; 'summary' em "
+    "português explicando o que é e por que é meme.\n\nFontes:\n"
+)
 
-    With ``cdp_url`` set it attaches to the *user's own Chrome* via the DevTools
-    protocol (so the existing logged-in session is reused); otherwise it launches
-    its own browser. The DOM interaction is isolated in ``_send`` and can be
-    swapped via ``completer`` for testing.
+
+def build_webchat_url(
+    sources: list[WebSource],
+    *,
+    temporary: bool = True,
+    max_chars: int = 6000,
+) -> str:
+    """Build a chatgpt.com deep link that pre-fills the compact prompt + the top
+    matches (title + URL). The number of matches is trimmed until the whole URL
+    stays under ``max_chars`` so it never trips a proxy's 414 (URI too long)."""
+    base = "https://chatgpt.com/"
+    usable = [s for s in sources if s.url]
+
+    def make(count: int) -> str:
+        lines = "\n".join(f"- {s.title} | {s.url}" for s in usable[:count])
+        params = {"q": _WEBCHAT_INSTRUCTION + lines, "hints": "search"}
+        if temporary:
+            params["temporary-chat"] = "true"
+        return base + "?" + parse.urlencode(params)
+
+    count = min(len(usable), 8)
+    url = make(count) if count else make(0)
+    while count > 1 and len(url) > max_chars:
+        count -= 1
+        url = make(count)
+    return url
+
+
+class WebChatBackend:
+    """Drive a logged-in ChatGPT in a dedicated browser profile, end to end:
+    open a deep link that pre-fills the prompt, auto-submit, wait for the reply,
+    capture it. Free and uses the user's account; fragile by nature (depends on
+    chatgpt.com's DOM and a one-time login), so it needs live calibration.
+
+    Connection (decided with the user): a **dedicated persistent profile** is the
+    default -- the user logs into ChatGPT once and it is reused. ``cdp_url`` can
+    instead attach to the user's own running Chrome. The DOM interaction is
+    isolated in ``_send_deeplink`` and can be swapped via ``completer`` for tests.
     """
 
     name = "webchat"
-    _targets = {
-        "chatgpt": {
-            "url": "https://chatgpt.com/",
-            "input": "#prompt-textarea",
-            "answer": "[data-message-author-role='assistant']",
-        },
-        "gemini": {
-            "url": "https://gemini.google.com/app",
-            "input": "div.ql-editor[contenteditable='true'], rich-textarea div[contenteditable='true']",
-            "answer": "message-content, .model-response-text",
-        },
-    }
+    _input = "#prompt-textarea"
+    _answer = "[data-message-author-role='assistant']"
+    # While streaming, a "stop" button is shown; its absence means the reply is done.
+    _stop = "button[data-testid='stop-button'], button[aria-label*='Stop'], button[aria-label*='Parar']"
 
     def __init__(
         self,
@@ -893,72 +932,91 @@ class WebChatBackend:
         cdp_url: str = "",
         headless: bool | None = None,
         profile_dir: str = "",
+        temporary: bool | None = None,
         timeout_ms: int | None = None,
         completer: Callable[[str], str] | None = None,
     ):
         self.target = (target or "chatgpt").strip().lower()
         self.cdp_url = cdp_url or os.environ.get("IRIS_WEBCHAT_CDP", "")
+        # Web chat must run headed (login + far less bot-flagging).
         env_headless = os.environ.get("IRIS_WEBCHAT_HEADLESS", "0").strip().lower()
         self.headless = headless if headless is not None else env_headless not in {"0", "false", "no"}
-        self.profile_dir = profile_dir or os.environ.get("IRIS_WEBCHAT_PROFILE_DIR", "")
+        self.profile_dir = profile_dir or os.environ.get(
+            "IRIS_WEBCHAT_PROFILE_DIR", os.path.expanduser("~/.iris/webchat-profile")
+        )
+        env_temp = os.environ.get("IRIS_WEBCHAT_TEMPORARY", "1").strip().lower()
+        self.temporary = temporary if temporary is not None else env_temp not in {"0", "false", "no"}
         self.timeout_ms = timeout_ms or int(os.environ.get("IRIS_WEBCHAT_TIMEOUT_MS", "120000"))
         self._completer = completer
 
     def available(self) -> bool:
         if self._completer is not None:
             return True
-        if self.target not in self._targets:
-            return False
+        if self.target != "chatgpt":
+            return False  # only ChatGPT has a working URL prefill
         try:
             import playwright.sync_api  # noqa: F401
         except Exception:
             return False
         return True
 
-    def complete(self, system: str, user: str) -> str:
-        prompt = (
-            f"{system}\n\nMatches:\n{user}\n\n"
-            "Responda APENAS com o objeto JSON pedido, sem texto extra."
-        )
+    def complete(
+        self, system: str, user: str, sources: list[WebSource] | None = None
+    ) -> str:
+        url = build_webchat_url(sources or [], temporary=self.temporary)
         if self._completer is not None:
-            return self._completer(prompt)
-        return self._send(prompt)
+            return self._completer(url)
+        return self._send_deeplink(url)
 
-    def _send(self, prompt: str) -> str:
+    def _send_deeplink(self, url: str) -> str:
         from playwright.sync_api import sync_playwright
 
-        cfg = self._targets[self.target]
         with sync_playwright() as pw:
-            browser, context, owns_browser = self._connect(pw)
+            context, owns = self._connect(pw)
             try:
                 page = context.new_page()
                 page.set_default_timeout(self.timeout_ms)
-                page.goto(cfg["url"], wait_until="domcontentloaded")
-                editor = page.locator(cfg["input"]).first
+                page.goto(url, wait_until="domcontentloaded")
+                if "/auth" in page.url or "login" in page.url:
+                    raise RuntimeError(
+                        "ChatGPT não está logado neste perfil. Rode uma vez com a janela "
+                        "visível e faça login (o perfil fica salvo em IRIS_WEBCHAT_PROFILE_DIR)."
+                    )
+                # Wait for the prefilled composer, then submit.
+                editor = page.locator(self._input).first
+                editor.wait_for(timeout=self.timeout_ms)
+                page.wait_for_timeout(1500)  # let the prefill text settle
                 editor.click()
-                editor.fill(prompt) if self.target == "chatgpt" else editor.type(prompt)
                 page.keyboard.press("Enter")
-                # Wait for the answer to finish streaming, then read the last one.
-                page.wait_for_selector(cfg["answer"], timeout=self.timeout_ms)
-                page.wait_for_timeout(2500)
-                answers = page.locator(cfg["answer"])
+                self._wait_answer(page)
+                answers = page.locator(self._answer)
+                if not answers.count():
+                    raise RuntimeError("ChatGPT não retornou resposta.")
                 return answers.last.inner_text().strip()
             finally:
-                if owns_browser and browser is not None:
-                    browser.close()
+                if owns:
+                    context.close()
 
-    def _connect(self, pw: Any) -> tuple[Any, Any, bool]:
+    def _wait_answer(self, page: Any) -> None:
+        """Wait until an answer appears and streaming has stopped."""
+        page.wait_for_selector(self._answer, timeout=self.timeout_ms)
+        try:
+            # The stop button shows while streaming; wait for it to disappear.
+            page.wait_for_selector(self._stop, state="detached", timeout=self.timeout_ms)
+        except Exception:
+            pass
+        page.wait_for_timeout(1500)
+
+    def _connect(self, pw: Any) -> tuple[Any, bool]:
         if self.cdp_url:
             browser = pw.chromium.connect_over_cdp(self.cdp_url)
             context = browser.contexts[0] if browser.contexts else browser.new_context()
-            return browser, context, False  # never close the user's own Chrome
-        if self.profile_dir:
-            context = pw.chromium.launch_persistent_context(
-                self.profile_dir, headless=self.headless
-            )
-            return None, context, False
-        browser = pw.chromium.launch(headless=self.headless)
-        return browser, browser.new_context(), True
+            return context, False  # never close the user's own Chrome
+        os.makedirs(self.profile_dir, exist_ok=True)
+        context = pw.chromium.launch_persistent_context(
+            self.profile_dir, headless=self.headless
+        )
+        return context, True
 
 
 class LLMDistiller:
@@ -976,7 +1034,7 @@ class LLMDistiller:
             return fallback
         try:
             system, user = build_distill_messages(sources)
-            parsed = _extract_json(self.backend.complete(system, user))
+            parsed = _extract_json(self.backend.complete(system, user, sources))
             return EnrichmentSuggestion(
                 provider=f"llm:{self.backend.name}",
                 character=str(parsed.get("character") or fallback.character),
@@ -1034,9 +1092,12 @@ def build_distiller(overrides: dict[str, str] | None = None) -> HeuristicDistill
             model=cfg("model", "IRIS_LLM_MODEL") or "gemini-2.0-flash",
         )
     elif kind in {"webchat", "web", "browser"}:
+        temp_raw = cfg("temporary", "IRIS_WEBCHAT_TEMPORARY")
+        temporary = None if temp_raw == "" else temp_raw not in {"0", "false", "no"}
         backend = WebChatBackend(
             target=cfg("target", "IRIS_WEBCHAT_TARGET") or "chatgpt",
             cdp_url=cfg("cdp", "IRIS_WEBCHAT_CDP"),
+            temporary=temporary,
         )
     else:
         return HeuristicDistiller()

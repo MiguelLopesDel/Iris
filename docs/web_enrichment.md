@@ -286,14 +286,33 @@ poucos tokens) é enviado por qualquer backend que implemente o `Protocol`
 |---|---|---|
 | `OpenAICompatBackend` | API OpenAI-compatível (ChatGPT, Ollama, LM Studio) | Estável, melhor; consome cota da API |
 | `GeminiAPIBackend` | API Gemini `generateContent` | Estável; consome cota da API |
-| `WebChatBackend` | Browser em chatgpt.com / gemini.com | Grátis; usa conta logada; **frágil** (DOM/anti-bot) |
+| `WebChatBackend` | ChatGPT logado, via browser (deep link) | Grátis; usa sua conta; **frágil** (DOM/login), precisa calibrar |
 
-`WebChatBackend` pode **anexar ao seu próprio Chrome** via DevTools Protocol
-(`IRIS_WEBCHAT_CDP`) — assim reaproveita sua sessão logada (mais qualidade, mais
-contexto, deixa registro na conversa). Para isso, suba o Chrome com a porta de
-debug aberta: `google-chrome --remote-debugging-port=9222`. Sem CDP, ele abre um
-browser próprio (precisa logar). O scraping web é frágil por natureza e precisa
-de calibração ao vivo dos seletores na sua máquina.
+#### `WebChatBackend` — ChatGPT logado, ponta a ponta
+
+Fluxo automático: abre uma aba já com o prompt **pré-preenchido por URL** (deep
+link `chatgpt.com/?q=...&hints=search`), envia, espera a resposta terminar,
+captura e preenche a sugestão (você aprova/rejeita como sempre). O *deep link*
+elimina a parte mais frágil (não digita na caixa); ainda restam enviar + esperar
++ capturar, que dependem do DOM do ChatGPT — por isso precisa de **calibração ao
+vivo** na sua máquina.
+
+Decisões (com o usuário):
+- **Perfil dedicado do Iris** (`IRIS_WEBCHAT_PROFILE_DIR`, padrão
+  `~/.iris/webchat-profile`): você loga no ChatGPT **uma vez** nesse perfil e ele
+  é reaproveitado; seu Chrome pessoal fica intacto. Alternativa: `IRIS_WEBCHAT_CDP`
+  anexa ao seu Chrome já aberto (precisa subir com `--remote-debugging-port=9222`).
+- **Conversa temporária por padrão** (`IRIS_WEBCHAT_TEMPORARY=1` →
+  `temporary-chat=true`): a busca não fica no seu histórico do ChatGPT. Toggle na
+  UI. O parâmetro temporário é um pouco instável no ChatGPT, mas como mandamos só
+  uma pergunta/resposta, costuma segurar.
+
+Detalhes técnicos:
+- Só **ChatGPT** (Gemini não tem prefill por URL nativo — para Gemini use a API).
+- `build_webchat_url` monta o prompt compacto + os **top ~8 matches (título +
+  URL)** e **corta matches** até a URL ficar < ~6 KB, evitando o erro 414 (URI
+  too long) de proxies/CDN.
+- Roda **headed** (login + bem menos detecção); uma aba/contexto por imagem.
 
 `LLMDistiller` monta o prompt, chama o backend, faz parsing tolerante do JSON
 (`_extract_json`, aceita cercas markdown/prosa) e cai na heurística em qualquer
@@ -306,9 +325,10 @@ Seleção por env:
 export IRIS_LLM_BACKEND="gemini"      # ou openai / webchat / heuristic
 export IRIS_LLM_API_KEY="..."         # APIs; web-chat não precisa
 export IRIS_LLM_MODEL="gemini-2.0-flash"
-# web-chat:
-export IRIS_WEBCHAT_TARGET="chatgpt"  # ou gemini
-export IRIS_WEBCHAT_CDP="http://localhost:9222"  # anexar ao seu Chrome logado
+# web-chat (ChatGPT logado):
+export IRIS_WEBCHAT_PROFILE_DIR="$HOME/.iris/webchat-profile"
+export IRIS_WEBCHAT_TEMPORARY="1"     # 0 = conversa normal (fica no histórico)
+# export IRIS_WEBCHAT_CDP="http://localhost:9222"  # alternativa: anexar ao seu Chrome
 ```
 
 **Na UI**: o painel "Enriquecimento web" tem um seletor de backend (Heurística /

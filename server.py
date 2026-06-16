@@ -1319,6 +1319,7 @@ async def create_enrichment_job(
     llm_model: str = Form(""),
     webchat_target: str = Form(""),
     webchat_cdp: str = Form(""),
+    webchat_temporary: str = Form(""),
 ):
     conn = _backend_connection()
     ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
@@ -1332,6 +1333,7 @@ async def create_enrichment_job(
             "model": llm_model.strip(),
             "target": webchat_target.strip(),
             "cdp": webchat_cdp.strip(),
+            "temporary": webchat_temporary.strip(),
         }.items()
         if v
     }

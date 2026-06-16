@@ -458,9 +458,12 @@
       </select>
     </label>
     <label id="we-cdp-wrap" hidden>Chrome (CDP):
-      <input id="we-cdp" type="text" placeholder="http://localhost:9222" />
+      <input id="we-cdp" type="text" placeholder="(vazio = perfil dedicado do Iris)" />
     </label>
-    <span class="web-enrichment-hint">Chaves de API ficam no ambiente (env), não na interface.</span>
+    <label id="we-temporary-wrap" hidden>
+      <input id="we-temporary" type="checkbox" checked /> Conversa temporária
+    </label>
+    <span class="web-enrichment-hint">Chaves de API ficam no ambiente (env), não na interface. Web-chat usa um perfil dedicado do Iris (login uma vez).</span>
   </div>
   <div id="web-enrichment-list" class="web-enrichment-list"></div>
 </section>

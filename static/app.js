@@ -15,7 +15,7 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=31';
+} from './api.js?v=32';
 import { initGallery, invalidateCache } from './gallery.js?v=27';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
 import { initCollections } from './collections.js?v=27';
@@ -391,11 +391,13 @@ document.getElementById('btn-enrich-selected').addEventListener('click', async f
 });
 
 function getEnrichBackendConfig() {
+  var temp = document.getElementById('we-temporary');
   return {
     backend: (document.getElementById('we-backend') || {}).value || '',
     model: (document.getElementById('we-model') || {}).value || '',
     target: (document.getElementById('we-target') || {}).value || '',
     cdp: (document.getElementById('we-cdp') || {}).value || '',
+    temporary: temp ? temp.checked : true,
   };
 }
 
@@ -408,6 +410,7 @@ function syncEnrichBackendFields() {
   show('we-model-wrap', backend === 'openai' || backend === 'gemini');
   show('we-target-wrap', backend === 'webchat');
   show('we-cdp-wrap', backend === 'webchat');
+  show('we-temporary-wrap', backend === 'webchat');
 }
 
 function restoreEnrichBackendConfig() {
@@ -417,11 +420,13 @@ function restoreEnrichBackendConfig() {
       var el = document.getElementById('we-' + k);
       if (el && saved[k] != null) el.value = saved[k];
     });
+    var temp = document.getElementById('we-temporary');
+    if (temp && saved.temporary != null) temp.checked = !!saved.temporary;
   } catch (e) { /* ignore */ }
   syncEnrichBackendFields();
 }
 
-['we-backend', 'we-model', 'we-target', 'we-cdp'].forEach(function(id) {
+['we-backend', 'we-model', 'we-target', 'we-cdp', 'we-temporary'].forEach(function(id) {
   var el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('change', function() {

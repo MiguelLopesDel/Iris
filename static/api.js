@@ -253,6 +253,7 @@ export async function createEnrichmentJob(dbIds, force = false, config = {}) {
     llm_model: config.model || '',
     webchat_target: config.target || '',
     webchat_cdp: config.cdp || '',
+    webchat_temporary: config.temporary ? '1' : '0',
   });
 }
 

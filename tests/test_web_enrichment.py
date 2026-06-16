@@ -20,6 +20,7 @@ from core.web_enrichment import (
     build_distill_messages,
     build_distiller,
     build_reverse_image_provider,
+    build_webchat_url,
     count_cached_ids,
     create_web_enrichment_tables,
     find_existing_suggestion,
@@ -246,7 +247,7 @@ def test_llm_distiller_uses_backend_and_parses_json() -> None:
         def available(self) -> bool:
             return True
 
-        def complete(self, system: str, user: str) -> str:
+        def complete(self, system: str, user: str, sources=None) -> str:
             captured["user"] = user
             return '{"character": "Frieren", "source_work": "Sousou no Frieren", ' \
                    '"meme_archetype": "staring", "tags": "frieren, olhar", "confidence": 0.8}'
@@ -277,19 +278,47 @@ def test_llm_distiller_falls_back_when_backend_unavailable() -> None:
     assert suggestion.provider == "heuristic"
 
 
-def test_webchat_backend_uses_injected_completer() -> None:
+def test_webchat_backend_uses_injected_completer_with_deeplink() -> None:
     seen: dict[str, str] = {}
 
-    def completer(prompt: str) -> str:
-        seen["prompt"] = prompt
+    def completer(url: str) -> str:
+        seen["url"] = url
         return '{"character": "Gojo"}'
 
     backend = WebChatBackend(completer=completer)
     assert backend.available() is True
-    out = backend.complete("SYS", "USERMATCHES")
+    sources = [WebSource(title="Gojo", url="https://jujutsu-kaisen.fandom.com/wiki/Gojo")]
+    out = backend.complete("SYS", "USER", sources)
 
-    assert "SYS" in seen["prompt"] and "USERMATCHES" in seen["prompt"]
+    assert seen["url"].startswith("https://chatgpt.com/?")
+    assert "jujutsu-kaisen.fandom.com" in seen["url"]
     assert _extract_json(out)["character"] == "Gojo"
+
+
+def test_build_webchat_url_includes_temporary_and_match_urls() -> None:
+    sources = [
+        WebSource(title="Frieren staring", url="https://knowyourmeme.com/memes/frieren"),
+        WebSource(title="Frieren wiki", url="https://frieren.fandom.com/wiki/Frieren"),
+    ]
+    url = build_webchat_url(sources, temporary=True)
+
+    assert url.startswith("https://chatgpt.com/?")
+    assert "temporary-chat=true" in url
+    assert "hints=search" in url
+    assert "knowyourmeme.com" in url  # match URLs are sent, not just domains
+
+    plain = build_webchat_url(sources, temporary=False)
+    assert "temporary-chat" not in plain
+
+
+def test_build_webchat_url_trims_matches_to_stay_under_limit() -> None:
+    sources = [
+        WebSource(title="m" * 200, url="https://example.com/" + "p" * 200)
+        for _ in range(40)
+    ]
+    url = build_webchat_url(sources, temporary=True, max_chars=2000)
+    # Trimmed to respect the limit, but keeps at least one match.
+    assert len(url) <= 2000 or url.count("https://example.com/") == 1
 
 
 def test_build_distiller_selects_backend_by_env(monkeypatch) -> None:
