@@ -220,6 +220,55 @@ def test_load_existing_sources_reuses_last_suggestion() -> None:
     assert reused[0].domain == "x.fandom.com"
 
 
+class _FakeLocator:
+    def __init__(self, count: int, on_set=None) -> None:
+        self._count = count
+        self._on_set = on_set
+        self.first = self
+
+    def count(self) -> int:
+        return self._count
+
+    def set_input_files(self, path: str) -> None:
+        if self._on_set:
+            self._on_set(path)
+
+
+class _FakeUploadPage:
+    def __init__(self, locators: dict) -> None:
+        self._locators = locators
+
+    def wait_for_selector(self, *args, **kwargs) -> None:
+        pass
+
+    def locator(self, selector: str):
+        return self._locators.get(selector, _FakeLocator(0))
+
+
+def test_upload_image_falls_back_to_encoded_image_input() -> None:
+    captured: dict[str, str] = {}
+    provider = PlaywrightLensProvider(scraper=lambda path: [])
+    page = _FakeUploadPage(
+        {
+            "input[name=encoded_image]": _FakeLocator(
+                1, lambda p: captured.__setitem__("file", p)
+            ),
+        }
+    )
+
+    provider._upload_image(page, "/tmp/meme.jpg")  # no "upload a file" link -> encoded_image
+
+    assert captured["file"] == "/tmp/meme.jpg"
+
+
+def test_upload_image_raises_when_no_upload_field() -> None:
+    provider = PlaywrightLensProvider(scraper=lambda path: [])
+    page = _FakeUploadPage({})  # nothing on the page
+
+    with pytest.raises(RuntimeError, match="campo de upload"):
+        provider._upload_image(page, "/tmp/meme.jpg")
+
+
 class _FakePage:
     """Minimal page stub for exercising PlaywrightLensProvider._await_results."""
 

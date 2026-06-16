@@ -536,7 +536,22 @@ class PlaywrightLensProvider:
     def _upload_image(self, page: Any, file_path: str) -> None:
         """Send the local file into Lens. Prefers the visible "upload a file"
         link (the real Lens path), falling back to the legacy reverse-search
-        input, then to the last file input."""
+        input, then to the last file input.
+
+        The Lens upload dialog renders **asynchronously** after a redirect
+        (``lens.google.com/upload`` → ``google.com/?olud``), so we first wait for
+        an upload affordance to exist -- otherwise we race the page and miss it.
+        """
+        # ``encoded_image`` only exists once the full Lens dialog has rendered;
+        # the early drag-drop inputs appear before the "upload a file" link, so
+        # gating on any file input fires too soon and we miss the real control.
+        try:
+            page.wait_for_selector(
+                "input[name=encoded_image]", state="attached", timeout=self.timeout_ms
+            )
+        except Exception:
+            pass
+
         for selector in (
             "text=/upload de um arquivo/i",
             "text=/upload a file/i",
@@ -545,17 +560,29 @@ class PlaywrightLensProvider:
             link = page.locator(selector)
             try:
                 if link.count():
-                    with page.expect_file_chooser(timeout=8000) as chooser:
+                    with page.expect_file_chooser(timeout=10000) as chooser:
                         link.first.click()
                     chooser.value.set_files(file_path)
                     return
             except Exception:
                 continue
+
         encoded = page.locator("input[name=encoded_image]")
-        if encoded.count():
-            encoded.set_input_files(file_path)
+        try:
+            if encoded.count():
+                encoded.set_input_files(file_path)
+                return
+        except Exception:
+            pass
+
+        inputs = page.locator("input[type=file]")
+        if inputs.count():
+            inputs.last.set_input_files(file_path)
             return
-        page.locator("input[type=file]").last.set_input_files(file_path)
+        raise RuntimeError(
+            "Não encontrei o campo de upload do Google Lens (a página pode ter "
+            "mudado ou não carregou). Tente novamente."
+        )
 
     def _await_results(self, page: Any) -> None:
         """Wait for the Lens results page. If Google walls with a reCAPTCHA and
