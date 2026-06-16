@@ -199,6 +199,47 @@ def test_playwright_provider_uses_injected_scraper() -> None:
     assert sources[0].domain == "knowyourmeme.com"
 
 
+def test_search_path_filters_noise_and_ranks_through_full_pipeline() -> None:
+    """End-to-end through search_path -> parse_lens_results: noise dropped,
+    rich domains first. Guards the whole Lens result-handling pipeline."""
+    def scraper(path):
+        return [
+            {"title": "clip", "url": "https://youtube.com/watch?v=x", "has_thumb": True},
+            {"title": "plain", "url": "https://example.com/x", "has_thumb": True},
+            {"title": "kym", "url": "https://knowyourmeme.com/x", "has_thumb": True},
+        ]
+
+    sources = PlaywrightLensProvider(scraper=scraper).search_path("/x.jpg")
+    domains = [s.domain for s in sources]
+
+    assert "youtube.com" not in domains  # noise dropped
+    assert domains[0] == "knowyourmeme.com"  # rich domain first
+
+
+class _FakeSettlePage:
+    def __init__(self, selector_raises: bool) -> None:
+        self.selector_raises = selector_raises
+        self.timeout_waited = False
+
+    def wait_for_selector(self, selector, timeout=0, **kwargs):
+        if self.selector_raises:
+            raise TimeoutError("no anchors")
+
+    def wait_for_timeout(self, ms):
+        self.timeout_waited = True
+
+
+def test_settle_results_is_bounded_and_never_hangs() -> None:
+    provider = PlaywrightLensProvider(scraper=lambda p: [])
+    # Even when no anchor ever appears, _settle_results must return (bounded),
+    # not block like wait_for_load_state('networkidle') used to.
+    page = _FakeSettlePage(selector_raises=True)
+
+    provider._settle_results(page)
+
+    assert page.timeout_waited is True
+
+
 def test_load_existing_sources_reuses_last_suggestion() -> None:
     conn = _make_conn()
     assert load_existing_sources(conn, 1) == []

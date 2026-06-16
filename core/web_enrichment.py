@@ -501,13 +501,20 @@ class PlaywrightLensProvider:
                 self._dismiss_consent(page)
                 self._upload_image(page, file_path)
                 self._await_results(page)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=self.timeout_ms)
-                except Exception:
-                    pass
+                self._settle_results(page)
                 return self._extract_results(page)
             finally:
                 (browser or context).close()
+
+    def _settle_results(self, page: Any) -> None:
+        """Let the result anchors populate without blocking on ``networkidle``,
+        which Google's pages rarely reach (they keep background connections
+        open) -- waiting on it froze the flow for the full timeout."""
+        try:
+            page.wait_for_selector("a[href^='http']", timeout=10000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1500)
 
     def _launch(self, pw: Any) -> tuple[Any, Any]:
         """Launch a browser/context. With ``profile_dir`` set, a persistent
