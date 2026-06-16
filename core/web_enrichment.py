@@ -893,9 +893,7 @@ def gather_vocabulary(
         pass
     try:
         vocab["styles"] = [
-            r[0].strip()
-            for r in conn.execute("SELECT DISTINCT style FROM memes WHERE style != ''")
-            if r[0] and r[0].strip()
+            r[0] for r in conn.execute("SELECT style FROM memes WHERE style != ''") if r[0]
         ]
     except Exception:
         pass
@@ -906,10 +904,43 @@ def gather_vocabulary(
                 tag = tag.strip()
                 if tag and tag.lower() != "web-enriched":
                     counts[tag] = counts.get(tag, 0) + 1
-        vocab["tags"] = [t for t, _ in sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:max_tags]]
+        vocab["tags"] = [t for t, _ in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
     except Exception:
         pass
-    return {key: values[:max_each] for key, values in vocab.items()}
+    # Clean each bucket: dedupe (case-insensitive), drop Florence-2 junk and
+    # over-long descriptive "names" that aren't reusable vocabulary.
+    limits = {"styles": 20, "tags": max_tags}
+    return {
+        key: _clean_vocab_tokens(
+            values,
+            max_len=40 if key in {"styles", "tags"} else 60,
+            drop_junk=(key == "tags"),
+        )[: limits.get(key, max_each)]
+        for key, values in vocab.items()
+    }
+
+
+def _clean_vocab_tokens(values: list[str], *, max_len: int, drop_junk: bool) -> list[str]:
+    """Dedupe (case-insensitive), normalize whitespace, drop empties / over-long
+    values and (for tags) Florence-2 caption artifacts like ``VQA>...<loc_0>``."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        value = re.sub(r"\s+", " ", value or "").strip()
+        if not value or len(value) > max_len:
+            continue
+        if drop_junk:
+            low = value.lower()
+            if "<" in value or ">" in value or "loc_" in low or "vqa" in low:
+                continue
+            if low in {"n/a", "na", "none", "null"}:
+                continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
 
 
 def build_distill_messages(
@@ -1092,21 +1123,29 @@ def build_webchat_url(
     trimmed = (
         {k: (vocabulary.get(k) or [])[:cap] for k, cap in caps.items()} if vocabulary else None
     )
-    vocab_txt = format_vocabulary(trimmed)
+    vocab_full = format_vocabulary(trimmed)
 
-    def make(count: int) -> str:
+    def make(count: int, vocab_txt: str) -> str:
         lines = "\n".join(f"- {s.title} | {s.url}" for s in usable[:count])
         params = {"q": _WEBCHAT_INSTRUCTION + lines + vocab_txt, "hints": "search"}
         if temporary:
             params["temporary-chat"] = "true"
         return base + "?" + parse.urlencode(params)
 
+    # 1) Trim matches down to a small floor first.
     count = min(len(usable), 8)
-    url = make(count) if count else make(0)
-    while count > 1 and len(url) > max_chars:
+    url = make(count, vocab_full)
+    while count > 3 and len(url) > max_chars:
         count -= 1
-        url = make(count)
-    return url
+        url = make(count, vocab_full)
+    # 2) Still over budget? Shrink the vocabulary (it grows unbounded with the
+    #    library, so it -- not the matches -- is what blows the URL past 414).
+    vocab_txt = vocab_full
+    while vocab_txt and len(make(count, vocab_txt)) > max_chars:
+        vocab_txt = vocab_txt[: int(len(vocab_txt) * 0.8)].rstrip()
+    if vocab_txt != vocab_full and vocab_txt:
+        vocab_txt += " …"
+    return make(count, vocab_txt)
 
 
 class WebChatBackend:

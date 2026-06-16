@@ -510,14 +510,16 @@ def test_build_webchat_url_includes_temporary_and_match_urls() -> None:
     assert "temporary-chat" not in plain
 
 
-def test_build_webchat_url_trims_matches_to_stay_under_limit() -> None:
-    sources = [
-        WebSource(title="m" * 200, url="https://example.com/" + "p" * 200)
-        for _ in range(40)
-    ]
-    url = build_webchat_url(sources, temporary=True, max_chars=2000)
-    # Trimmed to respect the limit, but keeps at least one match.
-    assert len(url) <= 2000 or url.count("https://example.com/") == 1
+def test_build_webchat_url_shrinks_vocabulary_to_fit() -> None:
+    # A large library produces a huge vocabulary -- the URL must stay bounded
+    # (this caused net::ERR_HTTP_RESPONSE_CODE_FAILURE / 414 in production).
+    sources = [WebSource(title="Frieren", url="https://knowyourmeme.com/frieren")]
+    huge_vocab = {"tags": [f"tag{i}-{'x' * 20}" for i in range(500)]}
+
+    url = build_webchat_url(sources, vocabulary=huge_vocab, max_chars=2500)
+
+    assert len(url) <= 2500
+    assert "knowyourmeme.com" in url  # the match itself is preserved
 
 
 def test_gather_vocabulary_buckets_concepts_by_category() -> None:
@@ -544,6 +546,25 @@ def test_gather_vocabulary_buckets_concepts_by_category() -> None:
     assert vocab["categories"] == ["Algo Antigo"]  # legacy 'outro' falls back here
     assert "anime" in vocab["styles"]
     assert "frieren" in vocab["tags"] and "web-enriched" not in vocab["tags"]
+
+
+def test_gather_vocabulary_cleans_duplicates_and_florence_junk() -> None:
+    conn = _make_conn()
+    conn.execute("INSERT INTO memes (id, arquivo, caminho) VALUES (2, 'b.jpg', '/b.jpg')")
+    # Duplicate styles (one with trailing space) -> must collapse to one.
+    conn.execute("UPDATE memes SET style = 'anime/manga' WHERE id = 1")
+    conn.execute("UPDATE memes SET style = 'anime/manga ' WHERE id = 2")
+    # A good tag plus Florence-2 caption junk that must be dropped.
+    conn.execute(
+        "UPDATE memes SET tags = 'frieren, VQA>What is this meme<loc_0><loc_999>, N/A' WHERE id = 1"
+    )
+    conn.commit()
+
+    vocab = gather_vocabulary(conn)
+
+    assert vocab["styles"] == ["anime/manga"]  # deduped despite trailing space
+    assert "frieren" in vocab["tags"]
+    assert not any("loc_" in t or "VQA" in t or t.lower() == "n/a" for t in vocab["tags"])
 
 
 def test_format_vocabulary_instructs_reuse_and_is_empty_when_blank() -> None:
