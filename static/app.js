@@ -15,7 +15,7 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=32';
+} from './api.js?v=33';
 import { initGallery, invalidateCache } from './gallery.js?v=27';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
 import { initCollections } from './collections.js?v=27';
@@ -382,7 +382,7 @@ document.getElementById('btn-enrich-selected').addEventListener('click', async f
   if (!window.__irisSelection.size) return;
   try {
     var ids = await resolveSelectedDbIds();
-    await runWebEnrichment(ids, false);
+    await runWebEnrichment(ids, false, false);
   } catch (err) {
     showWebEnrichmentPanel();
     document.getElementById('web-enrichment-status').textContent = 'Erro: ' + err.message;
@@ -395,7 +395,6 @@ function getEnrichBackendConfig() {
   return {
     backend: (document.getElementById('we-backend') || {}).value || '',
     model: (document.getElementById('we-model') || {}).value || '',
-    target: (document.getElementById('we-target') || {}).value || '',
     cdp: (document.getElementById('we-cdp') || {}).value || '',
     temporary: temp ? temp.checked : true,
   };
@@ -408,7 +407,6 @@ function syncEnrichBackendFields() {
     if (el) el.hidden = !on;
   };
   show('we-model-wrap', backend === 'openai' || backend === 'gemini');
-  show('we-target-wrap', backend === 'webchat');
   show('we-cdp-wrap', backend === 'webchat');
   show('we-temporary-wrap', backend === 'webchat');
 }
@@ -416,7 +414,7 @@ function syncEnrichBackendFields() {
 function restoreEnrichBackendConfig() {
   try {
     var saved = JSON.parse(localStorage.getItem('irisEnrichBackend') || '{}');
-    ['backend', 'model', 'target', 'cdp'].forEach(function(k) {
+    ['backend', 'model', 'cdp'].forEach(function(k) {
       var el = document.getElementById('we-' + k);
       if (el && saved[k] != null) el.value = saved[k];
     });
@@ -426,7 +424,7 @@ function restoreEnrichBackendConfig() {
   syncEnrichBackendFields();
 }
 
-['we-backend', 'we-model', 'we-target', 'we-cdp', 'we-temporary'].forEach(function(id) {
+['we-backend', 'we-model', 'we-cdp', 'we-temporary'].forEach(function(id) {
   var el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('change', function() {
@@ -436,18 +434,31 @@ function restoreEnrichBackendConfig() {
 });
 restoreEnrichBackendConfig();
 
-async function runWebEnrichment(ids, force) {
+function backendLabel() {
+  var b = (document.getElementById('we-backend') || {}).value || '';
+  return { '': 'a heurística', openai: 'o ChatGPT (API)', gemini: 'o Gemini (API)',
+           webchat: 'o ChatGPT (web-chat)' }[b] || 'a IA';
+}
+
+// force: ignora o cache; research: refaz a busca no Lens (false = reaproveita fontes).
+async function runWebEnrichment(ids, force, research) {
   window.__irisLastEnrichIds = ids;
-  var job = await createEnrichmentJob(ids, force, getEnrichBackendConfig());
+  var job = await createEnrichmentJob(ids, force, getEnrichBackendConfig(), research);
   showWebEnrichmentPanel();
   if (!force && job.cached > 0) {
     toast(job.cached + ' de ' + job.total
-      + ' ja tinham sugestao e foram reaproveitadas (sem custo).', 'info');
+      + ' ja tinham sugestao e foram reaproveitadas (sem nova busca).', 'info');
+  } else if (research) {
+    toast('Re-buscando no Lens ' + job.total + ' item(ns)', 'success');
+  } else if (force) {
+    toast('Re-enviando ' + job.total + ' item(ns) para ' + backendLabel(), 'success');
   } else {
     toast('Busca web iniciada para ' + job.total + ' item(ns)', 'success');
   }
-  var forceBtn = document.getElementById('web-enrichment-force');
-  forceBtn.hidden = force || !(job.cached > 0);
+  // Once there are results, both re-run actions make sense.
+  var hasRun = force || job.total > 0;
+  document.getElementById('web-enrichment-redistill').hidden = !hasRun;
+  document.getElementById('web-enrichment-research').hidden = !hasRun;
   pollWebEnrichmentJob(job.job_id);
 }
 
@@ -457,12 +468,24 @@ function showWebEnrichmentPanel() {
   loadWebEnrichmentSuggestions();
 }
 
-document.getElementById('web-enrichment-force').addEventListener('click', function() {
+// Reaproveita as fontes já encontradas e só re-roda a IA (sem nova busca no Lens).
+document.getElementById('web-enrichment-redistill').addEventListener('click', function() {
   var ids = window.__irisLastEnrichIds || [];
   if (!ids.length) return;
-  if (!confirm('Re-pesquisar ' + ids.length + ' imagem(ns)? Isso ignora o cache e '
-    + 'pode consumir creditos da API de busca.')) return;
-  runWebEnrichment(ids, true).catch(function(err) {
+  if (!confirm('Re-enviar ' + ids.length + ' imagem(ns) para ' + backendLabel()
+    + ' usando as fontes já encontradas (sem nova busca no Lens)?')) return;
+  runWebEnrichment(ids, true, false).catch(function(err) {
+    toast('Erro: ' + err.message, 'error');
+  });
+});
+
+// Refaz a busca no Lens do zero (pode abrir o navegador, demorar e pedir CAPTCHA).
+document.getElementById('web-enrichment-research').addEventListener('click', function() {
+  var ids = window.__irisLastEnrichIds || [];
+  if (!ids.length) return;
+  if (!confirm('Re-buscar ' + ids.length + ' imagem(ns) no Google Lens do zero? '
+    + 'Pode abrir o navegador, demorar e (no modo local) pedir CAPTCHA.')) return;
+  runWebEnrichment(ids, true, true).catch(function(err) {
     toast('Erro: ' + err.message, 'error');
   });
 });

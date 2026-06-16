@@ -26,6 +26,7 @@ from core.web_enrichment import (
     find_existing_suggestion,
     insert_suggestion,
     list_suggestions,
+    load_existing_sources,
     normalize_serpapi_sources,
     parse_lens_results,
 )
@@ -150,6 +151,22 @@ def test_parse_lens_results_dedupes_and_skips_empty() -> None:
     assert sources[0].match_type == "lens_visual_match"
 
 
+def test_parse_lens_results_drops_noise_and_ranks_rich_domains() -> None:
+    sources = parse_lens_results(
+        [
+            {"title": "Frieren clip", "url": "https://youtube.com/watch?v=x", "has_thumb": True},
+            {"title": "Frieren insta", "url": "https://instagram.com/p/x", "has_thumb": True},
+            {"title": "Frieren plain", "url": "https://example.com/x", "has_thumb": True},
+            {"title": "Frieren KYM", "url": "https://knowyourmeme.com/memes/frieren",
+             "has_thumb": True},
+        ]
+    )
+    domains = [s.domain for s in sources]
+
+    assert "youtube.com" not in domains and "instagram.com" not in domains
+    assert domains[0] == "knowyourmeme.com"  # rich/explanatory domain ranked first
+
+
 def test_parse_lens_results_ranks_thumbnail_matches_first() -> None:
     sources = parse_lens_results(
         [
@@ -179,6 +196,28 @@ def test_playwright_provider_uses_injected_scraper() -> None:
 
     assert captured == ["/tmp/meme.jpg"]
     assert sources[0].domain == "knowyourmeme.com"
+
+
+def test_load_existing_sources_reuses_last_suggestion() -> None:
+    conn = _make_conn()
+    assert load_existing_sources(conn, 1) == []
+
+    insert_suggestion(
+        conn,
+        "job1",
+        1,
+        EnrichmentSuggestion(
+            provider="lens",
+            summary="x",
+            sources=(
+                WebSource(title="Gojo", url="https://x.fandom.com", domain="x.fandom.com"),
+            ),
+        ),
+    )
+
+    reused = load_existing_sources(conn, 1)
+    assert len(reused) == 1
+    assert reused[0].domain == "x.fandom.com"
 
 
 class _FakePage:

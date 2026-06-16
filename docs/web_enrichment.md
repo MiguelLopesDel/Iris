@@ -176,9 +176,25 @@ Antes de pesquisar uma imagem, `_run_web_enrichment_job` checa
 a API) e marca como `reaproveitado (cache)`. Sugestões já obtidas ficam
 persistidas — sair antes de revisar não perde nada nem custa de novo.
 
-Para refazer de propósito, o endpoint aceita `force=1` (botão **Forçar
-re-pesquisa** no painel, com confirmação). `POST /api/enrichment/jobs` retorna
-`cached` (quantas foram reaproveitadas) para a UI avisar o usuário.
+Para refazer de propósito há **dois** caminhos (botões no painel, com
+confirmação):
+
+- **Re-enviar pra IA** (`force=1`, `research=0`): reaproveita as **fontes já
+  encontradas** do último Lens (`load_existing_sources`) e roda só o destilador
+  (`WebEnrichmentService.redistill`) — não reabre o navegador nem refaz a busca.
+  É o caminho para experimentar outro backend de IA numa imagem já pesquisada.
+- **Re-buscar no Lens** (`force=1`, `research=1`): refaz a busca do zero
+  (`enrich_path`), reabrindo o provider.
+
+Quando todas as imagens do lote já têm fontes e não é `research`, a config do
+provider de busca nem é exigida (não há busca nova). `POST /api/enrichment/jobs`
+retorna `cached` (reaproveitadas pelo cache) e `research` para a UI.
+
+> Priorização de fontes: `parse_lens_results` **descarta** domínios ruins para
+> identificar imagem (vídeo/stock/loja/social: youtube, instagram, shutterstock,
+> amazon…) e **ranqueia primeiro** os explicativos (knowyourmeme, fandom, wiki,
+> reddit, myanimelist…), via `_domain_tier`. Assim a IA recebe fontes com
+> conteúdo relevante em vez de links de vídeo/loja.
 
 ## Persistência (tabelas)
 

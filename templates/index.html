@@ -435,7 +435,8 @@
       <p id="web-enrichment-status">Nenhuma busca em andamento.</p>
     </div>
     <div class="web-enrichment-actions">
-      <button id="web-enrichment-force" class="btn btn-subtle" type="button" hidden>Forçar re-pesquisa</button>
+      <button id="web-enrichment-redistill" class="btn btn-subtle" type="button" hidden>Re-enviar pra IA</button>
+      <button id="web-enrichment-research" class="btn btn-subtle" type="button" hidden>Re-buscar no Lens</button>
       <button id="web-enrichment-close" class="icon-btn" type="button" aria-label="Fechar painel">×</button>
     </div>
   </div>
@@ -445,17 +446,11 @@
         <option value="">Heurística (sem IA)</option>
         <option value="openai">API ChatGPT (OpenAI)</option>
         <option value="gemini">API Gemini</option>
-        <option value="webchat">Web-chat no meu navegador</option>
+        <option value="webchat">Web-chat: ChatGPT (meu navegador)</option>
       </select>
     </label>
     <label id="we-model-wrap" hidden>Modelo:
       <input id="we-model" type="text" placeholder="gpt-4o-mini / gemini-2.0-flash" />
-    </label>
-    <label id="we-target-wrap" hidden>Site:
-      <select id="we-target">
-        <option value="chatgpt">chatgpt.com</option>
-        <option value="gemini">gemini.google.com</option>
-      </select>
     </label>
     <label id="we-cdp-wrap" hidden>Chrome (CDP):
       <input id="we-cdp" type="text" placeholder="(vazio = perfil dedicado do Iris)" />

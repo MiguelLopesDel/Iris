@@ -356,11 +356,40 @@ def normalize_serpapi_sources(payload: dict[str, Any]) -> list[WebSource]:
     return deduped[:30]
 
 
+# Domains that rarely help identify a still image: video, social noise, stock
+# photos and shops. Dropped from the results.
+_NOISE_DOMAINS = (
+    "youtube.com", "youtu.be", "instagram.com", "tiktok.com", "facebook.com",
+    "shutterstock.com", "istockphoto.com", "gettyimages", "alamy.com",
+    "dreamstime.com", "123rf.com", "depositphotos.com", "stock.adobe.com",
+    "amazon.", "aliexpress.", "ebay.", "etsy.com", "mercadolivre.", "walmart.com",
+)
+# Domains that usually explain/discuss an image (high signal for identification).
+_RICH_DOMAINS = (
+    "knowyourmeme.com", "fandom.com", "wikipedia.org", "wikia", "tvtropes.org",
+    "reddit.com", "myanimelist.net", "anilist.co", "danbooru", "gelbooru",
+    "zerochan.net", "safebooru", "pixiv.net", "deviantart.com", "tumblr.com",
+    "wikihow.com",
+)
+
+
+def _domain_tier(domain: str) -> int:
+    """+1 for rich/explanatory domains, -1 for noise (video/stock/shop), else 0."""
+    d = (domain or "").lower()
+    if any(n in d for n in _NOISE_DOMAINS):
+        return -1
+    if any(r in d for r in _RICH_DOMAINS):
+        return 1
+    return 0
+
+
 def parse_lens_results(items: list[dict[str, Any]], limit: int = 30) -> list[WebSource]:
     """Turn raw ``{title, url, source_url}`` rows scraped from the Lens page
     into deduplicated :class:`WebSource` objects.
 
-    Kept pure (no browser) so the parsing can be unit-tested on its own.
+    Noise domains (YouTube, Instagram, stock/shops) are dropped, and
+    rich/explanatory domains (knowyourmeme, fandom, wiki, reddit...) are ranked
+    first. Kept pure (no browser) so the parsing can be unit-tested on its own.
     """
     sources: list[WebSource] = []
     seen: set[tuple[str, str]] = set()
@@ -370,22 +399,27 @@ def parse_lens_results(items: list[dict[str, Any]], limit: int = 30) -> list[Web
         source_url = str(item.get("source_url") or url).strip()
         if not title and not url:
             continue
+        domain = _domain(source_url or url)
+        tier = _domain_tier(domain)
+        if tier < 0:
+            continue  # drop video/stock/shop/social-noise domains
         key = (title.lower(), source_url or url)
         if key in seen:
             continue
         seen.add(key)
         has_thumb = bool(item.get("has_thumb"))
+        # Rank: rich domains first, then real visual matches (thumbnail).
+        score = (2.0 if tier > 0 else 0.0) + (1.0 if has_thumb else 0.0)
         sources.append(
             WebSource(
                 title=title,
                 url=url,
                 source_url=source_url,
-                domain=_domain(source_url or url),
+                domain=domain,
                 match_type="lens_visual_match" if has_thumb else "lens_link",
-                score=1.0 if has_thumb else 0.0,
+                score=score,
             )
         )
-    # Real visual matches (with a thumbnail) first, preserving order otherwise.
     sources.sort(key=lambda s: s.score, reverse=True)
     return sources[:limit]
 
@@ -1125,10 +1159,21 @@ class WebEnrichmentService:
         return list(self.provider.missing_config())
 
     def enrich_path(self, path: str | os.PathLike[str]) -> EnrichmentSuggestion:
+        """Full pipeline: reverse-image search (Lens) + distill."""
         sources = self.provider.search_path(path)
+        return self._distill(sources, provider=self.provider.provider_name)
+
+    def redistill(self, sources: list[WebSource]) -> EnrichmentSuggestion:
+        """Re-run only the AI distiller over sources already found earlier --
+        no new Lens search. Lets the user re-send the same matches to a
+        different/better backend without re-searching (and without re-opening
+        the browser)."""
+        return self._distill(sources, provider="redistill")
+
+    def _distill(self, sources: list[WebSource], *, provider: str) -> EnrichmentSuggestion:
         suggestion = self.distiller.distill(sources)
         return EnrichmentSuggestion(
-            provider=self.provider.provider_name,
+            provider=provider,
             character=suggestion.character,
             source_work=suggestion.source_work,
             style=suggestion.style,
@@ -1212,6 +1257,31 @@ def find_existing_suggestion(conn: sqlite3.Connection, meme_id: int) -> dict[str
 def count_cached_ids(conn: sqlite3.Connection, meme_ids: list[int]) -> int:
     """How many of these memes already have a reusable suggestion."""
     return sum(1 for meme_id in meme_ids if find_existing_suggestion(conn, meme_id) is not None)
+
+
+def load_existing_sources(conn: sqlite3.Connection, meme_id: int) -> list[WebSource]:
+    """Load the web sources from the latest suggestion of a meme, so we can
+    re-run only the AI distiller without hitting Google Lens again."""
+    create_web_enrichment_tables(conn)
+    existing = find_existing_suggestion(conn, meme_id)
+    if not existing:
+        return []
+    rows = conn.execute(
+        "SELECT title, url, source_url, domain, match_type, score "
+        "FROM web_enrichment_sources WHERE suggestion_id = ? ORDER BY id",
+        (existing["id"],),
+    ).fetchall()
+    return [
+        WebSource(
+            title=row["title"],
+            url=row["url"],
+            source_url=row["source_url"],
+            domain=row["domain"],
+            match_type=row["match_type"],
+            score=row["score"],
+        )
+        for row in rows
+    ]
 
 
 def insert_suggestion(

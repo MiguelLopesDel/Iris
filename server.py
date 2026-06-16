@@ -51,6 +51,7 @@ from core.web_enrichment import (
     get_job,
     insert_suggestion,
     list_suggestions,
+    load_existing_sources,
     reject_suggestion,
     update_job,
 )
@@ -1269,6 +1270,7 @@ def _run_web_enrichment_job(
     db_ids: list[int],
     force: bool = False,
     backend_overrides: dict[str, str] | None = None,
+    research: bool = False,
 ) -> None:
     conn = _backend_connection()
     try:
@@ -1282,14 +1284,21 @@ def _run_web_enrichment_job(
                 done += 1
                 update_job(conn, job_id, done=done, message=f"{label}: reaproveitado (cache)")
                 continue
-            update_job(conn, job_id, done=done, message=f"Pesquisando {label}")
+            # Reuse the previous Lens sources (just re-run the AI) unless the user
+            # explicitly asked for a fresh search. Avoids re-opening the browser.
+            cached_sources = [] if research else load_existing_sources(conn, db_id)
             try:
-                if record is None or not record.resolved_path:
-                    raise RuntimeError("Registro sem arquivo resolvido")
-                path = Path(record.resolved_path)
-                if not path.exists() or not path.is_file():
-                    raise RuntimeError("Arquivo não encontrado")
-                suggestion = service.enrich_path(path)
+                if cached_sources:
+                    update_job(conn, job_id, done=done, message=f"Re-enviando {label} para a IA")
+                    suggestion = service.redistill(cached_sources)
+                else:
+                    update_job(conn, job_id, done=done, message=f"Pesquisando {label}")
+                    if record is None or not record.resolved_path:
+                        raise RuntimeError("Registro sem arquivo resolvido")
+                    path = Path(record.resolved_path)
+                    if not path.exists() or not path.is_file():
+                        raise RuntimeError("Arquivo não encontrado")
+                    suggestion = service.enrich_path(path)
             except Exception as exc:
                 suggestion = EnrichmentSuggestion(
                     provider="web_enrichment",
@@ -1320,6 +1329,7 @@ async def create_enrichment_job(
     webchat_target: str = Form(""),
     webchat_cdp: str = Form(""),
     webchat_temporary: str = Form(""),
+    research: str = Form(""),
 ):
     conn = _backend_connection()
     ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
@@ -1337,20 +1347,31 @@ async def create_enrichment_job(
         }.items()
         if v
     }
-    service = _create_web_enrichment_service(overrides)
-    missing = service.missing_config()
-    if missing:
-        raise HTTPException(400, "Configuração ausente: " + ", ".join(missing))
     force_flag = force.strip().lower() in {"1", "true", "yes", "on"}
+    research_flag = research.strip().lower() in {"1", "true", "yes", "on"}
+    service = _create_web_enrichment_service(overrides)
+    # The Lens provider config is only required when a fresh search will run; a
+    # pure re-distill of already-found sources needs no provider config.
+    needs_search = research_flag or any(not load_existing_sources(conn, i) for i in ids)
+    if needs_search:
+        missing = service.missing_config()
+        if missing:
+            raise HTTPException(400, "Configuração ausente: " + ", ".join(missing))
     cached = 0 if force_flag else count_cached_ids(conn, ids)
     job_id = create_job(conn, ids)
     thread = threading.Thread(
         target=_run_web_enrichment_job,
-        args=(job_id, ids, force_flag, overrides),
+        args=(job_id, ids, force_flag, overrides, research_flag),
         daemon=True,
     )
     thread.start()
-    return {"job_id": job_id, "total": len(ids), "cached": cached, "force": force_flag}
+    return {
+        "job_id": job_id,
+        "total": len(ids),
+        "cached": cached,
+        "force": force_flag,
+        "research": research_flag,
+    }
 
 
 @app.get("/api/enrichment/jobs/{job_id}")
