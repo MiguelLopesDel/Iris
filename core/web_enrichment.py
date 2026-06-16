@@ -259,6 +259,14 @@ class ReverseImageProvider(Protocol):
     def search_path(self, path: str | os.PathLike[str]) -> list[WebSource]: ...
 
 
+@runtime_checkable
+class Distiller(Protocol):
+    """Turns web sources into a structured suggestion. Implementations range
+    from a pure-heuristic one to LLM-backed transports (API or web chat)."""
+
+    def distill(self, sources: list[WebSource]) -> EnrichmentSuggestion: ...
+
+
 class SerpApiLensProvider:
     """Reverse search via SerpApi's Google Lens engine.
 
@@ -709,79 +717,268 @@ class HeuristicDistiller:
         )
 
 
-class HybridDistiller:
-    def __init__(self, fallback: HeuristicDistiller | None = None):
+_DISTILL_SYSTEM_PROMPT = (
+    "You identify an image from Google Lens reverse-search results. "
+    "The input is a list of web pages that visually match the image "
+    "(titles + domains). Infer what the image actually is.\n"
+    "Weight authoritative sources more: knowyourmeme.com, fandom.com, "
+    "wikipedia.org, wikia, reddit.com and booru/anime wikis usually name "
+    "the character, the source work and the meme directly. Ignore stores, "
+    "stock-photo sites and unrelated noise.\n"
+    "Decide: who/what is the main character or subject; which work it is "
+    "from (anime/game/movie/etc.); whether the image is a known meme and, "
+    "if so, what the joke/context is; the visual style; and the most useful "
+    "search keywords for this image (including the action or pose, e.g. "
+    "'looking up', 'staring', 'pointing').\n"
+    "Return ONLY compact JSON with keys: character, source_work, style, "
+    "meme_archetype, context, tags, summary, confidence. "
+    "'tags' is a comma-separated keyword list (character, work, meme name, "
+    "pose/action, style). 'summary' is one or two sentences in Portuguese "
+    "explaining what the image is and why it is a meme. Use empty strings "
+    "for unknowns and confidence between 0 and 1 reflecting evidence strength."
+)
+
+
+def build_distill_messages(sources: list[WebSource]) -> tuple[str, str]:
+    """Build the (system, user) prompt from the *clean relevant text* only --
+    page titles + domains, never raw HTML -- so token usage stays minimal and
+    every backend (API or web-chat) receives the exact same compact payload."""
+    user = json.dumps(
+        {
+            "matches": [
+                {
+                    "title": source.title,
+                    "domain": source.domain,
+                    "match_type": source.match_type,
+                }
+                for source in sources[:15]
+            ]
+        },
+        ensure_ascii=False,
+    )
+    return _DISTILL_SYSTEM_PROMPT, user
+
+
+def _extract_json(text: str) -> dict[str, Any]:
+    """Parse a JSON object out of an LLM/web-chat reply, tolerating markdown
+    code fences and surrounding prose."""
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", text, re.S)
+        if match:
+            return json.loads(match.group(0))
+    raise ValueError("Resposta sem JSON")
+
+
+@runtime_checkable
+class LLMBackend(Protocol):
+    """Transport that turns the clean prompt into a model reply. Implementations
+    differ only in *where* the text is sent (API vs web chat)."""
+
+    name: str
+
+    def available(self) -> bool: ...
+    def complete(self, system: str, user: str) -> str: ...
+
+
+class OpenAICompatBackend:
+    """Direct API call to any OpenAI-compatible Chat Completions endpoint
+    (ChatGPT, Ollama, LM Studio, ...). Stable and recommended."""
+
+    name = "openai"
+
+    def __init__(self, *, endpoint: str = "", api_key: str = "", model: str = "", timeout: int = 45):
+        self.endpoint = endpoint or "https://api.openai.com/v1/chat/completions"
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+
+    def available(self) -> bool:
+        return bool(self.endpoint and self.api_key and self.model)
+
+    def complete(self, system: str, user: str) -> str:
+        payload = {
+            "model": self.model,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        req = request.Request(
+            self.endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={
+                "authorization": f"Bearer {self.api_key}",
+                "content-type": "application/json",
+            },
+        )
+        with request.urlopen(req, timeout=self.timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return _llm_content(data)
+
+
+class GeminiAPIBackend:
+    """Direct call to the Google Gemini ``generateContent`` REST API."""
+
+    name = "gemini"
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    def __init__(self, *, api_key: str = "", model: str = "", timeout: int = 45):
+        self.api_key = api_key
+        self.model = model or "gemini-2.0-flash"
+        self.timeout = timeout
+
+    def available(self) -> bool:
+        return bool(self.api_key and self.model)
+
+    def complete(self, system: str, user: str) -> str:
+        url = f"{self.base_url}/{self.model}:generateContent?key={parse.quote(self.api_key)}"
+        body = {
+            "system_instruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+        }
+        req = request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={"content-type": "application/json"},
+        )
+        with request.urlopen(req, timeout=self.timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "\n".join(p.get("text", "") for p in parts if isinstance(p, dict))
+        if not text:
+            raise ValueError("Gemini sem texto")
+        return text
+
+
+class WebChatBackend:
+    """Send the prompt to a logged-in web chat (chatgpt.com / gemini.com) by
+    driving a browser. Free and uses the user's account (more context, leaves a
+    log in the chat history), but fragile: depends on the site DOM and login.
+
+    With ``cdp_url`` set it attaches to the *user's own Chrome* via the DevTools
+    protocol (so the existing logged-in session is reused); otherwise it launches
+    its own browser. The DOM interaction is isolated in ``_send`` and can be
+    swapped via ``completer`` for testing.
+    """
+
+    name = "webchat"
+    _targets = {
+        "chatgpt": {
+            "url": "https://chatgpt.com/",
+            "input": "#prompt-textarea",
+            "answer": "[data-message-author-role='assistant']",
+        },
+        "gemini": {
+            "url": "https://gemini.google.com/app",
+            "input": "div.ql-editor[contenteditable='true'], rich-textarea div[contenteditable='true']",
+            "answer": "message-content, .model-response-text",
+        },
+    }
+
+    def __init__(
+        self,
+        *,
+        target: str = "chatgpt",
+        cdp_url: str = "",
+        headless: bool | None = None,
+        profile_dir: str = "",
+        timeout_ms: int | None = None,
+        completer: Callable[[str], str] | None = None,
+    ):
+        self.target = (target or "chatgpt").strip().lower()
+        self.cdp_url = cdp_url or os.environ.get("IRIS_WEBCHAT_CDP", "")
+        env_headless = os.environ.get("IRIS_WEBCHAT_HEADLESS", "0").strip().lower()
+        self.headless = headless if headless is not None else env_headless not in {"0", "false", "no"}
+        self.profile_dir = profile_dir or os.environ.get("IRIS_WEBCHAT_PROFILE_DIR", "")
+        self.timeout_ms = timeout_ms or int(os.environ.get("IRIS_WEBCHAT_TIMEOUT_MS", "120000"))
+        self._completer = completer
+
+    def available(self) -> bool:
+        if self._completer is not None:
+            return True
+        if self.target not in self._targets:
+            return False
+        try:
+            import playwright.sync_api  # noqa: F401
+        except Exception:
+            return False
+        return True
+
+    def complete(self, system: str, user: str) -> str:
+        prompt = (
+            f"{system}\n\nMatches:\n{user}\n\n"
+            "Responda APENAS com o objeto JSON pedido, sem texto extra."
+        )
+        if self._completer is not None:
+            return self._completer(prompt)
+        return self._send(prompt)
+
+    def _send(self, prompt: str) -> str:
+        from playwright.sync_api import sync_playwright
+
+        cfg = self._targets[self.target]
+        with sync_playwright() as pw:
+            browser, context, owns_browser = self._connect(pw)
+            try:
+                page = context.new_page()
+                page.set_default_timeout(self.timeout_ms)
+                page.goto(cfg["url"], wait_until="domcontentloaded")
+                editor = page.locator(cfg["input"]).first
+                editor.click()
+                editor.fill(prompt) if self.target == "chatgpt" else editor.type(prompt)
+                page.keyboard.press("Enter")
+                # Wait for the answer to finish streaming, then read the last one.
+                page.wait_for_selector(cfg["answer"], timeout=self.timeout_ms)
+                page.wait_for_timeout(2500)
+                answers = page.locator(cfg["answer"])
+                return answers.last.inner_text().strip()
+            finally:
+                if owns_browser and browser is not None:
+                    browser.close()
+
+    def _connect(self, pw: Any) -> tuple[Any, Any, bool]:
+        if self.cdp_url:
+            browser = pw.chromium.connect_over_cdp(self.cdp_url)
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            return browser, context, False  # never close the user's own Chrome
+        if self.profile_dir:
+            context = pw.chromium.launch_persistent_context(
+                self.profile_dir, headless=self.headless
+            )
+            return None, context, False
+        browser = pw.chromium.launch(headless=self.headless)
+        return browser, browser.new_context(), True
+
+
+class LLMDistiller:
+    """Distiller backed by a pluggable :class:`LLMBackend`. Builds the clean
+    prompt, asks the backend, parses JSON, and falls back to the heuristic on
+    any failure or when the backend is not configured."""
+
+    def __init__(self, backend: LLMBackend | None, fallback: HeuristicDistiller | None = None):
+        self.backend = backend
         self.fallback = fallback or HeuristicDistiller()
-        self.endpoint = os.environ.get("IRIS_LLM_ENDPOINT", "").strip()
-        self.api_key = os.environ.get("IRIS_LLM_API_KEY", "").strip()
-        self.model = os.environ.get("IRIS_LLM_MODEL", "").strip()
 
     def distill(self, sources: list[WebSource]) -> EnrichmentSuggestion:
         fallback = self.fallback.distill(sources)
-        if not self.endpoint or not self.api_key or not self.model:
+        if self.backend is None or not self.backend.available():
             return fallback
         try:
-            payload = {
-                "model": self.model,
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You identify an image from Google Lens reverse-search results. "
-                            "The input is a list of web pages that visually match the image "
-                            "(titles + domains). Infer what the image actually is.\n"
-                            "Weight authoritative sources more: knowyourmeme.com, fandom.com, "
-                            "wikipedia.org, wikia, reddit.com and booru/anime wikis usually name "
-                            "the character, the source work and the meme directly. Ignore stores, "
-                            "stock-photo sites and unrelated noise.\n"
-                            "Decide: who/what is the main character or subject; which work it is "
-                            "from (anime/game/movie/etc.); whether the image is a known meme and, "
-                            "if so, what the joke/context is; the visual style; and the most useful "
-                            "search keywords for this image (including the action or pose, e.g. "
-                            "'looking up', 'staring', 'pointing').\n"
-                            "Return ONLY compact JSON with keys: character, source_work, style, "
-                            "meme_archetype, context, tags, summary, confidence. "
-                            "'tags' is a comma-separated keyword list (character, work, meme name, "
-                            "pose/action, style). 'summary' is one or two sentences in Portuguese "
-                            "explaining what the image is and why it is a meme. Use empty strings "
-                            "for unknowns and confidence between 0 and 1 reflecting evidence strength."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "matches": [
-                                    {
-                                        "title": source.title,
-                                        "domain": source.domain,
-                                        "match_type": source.match_type,
-                                    }
-                                    for source in sources[:15]
-                                ]
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-            }
-            req = request.Request(
-                self.endpoint,
-                data=json.dumps(payload).encode("utf-8"),
-                method="POST",
-                headers={
-                    "authorization": f"Bearer {self.api_key}",
-                    "content-type": "application/json",
-                },
-            )
-            with request.urlopen(req, timeout=45) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            content = _llm_content(data)
-            parsed = json.loads(content)
+            system, user = build_distill_messages(sources)
+            parsed = _extract_json(self.backend.complete(system, user))
             return EnrichmentSuggestion(
-                provider="hybrid_llm",
+                provider=f"llm:{self.backend.name}",
                 character=str(parsed.get("character") or fallback.character),
                 source_work=str(parsed.get("source_work") or fallback.source_work),
                 style=str(parsed.get("style") or fallback.style),
@@ -796,13 +993,64 @@ class HybridDistiller:
             return fallback
 
 
+class HybridDistiller(LLMDistiller):
+    """Back-compat shim: an :class:`LLMDistiller` wired to an OpenAI-compatible
+    backend from the legacy ``IRIS_LLM_*`` environment variables."""
+
+    def __init__(self, fallback: HeuristicDistiller | None = None):
+        backend = OpenAICompatBackend(
+            endpoint=os.environ.get("IRIS_LLM_ENDPOINT", "").strip(),
+            api_key=os.environ.get("IRIS_LLM_API_KEY", "").strip(),
+            model=os.environ.get("IRIS_LLM_MODEL", "").strip(),
+        )
+        super().__init__(backend, fallback)
+
+
+def build_distiller(overrides: dict[str, str] | None = None) -> HeuristicDistiller | LLMDistiller:
+    """Select the distiller/backend from ``overrides`` (e.g. from the UI) with
+    fallback to ``IRIS_*`` env vars. ``IRIS_LLM_BACKEND`` picks the transport:
+    ``heuristic`` (default), ``openai``, ``gemini`` or ``webchat``."""
+    over = overrides or {}
+
+    def cfg(key: str, env: str) -> str:
+        return str(over.get(key) or os.environ.get(env, "")).strip()
+
+    kind = (cfg("backend", "IRIS_LLM_BACKEND") or "heuristic").lower()
+    if kind in {"", "heuristic", "none", "off"}:
+        # Legacy: if OpenAI-compatible env is fully set, honour it transparently.
+        if all(os.environ.get(k, "").strip() for k in
+               ("IRIS_LLM_ENDPOINT", "IRIS_LLM_API_KEY", "IRIS_LLM_MODEL")):
+            return HybridDistiller()
+        return HeuristicDistiller()
+    if kind in {"openai", "chatgpt", "openai_compat"}:
+        backend: LLMBackend = OpenAICompatBackend(
+            endpoint=cfg("endpoint", "IRIS_LLM_ENDPOINT"),
+            api_key=cfg("api_key", "IRIS_LLM_API_KEY"),
+            model=cfg("model", "IRIS_LLM_MODEL") or "gpt-4o-mini",
+        )
+    elif kind == "gemini":
+        backend = GeminiAPIBackend(
+            api_key=cfg("api_key", "IRIS_LLM_API_KEY"),
+            model=cfg("model", "IRIS_LLM_MODEL") or "gemini-2.0-flash",
+        )
+    elif kind in {"webchat", "web", "browser"}:
+        backend = WebChatBackend(
+            target=cfg("target", "IRIS_WEBCHAT_TARGET") or "chatgpt",
+            cdp_url=cfg("cdp", "IRIS_WEBCHAT_CDP"),
+        )
+    else:
+        return HeuristicDistiller()
+    return LLMDistiller(backend)
+
+
 class WebEnrichmentService:
     def __init__(
         self,
         provider: ReverseImageProvider | None = None,
-        distiller: HybridDistiller | HeuristicDistiller | None = None,
+        distiller: Distiller | None = None,
         *,
         publisher: S3TemporaryImagePublisher | None = None,
+        backend_overrides: dict[str, str] | None = None,
     ):
         if provider is None:
             provider = build_reverse_image_provider()
@@ -810,7 +1058,7 @@ class WebEnrichmentService:
             if publisher is not None and isinstance(provider, SerpApiLensProvider):
                 provider.publisher = publisher
         self.provider = provider
-        self.distiller = distiller or HybridDistiller()
+        self.distiller = distiller or build_distiller(backend_overrides)
 
     def missing_config(self) -> list[str]:
         return list(self.provider.missing_config())

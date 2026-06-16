@@ -957,6 +957,38 @@ img[data-lightbox-src] {
   flex-shrink: 0;
 }
 
+.web-enrichment-config {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  font-size: 13px;
+}
+
+.web-enrichment-config label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.web-enrichment-config select,
+.web-enrichment-config input {
+  font: inherit;
+  padding: 4px 8px;
+}
+
+.web-enrichment-config input {
+  min-width: 180px;
+}
+
+.web-enrichment-hint {
+  flex-basis: 100%;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
 .web-enrichment-list {
   min-height: 0;
   overflow-y: auto;

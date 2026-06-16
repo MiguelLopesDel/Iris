@@ -439,6 +439,29 @@
       <button id="web-enrichment-close" class="icon-btn" type="button" aria-label="Fechar painel">×</button>
     </div>
   </div>
+  <div class="web-enrichment-config">
+    <label>Identificação por IA:
+      <select id="we-backend">
+        <option value="">Heurística (sem IA)</option>
+        <option value="openai">API ChatGPT (OpenAI)</option>
+        <option value="gemini">API Gemini</option>
+        <option value="webchat">Web-chat no meu navegador</option>
+      </select>
+    </label>
+    <label id="we-model-wrap" hidden>Modelo:
+      <input id="we-model" type="text" placeholder="gpt-4o-mini / gemini-2.0-flash" />
+    </label>
+    <label id="we-target-wrap" hidden>Site:
+      <select id="we-target">
+        <option value="chatgpt">chatgpt.com</option>
+        <option value="gemini">gemini.google.com</option>
+      </select>
+    </label>
+    <label id="we-cdp-wrap" hidden>Chrome (CDP):
+      <input id="we-cdp" type="text" placeholder="http://localhost:9222" />
+    </label>
+    <span class="web-enrichment-hint">Chaves de API ficam no ambiente (env), não na interface.</span>
+  </div>
   <div id="web-enrichment-list" class="web-enrichment-list"></div>
 </section>
 

@@ -15,7 +15,7 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=30';
+} from './api.js?v=31';
 import { initGallery, invalidateCache } from './gallery.js?v=27';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
 import { initCollections } from './collections.js?v=27';
@@ -390,9 +390,50 @@ document.getElementById('btn-enrich-selected').addEventListener('click', async f
   }
 });
 
+function getEnrichBackendConfig() {
+  return {
+    backend: (document.getElementById('we-backend') || {}).value || '',
+    model: (document.getElementById('we-model') || {}).value || '',
+    target: (document.getElementById('we-target') || {}).value || '',
+    cdp: (document.getElementById('we-cdp') || {}).value || '',
+  };
+}
+
+function syncEnrichBackendFields() {
+  var backend = (document.getElementById('we-backend') || {}).value || '';
+  var show = function(id, on) {
+    var el = document.getElementById(id);
+    if (el) el.hidden = !on;
+  };
+  show('we-model-wrap', backend === 'openai' || backend === 'gemini');
+  show('we-target-wrap', backend === 'webchat');
+  show('we-cdp-wrap', backend === 'webchat');
+}
+
+function restoreEnrichBackendConfig() {
+  try {
+    var saved = JSON.parse(localStorage.getItem('irisEnrichBackend') || '{}');
+    ['backend', 'model', 'target', 'cdp'].forEach(function(k) {
+      var el = document.getElementById('we-' + k);
+      if (el && saved[k] != null) el.value = saved[k];
+    });
+  } catch (e) { /* ignore */ }
+  syncEnrichBackendFields();
+}
+
+['we-backend', 'we-model', 'we-target', 'we-cdp'].forEach(function(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('change', function() {
+    syncEnrichBackendFields();
+    localStorage.setItem('irisEnrichBackend', JSON.stringify(getEnrichBackendConfig()));
+  });
+});
+restoreEnrichBackendConfig();
+
 async function runWebEnrichment(ids, force) {
   window.__irisLastEnrichIds = ids;
-  var job = await createEnrichmentJob(ids, force);
+  var job = await createEnrichmentJob(ids, force, getEnrichBackendConfig());
   showWebEnrichmentPanel();
   if (!force && job.cached > 0) {
     toast(job.cached + ' de ' + job.total

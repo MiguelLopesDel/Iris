@@ -245,8 +245,15 @@ export async function trashRecords(dbIds) {
 
 // ── Web enrichment ────────────────────────────────────────────────────────
 
-export async function createEnrichmentJob(dbIds, force = false) {
-  return apiPost('/api/enrichment/jobs', { db_ids: dbIds.join(','), force: force ? '1' : '' });
+export async function createEnrichmentJob(dbIds, force = false, config = {}) {
+  return apiPost('/api/enrichment/jobs', {
+    db_ids: dbIds.join(','),
+    force: force ? '1' : '',
+    llm_backend: config.backend || '',
+    llm_model: config.model || '',
+    webchat_target: config.target || '',
+    webchat_cdp: config.cdp || '',
+  });
 }
 
 export async function getEnrichmentJob(jobId) {

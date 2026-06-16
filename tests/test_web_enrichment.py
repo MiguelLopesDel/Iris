@@ -7,11 +7,18 @@ import pytest
 from core.concepts import create_concept_tables
 from core.web_enrichment import (
     EnrichmentSuggestion,
+    GeminiAPIBackend,
     HeuristicDistiller,
+    LLMDistiller,
+    OpenAICompatBackend,
     PlaywrightLensProvider,
     SerpApiLensProvider,
+    WebChatBackend,
     WebSource,
+    _extract_json,
     apply_suggestion,
+    build_distill_messages,
+    build_distiller,
     build_reverse_image_provider,
     count_cached_ids,
     create_web_enrichment_tables,
@@ -213,6 +220,100 @@ def test_await_results_headed_waits_for_manual_solve() -> None:
 
     assert page.waited_for_solve is True
     assert "/search" in page.url
+
+
+def test_extract_json_tolerates_code_fences_and_prose() -> None:
+    assert _extract_json('```json\n{"character": "Frieren"}\n```')["character"] == "Frieren"
+    assert _extract_json('Claro! {"character": "Gojo"} pronto')["character"] == "Gojo"
+
+
+def test_build_distill_messages_sends_only_clean_text() -> None:
+    sources = [WebSource(title="Frieren staring meme", url="https://knowyourmeme.com/x",
+                         domain="knowyourmeme.com", match_type="lens_visual_match")]
+    system, user = build_distill_messages(sources)
+
+    assert "JSON" in system
+    assert "knowyourmeme.com" in user
+    assert "<" not in user  # no raw HTML, only titles + domains
+
+
+def test_llm_distiller_uses_backend_and_parses_json() -> None:
+    captured: dict[str, str] = {}
+
+    class FakeBackend:
+        name = "fake"
+
+        def available(self) -> bool:
+            return True
+
+        def complete(self, system: str, user: str) -> str:
+            captured["user"] = user
+            return '{"character": "Frieren", "source_work": "Sousou no Frieren", ' \
+                   '"meme_archetype": "staring", "tags": "frieren, olhar", "confidence": 0.8}'
+
+    sources = [WebSource(title="Frieren", url="https://x.fandom.com", domain="x.fandom.com")]
+    suggestion = LLMDistiller(FakeBackend()).distill(sources)
+
+    assert suggestion.character == "Frieren"
+    assert suggestion.source_work == "Sousou no Frieren"
+    assert suggestion.provider == "llm:fake"
+    assert "fandom.com" in captured["user"]
+
+
+def test_llm_distiller_falls_back_when_backend_unavailable() -> None:
+    class DeadBackend:
+        name = "dead"
+
+        def available(self) -> bool:
+            return False
+
+        def complete(self, system: str, user: str) -> str:  # pragma: no cover
+            raise AssertionError("must not be called")
+
+    sources = [WebSource(title="Pepe", url="https://knowyourmeme.com/pepe",
+                         domain="knowyourmeme.com")]
+    suggestion = LLMDistiller(DeadBackend()).distill(sources)
+
+    assert suggestion.provider == "heuristic"
+
+
+def test_webchat_backend_uses_injected_completer() -> None:
+    seen: dict[str, str] = {}
+
+    def completer(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return '{"character": "Gojo"}'
+
+    backend = WebChatBackend(completer=completer)
+    assert backend.available() is True
+    out = backend.complete("SYS", "USERMATCHES")
+
+    assert "SYS" in seen["prompt"] and "USERMATCHES" in seen["prompt"]
+    assert _extract_json(out)["character"] == "Gojo"
+
+
+def test_build_distiller_selects_backend_by_env(monkeypatch) -> None:
+    monkeypatch.setenv("IRIS_LLM_BACKEND", "gemini")
+    monkeypatch.setenv("IRIS_LLM_API_KEY", "k")
+    distiller = build_distiller()
+    assert isinstance(distiller, LLMDistiller)
+    assert isinstance(distiller.backend, GeminiAPIBackend)
+
+    monkeypatch.setenv("IRIS_LLM_BACKEND", "openai")
+    assert isinstance(build_distiller().backend, OpenAICompatBackend)
+
+    monkeypatch.setenv("IRIS_LLM_BACKEND", "webchat")
+    assert isinstance(build_distiller().backend, WebChatBackend)
+
+    # UI override wins over env.
+    monkeypatch.setenv("IRIS_LLM_BACKEND", "openai")
+    assert isinstance(build_distiller({"backend": "gemini"}).backend, GeminiAPIBackend)
+
+
+def test_build_distiller_defaults_to_heuristic(monkeypatch) -> None:
+    for key in ("IRIS_LLM_BACKEND", "IRIS_LLM_ENDPOINT", "IRIS_LLM_API_KEY", "IRIS_LLM_MODEL"):
+        monkeypatch.delenv(key, raising=False)
+    assert isinstance(build_distiller(), HeuristicDistiller)
 
 
 def test_build_provider_selects_by_env(monkeypatch) -> None:

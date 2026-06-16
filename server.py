@@ -138,8 +138,10 @@ def _ensure_web_enrichment_tables(backend: SearchBackend | None = None) -> None:
         engine.db.invalidate_table_cache()
 
 
-def _create_web_enrichment_service() -> WebEnrichmentService:
-    return WebEnrichmentService()
+def _create_web_enrichment_service(
+    backend_overrides: dict[str, str] | None = None,
+) -> WebEnrichmentService:
+    return WebEnrichmentService(backend_overrides=backend_overrides)
 
 
 def _refresh_backend_metadata() -> None:
@@ -1262,10 +1264,15 @@ def _record_by_db_id(db_id: int) -> IndexRecord | None:
     return next((record for record in _get_backend().get_all_records() if record.db_id == db_id), None)
 
 
-def _run_web_enrichment_job(job_id: str, db_ids: list[int], force: bool = False) -> None:
+def _run_web_enrichment_job(
+    job_id: str,
+    db_ids: list[int],
+    force: bool = False,
+    backend_overrides: dict[str, str] | None = None,
+) -> None:
     conn = _backend_connection()
     try:
-        service = _create_web_enrichment_service()
+        service = _create_web_enrichment_service(backend_overrides)
         update_job(conn, job_id, status="running", message="Iniciando busca web")
         done = 0
         for db_id in db_ids:
@@ -1305,12 +1312,30 @@ def _run_web_enrichment_job(job_id: str, db_ids: list[int], force: bool = False)
 
 
 @app.post("/api/enrichment/jobs")
-async def create_enrichment_job(db_ids: str = Form(...), force: str = Form("")):
+async def create_enrichment_job(
+    db_ids: str = Form(...),
+    force: str = Form(""),
+    llm_backend: str = Form(""),
+    llm_model: str = Form(""),
+    webchat_target: str = Form(""),
+    webchat_cdp: str = Form(""),
+):
     conn = _backend_connection()
     ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
     if not ids:
         raise HTTPException(400, "Selecione pelo menos uma imagem")
-    service = _create_web_enrichment_service()
+    # Backend overrides from the UI selector (API keys stay in env for safety).
+    overrides = {
+        k: v
+        for k, v in {
+            "backend": llm_backend.strip(),
+            "model": llm_model.strip(),
+            "target": webchat_target.strip(),
+            "cdp": webchat_cdp.strip(),
+        }.items()
+        if v
+    }
+    service = _create_web_enrichment_service(overrides)
     missing = service.missing_config()
     if missing:
         raise HTTPException(400, "Configuração ausente: " + ", ".join(missing))
@@ -1318,7 +1343,9 @@ async def create_enrichment_job(db_ids: str = Form(...), force: str = Form("")):
     cached = 0 if force_flag else count_cached_ids(conn, ids)
     job_id = create_job(conn, ids)
     thread = threading.Thread(
-        target=_run_web_enrichment_job, args=(job_id, ids, force_flag), daemon=True
+        target=_run_web_enrichment_job,
+        args=(job_id, ids, force_flag, overrides),
+        daemon=True,
     )
     thread.start()
     return {"job_id": job_id, "total": len(ids), "cached": cached, "force": force_flag}

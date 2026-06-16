@@ -274,3 +274,44 @@ export IRIS_LLM_ENDPOINT="http://localhost:11434/v1/chat/completions"
 export IRIS_LLM_API_KEY="ollama"
 export IRIS_LLM_MODEL="qwen2.5:7b"
 ```
+
+### Backends de IA plugáveis (`LLMBackend`)
+
+A destilação por IA é desacoplada do *transporte*: o mesmo **prompt limpo**
+(`build_distill_messages` — só títulos + domínios, nunca HTML cru, para gastar
+poucos tokens) é enviado por qualquer backend que implemente o `Protocol`
+`LLMBackend` (`available()` + `complete(system, user)`):
+
+| Backend | Transporte | Quando usar |
+|---|---|---|
+| `OpenAICompatBackend` | API OpenAI-compatível (ChatGPT, Ollama, LM Studio) | Estável, melhor; consome cota da API |
+| `GeminiAPIBackend` | API Gemini `generateContent` | Estável; consome cota da API |
+| `WebChatBackend` | Browser em chatgpt.com / gemini.com | Grátis; usa conta logada; **frágil** (DOM/anti-bot) |
+
+`WebChatBackend` pode **anexar ao seu próprio Chrome** via DevTools Protocol
+(`IRIS_WEBCHAT_CDP`) — assim reaproveita sua sessão logada (mais qualidade, mais
+contexto, deixa registro na conversa). Para isso, suba o Chrome com a porta de
+debug aberta: `google-chrome --remote-debugging-port=9222`. Sem CDP, ele abre um
+browser próprio (precisa logar). O scraping web é frágil por natureza e precisa
+de calibração ao vivo dos seletores na sua máquina.
+
+`LLMDistiller` monta o prompt, chama o backend, faz parsing tolerante do JSON
+(`_extract_json`, aceita cercas markdown/prosa) e cai na heurística em qualquer
+falha. `build_distiller(overrides)` escolhe o backend por `IRIS_LLM_BACKEND`
+(`heuristic` | `openai` | `gemini` | `webchat`), com a UI sobrepondo o env.
+
+Seleção por env:
+
+```bash
+export IRIS_LLM_BACKEND="gemini"      # ou openai / webchat / heuristic
+export IRIS_LLM_API_KEY="..."         # APIs; web-chat não precisa
+export IRIS_LLM_MODEL="gemini-2.0-flash"
+# web-chat:
+export IRIS_WEBCHAT_TARGET="chatgpt"  # ou gemini
+export IRIS_WEBCHAT_CDP="http://localhost:9222"  # anexar ao seu Chrome logado
+```
+
+**Na UI**: o painel "Enriquecimento web" tem um seletor de backend (Heurística /
+API ChatGPT / API Gemini / Web-chat) com campos de modelo/site/CDP. A escolha
+é persistida no navegador e vale para as próximas buscas (inclusive o "Forçar
+re-pesquisa"). Por segurança, **chaves de API ficam no env**, não na interface.
