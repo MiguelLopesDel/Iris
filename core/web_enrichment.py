@@ -17,6 +17,12 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib import parse, request
 
+from core.browser_session import (
+    get_browser_session,
+    set_window_visible,
+    shared_session_enabled,
+)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -489,22 +495,36 @@ class PlaywrightLensProvider:
         return parse_lens_results(scraper(path), limit=self.max_results)
 
     def _scrape_lens(self, path: str | os.PathLike[str]) -> list[dict[str, Any]]:
+        file_path = str(Path(path))
+        # Reuse the persistent shared browser across jobs (a new tab per image),
+        # instead of opening/closing Chromium every time.
+        if shared_session_enabled():
+            return get_browser_session().submit(
+                lambda ctx: self._scrape_on_context(ctx, file_path)
+            )
         from playwright.sync_api import sync_playwright
 
-        file_path = str(Path(path))
         with self._stealth(sync_playwright()) as pw:
             browser, context = self._launch(pw)
             try:
-                page = context.new_page()
-                page.set_default_timeout(self.timeout_ms)
-                page.goto(self.upload_url, wait_until="domcontentloaded")
-                self._dismiss_consent(page)
-                self._upload_image(page, file_path)
-                self._await_results(page)
-                self._settle_results(page)
-                return self._extract_results(page)
+                return self._scrape_on_context(context, file_path)
             finally:
                 (browser or context).close()
+
+    def _scrape_on_context(self, context: Any, file_path: str) -> list[dict[str, Any]]:
+        """Run the Lens flow on a fresh tab of an existing browser context, then
+        close the tab (leaving the browser open for the next image)."""
+        page = context.new_page()
+        try:
+            page.set_default_timeout(self.timeout_ms)
+            page.goto(self.upload_url, wait_until="domcontentloaded")
+            self._dismiss_consent(page)
+            self._upload_image(page, file_path)
+            self._await_results(page)
+            self._settle_results(page)
+            return self._extract_results(page)
+        finally:
+            page.close()
 
     def _settle_results(self, page: Any) -> None:
         """Let the result anchors populate without blocking on ``networkidle``,
@@ -612,6 +632,7 @@ class PlaywrightLensProvider:
                 f"{self.solve_timeout_ms // 1000}s...",
                 flush=True,
             )
+            set_window_visible(page, True)  # bring the (hidden) window up for the human
             try:
                 page.wait_for_url(
                     lambda url: "/sorry/" not in url and "/search" in url,
@@ -622,6 +643,8 @@ class PlaywrightLensProvider:
                     "CAPTCHA não foi resolvido a tempo. Aumente IRIS_LENS_SOLVE_TIMEOUT_MS "
                     "ou use IRIS_ENRICHMENT_PROVIDER=serpapi."
                 ) from exc
+            finally:
+                set_window_visible(page, False)  # hide it again
         if "/search" not in page.url:
             raise RuntimeError("Google Lens não retornou página de resultados.")
 
@@ -1046,33 +1069,45 @@ class WebChatBackend:
         return self._send_deeplink(url)
 
     def _send_deeplink(self, url: str) -> str:
+        # Reuse the persistent shared browser (same window/profile as Lens) when
+        # enabled and not attaching to the user's own Chrome via CDP.
+        if not self.cdp_url and shared_session_enabled():
+            return get_browser_session().submit(
+                lambda ctx: self._send_on_context(ctx, url)
+            )
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as pw:
             context, owns = self._connect(pw)
             try:
-                page = context.new_page()
-                page.set_default_timeout(self.timeout_ms)
-                # 1) Open the base site and make sure we're logged in and past any
-                #    Cloudflare check *before* sending the prompt (a logged-out
-                #    redirect would drop the prefilled ?q=).
-                page.goto("https://chatgpt.com/", wait_until="domcontentloaded")
-                self._ensure_ready(page)
-                # 2) Now open the deep link, which pre-fills the prompt, and submit.
-                page.goto(url, wait_until="domcontentloaded")
-                editor = page.locator(self._input).first
-                editor.wait_for(timeout=self.timeout_ms)
-                page.wait_for_timeout(1500)  # let the prefill text settle
-                editor.click()
-                page.keyboard.press("Enter")
-                self._wait_answer(page)
-                answers = page.locator(self._answer)
-                if not answers.count():
-                    raise RuntimeError("ChatGPT não retornou resposta.")
-                return answers.last.inner_text().strip()
+                return self._send_on_context(context, url)
             finally:
                 if owns:
                     context.close()
+
+    def _send_on_context(self, context: Any, url: str) -> str:
+        page = context.new_page()
+        try:
+            page.set_default_timeout(self.timeout_ms)
+            # 1) Open the base site and make sure we're logged in and past any
+            #    Cloudflare check *before* sending the prompt (a logged-out
+            #    redirect would drop the prefilled ?q=).
+            page.goto("https://chatgpt.com/", wait_until="domcontentloaded")
+            self._ensure_ready(page)
+            # 2) Now open the deep link, which pre-fills the prompt, and submit.
+            page.goto(url, wait_until="domcontentloaded")
+            editor = page.locator(self._input).first
+            editor.wait_for(timeout=self.timeout_ms)
+            page.wait_for_timeout(1500)  # let the prefill text settle
+            editor.click()
+            page.keyboard.press("Enter")
+            self._wait_answer(page)
+            answers = page.locator(self._answer)
+            if not answers.count():
+                raise RuntimeError("ChatGPT não retornou resposta.")
+            return answers.last.inner_text().strip()
+        finally:
+            page.close()
 
     def _ensure_ready(self, page: Any) -> None:
         """Make sure the chat composer is usable. If it isn't, the user most
@@ -1095,6 +1130,7 @@ class WebChatBackend:
             "no perfil dedicado, então só é pedido uma vez.",
             flush=True,
         )
+        set_window_visible(page, True)  # bring the (hidden) window up for the human
         try:
             page.wait_for_selector(self._input, timeout=self.login_timeout_ms)
         except Exception as exc:
@@ -1102,6 +1138,8 @@ class WebChatBackend:
                 "Login no ChatGPT não foi concluído a tempo. Tente novamente e faça login "
                 "na janela, ou use um backend de API (IRIS_LLM_BACKEND=openai/gemini)."
             ) from exc
+        finally:
+            set_window_visible(page, False)  # hide it again once logged in
 
     def _wait_answer(self, page: Any) -> None:
         """Wait until an answer appears and streaming has stopped."""

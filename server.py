@@ -178,6 +178,12 @@ async def lifespan(app: FastAPI):
     print(f"[iris] Ready — {backend.get_total_records()} records")
     yield
     dump()
+    try:
+        from core.browser_session import close_browser_session
+
+        close_browser_session()
+    except Exception:
+        pass
     print("[iris] Shutdown complete")
 
 

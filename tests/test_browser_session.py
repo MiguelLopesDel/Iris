@@ -1,0 +1,109 @@
+"""Tests for the persistent shared BrowserSession worker.
+
+Exercise the thread-marshaling mechanics (submit runs on the worker thread,
+results/exceptions come back, ops serialize, close stops it) with a fake context
+-- no real browser.
+"""
+
+from __future__ import annotations
+
+import threading
+
+from core.browser_session import BrowserSession
+
+
+class _FakeContext:
+    def __init__(self) -> None:
+        self.closed = False
+
+
+def _make_session() -> BrowserSession:
+    ctx = _FakeContext()
+    return BrowserSession(launcher=lambda: (ctx, lambda: setattr(ctx, "closed", True)))
+
+
+def test_submit_runs_on_a_single_dedicated_worker_thread() -> None:
+    session = _make_session()
+    try:
+        main = threading.get_ident()
+        t1 = session.submit(lambda ctx: threading.get_ident())
+        t2 = session.submit(lambda ctx: threading.get_ident())
+
+        assert t1 != main  # ran off the caller's thread
+        assert t1 == t2  # same dedicated worker thread every time
+    finally:
+        session.close()
+
+
+def test_submit_returns_result_and_propagates_exceptions() -> None:
+    session = _make_session()
+    try:
+        assert session.submit(lambda ctx: 21 * 2) == 42
+
+        def boom(ctx):
+            raise ValueError("falhou no worker")
+
+        try:
+            session.submit(boom)
+            raise AssertionError("deveria ter propagado")
+        except ValueError as exc:
+            assert "falhou no worker" in str(exc)
+    finally:
+        session.close()
+
+
+def test_submit_passes_the_shared_context() -> None:
+    ctx = _FakeContext()
+    session = BrowserSession(launcher=lambda: (ctx, lambda: None))
+    try:
+        got = session.submit(lambda c: c)
+        assert got is ctx
+    finally:
+        session.close()
+
+
+def test_operations_serialize_on_the_worker() -> None:
+    session = _make_session()
+    order: list[str] = []
+    lock = threading.Lock()
+
+    def op(tag: str):
+        def run(ctx):
+            with lock:
+                order.append(f"start-{tag}")
+            with lock:
+                order.append(f"end-{tag}")
+            return tag
+
+        return run
+
+    try:
+        # Submitted from different threads, but the single worker runs them
+        # one-at-a-time: no interleaving of start/end.
+        results = []
+        threads = [
+            threading.Thread(target=lambda t=t: results.append(session.submit(op(t))))
+            for t in ("a", "b", "c")
+        ]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+
+        # Every op's start is immediately followed by its own end.
+        for i in range(0, len(order), 2):
+            assert order[i].split("-")[1] == order[i + 1].split("-")[1]
+        assert sorted(results) == ["a", "b", "c"]
+    finally:
+        session.close()
+
+
+def test_close_stops_worker_and_runs_cleanup() -> None:
+    ctx = _FakeContext()
+    session = BrowserSession(launcher=lambda: (ctx, lambda: setattr(ctx, "closed", True)))
+    assert session.alive() is True
+
+    session.close()
+
+    assert ctx.closed is True
+    assert session.alive() is False

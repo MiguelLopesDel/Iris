@@ -366,6 +366,38 @@ API ChatGPT / API Gemini / Web-chat) com campos de modelo/site/CDP. A escolha
 é persistida no navegador e vale para as próximas buscas (inclusive o "Forçar
 re-pesquisa"). Por segurança, **chaves de API ficam no env**, não na interface.
 
+## Navegador compartilhado e persistente (`core/browser_session.py`)
+
+Para não abrir/fechar o Chromium a cada imagem, há uma **sessão de navegador
+única e persistente**, reusada entre jobs.
+
+Por que não é "só guardar numa global": a API *sync* do Playwright é
+**presa à thread** que criou o browser, e cada job roda numa thread nova. Então a
+`BrowserSession` roda o navegador numa **thread-dona dedicada** e todo trabalho de
+browser é enviado pra ela via fila — `submit(fn)` executa `fn(context)` nessa
+thread e devolve o resultado. Com uma só worker, jobs concorrentes **serializam**
+naturalmente (dois jobs nunca dirigem o browser ao mesmo tempo).
+
+- **Um perfil, um browser** para Lens **e** ChatGPT: o Lens abre uma aba, extrai,
+  fecha a aba; o ChatGPT abre outra aba no **mesmo** navegador. Nada de relançar.
+- **Janela oculta** por padrão (minimizada via CDP `Browser.setWindowBounds`), e
+  **restaurada automaticamente** só quando precisa de você — CAPTCHA do Lens
+  (`_await_results`) ou login do ChatGPT (`_ensure_ready`) — voltando a minimizar
+  depois (`set_window_visible`).
+- Usa o **Chrome do sistema** (fallback Chromium), headed.
+- Fecha no shutdown do servidor (`close_browser_session` no `lifespan`).
+
+Variáveis:
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `IRIS_BROWSER_SHARED` | `1` | `0` volta ao modo antigo (um browser por operação) |
+| `IRIS_BROWSER_PROFILE_DIR` | `~/.iris/browser` | Perfil único (Lens + ChatGPT) |
+
+Os providers/backends mantêm o **modo standalone** como fallback
+(`IRIS_BROWSER_SHARED=0` ou `scraper=`/`completer=`/`cdp_url` injetados), então a
+lógica continua testável sem browser.
+
 ## Testes (rede de segurança)
 
 Objetivo: se a suíte passa, a **lógica** em produção funciona. O que é
@@ -380,6 +412,7 @@ Camadas (`tests/`):
 | `test_enrichment_job.py` | Orquestração `_run_web_enrichment_job`: cache, reaproveitar fontes (redistill), busca nova (research), erro → sugestão com `error_message`. |
 | `test_enrichment_api.py` | Endpoints HTTP: validação, formato de resposta, flags `force`/`research` chegando ao job, gating de config do provider. |
 | `test_static_wiring.py` | Fiação da UI: todo `getElementById('x').addEventListener` tem `id` no HTML; assets `/static` existem; JS/CSS têm `?v=` (cache-busting). |
+| `test_browser_session.py` | Mecânica da `BrowserSession`: `submit` roda na thread-dona, devolve resultado/exceção, serializa jobs concorrentes, `close` para e limpa (via `launcher` fake, sem browser). |
 
 **Costuras injetáveis** (mantenha-as ao editar — é o que torna o resto testável
 sem rede/browser):
