@@ -11,7 +11,7 @@ import re
 import sqlite3
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -1303,8 +1303,14 @@ class LLMDistiller:
         self, sources: list[WebSource], vocabulary: dict[str, list[str]] | None = None
     ) -> EnrichmentSuggestion:
         fallback = self.fallback.distill(sources)
-        if self.backend is None or not self.backend.available():
+        if self.backend is None:
             return fallback
+        if not self.backend.available():
+            # Backend selected but not usable (e.g. missing key, no login) -- make
+            # the silent fallback visible instead of returning generic data.
+            reason = f"backend '{self.backend.name}' indisponível (config/login?)"
+            print(f"[distill] {reason}; usando heurística.", flush=True)
+            return replace(fallback, error_message=f"IA: {reason}")
         try:
             system, user = build_distill_messages(sources, vocabulary)
             parsed = _extract_json(self.backend.complete(system, user, sources, vocabulary))
@@ -1320,8 +1326,14 @@ class LLMDistiller:
                 confidence=float(parsed.get("confidence") or fallback.confidence),
                 sources=fallback.sources,
             )
-        except Exception:
-            return fallback
+        except Exception as exc:
+            # Don't fail silently: log why and tag the fallback so the UI shows it.
+            detail = f"{type(exc).__name__}: {exc}".strip()
+            print(
+                f"[distill] backend '{self.backend.name}' falhou ({detail}); usando heurística.",
+                flush=True,
+            )
+            return replace(fallback, error_message=f"IA ({self.backend.name}) falhou: {detail}")
 
 
 class HybridDistiller(LLMDistiller):

@@ -603,10 +603,14 @@ function renderWebEnrichmentSuggestion(item) {
       + '<span><strong>' + field[1] + '</strong>' + escapeHtml(field[2] || 'sem sugestao') + '</span>'
       + '</label>';
   }).join('');
+  var warn = item.error_message
+    ? '<p class="web-warn">⚠ ' + escapeHtml(item.error_message) + '</p>'
+    : '';
   return '<article class="web-suggestion-card" data-suggestion-id="' + item.id + '">'
     + '<div class="web-suggestion-main">'
     + '<h4>' + escapeHtml(item.arquivo || ('Registro ' + item.meme_id)) + '</h4>'
-    + '<p>' + escapeHtml(item.summary || item.error_message || 'Sem resumo.') + '</p>'
+    + warn
+    + '<p>' + escapeHtml(item.summary || 'Sem resumo.') + '</p>'
     + '<span class="score-badge">conf ' + Number(item.confidence || 0).toFixed(2) + '</span>'
     + '</div>'
     + '<div class="web-fields">' + fields + '</div>'

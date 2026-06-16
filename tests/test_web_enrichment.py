@@ -130,8 +130,13 @@ def test_apply_suggestion_updates_metadata_and_creates_concepts() -> None:
     assert row["source_work"] == "Wojak"
     assert "doomer" in row["tags"]
     assert "Possivel Doomer Wojak" in row["descricao_ia"]
-    concepts = conn.execute("SELECT name FROM concepts ORDER BY name").fetchall()
-    assert [row["name"] for row in concepts] == ["Doomer", "Wojak"]
+    # source_work -> 'obra', character -> 'personagem' (regression guard for the
+    # distinct-category mapping; meme_archetype 'doomer' reuses the 'Doomer' concept).
+    concepts = conn.execute("SELECT name, category FROM concepts ORDER BY name").fetchall()
+    assert [(row["name"], row["category"]) for row in concepts] == [
+        ("Doomer", "personagem"),
+        ("Wojak", "obra"),
+    ]
     media = conn.execute("SELECT COUNT(*) FROM concept_media WHERE meme_id = 1").fetchone()[0]
     assert media == 2
     assert list_suggestions(conn, "pending") == []
@@ -409,6 +414,28 @@ def test_llm_distiller_falls_back_when_backend_unavailable() -> None:
     suggestion = LLMDistiller(DeadBackend()).distill(sources)
 
     assert suggestion.provider == "heuristic"
+    # The fallback must not be silent: it carries why it happened.
+    assert "indispon" in suggestion.error_message and "dead" in suggestion.error_message
+
+
+def test_llm_distiller_fallback_is_tagged_when_backend_raises() -> None:
+    class BrokenBackend:
+        name = "broken"
+
+        def available(self) -> bool:
+            return True
+
+        def complete(self, system, user, sources=None, vocabulary=None) -> str:
+            raise RuntimeError("resposta sem JSON")
+
+    sources = [WebSource(title="Pepe", url="https://knowyourmeme.com/pepe",
+                         domain="knowyourmeme.com")]
+    suggestion = LLMDistiller(BrokenBackend()).distill(sources)
+
+    # Falls back to heuristic content, but tagged with the real failure reason.
+    assert suggestion.character  # heuristic still produced something
+    assert "broken" in suggestion.error_message
+    assert "resposta sem JSON" in suggestion.error_message
 
 
 def test_domain_tier_classifies_noise_rich_and_neutral() -> None:
@@ -532,11 +559,14 @@ def test_build_messages_and_url_include_existing_vocabulary() -> None:
     sources = [WebSource(title="Frieren", url="https://knowyourmeme.com/x", domain="knowyourmeme.com")]
     vocab = {"characters": ["Frieren"], "tags": ["olhar"]}
 
+    # "olhar" only comes from the vocabulary (not from any match title/domain),
+    # so it actually proves the vocabulary was injected -- unlike "Frieren",
+    # which is also the match title.
     _, user = build_distill_messages(sources, vocab)
-    assert "Frieren" in user and "olhar" in user
+    assert "olhar" in user
 
     url = build_webchat_url(sources, vocabulary=vocab)
-    assert "Frieren" in url  # vocabulary travels in the deep link too
+    assert "olhar" in url  # vocabulary travels in the deep link too
 
 
 def test_build_distiller_selects_backend_by_env(monkeypatch) -> None:

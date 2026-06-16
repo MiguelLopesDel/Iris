@@ -962,6 +962,12 @@ img[data-lightbox-src] {
   font-weight: 600;
 }
 
+.web-warn {
+  color: var(--warning, #f0a020);
+  font-size: 12px;
+  margin: 2px 0 4px;
+}
+
 .web-enrichment-config {
   display: flex;
   flex-wrap: wrap;
