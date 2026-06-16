@@ -957,6 +957,11 @@ img[data-lightbox-src] {
   flex-shrink: 0;
 }
 
+#web-enrichment-status.we-error {
+  color: var(--danger, #ff6b6b);
+  font-weight: 600;
+}
+
 .web-enrichment-config {
   display: flex;
   flex-wrap: wrap;

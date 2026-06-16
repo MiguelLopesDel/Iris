@@ -494,21 +494,71 @@ document.getElementById('web-enrichment-close').addEventListener('click', functi
   document.getElementById('web-enrichment-panel').hidden = true;
 });
 
+// Live status: keeps a per-step elapsed counter ticking every second (the
+// browser is hidden, so a long step must still *look* alive and not errored).
+var __weTick = null;
+var __weJob = null;
+var __weStepStart = 0;
+var __weLastMsg = '';
+
+function renderWeStatus() {
+  var el = document.getElementById('web-enrichment-status');
+  var job = __weJob;
+  if (!el || !job) return;
+  el.classList.remove('we-error');
+  if (job.status === 'failed') {
+    el.classList.add('we-error');
+    el.textContent = '✖ Falhou: ' + (job.error_message || job.message || 'erro desconhecido');
+    return;
+  }
+  if (job.status === 'completed') {
+    el.textContent = '✓ Concluído · ' + job.done + '/' + job.total;
+    return;
+  }
+  var secs = Math.round((Date.now() - __weStepStart) / 1000);
+  var dots = '.'.repeat((Math.floor(Date.now() / 500) % 3) + 1);
+  var line = '⏳ ' + (job.message || job.status) + dots
+    + ' · ' + job.done + '/' + job.total + ' · ' + secs + 's';
+  if (secs >= 20) {
+    line += ' — se pedir login/CAPTCHA, confira a janela do navegador';
+  }
+  el.textContent = line;
+}
+
+function stopWeHeartbeat() {
+  if (__weTick) { clearInterval(__weTick); __weTick = null; }
+}
+
 async function pollWebEnrichmentJob(jobId) {
+  if (!__weTick) {
+    __weStepStart = Date.now();
+    __weLastMsg = '';
+    __weTick = setInterval(renderWeStatus, 500);  // ticks even between polls
+  }
   try {
     var job = await getEnrichmentJob(jobId);
-    document.getElementById('web-enrichment-status').textContent =
-      job.status + ' · ' + job.done + '/' + job.total + ' · ' + (job.message || '');
+    if (job.message !== __weLastMsg || (job.done || 0) !== ((__weJob || {}).done || 0)) {
+      __weStepStart = Date.now();  // a new step started -> reset the step timer
+      __weLastMsg = job.message;
+    }
+    __weJob = job;
+    renderWeStatus();
     await loadWebEnrichmentSuggestions();
     if (job.status === 'queued' || job.status === 'running') {
       setTimeout(function() { pollWebEnrichmentJob(jobId); }, 1400);
-    } else if (job.status === 'completed') {
-      toast('Enriquecimento concluido', 'success');
-    } else if (job.status === 'failed') {
-      toast('Erro no enriquecimento: ' + (job.error_message || job.message), 'error');
+    } else {
+      stopWeHeartbeat();
+      if (job.status === 'completed') {
+        toast('Enriquecimento concluido', 'success');
+      } else if (job.status === 'failed') {
+        toast('Erro no enriquecimento: ' + (job.error_message || job.message), 'error');
+      }
     }
   } catch (err) {
-    document.getElementById('web-enrichment-status').textContent = 'Erro: ' + err.message;
+    // A failed poll is not a job failure -- keep retrying, but show we know.
+    var el = document.getElementById('web-enrichment-status');
+    if (el) el.textContent = '⚠ sem resposta do servidor, tentando de novo... (' + err.message + ')';
+    setTimeout(function() { pollWebEnrichmentJob(jobId); }, 2500);
   }
 }
 
