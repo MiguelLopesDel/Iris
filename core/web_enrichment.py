@@ -842,7 +842,9 @@ def format_vocabulary(vocabulary: dict[str, list[str]] | None) -> str:
         return ""
     labels = [
         ("characters", "personagens"),
-        ("categories", "obras/categorias"),
+        ("source_works", "obras"),
+        ("meme_archetypes", "arquétipos de meme"),
+        ("categories", "outras categorias"),
         ("styles", "estilos"),
         ("tags", "tags"),
     ]
@@ -866,13 +868,26 @@ def gather_vocabulary(
 ) -> dict[str, list[str]]:
     """Collect the library's existing vocabulary (concept names, styles, top
     tags) so the AI reuses it instead of inventing divergent values per image."""
-    vocab: dict[str, list[str]] = {"characters": [], "categories": [], "styles": [], "tags": []}
+    vocab: dict[str, list[str]] = {
+        "characters": [],
+        "source_works": [],
+        "meme_archetypes": [],
+        "categories": [],
+        "styles": [],
+        "tags": [],
+    }
+    by_category = {
+        "personagem": "characters",
+        "obra": "source_works",
+        "arquetipo": "meme_archetypes",
+    }
     try:
         for row in conn.execute("SELECT name, category FROM concepts ORDER BY name"):
             name = (row["name"] or "").strip()
             if not name:
                 continue
-            key = "characters" if (row["category"] or "").strip().lower() == "personagem" else "categories"
+            # Legacy concepts (and misc kinds) fall back to a generic bucket.
+            key = by_category.get((row["category"] or "").strip().lower(), "categories")
             vocab[key].append(name)
     except Exception:
         pass
@@ -1066,7 +1081,14 @@ def build_webchat_url(
     base = "https://chatgpt.com/"
     usable = [s for s in sources if s.url]
     # Keep the vocabulary small for the URL (the size limit lives here).
-    caps = {"characters": 25, "categories": 25, "styles": 15, "tags": 20}
+    caps = {
+        "characters": 25,
+        "source_works": 20,
+        "meme_archetypes": 15,
+        "categories": 15,
+        "styles": 15,
+        "tags": 20,
+    }
     trimmed = (
         {k: (vocabulary.get(k) or [])[:cap] for k, cap in caps.items()} if vocabulary else None
     )
@@ -1658,8 +1680,8 @@ def apply_suggestion(conn: sqlite3.Connection, suggestion_id: int, fields: list[
 
     for field, category in [
         ("character", "personagem"),
-        ("source_work", "outro"),
-        ("meme_archetype", "outro"),
+        ("source_work", "obra"),
+        ("meme_archetype", "arquetipo"),
     ]:
         value = suggestion.get(field, "").strip()
         if field in allowed and value:

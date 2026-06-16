@@ -19,7 +19,7 @@ import {
 import { initGallery, invalidateCache } from './gallery.js?v=27';
 import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
 import { initCollections } from './collections.js?v=27';
-import { initConcepts } from './concepts.js?v=27';
+import { initConcepts } from './concepts.js?v=28';
 import { initDuplicates } from './duplicates.js?v=27';
 import { initSystem } from './system.js?v=27';
 

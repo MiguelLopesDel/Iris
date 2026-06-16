@@ -55,7 +55,7 @@ function renderWizardStep1(wiz) {
   wiz.innerHTML = '<h4>Passo 1: Nome e Categoria</h4>'
     + '<input type="text" id="wiz-name" placeholder="Nome do conceito" value="' + escapeHtml(wizardData.name) + '" style="width:100%;margin-bottom:8px;">'
     + '<select id="wiz-category" style="width:100%;margin-bottom:8px;">'
-    + ['pessoa','lugar','objeto','personagem','animal','outro'].map(function(c) { return '<option value="' + c + '"' + (wizardData.category === c ? ' selected' : '') + '>' + c + '</option>'; }).join('')
+    + ['pessoa','lugar','objeto','personagem','obra','arquetipo','animal','outro'].map(function(c) { return '<option value="' + c + '"' + (wizardData.category === c ? ' selected' : '') + '>' + c + '</option>'; }).join('')
     + '</select>'
     + '<button class="btn" onclick="document.getElementById(\'concept-wizard\').style.display=\'none\'">Cancelar</button> '
     + '<button class="btn" style="background:var(--accent);color:#fff;" onclick="window.__wizNext()">Continuar</button>';
@@ -91,6 +91,8 @@ function wizardQuestions(category) {
     pessoa: ['Apelidos ou nomes alternativos', 'Em que contexto aparece?'],
     lugar: ['País, cidade ou região', 'Nomes alternativos ou abreviações'],
     personagem: ['De qual obra?', 'Características visuais marcantes'],
+    obra: ['Tipo (anime, jogo, filme...)', 'Nomes alternativos'],
+    arquetipo: ['Que tipo de meme é?', 'Quando se usa este formato'],
     objeto: ['O que é este objeto?', 'Como aparece nas mídias?'],
     animal: ['Espécie ou raça', 'Características visuais marcantes'],
     outro: ['Descrição livre', 'Contexto recorrente'],

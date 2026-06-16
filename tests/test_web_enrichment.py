@@ -493,23 +493,28 @@ def test_build_webchat_url_trims_matches_to_stay_under_limit() -> None:
     assert len(url) <= 2000 or url.count("https://example.com/") == 1
 
 
-def test_gather_vocabulary_collects_concepts_styles_and_tags() -> None:
+def test_gather_vocabulary_buckets_concepts_by_category() -> None:
     conn = _make_conn()
     conn.execute("UPDATE memes SET style = 'anime', tags = 'frieren, olhar, anime' WHERE id = 1")
-    conn.execute(
-        "INSERT INTO concepts (name, category, description, search_terms, auto_threshold, "
-        "created_at) VALUES ('Frieren', 'personagem', '', '', 0.2, '2026-01-01')"
-    )
-    conn.execute(
-        "INSERT INTO concepts (name, category, description, search_terms, auto_threshold, "
-        "created_at) VALUES ('Sousou no Frieren', 'outro', '', '', 0.2, '2026-01-01')"
-    )
+    for name, category in [
+        ("Frieren", "personagem"),
+        ("Sousou no Frieren", "obra"),
+        ("staring", "arquetipo"),
+        ("Algo Antigo", "outro"),  # legacy concept -> generic bucket
+    ]:
+        conn.execute(
+            "INSERT INTO concepts (name, category, description, search_terms, auto_threshold, "
+            "created_at) VALUES (?, ?, '', '', 0.2, '2026-01-01')",
+            (name, category),
+        )
     conn.commit()
 
     vocab = gather_vocabulary(conn)
 
     assert vocab["characters"] == ["Frieren"]
-    assert vocab["categories"] == ["Sousou no Frieren"]
+    assert vocab["source_works"] == ["Sousou no Frieren"]
+    assert vocab["meme_archetypes"] == ["staring"]
+    assert vocab["categories"] == ["Algo Antigo"]  # legacy 'outro' falls back here
     assert "anime" in vocab["styles"]
     assert "frieren" in vocab["tags"] and "web-enriched" not in vocab["tags"]
 

@@ -351,8 +351,11 @@ falha. `build_distiller(overrides)` escolhe o backend por `IRIS_LLM_BACKEND`
 ### Vocabulário existente (evita tags/categorias infinitas)
 
 Antes de cada lote, `gather_vocabulary(conn)` coleta o que o acervo **já** usa —
-nomes de `concepts` (personagens / obras-categorias), `styles` distintos e as
-`tags` mais frequentes. `format_vocabulary` injeta isso no prompt instruindo o
+nomes de `concepts` separados por categoria (`personagem`→personagens,
+`obra`→obras, `arquetipo`→arquétipos; categorias legadas/`outro` caem num balde
+genérico), `styles` distintos e as `tags` mais frequentes. `apply_suggestion`
+grava os conceitos com essas categorias distintas (antes obra e arquétipo iam
+ambos para `outro`). `format_vocabulary` injeta isso no prompt instruindo o
 modelo a **reutilizar** esses valores (mesma grafia) quando se aplicarem e só
 criar um novo quando nenhum servir — assim a mesma coisa não vira tag/categoria
 diferente a cada imagem. Vai tanto para os backends de API (`build_distill_messages`)
