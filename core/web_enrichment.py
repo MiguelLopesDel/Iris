@@ -982,6 +982,7 @@ class WebChatBackend:
 
     name = "webchat"
     _input = "#prompt-textarea"
+    _launch_args = ("--disable-blink-features=AutomationControlled", "--no-sandbox")
     _answer = "[data-message-author-role='assistant']"
     # While streaming, a "stop" button is shown; its absence means the reply is done.
     _stop = "button[data-testid='stop-button'], button[aria-label*='Stop'], button[aria-label*='Parar']"
@@ -993,6 +994,7 @@ class WebChatBackend:
         cdp_url: str = "",
         headless: bool | None = None,
         profile_dir: str = "",
+        channel: str | None = None,
         temporary: bool | None = None,
         timeout_ms: int | None = None,
         completer: Callable[[str], str] | None = None,
@@ -1005,9 +1007,16 @@ class WebChatBackend:
         self.profile_dir = profile_dir or os.environ.get(
             "IRIS_WEBCHAT_PROFILE_DIR", os.path.expanduser("~/.iris/webchat-profile")
         )
+        # Real Chrome passes chatgpt.com's Cloudflare check; the bundled Chromium
+        # usually gets walled. Default to the system Chrome, fall back to Chromium.
+        self.channel = (
+            channel if channel is not None else os.environ.get("IRIS_WEBCHAT_CHANNEL", "chrome")
+        )
         env_temp = os.environ.get("IRIS_WEBCHAT_TEMPORARY", "1").strip().lower()
         self.temporary = temporary if temporary is not None else env_temp not in {"0", "false", "no"}
         self.timeout_ms = timeout_ms or int(os.environ.get("IRIS_WEBCHAT_TIMEOUT_MS", "120000"))
+        # How long to wait for the user to log in / pass Cloudflare in the window.
+        self.login_timeout_ms = int(os.environ.get("IRIS_WEBCHAT_LOGIN_TIMEOUT_MS", "300000"))
         self._completer = completer
 
     def available(self) -> bool:
@@ -1037,13 +1046,13 @@ class WebChatBackend:
             try:
                 page = context.new_page()
                 page.set_default_timeout(self.timeout_ms)
+                # 1) Open the base site and make sure we're logged in and past any
+                #    Cloudflare check *before* sending the prompt (a logged-out
+                #    redirect would drop the prefilled ?q=).
+                page.goto("https://chatgpt.com/", wait_until="domcontentloaded")
+                self._ensure_ready(page)
+                # 2) Now open the deep link, which pre-fills the prompt, and submit.
                 page.goto(url, wait_until="domcontentloaded")
-                if "/auth" in page.url or "login" in page.url:
-                    raise RuntimeError(
-                        "ChatGPT não está logado neste perfil. Rode uma vez com a janela "
-                        "visível e faça login (o perfil fica salvo em IRIS_WEBCHAT_PROFILE_DIR)."
-                    )
-                # Wait for the prefilled composer, then submit.
                 editor = page.locator(self._input).first
                 editor.wait_for(timeout=self.timeout_ms)
                 page.wait_for_timeout(1500)  # let the prefill text settle
@@ -1057,6 +1066,35 @@ class WebChatBackend:
             finally:
                 if owns:
                     context.close()
+
+    def _ensure_ready(self, page: Any) -> None:
+        """Make sure the chat composer is usable. If it isn't, the user most
+        likely needs to log in (or clear a Cloudflare check) in the visible
+        window -- so we warn and wait, instead of failing immediately."""
+        try:
+            page.wait_for_selector(self._input, timeout=15000)
+            return
+        except Exception:
+            pass
+        if self.headless:
+            raise RuntimeError(
+                "ChatGPT não está pronto (login ou verificação Cloudflare). Rode com a "
+                "janela visível (IRIS_WEBCHAT_HEADLESS=0) e faça login uma vez no perfil "
+                "dedicado (IRIS_WEBCHAT_PROFILE_DIR)."
+            )
+        print(
+            "[webchat] Faça login no ChatGPT (e resolva qualquer verificação) na janela "
+            f"aberta. Aguardando até {self.login_timeout_ms // 1000}s... O login fica salvo "
+            "no perfil dedicado, então só é pedido uma vez.",
+            flush=True,
+        )
+        try:
+            page.wait_for_selector(self._input, timeout=self.login_timeout_ms)
+        except Exception as exc:
+            raise RuntimeError(
+                "Login no ChatGPT não foi concluído a tempo. Tente novamente e faça login "
+                "na janela, ou use um backend de API (IRIS_LLM_BACKEND=openai/gemini)."
+            ) from exc
 
     def _wait_answer(self, page: Any) -> None:
         """Wait until an answer appears and streaming has stopped."""
@@ -1074,10 +1112,21 @@ class WebChatBackend:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
             return context, False  # never close the user's own Chrome
         os.makedirs(self.profile_dir, exist_ok=True)
-        context = pw.chromium.launch_persistent_context(
-            self.profile_dir, headless=self.headless
-        )
-        return context, True
+        # Prefer the real Chrome channel (passes Cloudflare); fall back to the
+        # bundled Chromium if Chrome is not installed.
+        for channel in ([self.channel] if self.channel else []) + [None]:
+            try:
+                kwargs: dict[str, Any] = {
+                    "headless": self.headless,
+                    "args": list(self._launch_args),
+                }
+                if channel:
+                    kwargs["channel"] = channel
+                context = pw.chromium.launch_persistent_context(self.profile_dir, **kwargs)
+                return context, True
+            except Exception:
+                continue
+        raise RuntimeError("Não foi possível abrir o navegador para o web-chat.")
 
 
 class LLMDistiller:

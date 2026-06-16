@@ -323,8 +323,21 @@ Decisões (com o usuário):
   UI. O parâmetro temporário é um pouco instável no ChatGPT, mas como mandamos só
   uma pergunta/resposta, costuma segurar.
 
+> ⚠️ **Use o Chrome do sistema, não o Chromium do pip.** O Chromium "pelado" do
+> Playwright é barrado pela **Cloudflare** do chatgpt.com (página "Just a
+> moment…"). Por isso o padrão é o canal **`chrome`** (`IRIS_WEBCHAT_CHANNEL`,
+> com fallback automático para o Chromium se o Chrome não estiver instalado).
+
+Login: antes de mandar o prompt, abre o `chatgpt.com` base e checa se o composer
+(`#prompt-textarea`) está disponível. Se não estiver (não logado ou Cloudflare),
+**avisa no log e aguarda** você logar/resolver na janela visível (até
+`IRIS_WEBCHAT_LOGIN_TIMEOUT_MS`, padrão 300 s). Como o perfil é persistente, o
+login só é pedido uma vez. Em headless não há quem logue → erro claro.
+
 Detalhes técnicos:
 - Só **ChatGPT** (Gemini não tem prefill por URL nativo — para Gemini use a API).
+- Loga na base **antes** de abrir o deep link (um redirect de login descartaria o
+  `?q=` pré-preenchido).
 - `build_webchat_url` monta o prompt compacto + os **top ~8 matches (título +
   URL)** e **corta matches** até a URL ficar < ~6 KB, evitando o erro 414 (URI
   too long) de proxies/CDN.
@@ -343,6 +356,7 @@ export IRIS_LLM_API_KEY="..."         # APIs; web-chat não precisa
 export IRIS_LLM_MODEL="gemini-2.0-flash"
 # web-chat (ChatGPT logado):
 export IRIS_WEBCHAT_PROFILE_DIR="$HOME/.iris/webchat-profile"
+export IRIS_WEBCHAT_CHANNEL="chrome"  # usa o Chrome do sistema (passa Cloudflare)
 export IRIS_WEBCHAT_TEMPORARY="1"     # 0 = conversa normal (fica no histórico)
 # export IRIS_WEBCHAT_CDP="http://localhost:9222"  # alternativa: anexar ao seu Chrome
 ```
