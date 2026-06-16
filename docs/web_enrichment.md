@@ -348,6 +348,17 @@ Detalhes técnicos:
 falha. `build_distiller(overrides)` escolhe o backend por `IRIS_LLM_BACKEND`
 (`heuristic` | `openai` | `gemini` | `webchat`), com a UI sobrepondo o env.
 
+### Vocabulário existente (evita tags/categorias infinitas)
+
+Antes de cada lote, `gather_vocabulary(conn)` coleta o que o acervo **já** usa —
+nomes de `concepts` (personagens / obras-categorias), `styles` distintos e as
+`tags` mais frequentes. `format_vocabulary` injeta isso no prompt instruindo o
+modelo a **reutilizar** esses valores (mesma grafia) quando se aplicarem e só
+criar um novo quando nenhum servir — assim a mesma coisa não vira tag/categoria
+diferente a cada imagem. Vai tanto para os backends de API (`build_distill_messages`)
+quanto para o deep link do web-chat (`build_webchat_url`, com vocabulário
+recortado para caber na URL).
+
 Seleção por env:
 
 ```bash

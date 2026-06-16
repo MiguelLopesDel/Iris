@@ -30,7 +30,7 @@ class _FakeService:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def enrich_path(self, path) -> EnrichmentSuggestion:
+    def enrich_path(self, path, vocabulary=None) -> EnrichmentSuggestion:
         self.calls.append(("enrich_path", str(path)))
         return EnrichmentSuggestion(
             provider="lens",
@@ -38,7 +38,7 @@ class _FakeService:
             sources=(WebSource(title="m", url="https://knowyourmeme.com/x"),),
         )
 
-    def redistill(self, sources) -> EnrichmentSuggestion:
+    def redistill(self, sources, vocabulary=None) -> EnrichmentSuggestion:
         self.calls.append(("redistill", len(sources)))
         return EnrichmentSuggestion(provider="redistill", character="FromRedistill")
 
@@ -115,7 +115,7 @@ def test_job_first_time_runs_lens(wired) -> None:
 
 
 def test_job_records_error_suggestion_on_failure(wired, monkeypatch) -> None:
-    def boom(path):
+    def boom(path, vocabulary=None):
         raise RuntimeError("falha simulada")
 
     wired.service.enrich_path = boom  # type: ignore[method-assign]

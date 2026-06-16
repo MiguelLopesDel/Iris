@@ -25,6 +25,8 @@ from core.web_enrichment import (
     count_cached_ids,
     create_web_enrichment_tables,
     find_existing_suggestion,
+    format_vocabulary,
+    gather_vocabulary,
     insert_suggestion,
     list_suggestions,
     load_existing_sources,
@@ -377,8 +379,9 @@ def test_llm_distiller_uses_backend_and_parses_json() -> None:
         def available(self) -> bool:
             return True
 
-        def complete(self, system: str, user: str, sources=None) -> str:
+        def complete(self, system: str, user: str, sources=None, vocabulary=None) -> str:
             captured["user"] = user
+            captured["vocabulary"] = vocabulary
             return '{"character": "Frieren", "source_work": "Sousou no Frieren", ' \
                    '"meme_archetype": "staring", "tags": "frieren, olhar", "confidence": 0.8}'
 
@@ -488,6 +491,47 @@ def test_build_webchat_url_trims_matches_to_stay_under_limit() -> None:
     url = build_webchat_url(sources, temporary=True, max_chars=2000)
     # Trimmed to respect the limit, but keeps at least one match.
     assert len(url) <= 2000 or url.count("https://example.com/") == 1
+
+
+def test_gather_vocabulary_collects_concepts_styles_and_tags() -> None:
+    conn = _make_conn()
+    conn.execute("UPDATE memes SET style = 'anime', tags = 'frieren, olhar, anime' WHERE id = 1")
+    conn.execute(
+        "INSERT INTO concepts (name, category, description, search_terms, auto_threshold, "
+        "created_at) VALUES ('Frieren', 'personagem', '', '', 0.2, '2026-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO concepts (name, category, description, search_terms, auto_threshold, "
+        "created_at) VALUES ('Sousou no Frieren', 'outro', '', '', 0.2, '2026-01-01')"
+    )
+    conn.commit()
+
+    vocab = gather_vocabulary(conn)
+
+    assert vocab["characters"] == ["Frieren"]
+    assert vocab["categories"] == ["Sousou no Frieren"]
+    assert "anime" in vocab["styles"]
+    assert "frieren" in vocab["tags"] and "web-enriched" not in vocab["tags"]
+
+
+def test_format_vocabulary_instructs_reuse_and_is_empty_when_blank() -> None:
+    assert format_vocabulary(None) == ""
+    assert format_vocabulary({"tags": [], "characters": []}) == ""
+
+    text = format_vocabulary({"characters": ["Frieren"], "tags": ["olhar", "anime"]})
+    assert "reutilizar" in text.lower()
+    assert "Frieren" in text and "olhar" in text
+
+
+def test_build_messages_and_url_include_existing_vocabulary() -> None:
+    sources = [WebSource(title="Frieren", url="https://knowyourmeme.com/x", domain="knowyourmeme.com")]
+    vocab = {"characters": ["Frieren"], "tags": ["olhar"]}
+
+    _, user = build_distill_messages(sources, vocab)
+    assert "Frieren" in user and "olhar" in user
+
+    url = build_webchat_url(sources, vocabulary=vocab)
+    assert "Frieren" in url  # vocabulary travels in the deep link too
 
 
 def test_build_distiller_selects_backend_by_env(monkeypatch) -> None:

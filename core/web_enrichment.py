@@ -271,7 +271,9 @@ class Distiller(Protocol):
     """Turns web sources into a structured suggestion. Implementations range
     from a pure-heuristic one to LLM-backed transports (API or web chat)."""
 
-    def distill(self, sources: list[WebSource]) -> EnrichmentSuggestion: ...
+    def distill(
+        self, sources: list[WebSource], vocabulary: dict[str, list[str]] | None = None
+    ) -> EnrichmentSuggestion: ...
 
 
 class SerpApiLensProvider:
@@ -740,7 +742,9 @@ def build_reverse_image_provider() -> ReverseImageProvider:
 
 
 class HeuristicDistiller:
-    def distill(self, sources: list[WebSource]) -> EnrichmentSuggestion:
+    def distill(
+        self, sources: list[WebSource], vocabulary: dict[str, list[str]] | None = None
+    ) -> EnrichmentSuggestion:
         text = " ".join(
             part
             for source in sources
@@ -831,7 +835,71 @@ _DISTILL_SYSTEM_PROMPT = (
 )
 
 
-def build_distill_messages(sources: list[WebSource]) -> tuple[str, str]:
+def format_vocabulary(vocabulary: dict[str, list[str]] | None) -> str:
+    """Render the library's existing tags/categories as an instruction so the
+    model REUSES them instead of inventing new, divergent ones per image."""
+    if not vocabulary:
+        return ""
+    labels = [
+        ("characters", "personagens"),
+        ("categories", "obras/categorias"),
+        ("styles", "estilos"),
+        ("tags", "tags"),
+    ]
+    blocks = [
+        f"{label}: {', '.join(vocabulary[key])}"
+        for key, label in labels
+        if vocabulary.get(key)
+    ]
+    if not blocks:
+        return ""
+    return (
+        "\n\nVocabulário JÁ existente no acervo — PREFIRA reutilizar estes valores "
+        "(mesma grafia) quando se aplicarem; só crie um novo se nenhum servir, para "
+        "não multiplicar sinônimos/categorias diferentes para a mesma coisa:\n"
+        + "\n".join(blocks)
+    )
+
+
+def gather_vocabulary(
+    conn: sqlite3.Connection, *, max_tags: int = 50, max_each: int = 60
+) -> dict[str, list[str]]:
+    """Collect the library's existing vocabulary (concept names, styles, top
+    tags) so the AI reuses it instead of inventing divergent values per image."""
+    vocab: dict[str, list[str]] = {"characters": [], "categories": [], "styles": [], "tags": []}
+    try:
+        for row in conn.execute("SELECT name, category FROM concepts ORDER BY name"):
+            name = (row["name"] or "").strip()
+            if not name:
+                continue
+            key = "characters" if (row["category"] or "").strip().lower() == "personagem" else "categories"
+            vocab[key].append(name)
+    except Exception:
+        pass
+    try:
+        vocab["styles"] = [
+            r[0].strip()
+            for r in conn.execute("SELECT DISTINCT style FROM memes WHERE style != ''")
+            if r[0] and r[0].strip()
+        ]
+    except Exception:
+        pass
+    try:
+        counts: dict[str, int] = {}
+        for (tag_str,) in conn.execute("SELECT tags FROM memes WHERE tags != ''"):
+            for tag in (tag_str or "").split(","):
+                tag = tag.strip()
+                if tag and tag.lower() != "web-enriched":
+                    counts[tag] = counts.get(tag, 0) + 1
+        vocab["tags"] = [t for t, _ in sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:max_tags]]
+    except Exception:
+        pass
+    return {key: values[:max_each] for key, values in vocab.items()}
+
+
+def build_distill_messages(
+    sources: list[WebSource], vocabulary: dict[str, list[str]] | None = None
+) -> tuple[str, str]:
     """Build the (system, user) prompt from the *clean relevant text* only --
     page titles + domains, never raw HTML -- so token usage stays minimal and
     every backend (API or web-chat) receives the exact same compact payload."""
@@ -848,7 +916,7 @@ def build_distill_messages(sources: list[WebSource]) -> tuple[str, str]:
         },
         ensure_ascii=False,
     )
-    return _DISTILL_SYSTEM_PROMPT, user
+    return _DISTILL_SYSTEM_PROMPT, user + format_vocabulary(vocabulary)
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -876,7 +944,11 @@ class LLMBackend(Protocol):
 
     def available(self) -> bool: ...
     def complete(
-        self, system: str, user: str, sources: list[WebSource] | None = None
+        self,
+        system: str,
+        user: str,
+        sources: list[WebSource] | None = None,
+        vocabulary: dict[str, list[str]] | None = None,
     ) -> str: ...
 
 
@@ -896,7 +968,11 @@ class OpenAICompatBackend:
         return bool(self.endpoint and self.api_key and self.model)
 
     def complete(
-        self, system: str, user: str, sources: list[WebSource] | None = None
+        self,
+        system: str,
+        user: str,
+        sources: list[WebSource] | None = None,
+        vocabulary: dict[str, list[str]] | None = None,
     ) -> str:
         payload = {
             "model": self.model,
@@ -936,7 +1012,11 @@ class GeminiAPIBackend:
         return bool(self.api_key and self.model)
 
     def complete(
-        self, system: str, user: str, sources: list[WebSource] | None = None
+        self,
+        system: str,
+        user: str,
+        sources: list[WebSource] | None = None,
+        vocabulary: dict[str, list[str]] | None = None,
     ) -> str:
         url = f"{self.base_url}/{self.model}:generateContent?key={parse.quote(self.api_key)}"
         body = {
@@ -977,16 +1057,24 @@ def build_webchat_url(
     *,
     temporary: bool = True,
     max_chars: int = 6000,
+    vocabulary: dict[str, list[str]] | None = None,
 ) -> str:
     """Build a chatgpt.com deep link that pre-fills the compact prompt + the top
-    matches (title + URL). The number of matches is trimmed until the whole URL
-    stays under ``max_chars`` so it never trips a proxy's 414 (URI too long)."""
+    matches (title + URL) + a trimmed copy of the existing vocabulary. The number
+    of matches is trimmed until the whole URL stays under ``max_chars`` so it
+    never trips a proxy's 414 (URI too long)."""
     base = "https://chatgpt.com/"
     usable = [s for s in sources if s.url]
+    # Keep the vocabulary small for the URL (the size limit lives here).
+    caps = {"characters": 25, "categories": 25, "styles": 15, "tags": 20}
+    trimmed = (
+        {k: (vocabulary.get(k) or [])[:cap] for k, cap in caps.items()} if vocabulary else None
+    )
+    vocab_txt = format_vocabulary(trimmed)
 
     def make(count: int) -> str:
         lines = "\n".join(f"- {s.title} | {s.url}" for s in usable[:count])
-        params = {"q": _WEBCHAT_INSTRUCTION + lines, "hints": "search"}
+        params = {"q": _WEBCHAT_INSTRUCTION + lines + vocab_txt, "hints": "search"}
         if temporary:
             params["temporary-chat"] = "true"
         return base + "?" + parse.urlencode(params)
@@ -1063,9 +1151,13 @@ class WebChatBackend:
         return True
 
     def complete(
-        self, system: str, user: str, sources: list[WebSource] | None = None
+        self,
+        system: str,
+        user: str,
+        sources: list[WebSource] | None = None,
+        vocabulary: dict[str, list[str]] | None = None,
     ) -> str:
-        url = build_webchat_url(sources or [], temporary=self.temporary)
+        url = build_webchat_url(sources or [], temporary=self.temporary, vocabulary=vocabulary)
         if self._completer is not None:
             return self._completer(url)
         return self._send_deeplink(url)
@@ -1185,13 +1277,15 @@ class LLMDistiller:
         self.backend = backend
         self.fallback = fallback or HeuristicDistiller()
 
-    def distill(self, sources: list[WebSource]) -> EnrichmentSuggestion:
+    def distill(
+        self, sources: list[WebSource], vocabulary: dict[str, list[str]] | None = None
+    ) -> EnrichmentSuggestion:
         fallback = self.fallback.distill(sources)
         if self.backend is None or not self.backend.available():
             return fallback
         try:
-            system, user = build_distill_messages(sources)
-            parsed = _extract_json(self.backend.complete(system, user, sources))
+            system, user = build_distill_messages(sources, vocabulary)
+            parsed = _extract_json(self.backend.complete(system, user, sources, vocabulary))
             return EnrichmentSuggestion(
                 provider=f"llm:{self.backend.name}",
                 character=str(parsed.get("character") or fallback.character),
@@ -1281,20 +1375,34 @@ class WebEnrichmentService:
     def missing_config(self) -> list[str]:
         return list(self.provider.missing_config())
 
-    def enrich_path(self, path: str | os.PathLike[str]) -> EnrichmentSuggestion:
+    def enrich_path(
+        self,
+        path: str | os.PathLike[str],
+        vocabulary: dict[str, list[str]] | None = None,
+    ) -> EnrichmentSuggestion:
         """Full pipeline: reverse-image search (Lens) + distill."""
         sources = self.provider.search_path(path)
-        return self._distill(sources, provider=self.provider.provider_name)
+        return self._distill(sources, provider=self.provider.provider_name, vocabulary=vocabulary)
 
-    def redistill(self, sources: list[WebSource]) -> EnrichmentSuggestion:
+    def redistill(
+        self,
+        sources: list[WebSource],
+        vocabulary: dict[str, list[str]] | None = None,
+    ) -> EnrichmentSuggestion:
         """Re-run only the AI distiller over sources already found earlier --
         no new Lens search. Lets the user re-send the same matches to a
         different/better backend without re-searching (and without re-opening
         the browser)."""
-        return self._distill(sources, provider="redistill")
+        return self._distill(sources, provider="redistill", vocabulary=vocabulary)
 
-    def _distill(self, sources: list[WebSource], *, provider: str) -> EnrichmentSuggestion:
-        suggestion = self.distiller.distill(sources)
+    def _distill(
+        self,
+        sources: list[WebSource],
+        *,
+        provider: str,
+        vocabulary: dict[str, list[str]] | None = None,
+    ) -> EnrichmentSuggestion:
+        suggestion = self.distiller.distill(sources, vocabulary)
         return EnrichmentSuggestion(
             provider=provider,
             character=suggestion.character,

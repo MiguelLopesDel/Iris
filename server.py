@@ -48,6 +48,7 @@ from core.web_enrichment import (
     create_job,
     create_web_enrichment_tables,
     find_existing_suggestion,
+    gather_vocabulary,
     get_job,
     insert_suggestion,
     list_suggestions,
@@ -1291,6 +1292,8 @@ def _run_web_enrichment_job(
     conn = _backend_connection()
     try:
         service = _create_web_enrichment_service(backend_overrides)
+        # Existing tags/categories, so the AI reuses them instead of inventing new ones.
+        vocabulary = gather_vocabulary(conn)
         update_job(conn, job_id, status="running", message="Iniciando busca web")
         done = 0
         for db_id in db_ids:
@@ -1306,7 +1309,7 @@ def _run_web_enrichment_job(
             try:
                 if cached_sources:
                     update_job(conn, job_id, done=done, message=f"Re-enviando {label} para a IA")
-                    suggestion = service.redistill(cached_sources)
+                    suggestion = service.redistill(cached_sources, vocabulary)
                 else:
                     update_job(conn, job_id, done=done, message=f"Pesquisando {label}")
                     if record is None or not record.resolved_path:
@@ -1314,7 +1317,7 @@ def _run_web_enrichment_job(
                     path = Path(record.resolved_path)
                     if not path.exists() or not path.is_file():
                         raise RuntimeError("Arquivo não encontrado")
-                    suggestion = service.enrich_path(path)
+                    suggestion = service.enrich_path(path, vocabulary)
             except Exception as exc:
                 suggestion = EnrichmentSuggestion(
                     provider="web_enrichment",
