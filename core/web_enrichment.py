@@ -18,6 +18,7 @@ from typing import Any, Protocol, runtime_checkable
 from urllib import parse, request
 
 from core.browser_session import (
+    SHARED_PROFILE_DIR,
     get_browser_session,
     set_window_visible,
     shared_session_enabled,
@@ -1034,8 +1035,9 @@ class WebChatBackend:
         # Web chat must run headed (login + far less bot-flagging).
         env_headless = os.environ.get("IRIS_WEBCHAT_HEADLESS", "0").strip().lower()
         self.headless = headless if headless is not None else env_headless not in {"0", "false", "no"}
+        # Same profile as the shared session, so login persists across both modes.
         self.profile_dir = profile_dir or os.environ.get(
-            "IRIS_WEBCHAT_PROFILE_DIR", os.path.expanduser("~/.iris/webchat-profile")
+            "IRIS_WEBCHAT_PROFILE_DIR", SHARED_PROFILE_DIR
         )
         # Real Chrome passes chatgpt.com's Cloudflare check; the bundled Chromium
         # usually gets walled. Default to the system Chrome, fall back to Chromium.

@@ -19,8 +19,10 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+# Reuse the profile the web-chat backend already logged into, so the shared
+# browser keeps the existing ChatGPT login (and Lens cookies live here too).
 SHARED_PROFILE_DIR = os.environ.get(
-    "IRIS_BROWSER_PROFILE_DIR", os.path.expanduser("~/.iris/browser")
+    "IRIS_BROWSER_PROFILE_DIR", os.path.expanduser("~/.iris/webchat-profile")
 )
 _LAUNCH_ARGS = ("--disable-blink-features=AutomationControlled", "--no-sandbox")
 

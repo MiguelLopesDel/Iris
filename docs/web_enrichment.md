@@ -392,7 +392,7 @@ Variáveis:
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `IRIS_BROWSER_SHARED` | `1` | `0` volta ao modo antigo (um browser por operação) |
-| `IRIS_BROWSER_PROFILE_DIR` | `~/.iris/browser` | Perfil único (Lens + ChatGPT) |
+| `IRIS_BROWSER_PROFILE_DIR` | `~/.iris/webchat-profile` | Perfil único (Lens + ChatGPT); reusa o login já feito |
 
 Os providers/backends mantêm o **modo standalone** como fallback
 (`IRIS_BROWSER_SHARED=0` ou `scraper=`/`completer=`/`cdp_url` injetados), então a
