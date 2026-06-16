@@ -128,8 +128,10 @@ def test_apply_suggestion_updates_metadata_and_creates_concepts() -> None:
 def test_parse_lens_results_dedupes_and_skips_empty() -> None:
     sources = parse_lens_results(
         [
-            {"title": "Gojo Satoru", "url": "https://jujutsu-kaisen.fandom.com/wiki/Gojo"},
-            {"title": "Gojo Satoru", "url": "https://jujutsu-kaisen.fandom.com/wiki/Gojo"},
+            {"title": "Gojo Satoru", "url": "https://jujutsu-kaisen.fandom.com/wiki/Gojo",
+             "has_thumb": True},
+            {"title": "Gojo Satoru", "url": "https://jujutsu-kaisen.fandom.com/wiki/Gojo",
+             "has_thumb": True},
             {"title": "", "url": ""},
             {"title": "Discussion", "url": "https://reddit.com/r/x"},
         ]
@@ -138,6 +140,21 @@ def test_parse_lens_results_dedupes_and_skips_empty() -> None:
     assert len(sources) == 2
     assert sources[0].domain == "jujutsu-kaisen.fandom.com"
     assert sources[0].match_type == "lens_visual_match"
+
+
+def test_parse_lens_results_ranks_thumbnail_matches_first() -> None:
+    sources = parse_lens_results(
+        [
+            {"title": "Related search", "url": "https://example.com/related"},
+            {"title": "Frieren staring", "url": "https://knowyourmeme.com/x",
+             "has_thumb": True},
+        ]
+    )
+
+    # The real visual match (with thumbnail) must outrank the plain link.
+    assert sources[0].domain == "knowyourmeme.com"
+    assert sources[0].match_type == "lens_visual_match"
+    assert sources[1].match_type == "lens_link"
 
 
 def test_playwright_provider_uses_injected_scraper() -> None:

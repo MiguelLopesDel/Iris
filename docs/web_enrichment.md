@@ -247,3 +247,30 @@ pip install playwright && playwright install chromium
 Nesse modo não há custo de API nem upload para nuvem — o Lens é dirigido
 localmente. Em troca, é mais lento (um browser por imagem) e sensível a
 mudanças no DOM do Google; recomendado para volume baixo.
+
+### Qualidade do metadado (extração + destilação)
+
+O scraping local devolve apenas **links** (páginas que casam visualmente), não
+um "entendimento" da imagem. A qualidade depende de duas etapas:
+
+1. **Extração** (`_extract_results`): prioriza os *cards* de match visual (âncoras
+   que envolvem uma miniatura `<img>`) e descarta navegação/rodapé/pesquisas
+   relacionadas por uma lista de stopwords. Fontes com miniatura vêm marcadas
+   como `lens_visual_match` (score 1) e são ranqueadas à frente das `lens_link`.
+   Sem esse filtro, títulos de menu/rodapé entram como "fonte" e poluem tudo.
+2. **Destilação** (sources → metadado): a **heurística** apenas conta palavras
+   nos títulos (com peso extra para knowyourmeme/fandom/wikipedia), então acerta
+   no máximo personagem/obra óbvios — **não entende** que algo é um meme nem o
+   contexto/piada. Para isso é preciso o **LLM** (`HybridDistiller`).
+
+> ⚠️ Para o resultado que se espera ("isto é a Frieren, é um meme do olhar pra
+> cima, keywords: olhar/staring"), **habilite o LLM local**. Numa RTX 4050 roda
+> bem um modelo 7B (ex.: `qwen2.5:7b` no Ollama). O prompt já instrui o modelo a
+> identificar personagem, obra, se é meme, o contexto e as palavras-chave
+> (inclusive pose/ação), dando mais peso a knowyourmeme/fandom/wiki:
+
+```bash
+export IRIS_LLM_ENDPOINT="http://localhost:11434/v1/chat/completions"
+export IRIS_LLM_API_KEY="ollama"
+export IRIS_LLM_MODEL="qwen2.5:7b"
+```

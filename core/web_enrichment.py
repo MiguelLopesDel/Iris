@@ -366,16 +366,19 @@ def parse_lens_results(items: list[dict[str, Any]], limit: int = 30) -> list[Web
         if key in seen:
             continue
         seen.add(key)
+        has_thumb = bool(item.get("has_thumb"))
         sources.append(
             WebSource(
                 title=title,
                 url=url,
                 source_url=source_url,
                 domain=_domain(source_url or url),
-                match_type="lens_visual_match",
-                score=0.0,
+                match_type="lens_visual_match" if has_thumb else "lens_link",
+                score=1.0 if has_thumb else 0.0,
             )
         )
+    # Real visual matches (with a thumbnail) first, preserving order otherwise.
+    sources.sort(key=lambda s: s.score, reverse=True)
     return sources[:limit]
 
 
@@ -571,21 +574,54 @@ class PlaywrightLensProvider:
 
     @staticmethod
     def _extract_results(page: Any) -> list[dict[str, Any]]:
+        """Extract the actual visual-match cards from the Lens results page.
+
+        The page is full of non-result links (header, footer, related
+        searches, language switch). Real visual matches are anchors that wrap a
+        thumbnail ``<img>``, so we prefer those and fall back to plain anchors
+        only when too few cards are found. Nav/footer chrome is filtered by a
+        stopword list."""
         return page.evaluate(
             """
             () => {
-              const out = [];
-              const seen = new Set();
-              for (const a of document.querySelectorAll('a[href^="http"]')) {
-                const url = a.href;
-                if (!url || seen.has(url)) continue;
-                if (/google\\.com|gstatic\\.com|googleusercontent\\.com/.test(url)) continue;
-                const title = (a.innerText || a.getAttribute('aria-label') || '').trim();
-                if (!title) continue;
-                seen.add(url);
-                out.push({ title, url, source_url: url });
+              const STOP = [
+                'sign in','sign up','log in','fazer login','settings','configura',
+                'privacy','privacidade','terms','termos','gmail','images','imagens',
+                'about','sobre','help','ajuda','feedback','advertising','business',
+                'how search works','accessibility','your data','more results','mais',
+                'related','relacionad','learn more','saiba mais','next','previous',
+                'send feedback','google apps','all filters','filters','store','maps'
+              ];
+              const GOOGLE = /google\\.[a-z.]+|gstatic\\.com|googleusercontent\\.com|youtube\\.com\\/(?:about|t\\/)/;
+              const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+              const isNoise = (t) => {
+                const l = t.toLowerCase();
+                return !t || t.length < 3 || STOP.some((w) => l.includes(w));
+              };
+              const collect = (requireImg) => {
+                const out = [];
+                const seen = new Set();
+                for (const a of document.querySelectorAll('a[href^="http"]')) {
+                  const url = a.href;
+                  if (!url || GOOGLE.test(url) || seen.has(url)) continue;
+                  if (requireImg && !a.querySelector('img')) continue;
+                  const img = a.querySelector('img');
+                  let title = clean(a.getAttribute('aria-label'))
+                    || clean(img && (img.getAttribute('alt') || img.getAttribute('title')))
+                    || clean(a.innerText);
+                  if (isNoise(title)) continue;
+                  seen.add(url);
+                  out.push({ title, url, source_url: url, has_thumb: !!img });
+                }
+                return out;
+              };
+              let cards = collect(true);          // visual-match cards (thumbnail)
+              if (cards.length < 3) {
+                const extra = collect(false);     // fallback: any meaningful link
+                const have = new Set(cards.map((c) => c.url));
+                for (const e of extra) if (!have.has(e.url)) cards.push(e);
               }
-              return out;
+              return cards;
             }
             """
         )
@@ -693,24 +729,39 @@ class HybridDistiller:
                     {
                         "role": "system",
                         "content": (
-                            "Return compact JSON with keys: character, source_work, style, "
+                            "You identify an image from Google Lens reverse-search results. "
+                            "The input is a list of web pages that visually match the image "
+                            "(titles + domains). Infer what the image actually is.\n"
+                            "Weight authoritative sources more: knowyourmeme.com, fandom.com, "
+                            "wikipedia.org, wikia, reddit.com and booru/anime wikis usually name "
+                            "the character, the source work and the meme directly. Ignore stores, "
+                            "stock-photo sites and unrelated noise.\n"
+                            "Decide: who/what is the main character or subject; which work it is "
+                            "from (anime/game/movie/etc.); whether the image is a known meme and, "
+                            "if so, what the joke/context is; the visual style; and the most useful "
+                            "search keywords for this image (including the action or pose, e.g. "
+                            "'looking up', 'staring', 'pointing').\n"
+                            "Return ONLY compact JSON with keys: character, source_work, style, "
                             "meme_archetype, context, tags, summary, confidence. "
-                            "Use empty strings for unknowns and confidence 0..1."
+                            "'tags' is a comma-separated keyword list (character, work, meme name, "
+                            "pose/action, style). 'summary' is one or two sentences in Portuguese "
+                            "explaining what the image is and why it is a meme. Use empty strings "
+                            "for unknowns and confidence between 0 and 1 reflecting evidence strength."
                         ),
                     },
                     {
                         "role": "user",
                         "content": json.dumps(
-                            [
-                                {
-                                    "title": source.title,
-                                    "url": source.url,
-                                    "source_url": source.source_url,
-                                    "domain": source.domain,
-                                    "match_type": source.match_type,
-                                }
-                                for source in sources[:12]
-                            ],
+                            {
+                                "matches": [
+                                    {
+                                        "title": source.title,
+                                        "domain": source.domain,
+                                        "match_type": source.match_type,
+                                    }
+                                    for source in sources[:15]
+                                ]
+                            },
                             ensure_ascii=False,
                         ),
                     },
@@ -1057,7 +1108,9 @@ def _candidate_from_titles(sources: list[WebSource]) -> str:
         "pinterest",
         "wiki",
     }
-    counts: dict[str, int] = {}
+    # Titles from sources that tend to name the character/work get more weight.
+    authoritative = ("knowyourmeme", "fandom", "wikipedia", "wikia", "booru", "myanimelist")
+    counts: dict[str, float] = {}
     for source in sources[:12]:
         title = re.sub(r"\s+", " ", source.title).strip()
         if not title:
@@ -1069,7 +1122,8 @@ def _candidate_from_titles(sources: list[WebSource]) -> str:
         if 1 <= len(words) <= 5:
             normalized = " ".join(words)
             if len(normalized) >= 3:
-                counts[normalized] = counts.get(normalized, 0) + 1
+                weight = 3.0 if any(a in source.domain for a in authoritative) else 1.0
+                counts[normalized] = counts.get(normalized, 0.0) + weight
     if not counts:
         return ""
     return max(counts.items(), key=lambda item: (item[1], len(item[0])))[0]
