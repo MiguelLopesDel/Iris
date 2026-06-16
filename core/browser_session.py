@@ -16,6 +16,7 @@ import json
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -41,6 +42,52 @@ _LAUNCH_ARGS = (
 def shared_session_enabled() -> bool:
     """Whether browser work should reuse the persistent shared session."""
     return os.environ.get("IRIS_BROWSER_SHARED", "1").strip().lower() not in {"0", "false", "no"}
+
+
+def _matching_browser_pids(profile_dir: str) -> list[int]:
+    """PIDs of Chrome/Chromium processes that are ours (our window class or our
+    profile dir in the command line). Linux-only (reads /proc)."""
+    pids: list[int] = []
+    mypid = os.getpid()
+    needles = (f"--class={WINDOW_CLASS}", profile_dir)
+    try:
+        candidates = [int(p) for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
+        return pids
+    for pid in candidates:
+        if pid == mypid:
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                cmd = fh.read().replace(b"\x00", b" ").decode("utf-8", "ignore")
+        except OSError:
+            continue
+        low = cmd.lower()
+        if "chrome" not in low and "chromium" not in low:
+            continue
+        if any(needle in cmd for needle in needles):
+            pids.append(pid)
+    return pids
+
+
+def kill_orphan_browsers(profile_dir: str = SHARED_PROFILE_DIR) -> int:
+    """Kill leftover browser processes from a previous run (e.g. after a crash
+    that skipped the clean shutdown). They hold the profile's SingletonLock and
+    would block a fresh launch. Returns how many were killed."""
+    pids = _matching_browser_pids(profile_dir)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    if pids:
+        time.sleep(1.0)
+        for pid in _matching_browser_pids(profile_dir):  # SIGKILL stragglers
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    return len(pids)
 
 
 # ── Window show/hide ─────────────────────────────────────────────────────────
@@ -168,6 +215,8 @@ class BrowserSession:
             else:
                 from playwright.sync_api import sync_playwright
 
+                # Free the profile lock from any leaked browser before launching.
+                kill_orphan_browsers(self.profile_dir)
                 with sync_playwright() as pw:
                     context = self._launch(pw)
                     if self.start_minimized:

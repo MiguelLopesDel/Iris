@@ -170,6 +170,16 @@ def _open_folder_in_file_manager(path: Path) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Kill browsers leaked by a previous run (a crash that skipped shutdown);
+    # they hold the profile lock and would block a fresh launch.
+    try:
+        from core.browser_session import kill_orphan_browsers
+
+        killed = kill_orphan_browsers()
+        if killed:
+            print(f"[iris] Limpou {killed} navegador(es) orfao(s) de execucao anterior")
+    except Exception:
+        pass
     if _backend is None:
         print(f"[iris] Loading backend — DB: {_active_config['db_path']}")
         backend = _reload_backend()

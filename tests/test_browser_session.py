@@ -8,7 +8,10 @@ results/exceptions come back, ops serialize, close stops it) with a fake context
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import threading
+import time
 
 import core.browser_session as bs
 from core.browser_session import BrowserSession
@@ -135,6 +138,36 @@ def test_hypr_show_moves_to_active_workspace_and_focuses(monkeypatch) -> None:
     assert bs._hypr_set_visible(True) is True
     assert ("dispatch", "movetoworkspacesilent", "3,address:0xABC") in calls
     assert ("dispatch", "focuswindow", "address:0xABC") in calls
+
+
+def test_kill_orphan_browsers_kills_matching_process() -> None:
+    # A fake "chromium" carrying our window class in argv (an orphan from a crash).
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)",
+         "chromium", f"--class={bs.WINDOW_CLASS}"]
+    )
+    try:
+        time.sleep(0.3)  # let it show up in /proc
+        assert proc.pid in bs._matching_browser_pids(bs.SHARED_PROFILE_DIR)
+
+        killed = bs.kill_orphan_browsers(bs.SHARED_PROFILE_DIR)
+
+        assert killed >= 1
+        proc.wait(timeout=5)
+        assert proc.poll() is not None  # the orphan is gone
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_matching_browser_pids_ignores_non_browser_processes() -> None:
+    # A sleep without chrome/our-class in argv must NOT match.
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        time.sleep(0.3)
+        assert proc.pid not in bs._matching_browser_pids(bs.SHARED_PROFILE_DIR)
+    finally:
+        proc.kill()
 
 
 def test_hypr_address_none_when_class_absent(monkeypatch) -> None:
