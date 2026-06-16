@@ -365,3 +365,36 @@ export IRIS_WEBCHAT_TEMPORARY="1"     # 0 = conversa normal (fica no histórico)
 API ChatGPT / API Gemini / Web-chat) com campos de modelo/site/CDP. A escolha
 é persistida no navegador e vale para as próximas buscas (inclusive o "Forçar
 re-pesquisa"). Por segurança, **chaves de API ficam no env**, não na interface.
+
+## Testes (rede de segurança)
+
+Objetivo: se a suíte passa, a **lógica** em produção funciona. O que é
+não-determinístico (browser/rede real) fica **isolado atrás de costuras
+injetáveis** e é validado por calibração ao vivo, não na CI.
+
+Camadas (`tests/`):
+
+| Arquivo | Cobre |
+|---|---|
+| `test_web_enrichment.py` | Núcleo puro: parsing/ranqueamento (`parse_lens_results`, `_domain_tier`), destiladores e backends (via fakes), `build_webchat_url`, `_extract_json`, fallback de upload, espera de CAPTCHA/login. |
+| `test_enrichment_job.py` | Orquestração `_run_web_enrichment_job`: cache, reaproveitar fontes (redistill), busca nova (research), erro → sugestão com `error_message`. |
+| `test_enrichment_api.py` | Endpoints HTTP: validação, formato de resposta, flags `force`/`research` chegando ao job, gating de config do provider. |
+| `test_static_wiring.py` | Fiação da UI: todo `getElementById('x').addEventListener` tem `id` no HTML; assets `/static` existem; JS/CSS têm `?v=` (cache-busting). |
+
+**Costuras injetáveis** (mantenha-as ao editar — é o que torna o resto testável
+sem rede/browser):
+
+- `PlaywrightLensProvider(scraper=...)` — substitui a automação do Lens.
+- `WebChatBackend(completer=...)` — substitui a automação do ChatGPT.
+- `LLMBackend` é um `Protocol`: backends fake nos testes implementam
+  `available()` + `complete()`.
+- Páginas fake (`_FakePage`, `_FakeChatPage`, `_FakeUploadPage`) exercitam a
+  lógica de DOM (espera de resultado, login, upload) sem um browser.
+
+**O que os testes NÃO garantem** (e por quê): o sucesso real da automação de
+browser contra o DOM do Google Lens e do ChatGPT + Cloudflare. Esses seletores
+mudam sem aviso e dependem de IP/login — valida-se ao vivo na máquina do usuário
+(ver os avisos de CAPTCHA/login acima), não na CI.
+
+Rodar: `pytest tests/test_web_enrichment.py tests/test_enrichment_job.py
+tests/test_enrichment_api.py tests/test_static_wiring.py`.

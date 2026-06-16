@@ -15,6 +15,7 @@ from core.web_enrichment import (
     SerpApiLensProvider,
     WebChatBackend,
     WebSource,
+    _domain_tier,
     _extract_json,
     apply_suggestion,
     build_distill_messages,
@@ -364,6 +365,45 @@ def test_llm_distiller_falls_back_when_backend_unavailable() -> None:
     suggestion = LLMDistiller(DeadBackend()).distill(sources)
 
     assert suggestion.provider == "heuristic"
+
+
+def test_domain_tier_classifies_noise_rich_and_neutral() -> None:
+    assert _domain_tier("youtube.com") < 0
+    assert _domain_tier("www.instagram.com") < 0
+    assert _domain_tier("knowyourmeme.com") > 0
+    assert _domain_tier("frieren.fandom.com") > 0
+    assert _domain_tier("example.com") == 0
+
+
+class _FakeChatPage:
+    """Fake page for WebChatBackend._ensure_ready: composer becomes ready only
+    on the Nth wait_for_selector call (simulating a login/Cloudflare delay)."""
+
+    def __init__(self, ready_on_call: int) -> None:
+        self.calls = 0
+        self.ready_on_call = ready_on_call
+
+    def wait_for_selector(self, selector, timeout=0, **kwargs):
+        self.calls += 1
+        if self.calls < self.ready_on_call:
+            raise TimeoutError("composer not ready")
+
+
+def test_webchat_ensure_ready_raises_in_headless_when_not_logged_in() -> None:
+    backend = WebChatBackend(headless=True)
+    page = _FakeChatPage(ready_on_call=99)  # never ready
+
+    with pytest.raises(RuntimeError, match="login"):
+        backend._ensure_ready(page)
+
+
+def test_webchat_ensure_ready_waits_for_login_when_headed() -> None:
+    backend = WebChatBackend(headless=False)
+    page = _FakeChatPage(ready_on_call=2)  # not ready first, ready after "login"
+
+    backend._ensure_ready(page)  # must not raise once the composer appears
+
+    assert page.calls == 2  # initial check + the login wait
 
 
 def test_webchat_backend_uses_injected_completer_with_deeplink() -> None:
