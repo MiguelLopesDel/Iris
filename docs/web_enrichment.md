@@ -135,8 +135,38 @@ A seleção é por env `IRIS_ENRICHMENT_PROVIDER` (`serpapi` | `playwright`),
 resolvida em `build_reverse_image_provider()`. A lógica S3 permanece intacta
 para quem quiser voltar ao SerpApi.
 
-Variáveis do provider local: `IRIS_LENS_HEADLESS` (padrão `1`),
-`IRIS_LENS_TIMEOUT_MS` (padrão `45000`).
+Variáveis do provider local:
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `IRIS_LENS_HEADLESS` | `1` | `0` abre o navegador visível (necessário para o fluxo semi-manual) |
+| `IRIS_LENS_TIMEOUT_MS` | `45000` | Timeout das ações de navegação |
+| `IRIS_LENS_PROFILE_DIR` | _(vazio)_ | Pasta de perfil persistente; guarda o cookie de isenção entre execuções |
+| `IRIS_LENS_SOLVE_TIMEOUT_MS` | `180000` | Tempo de espera para você resolver o reCAPTCHA na janela visível |
+| `IRIS_LENS_LOCALE` | `en-US` | Locale do contexto do navegador |
+
+### Fluxo semi-manual (resolver o reCAPTCHA uma vez)
+
+O `_scrape_lens` faz upload pelo caminho real do Lens (link "faça upload de um
+arquivo" via *file chooser*, com fallback para o input legado `encoded_image`).
+Quando o Google responde com `/sorry/` (reCAPTCHA):
+
+- **headless** (`IRIS_LENS_HEADLESS=1`): não há quem resolva → lança erro claro
+  pedindo para rodar headed ou usar SerpApi.
+- **headed** (`IRIS_LENS_HEADLESS=0`): imprime no log a instrução e **aguarda**
+  (`IRIS_LENS_SOLVE_TIMEOUT_MS`) você clicar no "I'm not a robot" na janela.
+  Resolvido, ele segue e extrai os resultados.
+
+Com `IRIS_LENS_PROFILE_DIR` apontando para uma pasta fixa, o cookie
+`GOOGLE_ABUSE_EXEMPTION` gravado na resolução **persiste**, então as próximas
+imagens do lote passam sem novo CAPTCHA (até o cookie expirar).
+
+```bash
+export IRIS_ENRICHMENT_PROVIDER="playwright"
+export IRIS_LENS_HEADLESS=0
+export IRIS_LENS_PROFILE_DIR="$HOME/.iris/lens-profile"
+# resolva o reCAPTCHA uma vez na primeira imagem; o restante do lote reaproveita
+```
 
 ## Cache (evita re-pesquisar e gastar de novo)
 

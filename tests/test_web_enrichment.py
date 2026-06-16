@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from core.concepts import create_concept_tables
 from core.web_enrichment import (
     EnrichmentSuggestion,
@@ -152,6 +154,48 @@ def test_playwright_provider_uses_injected_scraper() -> None:
 
     assert captured == ["/tmp/meme.jpg"]
     assert sources[0].domain == "knowyourmeme.com"
+
+
+class _FakePage:
+    """Minimal page stub for exercising PlaywrightLensProvider._await_results."""
+
+    def __init__(self, url: str, solved_url: str | None = None) -> None:
+        self.url = url
+        self._solved_url = solved_url
+        self.waited_for_solve = False
+
+    def wait_for_url(self, matcher, timeout: int = 0) -> None:
+        if callable(matcher):
+            # Simulates the human-solve wait on the reCAPTCHA page.
+            self.waited_for_solve = True
+            if self._solved_url is None:
+                raise TimeoutError("captcha not solved")
+            self.url = self._solved_url
+
+
+def test_await_results_headless_captcha_raises() -> None:
+    provider = PlaywrightLensProvider(scraper=lambda path: [])  # headless default
+    page = _FakePage("https://www.google.com/sorry/index?continue=...search")
+
+    with pytest.raises(RuntimeError, match="IRIS_LENS_HEADLESS=0"):
+        provider._await_results(page)
+
+    assert page.waited_for_solve is False
+
+
+def test_await_results_headed_waits_for_manual_solve() -> None:
+    provider = PlaywrightLensProvider(
+        headless=False, profile_dir="/tmp/iris_lens_profile", solve_timeout_ms=1000
+    )
+    page = _FakePage(
+        "https://www.google.com/sorry/index?continue=...search",
+        solved_url="https://www.google.com/search?vsrid=abc&udm=26",
+    )
+
+    provider._await_results(page)  # must not raise once "solved"
+
+    assert page.waited_for_solve is True
+    assert "/search" in page.url
 
 
 def test_build_provider_selects_by_env(monkeypatch) -> None:

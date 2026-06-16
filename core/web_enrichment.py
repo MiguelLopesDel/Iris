@@ -410,12 +410,23 @@ class PlaywrightLensProvider:
         timeout_ms: int | None = None,
         max_results: int = 30,
         locale: str | None = None,
+        profile_dir: str | None = None,
+        solve_timeout_ms: int | None = None,
         scraper: Callable[[str | os.PathLike[str]], list[dict[str, Any]]] | None = None,
     ):
         env_headless = os.environ.get("IRIS_LENS_HEADLESS", "1").strip().lower()
         self.headless = headless if headless is not None else env_headless not in {"0", "false", "no"}
         self.timeout_ms = timeout_ms or int(os.environ.get("IRIS_LENS_TIMEOUT_MS", "45000"))
         self.locale = locale or os.environ.get("IRIS_LENS_LOCALE", "en-US")
+        # Persistent profile keeps the GOOGLE_ABUSE_EXEMPTION cookie across runs,
+        # so the reCAPTCHA only needs to be solved once (semi-manual workflow).
+        self.profile_dir = profile_dir if profile_dir is not None else os.environ.get(
+            "IRIS_LENS_PROFILE_DIR", ""
+        )
+        # How long to wait for a human to solve the reCAPTCHA in a headed window.
+        self.solve_timeout_ms = solve_timeout_ms or int(
+            os.environ.get("IRIS_LENS_SOLVE_TIMEOUT_MS", "180000")
+        )
         self.max_results = max_results
         self._scraper = scraper
 
@@ -437,38 +448,103 @@ class PlaywrightLensProvider:
 
         file_path = str(Path(path))
         with self._stealth(sync_playwright()) as pw:
-            browser = pw.chromium.launch(headless=self.headless, args=list(self._launch_args))
+            browser, context = self._launch(pw)
             try:
-                context = browser.new_context(
-                    user_agent=self._user_agent,
-                    locale=self.locale,
-                    viewport={"width": 1366, "height": 768},
-                )
                 page = context.new_page()
                 page.set_default_timeout(self.timeout_ms)
                 page.goto(self.upload_url, wait_until="domcontentloaded")
                 self._dismiss_consent(page)
-                # The visible upload control is the last file input on the page;
-                # selecting it triggers a client-side navigation to the results.
-                page.locator("input[type=file]").last.set_input_files(file_path)
-                try:
-                    page.wait_for_url("**/search**", timeout=self.timeout_ms)
-                except Exception:
-                    pass
-                if "/sorry/" in page.url:
-                    raise RuntimeError(
-                        "Google Lens exigiu CAPTCHA (tráfego sinalizado). Tente de um IP "
-                        "residencial, reduza o volume ou use IRIS_ENRICHMENT_PROVIDER=serpapi."
-                    )
-                if "/search" not in page.url:
-                    raise RuntimeError("Google Lens não retornou página de resultados.")
+                self._upload_image(page, file_path)
+                self._await_results(page)
                 try:
                     page.wait_for_load_state("networkidle", timeout=self.timeout_ms)
                 except Exception:
                     pass
                 return self._extract_results(page)
             finally:
-                browser.close()
+                (browser or context).close()
+
+    def _launch(self, pw: Any) -> tuple[Any, Any]:
+        """Launch a browser/context. With ``profile_dir`` set, a persistent
+        context is used so cookies (notably ``GOOGLE_ABUSE_EXEMPTION`` from a
+        solved reCAPTCHA) survive between runs. Returns ``(browser, context)``;
+        ``browser`` is ``None`` for the persistent case."""
+        viewport = {"width": 1366, "height": 768}
+        if self.profile_dir:
+            context = pw.chromium.launch_persistent_context(
+                self.profile_dir,
+                headless=self.headless,
+                args=list(self._launch_args),
+                user_agent=self._user_agent,
+                locale=self.locale,
+                viewport=viewport,
+            )
+            return None, context
+        browser = pw.chromium.launch(headless=self.headless, args=list(self._launch_args))
+        context = browser.new_context(
+            user_agent=self._user_agent,
+            locale=self.locale,
+            viewport=viewport,
+        )
+        return browser, context
+
+    def _upload_image(self, page: Any, file_path: str) -> None:
+        """Send the local file into Lens. Prefers the visible "upload a file"
+        link (the real Lens path), falling back to the legacy reverse-search
+        input, then to the last file input."""
+        for selector in (
+            "text=/upload de um arquivo/i",
+            "text=/upload a file/i",
+            "text=/faça upload/i",
+        ):
+            link = page.locator(selector)
+            try:
+                if link.count():
+                    with page.expect_file_chooser(timeout=8000) as chooser:
+                        link.first.click()
+                    chooser.value.set_files(file_path)
+                    return
+            except Exception:
+                continue
+        encoded = page.locator("input[name=encoded_image]")
+        if encoded.count():
+            encoded.set_input_files(file_path)
+            return
+        page.locator("input[type=file]").last.set_input_files(file_path)
+
+    def _await_results(self, page: Any) -> None:
+        """Wait for the Lens results page. If Google walls with a reCAPTCHA and
+        we are headed, pause for a human to solve it (the only free path); in
+        headless mode there is nobody to solve it, so fail loudly."""
+        try:
+            page.wait_for_url("**/search**", timeout=self.timeout_ms)
+        except Exception:
+            pass
+        if "/sorry/" in page.url:
+            if self.headless:
+                raise RuntimeError(
+                    "Google Lens exigiu CAPTCHA (reCAPTCHA por 'tráfego incomum'). "
+                    "Rode headed com IRIS_LENS_HEADLESS=0 e IRIS_LENS_PROFILE_DIR=<pasta> "
+                    "para resolvê-lo uma vez, ou use IRIS_ENRICHMENT_PROVIDER=serpapi."
+                )
+            print(
+                "[lens] reCAPTCHA detectado: resolva o 'I'm not a robot' na janela "
+                "do navegador. Aguardando até "
+                f"{self.solve_timeout_ms // 1000}s...",
+                flush=True,
+            )
+            try:
+                page.wait_for_url(
+                    lambda url: "/sorry/" not in url and "/search" in url,
+                    timeout=self.solve_timeout_ms,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "CAPTCHA não foi resolvido a tempo. Aumente IRIS_LENS_SOLVE_TIMEOUT_MS "
+                    "ou use IRIS_ENRICHMENT_PROVIDER=serpapi."
+                ) from exc
+        if "/search" not in page.url:
+            raise RuntimeError("Google Lens não retornou página de resultados.")
 
     @staticmethod
     def _stealth(playwright_cm: Any) -> Any:
