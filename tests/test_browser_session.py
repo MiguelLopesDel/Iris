@@ -7,8 +7,10 @@ results/exceptions come back, ops serialize, close stops it) with a fake context
 
 from __future__ import annotations
 
+import json
 import threading
 
+import core.browser_session as bs
 from core.browser_session import BrowserSession
 
 
@@ -96,6 +98,50 @@ def test_operations_serialize_on_the_worker() -> None:
         assert sorted(results) == ["a", "b", "c"]
     finally:
         session.close()
+
+
+def test_hypr_hide_moves_window_to_special_workspace(monkeypatch) -> None:
+    calls = []
+
+    def fake_hyprctl(*args):
+        calls.append(args)
+        if args == ("-j", "clients"):
+            return json.dumps([{"class": bs.WINDOW_CLASS, "address": "0xABC"}])
+        return ""
+
+    monkeypatch.setattr(bs, "_hyprctl", fake_hyprctl)
+
+    assert bs._hypr_set_visible(False) is True
+    assert (
+        "dispatch",
+        "movetoworkspacesilent",
+        f"special:{bs._HYPR_SPECIAL},address:0xABC",
+    ) in calls
+
+
+def test_hypr_show_moves_to_active_workspace_and_focuses(monkeypatch) -> None:
+    calls = []
+
+    def fake_hyprctl(*args):
+        calls.append(args)
+        if args == ("-j", "clients"):
+            return json.dumps([{"initialClass": bs.WINDOW_CLASS, "address": "0xABC"}])
+        if args == ("-j", "activeworkspace"):
+            return json.dumps({"id": 3})
+        return ""
+
+    monkeypatch.setattr(bs, "_hyprctl", fake_hyprctl)
+
+    assert bs._hypr_set_visible(True) is True
+    assert ("dispatch", "movetoworkspacesilent", "3,address:0xABC") in calls
+    assert ("dispatch", "focuswindow", "address:0xABC") in calls
+
+
+def test_hypr_address_none_when_class_absent(monkeypatch) -> None:
+    monkeypatch.setattr(
+        bs, "_hyprctl", lambda *a: json.dumps([{"class": "firefox", "address": "0x1"}])
+    )
+    assert bs._hypr_address(retries=1) is None
 
 
 def test_close_stops_worker_and_runs_cleanup() -> None:

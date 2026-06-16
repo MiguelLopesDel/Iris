@@ -380,10 +380,16 @@ naturalmente (dois jobs nunca dirigem o browser ao mesmo tempo).
 
 - **Um perfil, um browser** para Lens **e** ChatGPT: o Lens abre uma aba, extrai,
   fecha a aba; o ChatGPT abre outra aba no **mesmo** navegador. Nada de relançar.
-- **Janela oculta** por padrão (minimizada via CDP `Browser.setWindowBounds`), e
-  **restaurada automaticamente** só quando precisa de você — CAPTCHA do Lens
-  (`_await_results`) ou login do ChatGPT (`_ensure_ready`) — voltando a minimizar
-  depois (`set_window_visible`).
+- **Janela oculta** por padrão, **restaurada automaticamente** só quando precisa
+  de você — CAPTCHA do Lens (`_await_results`) ou login do ChatGPT
+  (`_ensure_ready`) — voltando a ocultar depois (`set_window_visible`).
+  - **X11**: minimiza via CDP `Browser.setWindowBounds`.
+  - **Wayland/Hyprland**: no Wayland o cliente não move a própria janela (quem
+    manda é o compositor), então usamos `hyprctl`: a janela é lançada com uma
+    `--class` única (`IRIS_BROWSER_WINDOW_CLASS`, padrão `iris-meme-browser`) e
+    movida para um *special workspace* (scratchpad) para ocultar; ao precisar de
+    você, volta para o workspace ativo e recebe foco. Detecção por
+    `HYPRLAND_INSTANCE_SIGNATURE` + `hyprctl` no PATH; senão cai no CDP.
 - Usa o **Chrome do sistema** (fallback Chromium), headed.
 - Fecha no shutdown do servidor (`close_browser_session` no `lifespan`).
 

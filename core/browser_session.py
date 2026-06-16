@@ -12,9 +12,13 @@ human is needed (login / CAPTCHA), via the CDP ``Browser.setWindowBounds`` comma
 
 from __future__ import annotations
 
+import json
 import os
 import queue
+import shutil
+import subprocess
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
@@ -24,7 +28,14 @@ from typing import Any
 SHARED_PROFILE_DIR = os.environ.get(
     "IRIS_BROWSER_PROFILE_DIR", os.path.expanduser("~/.iris/webchat-profile")
 )
-_LAUNCH_ARGS = ("--disable-blink-features=AutomationControlled", "--no-sandbox")
+# Unique window class so a Wayland compositor (Hyprland) can target this window.
+WINDOW_CLASS = os.environ.get("IRIS_BROWSER_WINDOW_CLASS", "iris-meme-browser")
+_HYPR_SPECIAL = "iris"
+_LAUNCH_ARGS = (
+    "--disable-blink-features=AutomationControlled",
+    "--no-sandbox",
+    f"--class={WINDOW_CLASS}",
+)
 
 
 def shared_session_enabled() -> bool:
@@ -32,10 +43,57 @@ def shared_session_enabled() -> bool:
     return os.environ.get("IRIS_BROWSER_SHARED", "1").strip().lower() not in {"0", "false", "no"}
 
 
+# ── Window show/hide ─────────────────────────────────────────────────────────
+# Wayland clients can't move/minimize themselves -- the compositor does. So on
+# Hyprland we drive it via `hyprctl` (scratchpad/special workspace); on X11 we
+# use the CDP Browser.setWindowBounds command. Both best-effort.
+
+
+def _hyprland_active() -> bool:
+    return bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")) and shutil.which("hyprctl") is not None
+
+
+def _hyprctl(*args: str) -> str:
+    return subprocess.run(
+        ["hyprctl", *args], capture_output=True, text=True, timeout=5
+    ).stdout
+
+
+def _hypr_address(retries: int = 10) -> str | None:
+    """Find the address of our browser window (by class), retrying while it maps."""
+    for _ in range(retries):
+        try:
+            clients = json.loads(_hyprctl("-j", "clients"))
+            for client in clients:
+                if WINDOW_CLASS in (client.get("class", ""), client.get("initialClass", "")):
+                    return client.get("address")
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return None
+
+
+def _hypr_set_visible(visible: bool) -> bool:
+    address = _hypr_address()
+    if not address:
+        return False
+    try:
+        if visible:
+            ws = json.loads(_hyprctl("-j", "activeworkspace")).get("id")
+            _hyprctl("dispatch", "movetoworkspacesilent", f"{ws},address:{address}")
+            _hyprctl("dispatch", "focuswindow", f"address:{address}")
+        else:
+            _hyprctl("dispatch", "movetoworkspacesilent", f"special:{_HYPR_SPECIAL},address:{address}")
+        return True
+    except Exception:
+        return False
+
+
 def set_window_visible(page: Any, visible: bool) -> None:
-    """Show (restore) or hide (minimize) the browser window via CDP. Best-effort;
-    must run on the worker thread (CDP is bound to it). Safe to call on a normal
-    standalone page too."""
+    """Show (restore/foreground) or hide (minimize/scratchpad) the browser window.
+    Best-effort; must run on the worker thread. Tries Hyprland first, then CDP."""
+    if _hyprland_active() and _hypr_set_visible(visible):
+        return
     try:
         cdp = page.context.new_cdp_session(page)
         window_id = cdp.send("Browser.getWindowForTarget")["windowId"]
