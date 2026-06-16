@@ -114,12 +114,22 @@ ao motor de busca é detalhe interno. Implementações:
   browser). Requer `pip install playwright && playwright install chromium`
   (opcional: `pip install playwright-stealth` reduz detecção de bot).
 
-> ⚠️ **CAPTCHA / IP**: validado ao vivo. O fluxo de upload funciona e chega à
-> página de resultados do Lens, **mas o Google bloqueia com CAPTCHA
-> (`/sorry/`) a partir de IPs de datacenter/VPS** — e, uma vez sinalizado, o IP
-> fica soft-bloqueado. De um **IP residencial** (PC de casa) e em **volume
-> baixo** o risco é muito menor. O provider detecta o muro e lança erro claro
-> em vez de retornar vazio. Para volume alto ou IP de servidor, use o SerpApi.
+> ⚠️ **CAPTCHA (testado a fundo, inclusive em IP residencial)**: o **upload
+> sempre funciona** — toda tentativa gera um `vsrid` válido (o Google aceita a
+> busca visual). O bloqueio é na **página de resultados**: ela redireciona para
+> `/sorry/index` com reCAPTCHA ("tráfego incomum"). Isso foi reproduzido em IP
+> de **fibra residencial** (não só datacenter), em **headless e em headed (com
+> display real), com stealth, perfil persistente e cookies de consentimento** —
+> em todos os casos o SERP do Lens (`udm=26&source=lns`) é walled. Ou seja, o
+> gatilho é a automação na página de resultados, **não a reputação do IP**. O
+> provider detecta o muro e lança erro claro em vez de retornar vazio.
+>
+> **Workaround semi-manual (único caminho grátis viável)**: rodar headed
+> (`IRIS_LENS_HEADLESS=0`) com perfil persistente e **resolver o reCAPTCHA uma
+> vez na janela visível**. O Google grava um cookie `GOOGLE_ABUSE_EXEMPTION`
+> que persiste no perfil e libera as buscas seguintes por um tempo. Sem isso,
+> para uso automatizado/sem supervisão, o caminho confiável continua sendo o
+> SerpApi (ele absorve exatamente esse CAPTCHA com pool de proxies + solver).
 
 A seleção é por env `IRIS_ENRICHMENT_PROVIDER` (`serpapi` | `playwright`),
 resolvida em `build_reverse_image_provider()`. A lógica S3 permanece intacta
