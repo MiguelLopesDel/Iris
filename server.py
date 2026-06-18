@@ -128,6 +128,12 @@ def _reload_backend(config: dict[str, Any] | None = None) -> SearchBackend:
         _active_config.update(config)
     try:
         with _backend_lock:
+            # Ensure the full core schema (memes/collections/concepts/…) exists
+            # before opening the backend. Without this, launching the server on a
+            # fresh DB (before any indexing) leaves it without a `memes` table,
+            # which crashes the engine on the next start. init_db is idempotent.
+            from core.indexer_db import init_db
+            init_db(Path(_active_config["db_path"])).close()
             backend = create_backend(
                 db_path=str(_active_config["db_path"]),
                 media_root=str(_active_config["media_root"]),

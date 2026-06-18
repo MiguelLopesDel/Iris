@@ -112,6 +112,10 @@ class IrisEngine:
         conn = self.db.get_connection()
         try:
             columns = self.db.table_columns("memes")
+            if not columns:
+                # DB file exists but was never indexed (no `memes` table yet) —
+                # treat as empty instead of crashing on the SELECT below.
+                return []
             select_columns = [
                 "arquivo",
                 "caminho",
