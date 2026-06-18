@@ -344,7 +344,10 @@ class TestWithDatabase:
         from core.backend import create_backend
 
         db = os.environ["TEST_DB"]
-        server._backend = create_backend(db_path=db, media_root="media", load_model=False)
+        # Load the CLIP model only when explicitly asked (it's slow / needs GPU), so the
+        # plain TEST_DB run stays fast. With it, the text-search test also exercises.
+        load_model = os.environ.get("IRIS_RUN_MODEL_TESTS") == "1"
+        server._backend = create_backend(db_path=db, media_root="media", load_model=load_model)
         yield ASGITestClient(server.app)
 
     def test_info_total(self, db_client):
@@ -372,6 +375,12 @@ class TestWithDatabase:
             assert rec["media_type"] == "video"
 
     def test_search_text(self, db_client):
+        import server
+
+        # Text search has to encode the query with CLIP; the DB fixture loads no model
+        # (so the cheap DB tests stay fast). Skip unless a model is actually loaded.
+        if getattr(server._backend.engine, "model", None) is None:
+            pytest.skip("modelo não carregado (use IRIS_RUN_MODEL_TESTS=1 / load_model=True)")
         r = db_client.get("/api/search?q=test&top_k=5")
         assert r.status_code == 200
         data = r.json()
