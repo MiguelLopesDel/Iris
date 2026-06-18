@@ -20,7 +20,7 @@ _events: list[tuple[str, float]] = []
 _depth = 0
 
 
-def trace(label: str) -> "Span":
+def trace(label: str) -> Span:
     return Span(label)
 
 

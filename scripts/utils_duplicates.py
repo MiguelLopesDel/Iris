@@ -1,9 +1,9 @@
-import sqlite3
-import torch
-import numpy as np
-from sentence_transformers import util
 import os
+import sqlite3
 
+import numpy as np
+import torch
+from sentence_transformers import util
 
 DB_FILE = "iris.db"
 SIMILARITY_THRESHOLD = 0.985  
@@ -25,9 +25,7 @@ def find_duplicates():
         return
 
     
-    ids = [r[0] for r in rows]
     filenames = [r[1] for r in rows]
-    paths = [r[2] for r in rows]
     embeddings = torch.tensor(np.array([np.frombuffer(r[3], dtype=np.float32) for r in rows]))
 
     print(f"Analisando {len(embeddings)} arquivos em busca de duplicatas...")

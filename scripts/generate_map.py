@@ -1,5 +1,6 @@
 import os
 
+
 def is_ignored(name):
     """Define pastas e arquivos que não interessam para a arquitetura."""
     ignored = {
@@ -21,7 +22,8 @@ def generate_project_map(startpath):
         subindent = ' ' * 4 * (level + 1)
         
         folder_name = os.path.basename(root)
-        if level == 0: folder_name = "."
+        if level == 0:
+            folder_name = "."
         
         output.append(f"{indent}📁 {folder_name}/")
         
@@ -35,7 +37,7 @@ def generate_project_map(startpath):
             if f.endswith(".py"):
                 try:
                     path = os.path.join(root, f)
-                    with open(path, "r", encoding="utf-8", errors="ignore") as file_content:
+                    with open(path, encoding="utf-8", errors="ignore") as file_content:
                         imports = [line.strip() for line in file_content if line.strip().startswith(("import ", "from "))]
                         if imports:
                             output.append(f"{subindent}   Dependencies: {', '.join(imports)[:200]}...") # Corta se for muito longo

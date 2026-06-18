@@ -1,7 +1,6 @@
 import os
 import sqlite3
 
-
 IMAGE_DIR = './minhas_imagens'
 DB_FILE = "iris.db" 
 

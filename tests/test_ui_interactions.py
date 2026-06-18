@@ -18,9 +18,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from core.backend import SearchBackend, create_backend
+from core.backend import create_backend
 from core.search_engine import SearchOptions
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

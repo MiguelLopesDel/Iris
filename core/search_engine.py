@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image
-
 import torch
+from deep_translator import GoogleTranslator
+from PIL import Image
+from sentence_transformers import SentenceTransformer, util
+
 from core.db_manager import DatabaseManager
 from core.search_types import (
     STOP_WORDS,
@@ -20,8 +22,6 @@ from core.search_types import (
     parse_query_terms,
 )
 from core.vector_store import VectorStore
-from deep_translator import GoogleTranslator
-from sentence_transformers import SentenceTransformer, util
 
 DEFAULT_MODEL = "sentence-transformers/clip-ViT-L-14"
 DEFAULT_WEIGHTS = {"balance": 0.5, "text_bonus": 2.0, "lexical_weight": 0.25}
@@ -412,7 +412,7 @@ class IrisEngine:
             k = min(top_k, len(self.audio_record_indices))
             scores, indices = self.audio_index.search(text_vec, k)
             results = []
-            for score, idx in zip(scores[0], indices[0]):
+            for score, idx in zip(scores[0], indices[0], strict=False):
                 if idx < 0:
                     continue
                 rec_idx = self.audio_record_indices[int(idx)]

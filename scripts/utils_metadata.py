@@ -1,8 +1,8 @@
-import sqlite3
 import os
+import sqlite3
+
 import piexif
 from tqdm import tqdm
-
 
 DB_FILE = "iris.db"
 
@@ -40,7 +40,7 @@ def sync_metadata():
             
             try:
                 exif_dict = piexif.load(caminho)
-            except:
+            except Exception:
                 exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
 
             
@@ -51,7 +51,7 @@ def sync_metadata():
             exif_bytes = piexif.dump(exif_dict)
             piexif.insert(exif_bytes, caminho)
             
-        except Exception as e:
+        except Exception:
             
             pass
 

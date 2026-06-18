@@ -4,9 +4,9 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 
+import faiss
 import numpy as np
 
-import faiss
 from core.search_engine import IndexRecord, IrisEngine
 
 _VIDEO_EXTS_DUP = frozenset({".mp4", ".webm", ".mkv", ".mov", ".avi", ".flv"})
@@ -482,7 +482,7 @@ def chromaprint_groups(records: list[IndexRecord]) -> dict[str, list[int]]:
         n = min(len(a), len(b))
         if n == 0:
             return 1.0
-        diff = sum(bin(x ^ y).count("1") for x, y in zip(a[:n], b[:n]))
+        diff = sum(bin(x ^ y).count("1") for x, y in zip(a[:n], b[:n], strict=False))
         return diff / (32 * n)
 
     # Collect records with fingerprints
