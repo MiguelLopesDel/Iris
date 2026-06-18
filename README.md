@@ -12,12 +12,15 @@ Iris grew out of a meme search tool and became something bigger: a self-hosted A
 |---|---|
 | **Semantic search** | "sad frog in a suit" finds the right image even without matching keywords |
 | **Visual search** | Upload an image to find visually similar files in your library |
+| **Semantic audio search** | Describe a sound ("male voice speaking", "electronic music") — CLAP bridges text and audio |
 | **OCR** | Extracts printed and handwritten text from images automatically |
 | **AI captions** | Florence-2 describes scene content; used as a search signal |
 | **Speech transcription** | Whisper transcribes audio and video files |
 | **Concept recognition** | Teach Iris to recognize people, characters, or objects by showing reference images |
+| **Web enrichment** | Reverse-image lookup (Google Lens) + LLM distills character, source work, and tags |
+| **Auto-metadata & albums** | Reads EXIF date/GPS at import and suggests collections (great for photo libraries) |
 | **Collections / albums** | Organize files into named albums during or after import |
-| **Duplicate detection** | Hash-exact and near-duplicate visual deduplication |
+| **Duplicate detection** | Hash-exact, perceptual (images/video), and Chromaprint (audio) deduplication with an import-review quarantine |
 | **Background indexing** | Import thousands of files without interrupting search or browsing |
 
 ## Supported formats
@@ -66,7 +69,8 @@ Open **http://localhost:8501** in your browser.
 By default Iris opens `data/iris_v1.db` (falling back to a legacy
 `data/meme_compass_full_v1.db` if that's the only catalog present) and resolves media under `media/`.
 Use the **Sistema** tab to switch databases and media roots, import/index folders or
-uploaded files, choose CPU/CUDA/MPS, and create or restore complete backups.
+uploaded files, choose CPU/CUDA/MPS, and manage versioned catalog snapshots (point-in-time
+backup/restore to an external folder, plus media reconcile/export).
 
 You can also override the startup paths through environment variables:
 
@@ -142,19 +146,24 @@ Teach Iris to recognize visual entities — people, characters, places, objects:
 ## Architecture
 
 ```
-core/indexer.py       — indexing pipeline: OCR → captions → Whisper → CLIP → SQLite/FAISS
-core/search_engine.py — hybrid ranking: visual CLIP + description embeddings + lexical bonus
-core/concepts.py      — concept store: reference embeddings, auto-tagging, confirmed/rejected
-core/taxonomy.py      — zero-shot CLIP classification (style, source work, humor, context)
-server.py             — FastAPI application and REST API
-templates/index.html  — browser application shell
-static/               — CSS and JavaScript frontend modules
+core/indexer.py          — indexing pipeline: OCR → captions → Whisper → CLIP (+ CLAP/Chromaprint for audio) → SQLite/FAISS
+core/search_engine.py    — hybrid ranking: visual CLIP + description embeddings + lexical bonus + CLAP audio
+core/duplicates.py       — exact-hash, perceptual, and Chromaprint clustering with single-linkage merge
+core/concepts.py         — concept store: reference embeddings, auto-tagging, confirmed/rejected
+core/taxonomy.py         — zero-shot CLIP classification (style, source work, humor, context)
+core/web_enrichment.py   — reverse-image lookup (Google Lens) + LLM distillation of metadata
+core/media_metadata.py   — EXIF/ffprobe extraction (date, GPS, source app) at import
+core/import_suggestions.py — groups freshly imported media into suggested collections
+server.py                — FastAPI application and REST API
+templates/index.html     — browser application shell
+static/                  — CSS and JavaScript frontend modules
 ```
 
-**Embedding model**: `sentence-transformers/clip-ViT-L-14` (512-dim, stored in FAISS)  
+**Visual embedding**: `sentence-transformers/clip-ViT-L-14` (768-dim, stored in FAISS)  
+**Audio embedding**: `laion/clap-htsat-unfused` (512-dim; optional, for semantic audio search and dedup)  
 **Caption model**: `microsoft/Florence-2-large` (can be disabled with `--caption-model none`)  
 **Transcription**: OpenAI Whisper (default: `tiny` model; disable with `--whisper-model none`)  
-**Database**: SQLite (schema v4) + two FAISS flat indices (image + description embeddings)
+**Database**: SQLite (schema v4) + FAISS flat indices for image, description, and audio embeddings
 
 ---
 
@@ -190,9 +199,10 @@ Target: **Recall@10 ≥ 90%**, **Recall@20 ≥ 95%** on a 30-image golden set.
 ```bash
 source venv/bin/activate
 
-pytest
-ruff check app core scripts tests
-python -m compileall -q app core scripts tests
+pytest                              # full suite
+./scripts/run_tests.sh              # standard suite; also: db | model | integration | golden | all | menu
+ruff check core scripts tests
+python -m compileall -q core scripts tests server.py
 ```
 
 ### Commit style
