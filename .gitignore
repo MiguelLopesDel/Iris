@@ -130,8 +130,14 @@ media/
 tmp_build/
 .gemini/
 .geminih/
+.playwright-mcp/
+.streamlit/
 .aiexclude
 *.tar.gz
+run.log
+streamlit.log
+gallery_js_browser.txt
+iris-*.png
 
 # Test directory
 build_test_release/
