@@ -215,6 +215,10 @@ UI changes should include screenshots. DB/FAISS-impacting changes should note re
 
 ## License
 
-GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+Iris Non-Commercial Personal-Use License v1.0 — see [LICENSE](LICENSE).
 
-You may use, modify, and distribute Iris freely under the AGPL-3.0 terms. If you run a modified version as a network service, you must make the source available.
+Iris is **source-available**, not open source. You may use it and create your own
+forks for **personal, non-commercial** use, as long as you **credit the author**.
+Selling Iris or any fork, or offering it as a paid product/service, is not
+permitted. The author retains full ownership and may revoke the license for any
+fork at any time. For commercial use, contact the author.

@@ -1,21 +1,89 @@
-GNU AFFERO GENERAL PUBLIC LICENSE
-Version 3, 19 November 2007
+Iris Non-Commercial Personal-Use License
+Version 1.0
 
-Copyright (C) 2024-2026 Iris contributors
+Copyright (c) 2026 Miguel Lopes Delmondes (MiguelLopesDel).
+All rights reserved.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+This software and its source code ("Iris", the "Software") are the property of
+the copyright holder ("the Author"). The Software is made publicly available
+("source-available") but is NOT open source and NOT free software. Your rights
+to use it are limited to the permissions granted below.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+------------------------------------------------------------------------------
+1. GRANT OF LICENSE
+------------------------------------------------------------------------------
+Subject to your full compliance with this License, the Author grants you a
+personal, non-exclusive, non-transferable, royalty-free, and REVOCABLE license
+to:
 
-You should have received a copy of the GNU Affero General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
+  (a) use and run the Software for your own personal, non-commercial purposes;
+  (b) copy and modify the Software; and
+  (c) create your own forks and derivative works based on the Software,
+      strictly for your own personal, non-commercial use.
 
----
+------------------------------------------------------------------------------
+2. ATTRIBUTION (REQUIRED)
+------------------------------------------------------------------------------
+Any copy, fork, or derivative work of the Software must:
 
-The full license text is available at:
-https://www.gnu.org/licenses/agpl-3.0.txt
+  (a) retain this License file and the copyright notice above, unmodified; and
+  (b) give clear and visible credit to the Author as the original creator of
+      Iris, including a link to the original project where one is available
+      (for example, in the README, the "About" section, or an equivalent
+      prominently visible location).
+
+------------------------------------------------------------------------------
+3. NON-COMMERCIAL ONLY
+------------------------------------------------------------------------------
+You may NOT use the Software, in whole or in part, for any commercial purpose
+or for commercial advantage or monetary compensation. Without limitation, you
+may NOT:
+
+  (a) sell, rent, license, sublicense, or otherwise distribute the Software or
+      any fork or derivative work of it for profit or for a fee;
+  (b) offer the Software (or a modified version of it) as a paid product or as
+      a paid hosted/online service; or
+  (c) include the Software in any product or service whose purpose is to
+      generate revenue.
+
+Forks and derivative works are permitted only for the personal use of the
+person who creates them. Distributing your fork publicly is permitted ONLY if
+it remains non-commercial and complies with the Attribution requirements above.
+
+------------------------------------------------------------------------------
+4. REVOCATION
+------------------------------------------------------------------------------
+The Author reserves the right, at the Author's sole discretion and at any time,
+to revoke or terminate this License with respect to any person or fork, for any
+reason or for no reason. Upon receiving notice of revocation (including, for
+example, a public request from the Author or a takedown notice), you must
+promptly cease using and distributing the Software and any fork or derivative
+work of it, and take down any public copy or fork under your control.
+
+This License also terminates automatically and immediately if you breach any of
+its terms. Upon any termination, the permissions in Section 1 end immediately,
+though Sections 5 and 6 survive.
+
+------------------------------------------------------------------------------
+5. RESERVATION OF RIGHTS
+------------------------------------------------------------------------------
+All rights not expressly granted in this License are reserved by the Author.
+No rights are granted by implication, estoppel, or otherwise. The Author retains
+full ownership of the Software and may license it to others (including under
+different or commercial terms) at any time.
+
+------------------------------------------------------------------------------
+6. NO WARRANTY AND LIMITATION OF LIABILITY
+------------------------------------------------------------------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
+7. CONTACT
+------------------------------------------------------------------------------
+For permissions beyond the scope of this License — including any commercial use
+— contact the Author.
