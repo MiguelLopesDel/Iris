@@ -2,6 +2,8 @@
 
 **Local multimodal AI media intelligence.** Index, search, and organize your entire media collection with AI — all running on your own machine, with no data leaving your device.
 
+🌐 **[Project page → miguellopesdel.github.io/Iris](https://miguellopesdel.github.io/Iris/)**
+
 Iris grew out of a meme search tool and became something bigger: a self-hosted AI librarian for images, videos, GIFs, audio, and SVGs. It transcribes speech, reads text in images, describes scenes, and lets you find any file in seconds using natural language, visual queries, or named visual concepts.
 
 ---
@@ -48,7 +50,7 @@ CPU fallback exists but indexing is significantly slower.
 ### Install
 
 ```bash
-git clone https://github.com/yourusername/iris.git
+git clone https://github.com/MiguelLopesDel/Iris.git
 cd iris
 
 python3 -m venv venv
