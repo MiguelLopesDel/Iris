@@ -153,6 +153,9 @@ CLAUDE.md
 AGENTS.md
 GEMINI.md
 
+# Guia interno de engenharia & boas práticas (não versionado)
+ENGINEERING.md
+
 # Gemini-specific helper scripts and personal images at root
 fix_name.py
 image.png
