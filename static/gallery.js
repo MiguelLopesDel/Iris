@@ -2,7 +2,7 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, mediaUrl, searchImage, searchText } from './api.js?v=27';
+import { debounce, escapeHtml, fetchRecords, mediaUrl, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=35';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -74,6 +74,44 @@ export function initGallery() {
       if (file) runGalleryImageSearch(file);
     });
     clearButton.addEventListener('click', clearGallerySearch);
+    document.getElementById('gallery-random').addEventListener('click', () => {
+      runGalleryRandom(parseInt(document.getElementById('search-topk')?.value) || 50);
+    });
+    const advancedBtn = document.getElementById('gallery-search-advanced');
+    advancedBtn.addEventListener('click', () => {
+      const panel = document.getElementById('gallery-group-controls');
+      const open = panel.hidden;
+      panel.hidden = !open;
+      advancedBtn.setAttribute('aria-expanded', String(open));
+    });
+    const groupThreshold = document.getElementById('image-group-threshold');
+    groupThreshold.addEventListener('input', () => {
+      document.getElementById('image-group-threshold-val').textContent =
+        Number(groupThreshold.value).toFixed(2);
+    });
+
+    // Drag an image onto the search bar — skips the native file dialog entirely.
+    const hero = document.querySelector('.gallery-search-hero');
+    ['dragover', 'dragenter'].forEach(ev => hero.addEventListener(ev, (e) => {
+      e.preventDefault();
+      hero.classList.add('drag-over');
+    }));
+    ['dragleave', 'drop'].forEach(ev => hero.addEventListener(ev, (e) => {
+      e.preventDefault();
+      hero.classList.remove('drag-over');
+    }));
+    hero.addEventListener('drop', (e) => {
+      const file = [...(e.dataTransfer?.files || [])].find(f => f.type.startsWith('image/'));
+      if (file) runGalleryImageSearch(file);
+    });
+
+    // Paste an image from the clipboard (Ctrl+V) while the gallery is open.
+    document.addEventListener('paste', (e) => {
+      if (!document.getElementById('tab-gallery').classList.contains('active')) return;
+      const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+      const file = item?.getAsFile();
+      if (file) runGalleryImageSearch(file);
+    });
   }
 
   if (!searchActive) loadPage(currentPage);
@@ -261,8 +299,7 @@ function gallerySearchOptions() {
 }
 
 async function runGalleryTextSearch(query) {
-  searchActive = true;
-  document.getElementById('gallery-clear-search').hidden = false;
+  enterSearchMode();
   const grid = document.getElementById('gallery-grid');
   grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Buscando...</p>';
   try {
@@ -275,17 +312,66 @@ async function runGalleryTextSearch(query) {
 }
 
 async function runGalleryImageSearch(file) {
-  searchActive = true;
-  document.getElementById('gallery-clear-search').hidden = false;
+  enterSearchMode();
   const grid = document.getElementById('gallery-grid');
   grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Buscando por imagem...</p>';
   try {
-    const data = await searchImage(file, gallerySearchOptions());
+    const opts = {
+      ...gallerySearchOptions(),
+      group_results: document.getElementById('image-group-enabled').checked,
+      group_threshold: document.getElementById('image-group-threshold').value,
+      show_singletons: document.getElementById('image-group-singletons').checked,
+    };
+    const data = await searchImage(file, opts);
     document.getElementById('gallery-page-info').textContent = `${data.total} resultados`;
+    if (Array.isArray(data.groups)) renderGroupedGrid(data.groups);
+    else renderGrid(data.results);
+  } catch (error) {
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+// Renders a similar / random query into the gallery grid. Sets searchActive
+// synchronously so a concurrent switchTab → initGallery won't trigger a page load.
+export async function runGallerySimilar(index) {
+  enterSearchMode();
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Buscando similares...</p>';
+  try {
+    const data = await searchSimilar(index, gallerySearchOptions());
+    document.getElementById('gallery-page-info').textContent = `${data.total} similares`;
     renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
   }
+}
+
+export async function runGalleryRandom(n = 50) {
+  enterSearchMode();
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Carregando aleatórios...</p>';
+  try {
+    const data = await searchRandom(n);
+    document.getElementById('gallery-page-info').textContent = `${data.total} aleatórios`;
+    renderGrid(data.results);
+  } catch (error) {
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderGroupedGrid(groups) {
+  const grid = document.getElementById('gallery-grid');
+  if (!groups.length) {
+    grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Nenhum grupo encontrado.</p>';
+    return;
+  }
+  grid.innerHTML = groups.map((group, i) => `
+    <section class="search-result-group">
+      <div class="search-result-group-title">Grupo ${i + 1} · ${group.length} item(ns)</div>
+      <div class="media-grid">${group.map(renderCard).join('')}</div>
+    </section>
+  `).join('');
+  observeLazyImages(grid);
 }
 
 function clearGallerySearch() {
@@ -293,11 +379,33 @@ function clearGallerySearch() {
   loadPage(1);
 }
 
+// Controls that only make sense while browsing the paginated library. A search
+// result is a flat top-k list, so during a search these are disabled — otherwise
+// a stray click (next page / per-page / sort) silently wipes out the results.
+const BROWSE_CONTROL_IDS = [
+  'gallery-prev', 'gallery-next', 'gallery-page-go', 'gallery-page-jump',
+  'gallery-per-page', 'gallery-per-page-custom', 'gallery-sort', 'gallery-sort-asc',
+];
+
+function setBrowseControlsDisabled(disabled) {
+  for (const id of BROWSE_CONTROL_IDS) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  }
+}
+
+function enterSearchMode() {
+  searchActive = true;
+  document.getElementById('gallery-clear-search').hidden = false;
+  setBrowseControlsDisabled(true);
+}
+
 function resetGallerySearchState() {
   searchActive = false;
   document.getElementById('gallery-search').value = '';
   document.getElementById('gallery-image-search').value = '';
   document.getElementById('gallery-clear-search').hidden = true;
+  setBrowseControlsDisabled(false);
 }
 
 function renderSkeletons(n) {

@@ -216,25 +216,62 @@ export async function getImportStatus() {
   return apiGet('/api/import/status');
 }
 
-export async function getBackupInfo() {
-  return apiGet('/api/backup/info');
+export async function getImportSuggestions(jobId = '') {
+  return apiGet('/api/import/suggestions', { job_id: jobId });
 }
 
-export async function inspectBackup(file) {
-  const fd = new FormData();
-  fd.append('file', file);
-  const res = await fetch('/api/backup/inspect', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
-  return res.json();
+export async function createCollectionFromSuggestion(name, dbIds) {
+  return apiPost('/api/collections/from-suggestion', {
+    name,
+    db_ids: Array.isArray(dbIds) ? dbIds.join(',') : dbIds,
+  });
 }
 
-export async function restoreBackup(file) {
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('confirm', 'true');
-  const res = await fetch('/api/backup/restore', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
-  return res.json();
+export async function getBackupConfig() {
+  return apiGet('/api/backup/config');
+}
+
+export async function saveBackupConfig({ backupDir = '', backupAuto = true, keepLast = 10, mediaOriginalsRoot = 'media' }) {
+  return apiPost('/api/backup/config', {
+    backup_dir: backupDir,
+    backup_auto: backupAuto ? 'true' : 'false',
+    backup_keep_last: keepLast,
+    media_originals_root: mediaOriginalsRoot,
+  });
+}
+
+export async function listSnapshots() {
+  return apiGet('/api/backup/snapshots');
+}
+
+export async function createSnapshot(reason = 'manual') {
+  return apiPost('/api/backup/snapshot', { reason });
+}
+
+export async function restoreSnapshot(snapshotId, mode = 'overlay') {
+  return apiPost('/api/backup/restore', { snapshot_id: snapshotId, mode, confirm: 'true' });
+}
+
+export async function reconcileMedia() {
+  return apiPost('/api/backup/media/reconcile', {});
+}
+
+export async function exportMedia() {
+  return apiPost('/api/backup/media/export', {});
+}
+
+// ── Import review (deduplication quarantine) ───────────────────────────────
+
+export async function getImportReview(detection = '', limit = 200, offset = 0) {
+  return apiGet('/api/import/review', { detection, limit, offset });
+}
+
+export async function resolveImportReview({ ids = [], detection = '', action = 'ignore' }) {
+  return apiPost('/api/import/review/resolve', {
+    ids: ids.join(','),
+    detection,
+    action,
+  });
 }
 
 // ── Trash ─────────────────────────────────────────────────────────────────

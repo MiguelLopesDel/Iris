@@ -1,23 +1,28 @@
 import {
   browseFilesystem,
+  createCollectionFromSuggestion,
+  createSnapshot,
+  exportMedia,
   fetchInfo,
-  getBackupInfo,
+  getBackupConfig,
   getImportStatus,
-  inspectBackup,
-  restoreBackup,
+  getImportSuggestions,
+  listSnapshots,
+  reconcileMedia,
+  restoreSnapshot,
+  saveBackupConfig,
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=27';
+} from './api.js?v=29';
 
 let initialized = false;
 let importPoll = null;
-let restoreCandidate = null;
 let previousImportStatus = null;
 
 export function initSystem() {
   loadSystemInfo();
-  loadBackupInfo();
+  loadBackupSection();
   pollImportStatus();
   if (initialized) return;
   initialized = true;
@@ -31,9 +36,10 @@ export function initSystem() {
     browseFolder(data.parent);
   });
   document.getElementById('import-start').addEventListener('click', runImport);
-  document.getElementById('backup-library').addEventListener('change', updateBackupLink);
-  document.getElementById('restore-file').addEventListener('change', inspectRestore);
-  document.getElementById('restore-start').addEventListener('click', runRestore);
+  document.getElementById('backup-config-save').addEventListener('click', saveBackupSettings);
+  document.getElementById('snapshot-now').addEventListener('click', runSnapshot);
+  document.getElementById('media-reconcile').addEventListener('click', runReconcile);
+  document.getElementById('media-export').addEventListener('click', runExport);
   browseFolder(document.getElementById('import-folder').value);
 }
 
@@ -134,12 +140,17 @@ async function pollImportStatus(immediate = false) {
     const status = document.getElementById('import-status');
     const button = document.getElementById('import-start');
     const progress = job.total ? ` ${Math.min(job.done + 1, job.total)}/${job.total}` : '';
+    const reviewHint = (['completed', 'interrupted'].includes(job.status) && job.quarantined)
+      ? ' — veja “Revisão de importação” abaixo.'
+      : '';
     status.textContent = job.status === 'idle'
       ? 'Nenhuma importação em andamento.'
-      : `${job.message || job.status}${progress}${job.current ? ` · ${job.current}` : ''}`;
+      : `${job.message || job.status}${progress}${job.current ? ` · ${job.current}` : ''}${reviewHint}`;
     button.disabled = ['queued', 'running'].includes(job.status);
-    if (['queued', 'running'].includes(previousImportStatus) && job.status === 'completed') {
-      setTimeout(() => window.location.reload(), 800);
+    // Don't reload on "import anyway" jobs from the review panel — that would
+    // interrupt the user clicking through items. Only the main import reloads.
+    if (['queued', 'running'].includes(previousImportStatus) && job.status === 'completed' && !job.forced) {
+      handleImportComplete(job);
     }
     previousImportStatus = job.status;
     if (['queued', 'running'].includes(job.status)) {
@@ -150,22 +161,84 @@ async function pollImportStatus(immediate = false) {
   }
 }
 
-async function loadBackupInfo() {
-  const container = document.getElementById('backup-info');
+// On a finished import, offer to group the new media into collections based on the
+// metadata we read (date / app / location / device). The modal owns the reload so the
+// user gets to confirm before the page refreshes.
+async function handleImportComplete(job) {
+  let suggestions = [];
   try {
-    const info = await getBackupInfo();
-    container.innerHTML = metric('Bancos', info.databases)
-      + metric('Índices', info.indexes)
-      + metric('Mídias', info.library_files)
-      + metric('Tamanho', formatBytes(info.database_bytes + info.index_bytes + info.library_bytes));
-    updateBackupLink();
-  } catch (error) {
-    container.textContent = `Erro: ${error.message}`;
+    const data = await getImportSuggestions(job.id || '');
+    suggestions = data.suggestions || [];
+  } catch (_) { /* suggestions are best-effort */ }
+
+  if (suggestions.length) {
+    showSuggestionModal(suggestions);
+    return;
   }
+  if (job.quarantined) window.location.hash = 'system';
+  setTimeout(() => window.location.reload(), 800);
 }
 
-function metric(label, value) {
-  return `<div><span>${escapeHtml(String(label))}</span><strong>${escapeHtml(String(value))}</strong></div>`;
+const DIMENSION_LABELS = {
+  date: 'Data', source_app: 'App', location: 'Local', device: 'Dispositivo',
+};
+
+function showSuggestionModal(suggestions) {
+  const overlay = document.createElement('div');
+  overlay.className = 'suggest-modal';
+  overlay.innerHTML = `
+    <div class="suggest-card">
+      <header>
+        <h3>Organizar em coleções?</h3>
+        <p>Detectamos grupos pelos metadados das mídias importadas. Escolha e edite os nomes.</p>
+      </header>
+      <div class="suggest-list"></div>
+      <footer>
+        <span class="suggest-status"></span>
+        <div class="suggest-actions">
+          <button class="btn btn-subtle" data-act="skip">Agora não</button>
+          <button class="btn btn-primary" data-act="create">Criar selecionadas</button>
+        </div>
+      </footer>
+    </div>`;
+
+  const list = overlay.querySelector('.suggest-list');
+  suggestions.forEach((sug, i) => {
+    const row = document.createElement('label');
+    row.className = 'suggest-row';
+    row.innerHTML = `
+      <input type="checkbox" class="suggest-check" data-i="${i}" checked>
+      <span class="suggest-badge">${DIMENSION_LABELS[sug.dimension] || sug.dimension}</span>
+      <input type="text" class="suggest-name" data-i="${i}" value="${escapeHtml(sug.name)}">
+      <span class="suggest-count">${sug.count} itens</span>`;
+    list.appendChild(row);
+  });
+
+  const close = () => { overlay.remove(); window.location.reload(); };
+  overlay.querySelector('[data-act="skip"]').addEventListener('click', close);
+  overlay.querySelector('[data-act="create"]').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const statusEl = overlay.querySelector('.suggest-status');
+    let created = 0;
+    for (let i = 0; i < suggestions.length; i++) {
+      const check = overlay.querySelector(`.suggest-check[data-i="${i}"]`);
+      if (!check.checked) continue;
+      const name = overlay.querySelector(`.suggest-name[data-i="${i}"]`).value.trim();
+      if (!name) continue;
+      statusEl.textContent = `Criando “${name}”…`;
+      try {
+        await createCollectionFromSuggestion(name, suggestions[i].db_ids);
+        created += 1;
+      } catch (err) {
+        statusEl.textContent = `Erro em “${name}”: ${err.message}`;
+      }
+    }
+    statusEl.textContent = `${created} coleção(ões) criada(s). Atualizando…`;
+    setTimeout(close, 700);
+  });
+
+  document.body.appendChild(overlay);
 }
 
 function formatBytes(bytes) {
@@ -173,45 +246,128 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function updateBackupLink() {
-  const include = document.getElementById('backup-library').checked;
-  document.getElementById('backup-download').href = `/api/backup?include_library=${include}`;
+async function loadBackupSection() {
+  try {
+    const cfg = await getBackupConfig();
+    document.getElementById('backup-dir').value = cfg.backup_dir || '';
+    document.getElementById('backup-auto').checked = !!cfg.backup_auto;
+    document.getElementById('backup-keep').value = cfg.backup_keep_last || 10;
+    const status = document.getElementById('backup-config-status');
+    if (!cfg.backup_dir) {
+      status.textContent = 'Destino não configurado — configure um caminho externo para ativar os snapshots.';
+    } else if (!cfg.dir_ok) {
+      status.textContent = `⚠ ${cfg.error || 'Destino indisponível.'}`;
+    } else {
+      status.textContent = (cfg.warnings && cfg.warnings.length) ? `⚠ ${cfg.warnings[0]}` : 'Destino pronto. ✓';
+    }
+  } catch (error) {
+    document.getElementById('backup-config-status').textContent = `Erro: ${error.message}`;
+  }
+  await loadSnapshots();
 }
 
-async function inspectRestore() {
-  const file = document.getElementById('restore-file').files[0];
-  const info = document.getElementById('restore-info');
-  const button = document.getElementById('restore-start');
-  restoreCandidate = null;
-  button.disabled = true;
-  if (!file) {
-    info.textContent = '';
-    return;
-  }
-  info.textContent = 'Inspecionando backup...';
+async function saveBackupSettings() {
+  const status = document.getElementById('backup-config-status');
+  status.textContent = 'Salvando...';
   try {
-    const data = await inspectBackup(file);
-    restoreCandidate = file;
-    button.disabled = false;
-    info.textContent = `${data.databases} banco/índice, ${data.library} mídias, ${data.config} configurações.`;
+    const res = await saveBackupConfig({
+      backupDir: document.getElementById('backup-dir').value.trim(),
+      backupAuto: document.getElementById('backup-auto').checked,
+      keepLast: Number(document.getElementById('backup-keep').value) || 10,
+    });
+    status.textContent = (res.warnings && res.warnings.length) ? `Salvo. ⚠ ${res.warnings[0]}` : 'Salvo. ✓';
+    await loadSnapshots();
   } catch (error) {
-    info.textContent = `Backup inválido: ${error.message}`;
+    status.textContent = `Erro: ${error.message}`;
   }
 }
 
-async function runRestore() {
-  if (!restoreCandidate) return;
-  if (!confirm('Restaurar este backup e substituir os arquivos existentes?')) return;
-  const info = document.getElementById('restore-info');
-  const button = document.getElementById('restore-start');
-  button.disabled = true;
-  info.textContent = 'Restaurando...';
+async function loadSnapshots() {
+  const list = document.getElementById('snapshot-list');
   try {
-    const result = await restoreBackup(restoreCandidate);
-    info.textContent = `Restaurado: ${result.databases} bancos/índices e ${result.library} mídias.`;
-    window.location.reload();
+    const data = await listSnapshots();
+    if (!data.configured) {
+      list.innerHTML = '<span class="filter-empty">Configure um destino para ver o histórico.</span>';
+      return;
+    }
+    if (!data.snapshots.length) {
+      list.innerHTML = '<span class="filter-empty">Nenhum snapshot ainda.</span>';
+      return;
+    }
+    list.innerHTML = data.snapshots.map(snapshotRow).join('');
+    list.querySelectorAll('[data-restore]').forEach(btn => {
+      btn.addEventListener('click', () => runRestoreSnapshot(btn.dataset.restore, btn.dataset.mode));
+    });
   } catch (error) {
-    info.textContent = `Erro: ${error.message}`;
-    button.disabled = false;
+    list.innerHTML = `<span class="filter-empty">Erro: ${escapeHtml(error.message)}</span>`;
+  }
+}
+
+function snapshotRow(s) {
+  const when = (s.created_at || '').replace('T', ' ').replace(/(\+.*|Z)$/, '');
+  const reason = s.reason ? ` · ${escapeHtml(s.reason)}` : '';
+  const count = (s.meme_count != null) ? ` · ${s.meme_count} memes` : '';
+  const corrupt = s.corrupt ? ' · ⚠ corrompido' : '';
+  return `
+    <div class="snapshot-row">
+      <div class="snapshot-meta">
+        <strong>${escapeHtml(when || s.id)}</strong>
+        <span>${escapeHtml(formatBytes(s.size_bytes))}${reason}${count}${corrupt}</span>
+      </div>
+      <div class="snapshot-actions">
+        <button class="btn btn-subtle" data-restore="${escapeHtml(s.id)}" data-mode="overlay">Restaurar</button>
+        <button class="btn btn-danger" data-restore="${escapeHtml(s.id)}" data-mode="mirror">Restaurar (espelho)</button>
+      </div>
+    </div>`;
+}
+
+async function runSnapshot() {
+  const status = document.getElementById('snapshot-status');
+  status.textContent = 'Criando snapshot...';
+  try {
+    const res = await createSnapshot('manual');
+    status.textContent = `Snapshot criado (${formatBytes(res.snapshot.size_bytes)}). ✓`;
+    await loadSnapshots();
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  }
+}
+
+async function runRestoreSnapshot(id, mode) {
+  const label = mode === 'mirror'
+    ? 'Restaurar em modo ESPELHO apaga bancos/índices órfãos. Continuar?'
+    : 'Restaurar este snapshot por cima do estado atual? (um snapshot de segurança será criado antes)';
+  if (!confirm(label)) return;
+  const status = document.getElementById('snapshot-status');
+  status.textContent = 'Restaurando...';
+  try {
+    await restoreSnapshot(id, mode);
+    status.textContent = 'Restaurado. Recarregando...';
+    setTimeout(() => window.location.reload(), 800);
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  }
+}
+
+async function runReconcile() {
+  const status = document.getElementById('media-status');
+  status.textContent = 'Reconciliando mídia...';
+  try {
+    const res = await reconcileMedia();
+    status.textContent = `Mídia: ${res.present}/${res.total} presentes · ${res.relinked.length} relinkadas · ${res.missing.length} faltando.`;
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  }
+}
+
+async function runExport() {
+  const status = document.getElementById('media-status');
+  if (!confirm('Exportar a biblioteca inteira para o disco externo? Pode ser grande e demorado.')) return;
+  status.textContent = 'Exportando biblioteca (streaming)...';
+  try {
+    const res = await exportMedia();
+    status.textContent = `Exportado: ${res.files} arquivos (${formatBytes(res.bytes)}) → ${res.path}`;
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
   }
 }

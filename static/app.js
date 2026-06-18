@@ -16,12 +16,12 @@ import {
   rejectEnrichmentSuggestion,
   trashRecords
 } from './api.js?v=33';
-import { initGallery, invalidateCache } from './gallery.js?v=27';
-import { initSearch, doSimilarSearch, doRandomSearch } from './search.js?v=27';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom } from './gallery.js?v=30';
 import { initCollections } from './collections.js?v=27';
 import { initConcepts } from './concepts.js?v=28';
 import { initDuplicates } from './duplicates.js?v=27';
-import { initSystem } from './system.js?v=27';
+import { initSystem } from './system.js?v=30';
+import { initImportReview } from './import-review.js?v=3';
 
 window.__irisSelection = window.__irisSelection || new Map();
 
@@ -85,16 +85,14 @@ document.addEventListener('click', async function(event) {
 // ── Tab routing ──────────────────────────────────────────────────────────
 
 function switchTab(name) {
+  // Fall back to the gallery for unknown/removed tabs (e.g. a stale "#search"
+  // hash from before the Busca tab was folded in) so we never blank the view.
+  if (!document.getElementById('tab-' + name)) name = 'gallery';
   var viewMeta = {
     gallery: {
       kicker: 'Biblioteca',
       title: 'Galeria',
       description: 'Navegue por toda a sua colecao visual.'
-    },
-    search: {
-      kicker: 'Descoberta',
-      title: 'Busca multimodal',
-      description: 'Encontre midias por texto, imagem ou similaridade.'
     },
     collections: {
       kicker: 'Organizacao',
@@ -124,13 +122,11 @@ function switchTab(name) {
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
   var pane = document.getElementById('tab-' + name);
   if (pane) pane.classList.add('active');
-  document.getElementById('search-bar').style.display = (name === 'search') ? 'flex' : 'none';
   if (name === 'gallery') initGallery();
-  if (name === 'search') initSearch();
   if (name === 'collections') initCollections();
   if (name === 'concepts') initConcepts();
   if (name === 'duplicates') initDuplicates();
-  if (name === 'system') initSystem();
+  if (name === 'system') { initSystem(); initImportReview(); }
   document.getElementById('view-kicker').textContent = meta.kicker;
   document.getElementById('view-title').textContent = meta.title;
   document.getElementById('view-description').textContent = meta.description;
@@ -142,8 +138,10 @@ function switchTab(name) {
 // ── Custom events ─────────────────────────────────────────────────────────
 
 window.addEventListener('iris:similar', function(e) {
-  switchTab('search');
-  doSimilarSearch(e.detail.index);
+  // Set the gallery into search mode (runGallerySimilar flips searchActive
+  // synchronously) before switching, so initGallery won't load page 1 over it.
+  runGallerySimilar(e.detail.index);
+  switchTab('gallery');
 });
 
 window.addEventListener('iris:detail', async function(e) {
@@ -706,18 +704,14 @@ document.getElementById('search-mode').addEventListener('change', function() {
 });
 
 document.getElementById('btn-surprise').addEventListener('click', function() {
-  switchTab('search');
-  doRandomSearch(parseInt(document.getElementById('search-topk').value) || 50);
+  runGalleryRandom(parseInt(document.getElementById('search-topk').value) || 50);
+  switchTab('gallery');
 });
 
 document.getElementById('btn-refresh').addEventListener('click', function() {
   invalidateCache();
   window.dispatchEvent(new CustomEvent('iris:selection-changed'));
   toast('Dados atualizados', 'info');
-});
-
-document.getElementById('btn-search-random').addEventListener('click', function() {
-  doRandomSearch(parseInt(document.getElementById('search-topk').value) || 50);
 });
 
 var sidebarToggle = document.getElementById('sidebar-toggle');

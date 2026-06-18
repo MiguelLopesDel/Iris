@@ -82,7 +82,7 @@ class TestPageServing:
         assert "font-family" in css.lower() or "sans-serif" in css.lower()
 
     def test_static_js_served(self, client):
-        for mod in ["api.js", "gallery.js", "search.js", "app.js"]:
+        for mod in ["api.js", "gallery.js", "app.js"]:
             assert (Path("static") / mod).is_file(), f"{mod} missing"
 
 
@@ -103,10 +103,68 @@ class TestSystemEndpoints:
     def test_restore_requires_confirmation(self, client):
         r = client.post(
             "/api/backup/restore",
-            data={"confirm": "false"},
-            files={"file": ("backup.zip", b"not-used", "application/zip")},
+            data={"snapshot_id": "whatever.tar.gz", "mode": "overlay", "confirm": "false"},
         )
         assert r.status_code == 400
+
+    def test_backup_config_roundtrip(self, client, tmp_path, monkeypatch):
+        from core import app_config
+
+        monkeypatch.setattr(app_config, "CONFIG_PATH", tmp_path / "settings.json")
+        dest = tmp_path / "ext_backups"
+        r = client.post(
+            "/api/backup/config",
+            data={"backup_dir": str(dest), "backup_auto": "true", "backup_keep_last": "5"},
+        )
+        assert r.status_code == 200 and r.json()["backup_keep_last"] == 5
+        assert dest.exists()
+        cfg = client.get("/api/backup/config").json()
+        assert cfg["dir_ok"] is True and cfg["backup_keep_last"] == 5
+
+    def test_backup_snapshots_unconfigured(self, client, tmp_path, monkeypatch):
+        from core import app_config
+
+        monkeypatch.setattr(app_config, "CONFIG_PATH", tmp_path / "settings.json")
+        r = client.get("/api/backup/snapshots")
+        assert r.status_code == 200 and r.json()["configured"] is False
+
+    def test_backup_snapshot_requires_destination(self, client, tmp_path, monkeypatch):
+        from core import app_config
+
+        monkeypatch.setattr(app_config, "CONFIG_PATH", tmp_path / "settings.json")
+        r = client.post("/api/backup/snapshot", data={"reason": "manual"})
+        assert r.status_code == 400
+
+    def test_collection_from_suggestion_validates_input(self, client):
+        # name present but no valid numeric ids → 400 (not a 422 schema error)
+        r = client.post(
+            "/api/collections/from-suggestion",
+            data={"name": "Junho 2026", "db_ids": "abc,def"},
+        )
+        assert r.status_code == 400
+
+    def test_collection_from_suggestion_creates_and_adds(self, client, monkeypatch):
+        import server
+
+        created = {}
+        server._backend.list_collections.return_value = []
+        server._backend.engine = MagicMock()
+        server._backend.engine.create_collection.return_value = 42
+
+        def fake_add(ids, col_id):
+            created["ids"] = ids
+            created["col_id"] = col_id
+            return len(ids)
+
+        server._backend.add_records_to_collection.side_effect = fake_add
+        r = client.post(
+            "/api/collections/from-suggestion",
+            data={"name": "Fotos em Lisboa", "db_ids": "1,2,3"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["collection_id"] == 42 and body["added"] == 3
+        assert created == {"ids": [1, 2, 3], "col_id": 42}
 
     def test_filesystem_lists_directory(self, client, tmp_path):
         (tmp_path / "child").mkdir()

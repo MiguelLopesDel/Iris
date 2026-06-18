@@ -6,13 +6,16 @@ Serves the SPA shell and a REST JSON API consumed by vanilla JavaScript modules.
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -21,20 +24,15 @@ from typing import Annotated, Any
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 # Ensure core/ is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.app_operations import (
-    backup_inventory,
-    create_backup_file,
-    inspect_backup_zip,
-    restore_backup_zip,
-)
+from core import app_config, import_review
+from core import backup as backup_mod
 from core.backend import SearchBackend, create_backend
 from core.file_ops import move_to_trash
 from core.perf import dump, trace
@@ -59,7 +57,25 @@ from core.web_enrichment import (
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 _THUMB_DIR = Path("data/thumbnails")
-_DEFAULT_DB = os.environ.get("IRIS_DB", "data/meme_compass_full_v1.db")
+
+
+def _default_db_path() -> str:
+    """Resolve the default catalog path.
+
+    Iris-branded name going forward, but if only the legacy ``meme_compass`` catalog
+    exists we keep using it so the rebrand never orphans an existing library.
+    """
+    env = os.environ.get("IRIS_DB")
+    if env:
+        return env
+    iris = "data/iris_v1.db"
+    legacy = "data/meme_compass_full_v1.db"
+    if not os.path.exists(iris) and os.path.exists(legacy):
+        return legacy
+    return iris
+
+
+_DEFAULT_DB = _default_db_path()
 _MEDIA_ROOT = os.environ.get("IRIS_MEDIA_ROOT", "media")
 _LOAD_MODEL = os.environ.get("IRIS_LOAD_MODEL", "1").lower() not in {"0", "false", "no"}
 _DATA_DIR = Path("data")
@@ -78,11 +94,25 @@ _import_job: dict[str, Any] = {
     "status": "idle",
     "done": 0,
     "total": 0,
+    "imported": 0,
+    "quarantined": 0,
     "current": "",
     "message": "",
     "started_at": None,
     "finished_at": None,
 }
+
+# "Import anyway" queue: per-item clicks from the review panel accumulate here and a
+# single worker drains them in coalesced batches. Lets the user click through many
+# items without waiting for one import to finish (no more 409 between clicks).
+_forced_queue: list[str] = []
+_forced_lock = threading.Lock()
+_forced_worker_running = False
+
+
+def _import_db() -> sqlite3.Connection:
+    """Short-lived connection to the active DB for import_jobs / import_review ops."""
+    return sqlite3.connect(str(_active_config["db_path"]))
 
 
 def _get_backend() -> SearchBackend:
@@ -187,6 +217,7 @@ async def lifespan(app: FastAPI):
     else:
         backend = _backend
     print(f"[iris] Ready — {backend.get_total_records()} records")
+    _resume_unfinished_imports()
     yield
     dump()
     try:
@@ -482,35 +513,40 @@ def _set_import_progress(done: int, total: int, current: str) -> None:
     _import_job.update(done=done, total=total, current=current)
 
 
-async def _save_upload_to_temp(upload: UploadFile, suffix: str) -> Path:
-    descriptor, temporary_name = tempfile.mkstemp(prefix="iris-upload-", suffix=suffix)
-    os.close(descriptor)
-    temporary = Path(temporary_name)
+def _run_import_job(
+    job_id: str,
+    sources: list[Path],
+    settings: dict[str, Any],
+    cleanup: Path | None,
+    *,
+    explicit_files: list[Path] | None = None,
+    dedup_enabled: bool = True,
+) -> None:
     try:
-        with temporary.open("wb") as output:
-            while chunk := await upload.read(1024 * 1024):
-                output.write(chunk)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-    return temporary
-
-
-def _run_import_job(job_id: str, sources: list[Path], settings: dict[str, Any], cleanup: Path | None) -> None:
-    try:
-        from core.indexer import IndexerConfig, create_faiss_indices, process_images, resolve_device
+        from core.indexer import (
+            IndexerConfig,
+            create_faiss_indices,
+            process_images,
+            resolve_device,
+        )
 
         _import_job.update(
             id=job_id,
             status="running",
             done=0,
             total=0,
+            imported=0,
+            quarantined=0,
             current="",
             message="Carregando modelos e preparando importação.",
             started_at=datetime.now(timezone.utc).isoformat(),
             finished_at=None,
         )
+        with _import_db() as conn:
+            import_review.update_job(conn, job_id, status="running", message="Carregando modelos…")
         db_path = Path(str(_active_config["db_path"]))
+        total_imported = 0
+        total_quarantined = 0
         for source in sources:
             config = IndexerConfig(
                 media_dir=source,
@@ -528,23 +564,122 @@ def _run_import_job(job_id: str, sources: list[Path], settings: dict[str, Any], 
                 library_root=Path(str(settings["library_root"])),
                 copy_to_library=bool(settings["copy_to_library"]),
             )
-            process_images(config, progress_callback=_set_import_progress)
+            result = process_images(
+                config,
+                progress_callback=_set_import_progress,
+                job_id=job_id,
+                dedup_enabled=dedup_enabled,
+                explicit_files=explicit_files,
+            )
+            total_imported += int(result.get("imported", 0))
+            total_quarantined += int(result.get("quarantined", 0))
         create_faiss_indices(db_path, str(settings["model_name"]))
         _reload_backend()
+        done_msg = (
+            f"Importação concluída: {total_imported} nova(s), "
+            f"{total_quarantined} em revisão."
+        )
+        finished = datetime.now(timezone.utc).isoformat()
         _import_job.update(
             status="completed",
-            message="Importação concluída e índices recarregados.",
-            finished_at=datetime.now(timezone.utc).isoformat(),
+            imported=total_imported,
+            quarantined=total_quarantined,
+            message=done_msg,
+            finished_at=finished,
         )
+        with _import_db() as conn:
+            import_review.update_job(
+                conn, job_id, status="completed", imported=total_imported,
+                quarantined=total_quarantined, message=done_msg, finished_at=finished,
+            )
     except BaseException as exc:
-        _import_job.update(
-            status="failed",
-            message=str(exc),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
+        finished = datetime.now(timezone.utc).isoformat()
+        # An unavailable source (folder unmounted / disappeared) is *pausable*, not a
+        # failure: keep the job resumable so it picks up where it stopped once the
+        # folder is back (on restart, or when the user re-imports it).
+        paused = type(exc).__name__ == "ImportSourceUnavailable"
+        if paused:
+            msg = "Pasta de origem inacessível (desmontada?). Importação pausada — será retomada quando a pasta voltar."
+            _import_job.update(status="interrupted", message=msg, finished_at=finished)
+            try:
+                with _import_db() as conn:
+                    import_review.update_job(
+                        conn, job_id, status="interrupted", error_message=msg,
+                    )
+            except Exception:
+                pass
+        else:
+            _import_job.update(status="failed", message=str(exc), finished_at=finished)
+            try:
+                with _import_db() as conn:
+                    import_review.update_job(
+                        conn, job_id, status="failed", error_message=str(exc), finished_at=finished,
+                    )
+            except Exception:
+                pass
     finally:
         if cleanup:
             shutil.rmtree(cleanup, ignore_errors=True)
+
+
+def _resume_unfinished_imports() -> None:
+    """Re-launch an import left running/queued by a previous (crashed) process.
+
+    Relies on the indexer's skip-sets (already-imported memes + queued review rows)
+    so it picks up where it stopped without re-importing. Only folder sources that
+    still exist can resume; upload temp dirs are gone after a restart.
+    """
+    try:
+        with _import_db() as conn:
+            jobs = import_review.unfinished_jobs(conn)
+    except Exception:
+        return
+    for job in jobs:
+        try:
+            raw_sources = [Path(s) for s in json.loads(job.get("source") or "[]")]
+            settings = json.loads(job.get("settings") or "{}")
+        except Exception:
+            raw_sources, settings = [], {}
+        present = [s for s in raw_sources if s.exists() and s.is_dir()]
+        if not raw_sources or not settings:
+            # No source/settings recorded → genuinely unrecoverable.
+            with _import_db() as conn:
+                import_review.update_job(
+                    conn, job["id"], status="failed",
+                    error_message="Sem origem/configuração para retomar.",
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                )
+            continue
+        if not present:
+            # Sources configured but not mounted yet → wait, don't fail. The job stays
+            # 'interrupted' so a later restart (or re-import of the folder) resumes it.
+            with _import_db() as conn:
+                import_review.update_job(
+                    conn, job["id"], status="interrupted",
+                    error_message="Aguardando a pasta de origem ficar acessível para retomar.",
+                )
+            _import_job.update(
+                id=job["id"], status="interrupted",
+                imported=int(job.get("imported", 0)),
+                quarantined=int(job.get("quarantined", 0)),
+                message="Importação pausada: aguardando a pasta de origem ficar acessível.",
+            )
+            print(f"[iris] Importação {job['id'][:8]} aguardando pasta acessível")
+            continue
+        _import_job.update(
+            id=job["id"], status="queued", done=int(job.get("done", 0)),
+            total=int(job.get("total", 0)), imported=int(job.get("imported", 0)),
+            quarantined=int(job.get("quarantined", 0)),
+            message="Retomando importação interrompida.",
+        )
+        print(f"[iris] Retomando importação interrompida {job['id'][:8]}")
+        threading.Thread(
+            target=_run_import_job,
+            args=(job["id"], present, settings, None),
+            daemon=True,
+            name=f"iris-import-{job['id'][:8]}",
+        ).start()
+        break  # only one import runs at a time
 
 
 # ── Page routes ───────────────────────────────────────────────────────────────
@@ -661,6 +796,21 @@ async def open_folder(path: str = Form(...)):
 
 @app.get("/api/import/status")
 async def import_status():
+    if _import_job.get("id"):
+        return dict(_import_job)
+    # No in-memory job (e.g. fresh process): hydrate from the persisted job row.
+    try:
+        with _import_db() as conn:
+            job = import_review.latest_job(conn)
+        if job:
+            return {
+                "id": job["id"], "status": job["status"], "done": job["done"],
+                "total": job["total"], "imported": job["imported"],
+                "quarantined": job["quarantined"], "current": "",
+                "message": job["message"],
+            }
+    except Exception:
+        pass
     return dict(_import_job)
 
 
@@ -707,6 +857,9 @@ async def start_import(
     if not sources:
         raise HTTPException(400, "Escolha uma pasta ou envie arquivos")
 
+    # Reversibility: snapshot the catalog before a (re)index changes it.
+    await run_in_threadpool(maybe_auto_snapshot, "pre-import")
+
     job_id = uuid.uuid4().hex
     settings = {
         "recursive": recursive,
@@ -719,7 +872,14 @@ async def start_import(
         "whisper_model": whisper_model.strip() or "none",
         "model_name": str(_active_config["model_name"]),
     }
-    _import_job.update(id=job_id, status="queued", message="Importação na fila.")
+    _import_job.update(
+        id=job_id, status="queued", done=0, total=0, imported=0, quarantined=0,
+        message="Importação na fila.",
+    )
+    with _import_db() as conn:
+        import_review.create_job(
+            conn, job_id, json.dumps([str(s) for s in sources]), json.dumps(settings)
+        )
     threading.Thread(
         target=_run_import_job,
         args=(job_id, sources, settings, cleanup),
@@ -729,53 +889,420 @@ async def start_import(
     return {"ok": True, "job_id": job_id}
 
 
-@app.get("/api/backup/info")
-async def get_backup_info():
-    return backup_inventory(_DATA_DIR)
+# ── Import review (deduplication quarantine) ────────────────────────────────────
 
 
-@app.get("/api/backup")
-def download_backup(include_library: bool = Query(True)):
-    filename = datetime.now(timezone.utc).strftime("iris_backup_%Y%m%d_%H%M%S.zip")
-    file_descriptor, temporary_name = tempfile.mkstemp(prefix="iris-backup-", suffix=".zip")
-    os.close(file_descriptor)
-    temporary = Path(temporary_name)
-    create_backup_file(_DATA_DIR, temporary, include_library=include_library)
-    return FileResponse(
-        temporary,
-        media_type="application/zip",
-        filename=filename,
-        background=BackgroundTask(temporary.unlink, missing_ok=True),
-    )
+@app.get("/api/import/review")
+async def import_review_list(
+    detection: str = Query(""),
+    limit: int = Query(200),
+    offset: int = Query(0),
+):
+    with _import_db() as conn:
+        counts = import_review.counts_by_detection(conn)
+        items = import_review.list_items(
+            conn, detection=detection or None, limit=max(1, min(limit, 500)), offset=max(0, offset)
+        )
+    records_by_id = {r.db_id: r for r in _get_backend().get_all_records()}
+    enriched = []
+    for item in items:
+        match = records_by_id.get(item.get("match_meme_id")) if item.get("match_meme_id") else None
+        enriched.append(
+            {
+                "id": item["id"],
+                "detection": item["detection"],
+                "candidate_path": item["candidate_path"],
+                "candidate_filename": os.path.basename(item["candidate_path"]),
+                "candidate_thumb_url": (
+                    f"/api/import/review/{item['id']}/thumb" if item["has_thumb"] else ""
+                ),
+                "candidate_full_url": f"/api/import/review/{item['id']}/full",
+                "match_meme_id": item.get("match_meme_id"),
+                "match_filename": os.path.basename(match.arquivo) if match else "",
+                "match_thumb_url": _thumbnail_url(match) if match else "",
+                "match_full_url": (
+                    "/media/" + match.resolved_path.lstrip("/") if match and match.resolved_path else ""
+                ),
+                "score": round(float(item["score"]), 4),
+            }
+        )
+    categories = [
+        {
+            "detection": d,
+            "label": import_review.DETECTION_LABELS.get(d, d),
+            "count": counts.get(d, 0),
+        }
+        for d in import_review.DETECTIONS
+        if counts.get(d, 0)
+    ]
+    return {"categories": categories, "total": sum(counts.values()), "items": enriched}
 
 
-@app.post("/api/backup/inspect")
-async def inspect_backup(file: Annotated[UploadFile, File()]):
-    temporary = await _save_upload_to_temp(file, ".zip")
+@app.get("/api/import/suggestions")
+async def import_suggestions(job_id: str = Query("")):
+    """Collection suggestions from the metadata of the most-recent import (or job_id)."""
+    from core import import_suggestions as suggest_mod
+
+    with _import_db() as conn:
+        job = import_review.get_job(conn, job_id) if job_id else import_review.latest_job(conn)
+        since = (job or {}).get("created_at", "")
+        suggestions = suggest_mod.suggest_collections(conn, since=since) if since else []
+    return {"job_id": (job or {}).get("id", ""), "suggestions": suggestions}
+
+
+@app.post("/api/collections/from-suggestion")
+async def create_collection_from_suggestion(
+    name: str = Form(...),
+    db_ids: str = Form(...),
+):
+    """Create (or reuse) a collection by name and add the suggested members to it."""
+    backend = _get_backend()
+    name = name.strip()
+    ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
+    if not name or not ids:
+        raise HTTPException(400, "Nome e itens são obrigatórios.")
+    with trace("api.collections.from_suggestion"):
+        existing = {c["name"]: c["id"] for c in backend.list_collections()}
+        col_id = existing.get(name)
+        if col_id is None:
+            col_id = backend.engine.create_collection(name)
+        added = backend.add_records_to_collection(ids, col_id)
+        return {"collection_id": col_id, "name": name, "added": added}
+
+
+@app.get("/api/import/review/{item_id}/thumb")
+async def import_review_thumb(item_id: int):
+    with _import_db() as conn:
+        blob = import_review.get_thumb(conn, item_id)
+    if not blob:
+        raise HTTPException(404, "Sem miniatura")
+    return Response(content=blob, media_type="image/jpeg")
+
+
+@app.get("/api/import/review/{item_id}/full")
+async def import_review_full(item_id: int):
+    """Serve the candidate file at full size for the review lightbox.
+
+    The candidate isn't in the DB (it's a pending import), so it can't go through
+    /media. Serve it straight from its recorded path; if the file is gone (e.g. the
+    source was unmounted), fall back to the stored thumbnail so the panel still works.
+    """
+    with _import_db() as conn:
+        row = conn.execute(
+            "SELECT candidate_path FROM import_review WHERE id = ?", (item_id,)
+        ).fetchone()
+        path = row[0] if row else None
+        if path and os.path.exists(path):
+            return FileResponse(path, media_type=_guess_mime(path))
+        blob = import_review.get_thumb(conn, item_id)
+    if not blob:
+        raise HTTPException(404, "Arquivo indisponível")
+    return Response(content=blob, media_type="image/jpeg")
+
+
+@app.post("/api/import/review/resolve")
+async def import_review_resolve(
+    ids: str = Form(""),
+    detection: str = Form(""),
+    action: str = Form("ignore"),
+):
+    if action not in {"ignore", "trash", "import"}:
+        raise HTTPException(400, "Ação inválida")
+    with _import_db() as conn:
+        id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+        if detection and not id_list:
+            id_list = import_review.ids_for_detection(conn, detection)
+        items = import_review.items_for_ids(conn, id_list)
+        if not items:
+            raise HTTPException(404, "Nenhum item pendente encontrado")
+        item_ids = [it["id"] for it in items]
+
+        if action == "ignore":
+            resolved = import_review.mark_resolved(conn, item_ids, "ignored")
+            # Remember the decision so re-imports skip these instantly.
+            import_review.ledger_mark_paths(conn, [it["candidate_path"] for it in items], "ignored")
+            return {"ok": True, "resolved": resolved}
+
+        if action == "trash":
+            moved, failed = move_to_trash([it["candidate_path"] for it in items])
+            resolved = import_review.mark_resolved(conn, item_ids, "trashed")
+            import_review.ledger_mark_paths(conn, [it["candidate_path"] for it in items], "trashed")
+            return {"ok": True, "resolved": resolved, "moved": len(moved), "failed": len(failed)}
+
+    # action == "import": queue the candidates for force-indexing (dedup off).
+    # Enqueuing (not launching one job per click) is what lets the user click
+    # "import anyway" through many items in a row without waiting / hitting 409.
+    paths = [Path(it["candidate_path"]) for it in items if Path(it["candidate_path"]).exists()]
+    if not paths:
+        raise HTTPException(400, "Nenhum arquivo disponível para importar")
+    with _import_db() as conn:
+        import_review.mark_resolved(conn, item_ids, "imported")
+        import_review.ledger_mark_paths(conn, [str(p) for p in paths], "imported")
+    depth = _enqueue_forced_import(paths)
+    return {"ok": True, "imported_files": len(paths), "queued": depth}
+
+
+def _enqueue_forced_import(paths: list[Path]) -> int:
+    """Queue files to be force-indexed (dedup off) by the single drain worker.
+
+    Returns the queue depth after enqueuing. Rapid per-item "import anyway" clicks
+    coalesce into a few batches instead of one blocking job per click.
+    """
+    global _forced_worker_running
+    started = False
+    with _forced_lock:
+        _forced_queue.extend(str(p) for p in paths)
+        depth = len(_forced_queue)
+        if not _forced_worker_running:
+            _forced_worker_running = True
+            started = True
+    if started:
+        threading.Thread(
+            target=_forced_import_worker, daemon=True, name="iris-forced-import"
+        ).start()
+    return depth
+
+
+def _forced_import_worker() -> None:
+    """Drain the forced-import queue in coalesced batches, one batch at a time."""
+    global _forced_worker_running
     try:
-        return await run_in_threadpool(inspect_backup_zip, temporary)
-    except Exception as exc:
-        raise HTTPException(400, f"Backup inválido: {exc}") from exc
+        while True:
+            # Debounce: let a burst of clicks pile up so they index together.
+            time.sleep(1.2)
+            with _forced_lock:
+                batch = list(dict.fromkeys(_forced_queue))  # dedupe, keep order
+                _forced_queue.clear()
+                if not batch:
+                    _forced_worker_running = False
+                    return
+            # Defer to a normal (non-forced) import if one is in flight.
+            while _import_job.get("status") in {"queued", "running"} and not _import_job.get("forced"):
+                time.sleep(0.5)
+            paths = [Path(p) for p in batch if Path(p).exists()]
+            if paths:
+                _run_forced_import_batch(paths)
     finally:
-        temporary.unlink(missing_ok=True)
+        with _forced_lock:
+            _forced_worker_running = False
+
+
+def _run_forced_import_batch(paths: list[Path]) -> None:
+    """Synchronously force-index a batch of files even if flagged as duplicates."""
+    job_id = uuid.uuid4().hex
+    try:
+        common = Path(os.path.commonpath([str(p) for p in paths]))
+        media_dir = common if common.is_dir() else common.parent
+    except Exception:
+        media_dir = paths[0].parent
+    settings = {
+        "recursive": False,
+        "library_name": "default",
+        "library_root": "data/library",
+        "copy_to_library": True,
+        "batch_size": 8,
+        "device": "auto",
+        "caption_model": "microsoft/Florence-2-large",
+        "whisper_model": "tiny",
+        "model_name": str(_active_config["model_name"]),
+    }
+    _import_job.update(
+        id=job_id, status="queued", done=0, total=0, imported=0, quarantined=0,
+        forced=True, message="Importando itens marcados como “importar mesmo assim”.",
+    )
+    with _import_db() as conn:
+        import_review.create_job(conn, job_id, json.dumps([str(media_dir)]), json.dumps(settings))
+    try:
+        _run_import_job(
+            job_id, [media_dir], settings, None,
+            explicit_files=paths, dedup_enabled=False,
+        )
+    finally:
+        _import_job["forced"] = False
+
+
+# ── Backup: versioned catalog snapshots (external destination) ──────────────────
+
+
+def _active_db_path() -> Path:
+    return Path(str(_active_config["db_path"]))
+
+
+def _weights_path() -> Path:
+    return _DATA_DIR / "best_weights.json"
+
+
+def _library_root() -> Path:
+    """Resolve the active media library root (storage_path is relative to it)."""
+    try:
+        with sqlite3.connect(str(_active_db_path())) as conn:
+            row = conn.execute(
+                "SELECT root_path FROM media_libraries ORDER BY id LIMIT 1"
+            ).fetchone()
+        if row and row[0]:
+            return Path(row[0])
+    except Exception:
+        pass
+    return _DATA_DIR / "library" / "default"
+
+
+def _safe_snapshot_name(name: str) -> bool:
+    return name.endswith(backup_mod.SNAPSHOT_SUFFIX) and "/" not in name and ".." not in name
+
+
+def _rebuild_faiss(db_path: Path, model_name: str) -> None:
+    from core.indexer import create_faiss_indices
+
+    create_faiss_indices(Path(db_path), model_name or str(_active_config["model_name"]))
+
+
+def _do_snapshot(reason: str, cfg: dict) -> dict:
+    info = backup_mod.catalog_snapshot(
+        _active_db_path(), cfg["backup_dir"],
+        weights_path=_weights_path(), model_name=str(_active_config["model_name"]),
+        reason=reason,
+    )
+    backup_mod.apply_retention(cfg["backup_dir"], int(cfg.get("backup_keep_last") or 0))
+    return info
+
+
+def maybe_auto_snapshot(reason: str) -> dict | None:
+    """Take a pre-op catalog snapshot if auto-backup is on. Never raises (best effort)."""
+    try:
+        cfg = app_config.load()
+        if not cfg.get("backup_auto") or not cfg.get("backup_dir"):
+            return None
+        if not app_config.validate_backup_dir(cfg["backup_dir"], _DATA_DIR).get("ok"):
+            return None
+        return _do_snapshot(reason, cfg)
+    except Exception as exc:
+        print(f"[iris] auto-snapshot ({reason}) falhou: {exc}")
+        return None
+
+
+@app.get("/api/backup/config")
+async def backup_get_config():
+    cfg = app_config.load()
+    val = (
+        app_config.validate_backup_dir(cfg["backup_dir"], _DATA_DIR)
+        if cfg["backup_dir"] else {"ok": False, "warnings": [], "error": ""}
+    )
+    return {
+        **cfg,
+        "dir_ok": val.get("ok", False),
+        "warnings": val.get("warnings", []),
+        "error": val.get("error", ""),
+    }
+
+
+@app.post("/api/backup/config")
+async def backup_set_config(
+    backup_dir: str = Form(""),
+    backup_auto: bool = Form(True),
+    backup_keep_last: int = Form(10),
+    media_originals_root: str = Form("media"),
+):
+    resolved = backup_dir.strip()
+    warnings: list[str] = []
+    if resolved:
+        val = app_config.validate_backup_dir(resolved, _DATA_DIR)
+        if not val["ok"]:
+            raise HTTPException(400, val.get("error", "Destino de backup inválido"))
+        resolved = val.get("resolved") or resolved
+        warnings = val.get("warnings", [])
+    saved = app_config.save({
+        "backup_dir": resolved,
+        "backup_auto": backup_auto,
+        "backup_keep_last": max(1, backup_keep_last),
+        "media_originals_root": media_originals_root.strip() or "media",
+    })
+    return {"ok": True, **saved, "warnings": warnings}
+
+
+@app.get("/api/backup/snapshots")
+async def backup_list_snapshots():
+    cfg = app_config.load()
+    if not cfg["backup_dir"]:
+        return {"configured": False, "snapshots": []}
+    snaps = await run_in_threadpool(backup_mod.list_snapshots, cfg["backup_dir"])
+    return {"configured": True, "backup_dir": cfg["backup_dir"], "snapshots": snaps}
+
+
+@app.post("/api/backup/snapshot")
+async def backup_snapshot_now(reason: str = Form("manual")):
+    cfg = app_config.load()
+    if not cfg["backup_dir"]:
+        raise HTTPException(400, "Configure um destino de backup primeiro")
+    try:
+        info = await run_in_threadpool(_do_snapshot, reason, cfg)
+    except Exception as exc:
+        raise HTTPException(500, f"Falha ao criar snapshot: {exc}") from exc
+    return {"ok": True, "snapshot": info}
 
 
 @app.post("/api/backup/restore")
-async def restore_backup(
-    file: Annotated[UploadFile, File()],
+async def backup_restore(
+    snapshot_id: str = Form(...),
+    mode: str = Form("overlay"),
     confirm: bool = Form(False),
 ):
     if not confirm:
         raise HTTPException(400, "A restauração precisa ser confirmada")
-    temporary = await _save_upload_to_temp(file, ".zip")
+    if mode not in {"overlay", "mirror"}:
+        raise HTTPException(400, "Modo de restauração inválido")
+    cfg = app_config.load()
+    if not cfg["backup_dir"] or not _safe_snapshot_name(snapshot_id):
+        raise HTTPException(404, "Snapshot não encontrado")
+    snap = Path(cfg["backup_dir"]) / snapshot_id
+    if not snap.exists():
+        raise HTTPException(404, "Snapshot não encontrado")
+    # Safety net: snapshot the current state first so the restore is reversible.
+    pre = await run_in_threadpool(maybe_auto_snapshot, "pre-restore")
     try:
-        result = await run_in_threadpool(restore_backup_zip, temporary, _DATA_DIR)
+        result = await run_in_threadpool(_do_restore, snap, mode)
         await run_in_threadpool(_reload_backend)
-        return {"ok": True, **result}
     except Exception as exc:
         raise HTTPException(400, f"Não foi possível restaurar: {exc}") from exc
-    finally:
-        temporary.unlink(missing_ok=True)
+    return {"ok": True, "pre_restore": pre, **result}
+
+
+def _do_restore(snap: Path, mode: str) -> dict:
+    return backup_mod.restore_snapshot(
+        snap, db_path=_active_db_path(), weights_path=_weights_path(),
+        mode=mode, rebuild_faiss=_rebuild_faiss, model_name=str(_active_config["model_name"]),
+    )
+
+
+@app.get("/api/backup/snapshots/{snapshot_id}/download")
+def backup_download_snapshot(snapshot_id: str):
+    cfg = app_config.load()
+    if not cfg["backup_dir"] or not _safe_snapshot_name(snapshot_id):
+        raise HTTPException(404, "Snapshot não encontrado")
+    snap = Path(cfg["backup_dir"]) / snapshot_id
+    if not snap.exists():
+        raise HTTPException(404, "Snapshot não encontrado")
+    return FileResponse(snap, media_type="application/gzip", filename=snapshot_id)
+
+
+@app.post("/api/backup/media/reconcile")
+async def backup_media_reconcile():
+    cfg = app_config.load()
+    res = await run_in_threadpool(
+        backup_mod.reconcile_media, _active_db_path(), _library_root(), cfg["media_originals_root"]
+    )
+    return {"ok": True, **res}
+
+
+@app.post("/api/backup/media/export")
+async def backup_media_export():
+    cfg = app_config.load()
+    if not cfg["backup_dir"]:
+        raise HTTPException(400, "Configure um destino de backup primeiro")
+    try:
+        res = await run_in_threadpool(backup_mod.export_media, _library_root(), cfg["backup_dir"])
+    except Exception as exc:
+        raise HTTPException(400, f"Falha ao exportar biblioteca: {exc}") from exc
+    return {"ok": True, **res}
 
 
 # ── Records (paginated gallery) ───────────────────────────────────────────────
@@ -1476,6 +2003,7 @@ async def get_duplicates(
 @app.post("/api/trash")
 async def trash_records(db_ids: str = Form(...)):
     backend = _get_backend()
+    await run_in_threadpool(maybe_auto_snapshot, "pre-trash")
     with trace("api.trash"):
         ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
         paths = []

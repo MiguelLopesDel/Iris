@@ -27,11 +27,8 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoProcessor
 from transformers import logging as transformers_logging
 
-from core.deleted_registry import (
-    is_phash_deleted,
-    load_deleted_content_hashes,
-    load_deleted_phashes,
-)
+from core import import_review
+from core.deleted_registry import load_deleted_content_hashes
 from core.indexer_db import (
     ensure_unique_destination,
     existing_hashes,
@@ -45,6 +42,7 @@ from core.media_inventory import (
     iter_media_files,
     read_manifest,
 )
+from core.media_metadata import extract_metadata
 from core.search_engine import DEFAULT_MODEL, normalize_text
 from core.taxonomy import (
     build_taxonomy_prompt_rows,
@@ -276,24 +274,232 @@ def already_processed(conn: sqlite3.Connection) -> set[str]:
     return {row[0] for row in conn.execute(f"SELECT {column} FROM memes WHERE {column} IS NOT NULL")}
 
 
+_PHASH_IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"})
+_DEDUP_CLIP_THRESHOLD = 0.985
+_DEDUP_PHASH_THRESHOLD = 8
+_CANDIDATE_THUMB_SIZE = (320, 320)
+
+
+def _phash_to_u64(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        return int(value, 16) & 0xFFFFFFFFFFFFFFFF
+    except (ValueError, TypeError):
+        return None
+
+
+def _hamming_to_array(arr: np.ndarray, value: int) -> np.ndarray:
+    """Vectorized Hamming distance between each uint64 in arr and a scalar value."""
+    xor = (arr ^ np.uint64(value)).astype(np.uint64)
+    bits = np.unpackbits(xor.view(np.uint8))
+    return bits.reshape(-1, 64).sum(axis=1)
+
+
+def _compute_phash(image: Image.Image) -> str | None:
+    try:
+        import imagehash
+        return str(imagehash.phash(image))
+    except Exception:
+        return None
+
+
+def _candidate_thumb_bytes(image: Image.Image) -> bytes | None:
+    """Small JPEG of the candidate, stored so the review panel survives source moves."""
+    try:
+        import io
+        thumb = image.convert("RGB")
+        thumb.thumbnail(_CANDIDATE_THUMB_SIZE, Image.LANCZOS)
+        buffer = io.BytesIO()
+        thumb.save(buffer, format="JPEG", quality=80, optimize=True)
+        return buffer.getvalue()
+    except Exception:
+        return None
+
+
+def _phash_score(distance: int) -> float:
+    """Map Hamming distance (0..8) to a 0.99..1.0 confidence for display."""
+    return round(1.0 - (distance / 640.0), 4)
+
+
+@dataclass
+class _DedupContext:
+    """In-memory snapshot of existing memes used to detect duplicates during import.
+
+    Holds content_hash → meme_id, a uint64 perceptual-hash array, and a CLIP FAISS
+    index. Updated as new files are inserted so candidates also dedup against each
+    other within the same run.
+    """
+
+    hash_to_meme: dict[str, int]
+    phash_u64: np.ndarray
+    phash_ids: np.ndarray
+    deleted_phash_u64: np.ndarray
+    deleted_phash_ids: np.ndarray
+    clip_index: object | None
+    clip_ids: list[int]
+    clip_threshold: float = _DEDUP_CLIP_THRESHOLD
+    phash_threshold: int = _DEDUP_PHASH_THRESHOLD
+
+    def nearest_phash(self, phash: str | None) -> tuple[int, int] | None:
+        u = _phash_to_u64(phash)
+        if u is None or self.phash_u64.size == 0:
+            return None
+        dist = _hamming_to_array(self.phash_u64, u)
+        j = int(dist.argmin())
+        if int(dist[j]) <= self.phash_threshold:
+            return int(self.phash_ids[j]), int(dist[j])
+        return None
+
+    def nearest_deleted_phash(self, phash: str | None) -> int | None:
+        u = _phash_to_u64(phash)
+        if u is None or self.deleted_phash_u64.size == 0:
+            return None
+        dist = _hamming_to_array(self.deleted_phash_u64, u)
+        j = int(dist.argmin())
+        if int(dist[j]) <= self.phash_threshold:
+            return int(self.deleted_phash_ids[j])
+        return None
+
+    def nearest_clip(self, embedding: np.ndarray) -> tuple[int, float] | None:
+        if self.clip_index is None:
+            return None
+        query = np.asarray(embedding, dtype=np.float32).reshape(1, -1).copy()
+        faiss.normalize_L2(query)
+        scores, indices = self.clip_index.search(query, 1)
+        j = int(indices[0][0])
+        score = float(scores[0][0])
+        if j >= 0 and score >= self.clip_threshold:
+            return int(self.clip_ids[j]), score
+        return None
+
+    def add(
+        self,
+        meme_id: int,
+        content_hash: str | None,
+        phash: str | None,
+        embedding: np.ndarray | None,
+    ) -> None:
+        if content_hash:
+            self.hash_to_meme.setdefault(content_hash, meme_id)
+        u = _phash_to_u64(phash)
+        if u is not None:
+            self.phash_u64 = np.append(self.phash_u64, np.uint64(u))
+            self.phash_ids = np.append(self.phash_ids, np.int64(meme_id))
+        if self.clip_index is not None and embedding is not None:
+            query = np.asarray(embedding, dtype=np.float32).reshape(1, -1).copy()
+            faiss.normalize_L2(query)
+            self.clip_index.add(query)
+            self.clip_ids.append(meme_id)
+
+
+def _build_dedup_context(conn: sqlite3.Connection) -> _DedupContext:
+    """Snapshot existing memes (hash → id, phash array, CLIP FAISS) for the dedup gates.
+
+    Note: loads all image embeddings into RAM (≈150MB for ~50k @ 768-d), mirroring
+    what the search backend already holds. Built once at the start of an import.
+    """
+    hash_to_meme: dict[str, int] = {}
+    ph_u64: list[int] = []
+    ph_ids: list[int] = []
+    embeddings: list[np.ndarray] = []
+    clip_ids: list[int] = []
+    # Tolerate older schemas missing perceptual_hash/embedding columns.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(memes)")}
+    chash_col = "content_hash" if "content_hash" in cols else "NULL"
+    phash_col = "perceptual_hash" if "perceptual_hash" in cols else "NULL"
+    emb_col = "embedding" if "embedding" in cols else "NULL"
+    for mid, chash, phash, embedding in conn.execute(
+        f"SELECT id, {chash_col}, {phash_col}, {emb_col} FROM memes"
+    ):
+        if chash:
+            hash_to_meme.setdefault(chash, int(mid))
+        u = _phash_to_u64(phash)
+        if u is not None:
+            ph_u64.append(u)
+            ph_ids.append(int(mid))
+        if embedding:
+            embeddings.append(np.frombuffer(embedding, dtype=np.float32))
+            clip_ids.append(int(mid))
+
+    del_u64: list[int] = []
+    del_ids: list[int] = []
+    try:
+        for did, dphash in conn.execute(
+            "SELECT id, perceptual_hash FROM deleted_media WHERE perceptual_hash IS NOT NULL"
+        ):
+            u = _phash_to_u64(dphash)
+            if u is not None:
+                del_u64.append(u)
+                del_ids.append(int(did))
+    except sqlite3.OperationalError:
+        pass
+
+    clip_index = None
+    if embeddings:
+        matrix = np.vstack(embeddings).astype(np.float32)
+        faiss.normalize_L2(matrix)
+        clip_index = faiss.IndexFlatIP(matrix.shape[1])
+        clip_index.add(matrix)
+
+    return _DedupContext(
+        hash_to_meme=hash_to_meme,
+        phash_u64=np.array(ph_u64, dtype=np.uint64),
+        phash_ids=np.array(ph_ids, dtype=np.int64),
+        deleted_phash_u64=np.array(del_u64, dtype=np.uint64),
+        deleted_phash_ids=np.array(del_ids, dtype=np.int64),
+        clip_index=clip_index,
+        clip_ids=clip_ids,
+    )
+
+
+class ImportSourceUnavailable(OSError):
+    """Raised when an import source folder is missing/unreadable (e.g. unmounted).
+
+    Signals a *pausable* condition: the job should be marked interrupted (not failed)
+    and resumed later, picking up where it stopped via the dedup/ledger skip-sets.
+    """
+
+
 def process_images(
     config: IndexerConfig,
     progress_callback: Callable[[int, int, str], None] | None = None,
-) -> None:
+    *,
+    job_id: str | None = None,
+    dedup_enabled: bool = True,
+    explicit_files: list[Path] | None = None,
+) -> dict[str, int]:
     if not config.media_dir.exists():
-        print(f"Erro: diretorio '{config.media_dir}' nao encontrado.")
-        sys.exit(1)
+        # Don't sys.exit: this runs in a server background thread. Signal an
+        # unavailable source so the caller can pause (not fail) and resume later
+        # — e.g. the folder was unmounted mid-import.
+        raise ImportSourceUnavailable(str(config.media_dir))
 
     conn = init_db(config.db_path)
     processed = already_processed(conn)
     known_hashes = existing_hashes(conn)
     _deleted_hashes = load_deleted_content_hashes(conn)
-    _deleted_phashes = load_deleted_phashes(conn)
-    media_files = media_files_from_config(config)
-    if config.limit:
-        media_files = media_files[: config.limit]
 
-    if config.copy_to_library:
+    # Dedup gates: disabled when importing into a named album (everything is wanted
+    # there) or when forcing an explicit re-index of specific files.
+    dedup = (
+        _build_dedup_context(conn)
+        if (dedup_enabled and config.collection_name is None and explicit_files is None)
+        else None
+    )
+    quarantined_paths = import_review.pending_paths(conn) if dedup is not None else set()
+
+    if explicit_files is not None:
+        media_files = [p for p in explicit_files if p.exists()]
+    else:
+        media_files = media_files_from_config(config)
+        if config.limit:
+            media_files = media_files[: config.limit]
+
+    if explicit_files is not None:
+        # Forced re-index of specific files (e.g. "import anyway" from the review panel).
+        pending = media_files
+    elif config.copy_to_library:
         if config.force_reimport_video_audio:
             # Video/audio: always included (force re-process even if already indexed).
             # Images: only new ones (not already in processed) — don't re-process existing.
@@ -314,13 +520,33 @@ def process_images(
                 and path.suffix.lower() in _FORCE_REIMPORT_EXTS)
         ]
 
+    # Resume: skip files already sitting in the review queue.
+    if quarantined_paths:
+        pending = [path for path in pending if str(path.resolve()) not in quarantined_paths]
+
     print(f"Diretorio: {config.media_dir}")
     print(f"Arquivos encontrados: {len(media_files)}")
     print(f"Arquivos novos: {len(pending)}")
 
+    _imported = 0
+    _quarantined = 0
+    _skipped_ledger = 0
+
+    def _record_ledger(src: Path, st, chash: str | None, outcome: str, detection: str = "") -> None:
+        # Remember this file's fate so a future re-import skips it after one stat().
+        if dedup is None or st is None:
+            return
+        import_review.ledger_record(
+            conn, path=str(src), name=src.name, size=st.st_size, mtime=st.st_mtime,
+            content_hash=chash, outcome=outcome, detection=detection,
+        )
+
     if not pending:
         conn.close()
-        return
+        if job_id is not None:
+            with sqlite3.connect(config.db_path) as _jc:
+                import_review.update_job(_jc, job_id, total=0, done=0)
+        return {"imported": 0, "quarantined": 0, "processed": 0, "skipped": 0}
 
     # Log de falhas — ao lado do banco de dados
     _failed_log: Path = config.db_path.with_name(config.db_path.stem + "_failed.txt")
@@ -356,11 +582,24 @@ def process_images(
                     _proc_done += 1
                     try:
                         source_path = path.resolve()
-                        content_hash = file_sha256(source_path)
                         _is_force = (
                             config.force_reimport_video_audio
                             and source_path.suffix.lower() in _FORCE_REIMPORT_EXTS
                         )
+                        # Fast ledger short-circuit: a single stat() decides whether
+                        # we've already handled this exact file (same path/size/mtime).
+                        # Skips the full SHA-256 read + decode for unchanged re-imports.
+                        _st = source_path.stat() if dedup is not None else None
+                        if dedup is not None and not _is_force and _st is not None:
+                            _led = import_review.ledger_lookup(conn, str(source_path))
+                            if (
+                                _led is not None
+                                and int(_led["size"]) == int(_st.st_size)
+                                and int(_led["mtime"]) == int(_st.st_mtime)
+                            ):
+                                _skipped_ledger += 1
+                                continue
+                        content_hash = file_sha256(source_path)
                         if content_hash in known_hashes:
                             if _is_force:
                                 # Remove the old record so the new INSERT creates a fresh one
@@ -368,18 +607,78 @@ def process_images(
                                     "DELETE FROM memes WHERE content_hash = ?", (content_hash,)
                                 )
                                 known_hashes.discard(content_hash)
+                            elif _collection_id is not None:
+                                # Importing into an album: register the existing meme, don't quarantine.
+                                row = conn.execute(
+                                    "SELECT id FROM memes WHERE content_hash = ?", (content_hash,)
+                                ).fetchone()
+                                if row:
+                                    _existing_col_ids.append(int(row[0]))
+                                continue
+                            elif dedup is not None:
+                                # Exact byte-for-byte copy → review queue (not silent skip).
+                                import_review.quarantine_candidate(
+                                    conn, job_id=job_id, candidate_path=str(source_path),
+                                    candidate_hash=content_hash, candidate_phash=None,
+                                    candidate_thumb=None, detection="exact_hash",
+                                    match_meme_id=dedup.hash_to_meme.get(content_hash), score=1.0,
+                                )
+                                _record_ledger(source_path, _st, content_hash, "quarantined", "exact_hash")
+                                _quarantined += 1
+                                continue
                             else:
-                                if _collection_id is not None:
-                                    row = conn.execute(
-                                        "SELECT id FROM memes WHERE content_hash = ?", (content_hash,)
-                                    ).fetchone()
-                                    if row:
-                                        _existing_col_ids.append(int(row[0]))
                                 continue
                         if content_hash in _deleted_hashes and not _is_force:
+                            if dedup is not None:
+                                import_review.quarantine_candidate(
+                                    conn, job_id=job_id, candidate_path=str(source_path),
+                                    candidate_hash=content_hash, candidate_phash=None,
+                                    candidate_thumb=None, detection="deleted_registry", score=1.0,
+                                )
+                                _record_ledger(source_path, _st, content_hash, "quarantined", "deleted_registry")
+                                _quarantined += 1
                             continue
-                        if _deleted_phashes and not _is_force and is_phash_deleted(str(source_path), _deleted_phashes):
-                            continue
+
+                        # Perceptual-hash gates (images) BEFORE the expensive pipeline + copy.
+                        candidate_phash: str | None = None
+                        candidate_thumb: bytes | None = None
+                        if (
+                            dedup is not None
+                            and not _is_force
+                            and source_path.suffix.lower() in _PHASH_IMAGE_EXTS
+                        ):
+                            try:
+                                _probe_img = Image.open(source_path).convert("RGB")
+                            except Exception:
+                                _probe_img = None
+                            if _probe_img is not None:
+                                candidate_phash = _compute_phash(_probe_img)
+                                _ph_hit = dedup.nearest_phash(candidate_phash)
+                                if _ph_hit is not None:
+                                    _mid, _dist = _ph_hit
+                                    import_review.quarantine_candidate(
+                                        conn, job_id=job_id, candidate_path=str(source_path),
+                                        candidate_hash=content_hash, candidate_phash=candidate_phash,
+                                        candidate_thumb=_candidate_thumb_bytes(_probe_img),
+                                        detection="perceptual", match_meme_id=_mid,
+                                        score=_phash_score(_dist),
+                                    )
+                                    _record_ledger(source_path, _st, content_hash, "quarantined", "perceptual")
+                                    _quarantined += 1
+                                    continue
+                                _del_hit = dedup.nearest_deleted_phash(candidate_phash)
+                                if _del_hit is not None:
+                                    import_review.quarantine_candidate(
+                                        conn, job_id=job_id, candidate_path=str(source_path),
+                                        candidate_hash=content_hash, candidate_phash=candidate_phash,
+                                        candidate_thumb=_candidate_thumb_bytes(_probe_img),
+                                        detection="deleted_registry", match_deleted_id=_del_hit,
+                                        score=1.0,
+                                    )
+                                    _record_ledger(source_path, _st, content_hash, "quarantined", "deleted_registry")
+                                    _quarantined += 1
+                                    continue
+                                candidate_thumb = _candidate_thumb_bytes(_probe_img)
 
                         try:
                             relative_from_source = source_path.relative_to(config.media_dir.resolve()).as_posix()
@@ -431,15 +730,12 @@ def process_images(
                         else:
                             _precomp = None
 
-                        # Perceptual hash — images only (not video/audio)
-                        _perceptual_hash: str | None = None
+                        # Perceptual hash — images only (not video/audio).
+                        # Reuse the one already computed by the dedup gate when available.
+                        _perceptual_hash: str | None = candidate_phash
                         _is_audio = _file_suffix in (_AUDIO_ONLY_EXTS | frozenset({".ogg", ".og"}))
-                        if not _is_video_file and not _is_audio:
-                            try:
-                                import imagehash as _imagehash
-                                _perceptual_hash = str(_imagehash.phash(image))
-                            except Exception:
-                                pass
+                        if _perceptual_hash is None and not _is_video_file and not _is_audio:
+                            _perceptual_hash = _compute_phash(image)
 
                         if _precomp is None:
                             # Image, audio, or video with no useful frames → normal batch
@@ -448,6 +744,12 @@ def process_images(
                             # Video with multi-frame embedding: add a sentinel so batch
                             # index stays aligned; real embedding comes from _precomp
                             batch_images.append(None)
+
+                        try:
+                            _media_meta = extract_metadata(source_path)
+                            _metadata_json = json.dumps(_media_meta, ensure_ascii=False)
+                        except Exception:
+                            _metadata_json = ""
 
                         batch_metadata.append(
                             {
@@ -468,9 +770,17 @@ def process_images(
                                 "audio_fingerprint": _audio_fp,
                                 "audio_embedding": _audio_emb,
                                 "perceptual_hash": _perceptual_hash,
+                                "candidate_thumb": candidate_thumb,
+                                "metadata_json": _metadata_json,
                             }
                         )
+                    except ImportSourceUnavailable:
+                        raise
                     except Exception as exc:
+                        # If the source folder vanished (e.g. unmounted mid-import),
+                        # pause instead of logging thousands of per-file errors.
+                        if not config.media_dir.exists():
+                            raise ImportSourceUnavailable(str(config.media_dir)) from exc
                         msg = f"{path.name}: {exc}"
                         print(f"\nErro ao processar {msg}")
                         _failed_entries.append(str(path))
@@ -479,14 +789,22 @@ def process_images(
                             torch.cuda.empty_cache()
 
                 if not batch_images:
-                    # Nenhum arquivo novo, mas pode ter já-indexados para adicionar ao álbum
+                    # Whole batch was duplicates and/or already-indexed: nothing to encode,
+                    # but the quarantine rows (and album links) written above MUST be flushed.
+                    # Critical when most files are dupes — otherwise their review rows are lost.
                     if _collection_id is not None and _existing_col_ids:
                         conn.executemany(
                             "INSERT OR IGNORE INTO media_collections"
                             " (meme_id, collection_id, added_at) VALUES (?,?,?)",
                             [(_id, _collection_id, now_iso()) for _id in _existing_col_ids],
                         )
-                        conn.commit()
+                    conn.commit()
+                    if job_id is not None:
+                        import_review.update_job(
+                            conn, job_id, total=_proc_total, done=_proc_done,
+                            imported=_imported, quarantined=_quarantined,
+                            message=f"Importadas {_imported} · em revisão {_quarantined}",
+                        )
                     continue
 
                 # Encode only non-sentinel images (videos use pre-computed embeddings)
@@ -527,6 +845,31 @@ def process_images(
                     path = Path(item["path"])
                     image_embedding = image_embeddings[idx].astype(np.float32)
                     desc_embedding = desc_embeddings[idx].astype(np.float32)
+
+                    # CLIP similarity gate: visually-similar to an existing meme
+                    # (not caught by hash/phash) → review queue instead of insert.
+                    if dedup is not None:
+                        _clip_hit = dedup.nearest_clip(image_embedding)
+                        if _clip_hit is not None:
+                            _mid, _score = _clip_hit
+                            import_review.quarantine_candidate(
+                                conn, job_id=job_id, candidate_path=item["source_path"],
+                                candidate_hash=item["content_hash"],
+                                candidate_phash=item.get("perceptual_hash"),
+                                candidate_thumb=item.get("candidate_thumb"),
+                                detection="clip_similarity", match_meme_id=_mid, score=_score,
+                            )
+                            if dedup is not None:
+                                import_review.ledger_record(
+                                    conn, path=str(item["source_path"]),
+                                    name=os.path.basename(str(item["source_path"])),
+                                    size=int(item["file_size"]), mtime=item["file_mtime"],
+                                    content_hash=str(item["content_hash"]),
+                                    outcome="quarantined", detection="clip_similarity",
+                                )
+                            _quarantined += 1
+                            continue
+
                     taxonomy_matches = (
                         classify_embedding(
                             image_embedding,
@@ -577,9 +920,9 @@ def process_images(
                             ocr_normalized, visual_json, objects, style, source_work,
                             humor, context, error_message, model_name,
                             embedding_dim, schema_version, embedding, desc_embedding,
-                            audio_fingerprint, audio_embedding, perceptual_hash
+                            audio_fingerprint, audio_embedding, perceptual_hash, metadata_json
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             item["relative_path"],
@@ -611,10 +954,30 @@ def process_images(
                             item.get("audio_fingerprint"),
                             item["audio_embedding"].tobytes() if item.get("audio_embedding") is not None else None,
                             item.get("perceptual_hash"),
+                            item.get("metadata_json", ""),
                         ),
                     )
                     known_hashes.add(str(item["content_hash"]))
+                    _imported += 1
+                    if dedup is not None:
+                        import_review.ledger_record(
+                            conn, path=str(item["source_path"]),
+                            name=os.path.basename(str(item["source_path"])),
+                            size=int(item["file_size"]), mtime=item["file_mtime"],
+                            content_hash=str(item["content_hash"]), outcome="imported",
+                        )
+                        dedup.add(
+                            int(cursor.lastrowid), str(item["content_hash"]),
+                            item.get("perceptual_hash"), image_embedding,
+                        )
                 conn.commit()
+
+                if job_id is not None:
+                    import_review.update_job(
+                        conn, job_id, total=_proc_total, done=_proc_done,
+                        imported=_imported, quarantined=_quarantined,
+                        message=f"Importadas {_imported} · em revisão {_quarantined}",
+                    )
 
                 # Atribui ao álbum — novos indexados + já existentes que foram pulados
                 if _collection_id is not None:
@@ -650,6 +1013,13 @@ def process_images(
                 fh.write(f"\n# Sessao {dt.datetime.now().isoformat(timespec='seconds')}\n")
                 fh.writelines(f"{p}\n" for p in _failed_entries)
             print(f"\n{len(_failed_entries)} arquivo(s) com erro gravado(s) em: {_failed_log}")
+
+    return {
+        "imported": _imported,
+        "quarantined": _quarantined,
+        "processed": _proc_done,
+        "skipped": _skipped_ledger,
+    }
 
 
 def media_files_from_config(config: IndexerConfig) -> list[Path]:

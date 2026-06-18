@@ -63,7 +63,8 @@ python3 -m uvicorn server:app --host 127.0.0.1 --port 8501
 
 Open **http://localhost:8501** in your browser.
 
-By default Iris opens `data/meme_compass_full_v1.db` and resolves media under `media/`.
+By default Iris opens `data/iris_v1.db` (falling back to a legacy
+`data/meme_compass_full_v1.db` if that's the only catalog present) and resolves media under `media/`.
 Use the **Sistema** tab to switch databases and media roots, import/index folders or
 uploaded files, choose CPU/CUDA/MPS, and create or restore complete backups.
 

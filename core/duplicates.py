@@ -229,10 +229,20 @@ def find_duplicate_groups(
             )
         )
 
-    # Second pass: merge groups whose cluster centroids are mutually similar.
-    # matrix is the full normalized engine matrix; item.index values are engine indices,
-    # so _merge_by_centroid can index matrix[item.index] correctly.
-    duplicate_groups = _merge_by_centroid(duplicate_groups, matrix, threshold)
+    # Second pass: consolidate fragments. Two complementary criteria, applied in a
+    # loop until the group count stabilises (one merge can expose another):
+    #   • _merge_by_centroid  — clusters whose mean embeddings are mutually similar.
+    #   • _merge_by_best_pair — clusters whose closest cross-group *item* pair is itself
+    #     a duplicate (≥ threshold). The main FAISS pass only inspects each item's top
+    #     `max_neighbors` neighbours, so in a dense collection an item's above-threshold
+    #     twin in another cluster can fall outside that window and the clusters never get
+    #     linked — even though, by the tool's own threshold, they are duplicates.
+    # matrix is the full normalized engine matrix; item.index values are engine indices.
+    prev_count = -1
+    while len(duplicate_groups) != prev_count and len(duplicate_groups) > 1:
+        prev_count = len(duplicate_groups)
+        duplicate_groups = _merge_by_centroid(duplicate_groups, matrix, threshold)
+        duplicate_groups = _merge_by_best_pair(duplicate_groups, matrix, threshold)
 
     # Split any remaining mixed-type groups (safety net for already-indexed data
     # where the FAISS type filter wasn't applied yet).
@@ -309,8 +319,42 @@ def _merge_by_centroid(
         for ai in audio_gis[1:]:
             dsu.union(audio_gis[0], ai)
 
+    return _apply_unions(groups, dsu, matrix)
+
+
+def _rebuild_group(items: list[DuplicateItem], matrix: np.ndarray) -> DuplicateGroup:
+    """Re-anchor a combined item list and recompute scores vs the new anchor.
+
+    No min_direct filter — items being combined already survived the first-pass filter.
+    """
+    all_items = sorted(items, key=lambda it: it.index)
+    anchor_idx = all_items[0].index
+    anchor_vec = matrix[anchor_idx]
+    new_items: list[DuplicateItem] = []
+    min_score = 1.0
+    for item in all_items:
+        score = 1.0 if item.index == anchor_idx else float(np.dot(anchor_vec, matrix[item.index]))
+        min_score = min(min_score, score)
+        new_items.append(
+            DuplicateItem(
+                index=item.index,
+                arquivo=item.arquivo,
+                resolved_path=item.resolved_path,
+                score_to_anchor=score,
+            )
+        )
+    return DuplicateGroup(group_id=0, kind="exact_or_visual", score=min_score, items=new_items)
+
+
+def _apply_unions(
+    groups: list[DuplicateGroup],
+    dsu: DisjointSet,
+    matrix: np.ndarray,
+) -> list[DuplicateGroup]:
+    """Collapse ``groups`` according to ``dsu`` (one entry per group), rebuilding merged
+    clusters and renumbering group ids."""
     merged: dict[int, list[int]] = defaultdict(list)
-    for i in range(n):
+    for i in range(len(groups)):
         merged[dsu.find(i)].append(i)
 
     result: list[DuplicateGroup] = []
@@ -318,39 +362,74 @@ def _merge_by_centroid(
         if len(gis) == 1:
             result.append(groups[gis[0]])
             continue
-
-        # Combine items from all merged groups; recompute scores vs new anchor.
-        # No min_direct filter here — items survived the first-pass filter already.
-        all_items = sorted(
-            [item for gi in gis for item in groups[gi].items],
-            key=lambda it: it.index,
+        combined = _rebuild_group(
+            [item for gi in gis for item in groups[gi].items], matrix
         )
-        anchor_idx = all_items[0].index
-        anchor_vec = matrix[anchor_idx]
-
-        new_items: list[DuplicateItem] = []
-        min_score = 1.0
-        for item in all_items:
-            score = 1.0 if item.index == anchor_idx else float(np.dot(anchor_vec, matrix[item.index]))
-            min_score = min(min_score, score)
-            new_items.append(
-                DuplicateItem(
-                    index=item.index,
-                    arquivo=item.arquivo,
-                    resolved_path=item.resolved_path,
-                    score_to_anchor=score,
-                )
-            )
-
-        if len(new_items) >= 2:
-            result.append(
-                DuplicateGroup(group_id=0, kind="exact_or_visual", score=min_score, items=new_items)
-            )
+        if len(combined.items) >= 2:
+            result.append(combined)
 
     return [
         DuplicateGroup(group_id=i + 1, kind=g.kind, score=g.score, items=g.items)
         for i, g in enumerate(result)
     ]
+
+
+def _merge_by_best_pair(
+    groups: list[DuplicateGroup],
+    matrix: np.ndarray,
+    threshold: float,
+) -> list[DuplicateGroup]:
+    """Single-linkage completion: merge two groups whose closest cross-group pair of
+    items is itself a duplicate (cosine ≥ ``threshold``).
+
+    The main FAISS pass only inspects each item's top ``max_neighbors`` neighbours, so in
+    a dense collection an item's above-threshold match in *another* cluster can fall
+    outside that window and the clusters never get linked. Centroid merging doesn't
+    rescue every such case: when the two clusters' means are pulled apart by their other
+    members, the centroids stay distant even though one cross pair is near-identical.
+
+    This pass re-checks neighbours over only the already-grouped items — a small set, so
+    an effectively unbounded ``k`` is affordable — and links the groups the top-k window
+    missed. It adds no edge below ``threshold``, so it cannot create matches the
+    threshold wouldn't already allow.
+    """
+    n = len(groups)
+    if n < 2:
+        return groups
+
+    item_eng: list[int] = []
+    item_group: list[int] = []
+    item_type: list[str] = []
+    for gi, g in enumerate(groups):
+        for it in g.items:
+            item_eng.append(it.index)
+            item_group.append(gi)
+            item_type.append(_media_type(it.arquivo))
+    if len(item_eng) < 2:
+        return groups
+
+    sub = matrix[np.array(item_eng)]
+    idx = faiss.IndexFlatIP(sub.shape[1])
+    idx.add(sub)
+    k = min(len(item_eng), 256)  # unbounded enough for the grouped subset
+    scores, neighbors = idx.search(sub, k)
+
+    dsu = DisjointSet(n)
+    for p, row in enumerate(neighbors):
+        gp = item_group[p]
+        for jpos, q in enumerate(row.tolist()):
+            if q < 0 or q == p:
+                continue
+            if float(scores[p][jpos]) < threshold:
+                break  # neighbours are sorted by descending score
+            if item_group[q] == gp:
+                continue
+            # Never bridge different media types (image ≠ video ≠ audio).
+            if item_type[q] != item_type[p]:
+                continue
+            dsu.union(gp, item_group[q])
+
+    return _apply_unions(groups, dsu, matrix)
 
 
 def _split_by_media_type(groups: list[DuplicateGroup]) -> list[DuplicateGroup]:

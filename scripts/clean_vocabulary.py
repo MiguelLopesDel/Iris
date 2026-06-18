@@ -8,8 +8,8 @@ tags from memes.
 
 Dry-run by default; pass --apply to write.
 
-    python scripts/clean_vocabulary.py --db data/meme_compass_v10.db
-    python scripts/clean_vocabulary.py --db data/meme_compass_v10.db --apply
+    python scripts/clean_vocabulary.py --db data/iris_v1.db
+    python scripts/clean_vocabulary.py --db data/iris_v1.db --apply
 """
 
 from __future__ import annotations

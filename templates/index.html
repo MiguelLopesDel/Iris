@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
-  <link rel="stylesheet" href="/static/style.css?v=29">
+  <link rel="stylesheet" href="/static/style.css?v=35">
 </head>
 <body>
 
@@ -147,13 +147,8 @@
       </div>
     </div>
 
-    <div id="search-bar" style="display:none;">
-      <button id="btn-search-random" class="btn btn-subtle">Busca aleatória</button>
-    </div>
-
     <nav id="tabs" aria-label="Navegação principal">
       <button class="tab-btn active" data-tab="gallery"><span class="tab-icon">▦</span><span>Galeria</span></button>
-      <button class="tab-btn" data-tab="search"><span class="tab-icon">⌕</span><span>Busca</span></button>
       <button class="tab-btn" data-tab="collections"><span class="tab-icon">◇</span><span>Coleções</span></button>
       <button class="tab-btn" data-tab="concepts"><span class="tab-icon">✦</span><span>Conceitos</span></button>
       <button class="tab-btn" data-tab="duplicates"><span class="tab-icon">≋</span><span>Duplicatas</span></button>
@@ -164,6 +159,32 @@
   <div id="tab-content">
     <!-- Gallery tab -->
     <section id="tab-gallery" class="tab-pane active">
+      <div class="gallery-search-hero">
+        <div class="search-input-wrap">
+          <span aria-hidden="true">⌕</span>
+          <input type="text" id="gallery-search" placeholder="Descreva uma ideia, cole texto ou contexto…" autocomplete="off">
+        </div>
+        <label class="btn btn-primary" for="gallery-image-search">Usar imagem</label>
+        <input type="file" id="gallery-image-search" accept="image/*" hidden>
+        <button id="gallery-random" class="btn btn-subtle" type="button">Aleatório</button>
+        <button id="gallery-clear-search" class="btn btn-subtle" hidden>Limpar busca</button>
+        <button id="gallery-search-advanced" class="btn btn-subtle" type="button" aria-expanded="false">Agrupar ▾</button>
+        <div id="gallery-group-controls" class="image-group-controls" hidden>
+          <label class="switch-row">
+            <input type="checkbox" id="image-group-enabled" checked>
+            <span class="switch-control"></span>
+            <span>Agrupar resultados visualmente parecidos (busca por imagem)</span>
+          </label>
+          <label>Limiar <output id="image-group-threshold-val">0.90</output>
+            <input type="range" id="image-group-threshold" min="0.75" max="0.99" step="0.01" value="0.90">
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" id="image-group-singletons">
+            <span class="switch-control"></span>
+            <span>Mostrar grupos com um item</span>
+          </label>
+        </div>
+      </div>
       <div class="section-lead">
         <div>
           <span class="eyebrow">Visão geral</span>
@@ -177,13 +198,6 @@
       </div>
 
       <div id="gallery-controls" class="control-surface">
-        <div class="control-field control-field-wide">
-          <label for="gallery-search">Buscar nesta galeria</label>
-          <input type="text" id="gallery-search" placeholder="Texto, contexto ou descrição">
-        </div>
-        <label class="btn btn-subtle" for="gallery-image-search">Imagem</label>
-        <input type="file" id="gallery-image-search" accept="image/*" hidden>
-        <button id="gallery-clear-search" class="btn btn-subtle" hidden>Limpar busca</button>
         <div class="control-field">
           <label for="gallery-sort">Ordenar por</label>
           <select id="gallery-sort">
@@ -226,41 +240,6 @@
       </div>
       <div id="gallery-grid" class="media-grid"></div>
       <div id="gallery-pagination-bottom"></div>
-    </section>
-
-    <!-- Search tab -->
-    <section id="tab-search" class="tab-pane">
-      <div class="search-hero">
-        <span class="eyebrow">Busca multimodal</span>
-        <h3>Descreva uma ideia.<br>Encontre a imagem.</h3>
-        <p>Pesquise por texto, contexto ou use uma imagem como referência visual.</p>
-        <div id="search-controls">
-          <div class="search-input-wrap">
-            <span aria-hidden="true">⌕</span>
-            <input type="text" id="search-input2" placeholder="Ex: gato bravo olhando para a câmera" autocomplete="off">
-          </div>
-          <label class="btn btn-primary" for="search-image-input2">Usar imagem</label>
-          <input type="file" id="search-image-input2" accept="image/*" style="display:none;">
-          <button id="btn-similar-back" class="btn btn-subtle" style="display:none;">← Voltar</button>
-        </div>
-        <div class="image-group-controls">
-          <label class="switch-row">
-            <input type="checkbox" id="image-group-enabled" checked>
-            <span class="switch-control"></span>
-            <span>Agrupar resultados visualmente parecidos</span>
-          </label>
-          <label>Limiar <output id="image-group-threshold-val">0.90</output>
-            <input type="range" id="image-group-threshold" min="0.75" max="0.99" step="0.01" value="0.90">
-          </label>
-          <label class="switch-row">
-            <input type="checkbox" id="image-group-singletons">
-            <span class="switch-control"></span>
-            <span>Mostrar grupos com um item</span>
-          </label>
-        </div>
-      </div>
-      <div id="search-results-info" class="results-info"></div>
-      <div id="search-results-grid" class="media-grid"></div>
     </section>
 
     <!-- Collections tab -->
@@ -402,17 +381,44 @@
         </section>
 
         <section class="detail-panel system-card system-card-wide">
+          <span class="eyebrow">Deduplicação</span>
+          <h4>Revisão de importação</h4>
+          <p class="system-hint">Arquivos detectados como possíveis duplicatas durante a importação ficam aqui, separados por tipo de detecção. As mídias sem problema já foram indexadas.</p>
+          <div id="import-review" class="import-review"></div>
+        </section>
+
+        <section class="detail-panel system-card system-card-wide">
           <span class="eyebrow">Portabilidade</span>
-          <h4>Backup e restauração</h4>
-          <div id="backup-info" class="metric-grid"></div>
-          <label class="switch-row"><input type="checkbox" id="backup-library" checked><span class="switch-control"></span><span>Incluir mídias gerenciadas</span></label>
-          <a id="backup-download" class="btn btn-primary" href="/api/backup">Baixar backup</a>
+          <h4>Backup do catálogo (snapshots)</h4>
+          <p class="backup-hint">Salva só o catálogo (banco + embeddings) num destino externo, fora da cota. FAISS é reconstruído na restauração; a mídia é tratada à parte.</p>
+
+          <div class="backup-config">
+            <label>Destino externo dos snapshots
+              <span class="row-inline">
+                <input type="text" id="backup-dir" placeholder="/mnt/externo/iris_backups">
+                <button id="backup-config-save" class="btn btn-subtle">Salvar</button>
+              </span>
+            </label>
+            <label class="switch-row"><input type="checkbox" id="backup-auto" checked><span class="switch-control"></span><span>Snapshot automático antes de operações arriscadas (import / trash / restore)</span></label>
+            <label>Manter os últimos <input type="number" id="backup-keep" min="1" value="10"> snapshots</label>
+            <div id="backup-config-status" class="system-status"></div>
+          </div>
           <hr>
-          <label>Arquivo de backup
-            <input type="file" id="restore-file" accept=".zip,application/zip">
-          </label>
-          <div id="restore-info" class="system-status"></div>
-          <button id="restore-start" class="btn btn-danger" disabled>Restaurar backup</button>
+
+          <div class="row-inline">
+            <button id="snapshot-now" class="btn btn-primary">Snapshot agora</button>
+            <span id="snapshot-status" class="system-status"></span>
+          </div>
+          <div id="snapshot-list" class="snapshot-list"></div>
+          <hr>
+
+          <h4>Mídia</h4>
+          <p class="backup-hint">A mídia não entra no backup do catálogo. Reconcilie para relinkar arquivos faltantes a partir dos originais (por hash), ou exporte a biblioteca inteira para o disco externo.</p>
+          <div class="row-inline">
+            <button id="media-reconcile" class="btn btn-subtle">Verificar / reconciliar mídia</button>
+            <button id="media-export" class="btn btn-subtle">Exportar biblioteca p/ disco externo</button>
+          </div>
+          <div id="media-status" class="system-status"></div>
         </section>
       </div>
     </section>
@@ -476,7 +482,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=36"></script>
+<script type="module" src="/static/app.js?v=45"></script>
 
 </body>
 </html>
