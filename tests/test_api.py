@@ -427,3 +427,60 @@ class TestWithDatabase:
                 assert r2.status_code == 200
                 assert r2.headers["content-type"] == "image/jpeg"
                 break
+
+
+# ── Regression: launching on a brand-new DB ──────────────────────────────────
+
+
+class TestFreshDatabaseBoot:
+    """Regression for the boot bug where launching the server on a fresh DB left
+    it without a `memes` table, crashing the engine on the *next* start.
+
+    Fast and model-free: exercises the real backend-open path (_reload_backend ->
+    init_db) plus the HTTP stack, with no CLIP/network involved.
+    """
+
+    @pytest.fixture
+    def restore_server_state(self):
+        import server
+
+        saved_backend = server._backend
+        saved_config = dict(server._active_config)
+        yield server
+        server._backend = saved_backend
+        server._active_config.clear()
+        server._active_config.update(saved_config)
+
+    def test_fresh_db_boot_is_idempotent(self, tmp_path, restore_server_state):
+        server = restore_server_state
+        db = tmp_path / "fresh.db"
+        cfg = {
+            "db_path": str(db),
+            "media_root": str(tmp_path),
+            "model_name": server.DEFAULT_MODEL,
+            "load_model": False,
+        }
+
+        # First launch on a DB that does not exist yet.
+        server._reload_backend(cfg)
+        assert db.exists(), "opening the backend should create the DB file"
+
+        # The core schema must be created — this is exactly what the bug missed.
+        tables = {
+            row[0]
+            for row in sqlite3.connect(db).execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "memes" in tables
+        assert "collections" in tables
+        assert "concepts" in tables
+
+        # Second launch on the now-existing file must NOT crash (the original bug).
+        backend = server._reload_backend(cfg)
+        assert backend.get_total_records() == 0
+
+        # And the full HTTP stack must work on the fresh catalog.
+        http = ASGITestClient(server.app)
+        for endpoint in ("/api/records", "/api/collections", "/api/concepts"):
+            assert http.get(endpoint).status_code == 200, endpoint
