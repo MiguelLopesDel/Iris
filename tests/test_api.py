@@ -94,6 +94,49 @@ class TestInfoEndpoint:
         assert "missing_count" in r.json()
         assert "extension_counts" in r.json()
 
+    def test_missing_count_is_optin(self, client):
+        # Default: no O(N) stat scan → missing_count is null (not computed).
+        assert client.get("/api/info").json()["missing_count"] is None
+        # Opt-in: the scan runs and returns a number (mock backend has 0 records).
+        assert client.get("/api/info?check_missing=1").json()["missing_count"] == 0
+
+
+class TestViewCaches:
+    def test_sorted_records_is_cached_and_invalidated(self, monkeypatch):
+        import server
+        from core.search_types import IndexRecord
+
+        def _mk(i):
+            return IndexRecord(
+                index=i, arquivo=f"{i}.jpg", caminho=f"/{i}.jpg", resolved_path=None,
+                texto_extraido="", descricao_ia="", tags="",
+                embedding=None, desc_embedding=None, db_id=i,
+            )
+
+        backend = MagicMock()
+        backend.get_all_records.return_value = [_mk(3), _mk(1), _mk(2)]
+        server._invalidate_view_caches()
+
+        first = server._sorted_records(backend, "importacao", 1)
+        second = server._sorted_records(backend, "importacao", 1)
+        assert first is second  # served from cache, no re-sort
+        assert [r.db_id for r in first] == [1, 2, 3]  # ascending by db_id
+        assert backend.get_all_records.call_count == 1  # only sorted once
+
+        server._invalidate_view_caches()
+        third = server._sorted_records(backend, "importacao", 1)
+        assert third is not first  # cache cleared → recomputed
+        server._invalidate_view_caches()
+
+
+class TestGzip:
+    def test_gzip_middleware_registered(self):
+        from fastapi.middleware.gzip import GZipMiddleware
+
+        import server
+
+        assert any(m.cls is GZipMiddleware for m in server.app.user_middleware)
+
 
 class TestSystemEndpoints:
     def test_import_requires_source(self, client):

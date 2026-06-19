@@ -24,6 +24,7 @@ from typing import Annotated, Any
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -109,6 +110,19 @@ _forced_queue: list[str] = []
 _forced_lock = threading.Lock()
 _forced_worker_running = False
 
+# View-level memoization. Records are immutable between backend reloads, so the
+# expensive part of /api/records — sorting the whole library — is cached per
+# (sort_by, sort_asc). Filters (media type / collection / concept) stay live on
+# each request so membership changes are never served stale. Cleared on reload.
+_sorted_records_cache: dict[tuple[str, int], list[IndexRecord]] = {}
+# /api/info missing-file scan is O(N) syscalls; cache by (db_path, total_records).
+_missing_count_cache: dict[tuple[str, int], int] = {}
+
+
+def _invalidate_view_caches() -> None:
+    _sorted_records_cache.clear()
+    _missing_count_cache.clear()
+
 
 def _import_db() -> sqlite3.Connection:
     """Short-lived connection to the active DB for import_jobs / import_review ops."""
@@ -142,6 +156,7 @@ def _reload_backend(config: dict[str, Any] | None = None) -> SearchBackend:
             )
             _ensure_web_enrichment_tables(backend)
             _backend = backend
+            _invalidate_view_caches()
             return backend
     except Exception:
         _active_config.clear()
@@ -238,6 +253,10 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(lifespan=lifespan, title="Iris")
+
+# Compress JSON/HTML responses (records pages can be sizeable). Skips small bodies
+# and is a no-op for already-compressed media/thumbnails (own content types).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Static assets
 static_dir = Path(__file__).parent / "static"
@@ -702,20 +721,38 @@ async def serve_index():
 # ── Info ──────────────────────────────────────────────────────────────────────
 
 
+def _missing_count(backend: SearchBackend, total: int) -> int:
+    """Count records whose file is gone. O(N) syscalls — cached per (db, total)."""
+    key = (str(_active_config["db_path"]), total)
+    cached = _missing_count_cache.get(key)
+    if cached is not None:
+        return cached
+    count = sum(
+        1 for r in backend.get_all_records()
+        if not r.resolved_path or not os.path.exists(r.resolved_path)
+    )
+    _missing_count_cache[key] = count
+    return count
+
+
 @app.get("/api/info")
-async def get_info():
+async def get_info(check_missing: int = Query(0)):
     backend = _get_backend()
     with trace("api.info"):
+        # extension_counts is pure in-memory (cheap). The missing-file scan does
+        # one stat() per record, so it's opt-in (the stats panel asks for it) and
+        # cached — the sidebar's frequent /api/info stays syscall-free.
         records = backend.get_all_records()
         extension_counts: dict[str, int] = {}
-        missing_count = 0
         for record in records:
             extension = Path(record.arquivo).suffix.lower() or "(sem extensão)"
             extension_counts[extension] = extension_counts.get(extension, 0) + 1
-            if not record.resolved_path or not Path(record.resolved_path).exists():
-                missing_count += 1
+        total = backend.get_total_records()
+        missing_count = None
+        if check_missing:
+            missing_count = await run_in_threadpool(_missing_count, backend, total)
         return {
-            "total_records": backend.get_total_records(),
+            "total_records": total,
             "db_path": str(_active_config["db_path"]),
             "media_root": str(_active_config["media_root"]),
             "model_name": str(_active_config["model_name"]),
@@ -1314,6 +1351,38 @@ async def backup_media_export():
 # ── Records (paginated gallery) ───────────────────────────────────────────────
 
 
+def _sort_key_for(sort_by: str):
+    def _key(r: IndexRecord) -> object:
+        if sort_by == "nome":
+            return r.arquivo.lower()
+        if sort_by == "data":
+            return r.file_mtime or 0.0
+        if sort_by == "tamanho":
+            return r.file_size or 0
+        if sort_by == "tipo":
+            return os.path.splitext(r.arquivo)[1].lower()
+        return r.db_id or r.index  # importacao
+    return _key
+
+
+def _sorted_records(backend: SearchBackend, sort_by: str, sort_asc: int) -> list[IndexRecord]:
+    """Full library sorted by the given criteria — cached per (sort_by, sort_asc).
+
+    The sort is the O(N log N) cost paid on every page nav (the gallery prefetches
+    ±1 page); memoising it makes subsequent pages of the same view ~O(page). Safe
+    because records are immutable between backend reloads (which clear the cache).
+    """
+    key = (sort_by, int(bool(sort_asc)))
+    cached = _sorted_records_cache.get(key)
+    if cached is not None:
+        return cached
+    result = sorted(
+        backend.get_all_records(), key=_sort_key_for(sort_by), reverse=not bool(sort_asc)
+    )
+    _sorted_records_cache[key] = result
+    return result
+
+
 @app.get("/api/records")
 async def get_records(
     page: int = Query(1, ge=1),
@@ -1332,7 +1401,9 @@ async def get_records(
             concept_ids=concept_ids,
         )
 
-        records = backend.get_all_records()
+        # Sort once (cached); filtering after sort preserves order and stays live
+        # so collection/concept membership changes are never served stale.
+        records = _sorted_records(backend, sort_by, sort_asc)
 
         # Filter by media type
         if options.media_type == "video":
@@ -1350,19 +1421,7 @@ async def get_records(
             allowed = backend.get_concept_db_ids(options.concept_ids)
             records = [r for r in records if r.db_id in allowed]
 
-        # Sort
-        def _sort_key(r: IndexRecord) -> object:
-            if sort_by == "nome":
-                return r.arquivo.lower()
-            if sort_by == "data":
-                return r.file_mtime or 0.0
-            if sort_by == "tamanho":
-                return r.file_size or 0
-            if sort_by == "tipo":
-                return os.path.splitext(r.arquivo)[1].lower()
-            return r.db_id or r.index  # importacao
-
-        records_sorted = sorted(records, key=_sort_key, reverse=not bool(sort_asc))
+        records_sorted = records
         total = len(records_sorted)
         total_pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, total_pages)

@@ -15,7 +15,7 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=33';
+} from './api.js?v=36';
 import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom } from './gallery.js?v=30';
 import { initCollections } from './collections.js?v=27';
 import { initConcepts } from './concepts.js?v=28';
@@ -766,7 +766,9 @@ window.__showStats = async function() {
   el.style.display = 'block';
   el.innerHTML = '<p style="color:var(--text-muted);">Carregando...</p>';
   try {
-    var info = await fetchInfo();
+    // Stats panel is the one place that wants the missing-file count, so it
+    // opts into the O(N) scan; the sidebar's fetchInfo() stays syscall-free.
+    var info = await fetchInfo({ checkMissing: true });
     var counts = info.extension_counts || {};
     var sorted = Object.entries(counts).sort(function(a, b) { return b[1] - a[1]; });
     var maxCount = sorted.length ? sorted[0][1] : 1;

@@ -35,8 +35,8 @@ async function apiDelete(path, body = {}) {
 
 // ── Info ──────────────────────────────────────────────────────────────────
 
-export async function fetchInfo() {
-  return apiGet('/api/info');
+export async function fetchInfo({ checkMissing = false } = {}) {
+  return apiGet('/api/info', { check_missing: checkMissing ? 1 : '' });
 }
 
 export async function updateSettings(data) {
