@@ -129,6 +129,43 @@ class TestViewCaches:
         server._invalidate_view_caches()
 
 
+class TestThumbUrlCache:
+    def test_stat_is_skipped_within_ttl(self, monkeypatch, tmp_path):
+        import server
+
+        src = tmp_path / "x.jpg"
+        src.write_bytes(b"fake")
+        server._thumb_url_cache.clear()
+
+        calls = {"n": 0}
+        real_compute = server._compute_thumbnail_url
+
+        def _counting(fp):
+            calls["n"] += 1
+            return real_compute(fp)
+
+        monkeypatch.setattr(server, "_compute_thumbnail_url", _counting)
+
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(server.time, "monotonic", lambda: clock["t"])
+
+        first = server._thumbnail_url_from_path(str(src))
+        second = server._thumbnail_url_from_path(str(src))
+        assert first == second
+        assert calls["n"] == 1  # second call served from TTL cache
+
+        # Avançar além da TTL → recomputa.
+        clock["t"] += server._THUMB_URL_TTL + 1
+        server._thumbnail_url_from_path(str(src))
+        assert calls["n"] == 2
+        server._thumb_url_cache.clear()
+
+    def test_empty_path_returns_empty(self):
+        import server
+
+        assert server._thumbnail_url_from_path("") == ""
+
+
 class TestGzip:
     def test_gzip_middleware_registered(self):
         from fastapi.middleware.gzip import GZipMiddleware

@@ -349,6 +349,13 @@ def _empty_record(r: SearchResult) -> IndexRecord:
 _THUMB_SIZE = (300, 300)
 _THUMB_QUALITY = 75
 
+# Cache TTL curto (path -> (expiry_ts, url)) para evitar re-stat do mesmo arquivo
+# quando a galeria pré-busca páginas vizinhas em rajada. A TTL se auto-invalida,
+# então mudanças no arquivo aparecem em segundos (o miss recomputa a chave real).
+_THUMB_URL_TTL = 5.0
+_THUMB_URL_CACHE_MAX = 100_000
+_thumb_url_cache: dict[str, tuple[float, str]] = {}
+
 
 def _thumbnail_url(r: IndexRecord) -> str:
     """Compute thumbnail URL for a gallery record."""
@@ -361,7 +368,21 @@ def _thumbnail_url_from_path(fp: str) -> str:
     Uses md5(path:mtime:size) as cache key so thumbnails survive renames
     but invalidate when the source file changes.
     """
-    if not fp or not os.path.exists(fp):
+    if not fp:
+        return ""
+    cached = _thumb_url_cache.get(fp)
+    now = time.monotonic()
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    url = _compute_thumbnail_url(fp)
+    if len(_thumb_url_cache) > _THUMB_URL_CACHE_MAX:
+        _thumb_url_cache.clear()
+    _thumb_url_cache[fp] = (now + _THUMB_URL_TTL, url)
+    return url
+
+
+def _compute_thumbnail_url(fp: str) -> str:
+    if not os.path.exists(fp):
         return ""
     try:
         stat = os.stat(fp)
