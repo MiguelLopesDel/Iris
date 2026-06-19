@@ -12,16 +12,19 @@ import {
   listEnrichmentSuggestions,
   listCollections,
   listConcepts,
+  getRecordFaces,
+  faceThumbUrl,
   mediaUrl,
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=37';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom } from './gallery.js?v=31';
+} from './api.js?v=38';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=33';
 import { initCollections } from './collections.js?v=27';
 import { initConcepts } from './concepts.js?v=28';
 import { initDuplicates } from './duplicates.js?v=27';
 import { initSystem } from './system.js?v=30';
+import { initPersons } from './persons.js?v=1';
 import { initImportReview } from './import-review.js?v=3';
 
 window.__irisSelection = window.__irisSelection || new Map();
@@ -105,6 +108,11 @@ function switchTab(name) {
       title: 'Conceitos',
       description: 'Ensine entidades e contextos recorrentes ao Iris.'
     },
+    persons: {
+      kicker: 'Rostos',
+      title: 'Pessoas',
+      description: 'Encontre e agrupe mídias pela pessoa que aparece nelas.'
+    },
     duplicates: {
       kicker: 'Manutencao',
       title: 'Duplicatas',
@@ -126,6 +134,7 @@ function switchTab(name) {
   if (name === 'gallery') initGallery();
   if (name === 'collections') initCollections();
   if (name === 'concepts') initConcepts();
+  if (name === 'persons') initPersons();
   if (name === 'duplicates') initDuplicates();
   if (name === 'system') { initSystem(); initImportReview(); }
   document.getElementById('view-kicker').textContent = meta.kicker;
@@ -142,6 +151,30 @@ window.addEventListener('iris:similar', function(e) {
   // Set the gallery into search mode (runGallerySimilar flips searchActive
   // synchronously) before switching, so initGallery won't load page 1 over it.
   runGallerySimilar(e.detail.index);
+  switchTab('gallery');
+});
+
+window.addEventListener('iris:person', function(e) {
+  // Browse all media of a person in the gallery (same search-mode trick).
+  runGalleryPerson(e.detail.personId);
+  switchTab('gallery');
+});
+
+window.addEventListener('iris:face-search', function(e) {
+  if (e.detail && e.detail.file) {
+    runGalleryFaceSearch(e.detail.file);
+    switchTab('gallery');
+  }
+});
+
+window.addEventListener('iris:face', function(e) {
+  // Search by a specific detected face (a gallery item used as reference).
+  runGalleryFaceByFace(e.detail.faceId);
+  switchTab('gallery');
+});
+
+window.addEventListener('iris:face-record', function(e) {
+  runGalleryFaceByRecord(e.detail.index);
   switchTab('gallery');
 });
 
@@ -220,6 +253,7 @@ window.addEventListener('iris:detail', async function(e) {
 
     html += '<div style="margin-top:10px;font-size:12px;"><strong>📁 Colecoes:</strong><div id="detail-cols" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">Carregando...</div></div>';
     html += '<div style="margin-top:8px;font-size:12px;"><strong>🏷 Conceitos:</strong><div id="detail-concs" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">Carregando...</div></div>';
+    html += '<div style="margin-top:8px;font-size:12px;"><strong>🧑 Rostos:</strong><div id="detail-faces" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">…</div></div>';
 
     html += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);">';
     if (hasFile) {
@@ -253,6 +287,25 @@ window.addEventListener('iris:detail', async function(e) {
         }).join('') || '<span style="color:var(--text-muted);font-size:11px;">(nenhum)</span>';
       }
     } catch(e) { console.warn('toggle load failed', e); }
+
+    // Rostos detectados nesta mídia → clicar busca todas as mídias da pessoa.
+    try {
+      var facesEl = document.getElementById('detail-faces');
+      if (facesEl) {
+        var faceData = await getRecordFaces(index);
+        var faces = faceData.faces || [];
+        if (!faces.length) {
+          facesEl.innerHTML = '<span style="color:var(--text-muted);font-size:11px;">(nenhum rosto detectado)</span>';
+        } else {
+          facesEl.innerHTML = faces.map(function(f) {
+            // Search by this exact face — works whether or not it's been clustered yet.
+            return '<button class="face-chip" title="Buscar esta pessoa"'
+              + ' onclick="window.dispatchEvent(new CustomEvent(\'iris:face\',{detail:{faceId:' + f.id + '}}))">'
+              + '<img src="' + escapeHtml(faceThumbUrl(f.id)) + '" alt="rosto"></button>';
+          }).join('');
+        }
+      }
+    } catch(e) { console.warn('faces load failed', e); }
 
   } catch (err) {
     panel.textContent = '';

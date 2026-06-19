@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
-  <link rel="stylesheet" href="/static/style.css?v=35">
+  <link rel="stylesheet" href="/static/style.css?v=36">
 </head>
 <body>
 
@@ -152,6 +152,7 @@
       <button class="tab-btn active" data-tab="gallery"><span class="tab-icon">▦</span><span>Galeria</span></button>
       <button class="tab-btn" data-tab="collections"><span class="tab-icon">◇</span><span>Coleções</span></button>
       <button class="tab-btn" data-tab="concepts"><span class="tab-icon">✦</span><span>Conceitos</span></button>
+      <button class="tab-btn" data-tab="persons"><span class="tab-icon">☻</span><span>Pessoas</span></button>
       <button class="tab-btn" data-tab="duplicates"><span class="tab-icon">≋</span><span>Duplicatas</span></button>
       <button class="tab-btn" data-tab="system"><span class="tab-icon">⚙</span><span>Sistema</span></button>
     </nav>
@@ -167,6 +168,8 @@
         </div>
         <label class="btn btn-primary" for="gallery-image-search">Usar imagem</label>
         <input type="file" id="gallery-image-search" accept="image/*" hidden>
+        <label class="btn btn-subtle" for="gallery-face-search" title="Encontrar mídias com a pessoa da foto">Buscar pessoa</label>
+        <input type="file" id="gallery-face-search" accept="image/*" hidden>
         <button id="gallery-random" class="btn btn-subtle" type="button">Aleatório</button>
         <button id="gallery-clear-search" class="btn btn-subtle" hidden>Limpar busca</button>
         <button id="gallery-search-advanced" class="btn btn-subtle" type="button" aria-expanded="false">Agrupar ▾</button>
@@ -271,6 +274,25 @@
         </div>
         <div id="concept-wizard" class="wizard-panel" style="display:none;"></div>
         <div id="concepts-tab-list" class="entity-list"></div>
+      </div>
+    </section>
+
+    <!-- Persons tab -->
+    <section id="tab-persons" class="tab-pane">
+      <div id="persons-tab-content">
+        <div class="section-lead section-lead-compact">
+          <div>
+            <span class="eyebrow">Reconhecimento facial</span>
+            <h3>Pessoas</h3>
+            <p>Agrupa rostos por similaridade. Nomeie uma pessoa e navegue todas as mídias dela.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="persons-cluster" class="btn btn-primary" type="button">Agrupar rostos</button>
+            <button id="persons-recluster" class="btn btn-subtle" type="button">Reagrupar do zero</button>
+          </div>
+        </div>
+        <p id="persons-status" class="section-hint"></p>
+        <div id="persons-list" class="person-grid"></div>
       </div>
     </section>
 
@@ -508,7 +530,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=48"></script>
+<script type="module" src="/static/app.js?v=50"></script>
 
 </body>
 </html>

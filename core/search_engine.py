@@ -440,6 +440,164 @@ class IrisEngine:
             logger.warning("busca de áudio (CLAP) falhou para a query %r", query, exc_info=True)
             return []
 
+    def _has_face_tables(self) -> bool:
+        conn = self.db.get_connection()
+        tables = {
+            r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        return "faces" in tables and "persons" in tables
+
+    def _ensure_face_index(self) -> None:
+        """Build the in-memory face FAISS index lazily on first face query."""
+        if getattr(self, "_face_built", False):
+            return
+        self._face_built = True
+        self._face_index = None
+        self._face_meme_ids: list[int] = []
+        try:
+            if not self._has_face_tables():
+                return
+            import faiss
+
+            conn = self.db.get_connection()
+            rows = conn.execute("SELECT meme_id, embedding FROM faces").fetchall()
+            vecs: list[np.ndarray] = []
+            meme_ids: list[int] = []
+            for row in rows:
+                emb = np.frombuffer(row["embedding"], dtype=np.float32)
+                if emb.size == 0:
+                    continue
+                vecs.append(emb)
+                meme_ids.append(int(row["meme_id"]))
+            if not vecs:
+                return
+            matrix = np.array(vecs, dtype=np.float32)
+            faiss.normalize_L2(matrix)
+            index = faiss.IndexFlatIP(matrix.shape[1])
+            index.add(matrix)
+            self._face_index = index
+            self._face_meme_ids = meme_ids
+        except Exception:
+            self._face_index = None
+
+    def _face_result(self, meme_id: int, score: float, db_id_to_idx: dict[int, int]) -> SearchResult | None:
+        idx = db_id_to_idx.get(meme_id)
+        if idx is None:
+            return None
+        rec = self.records[idx]
+        return SearchResult(
+            score=score,
+            index=idx,
+            arquivo=rec.arquivo,
+            caminho=rec.caminho,
+            resolved_path=rec.resolved_path,
+            texto_extraido=rec.texto_extraido,
+            descricao_ia=rec.descricao_ia,
+            tags=rec.tags,
+            embedding=rec.embedding,
+            score_details={"face_score": score},
+        )
+
+    # ArcFace cosine floor below which two faces are almost certainly different
+    # people. Kept low to favour recall ("find every photo of X"); clearly
+    # unrelated faces (cosine ~0) are still dropped so results aren't padded.
+    FACE_MATCH_MIN_SCORE = 0.20
+
+    def search_face(
+        self, query_embedding: np.ndarray, top_k: int = 50, min_score: float | None = None
+    ) -> list[SearchResult]:
+        """Find media containing the person in ``query_embedding`` (best face per media)."""
+        self._ensure_face_index()
+        if self._face_index is None:
+            return []
+        floor = self.FACE_MATCH_MIN_SCORE if min_score is None else min_score
+        query = self._normalize_vector(query_embedding)
+        # Over-fetch: many faces map to the same media, and we aggregate per media.
+        k = min(max(top_k * 5, top_k), self._face_index.ntotal)
+        scores, indices = self._face_index.search(query, k)
+        best: dict[int, float] = {}
+        for score, fi in zip(scores[0], indices[0], strict=False):
+            if fi < 0 or score < floor:
+                continue
+            meme_id = self._face_meme_ids[int(fi)]
+            if score > best.get(meme_id, -1.0):
+                best[meme_id] = float(score)
+        db_id_to_idx = self._db_id_to_idx()
+        results: list[SearchResult] = []
+        for meme_id, score in sorted(best.items(), key=lambda kv: kv[1], reverse=True):
+            res = self._face_result(meme_id, score, db_id_to_idx)
+            if res is not None:
+                results.append(res)
+            if len(results) >= top_k:
+                break
+        return results
+
+    def _face_embedding_by_id(self, face_id: int) -> np.ndarray | None:
+        conn = self.db.get_connection()
+        row = conn.execute("SELECT embedding FROM faces WHERE id = ?", (face_id,)).fetchone()
+        if not row or not row["embedding"]:
+            return None
+        return np.frombuffer(row["embedding"], dtype=np.float32)
+
+    def _best_face_embedding_for_record(self, record_index: int) -> np.ndarray | None:
+        if record_index < 0 or record_index >= len(self.records):
+            return None
+        db_id = self.records[record_index].db_id
+        if not db_id:
+            return None
+        conn = self.db.get_connection()
+        row = conn.execute(
+            "SELECT embedding FROM faces WHERE meme_id = ? ORDER BY det_score DESC LIMIT 1",
+            (db_id,),
+        ).fetchone()
+        if not row or not row["embedding"]:
+            return None
+        return np.frombuffer(row["embedding"], dtype=np.float32)
+
+    def search_face_by_face(self, face_id: int, top_k: int = 50) -> list[SearchResult]:
+        """Find media containing the person of a specific detected face (gallery reference)."""
+        emb = self._face_embedding_by_id(face_id)
+        if emb is None:
+            return []
+        return self.search_face(emb, top_k=top_k)
+
+    def search_face_by_record(self, record_index: int, top_k: int = 50) -> list[SearchResult] | None:
+        """Find media with the person in an already-indexed item (its strongest face).
+
+        Returns ``None`` when the item has no detected face, so callers can tell
+        "no people here" apart from "no matches".
+        """
+        emb = self._best_face_embedding_for_record(record_index)
+        if emb is None:
+            return None
+        return self.search_face(emb, top_k=top_k)
+
+    def get_person_media(self, person_id: int, top_k: int = 500) -> list[SearchResult]:
+        """All media of a person, ranked by similarity to the person's face centroid."""
+        if not self._has_face_tables():
+            return []
+        conn = self.db.get_connection()
+        rows = conn.execute(
+            "SELECT meme_id, embedding FROM faces WHERE person_id = ?", (person_id,)
+        ).fetchall()
+        if not rows:
+            return []
+        embs = [np.frombuffer(r["embedding"], dtype=np.float32) for r in rows]
+        centroid = self._normalize_vector(np.stack(embs).mean(axis=0)).reshape(-1)
+        best: dict[int, float] = {}
+        for r, emb in zip(rows, embs, strict=False):
+            score = float(np.dot(emb, centroid))
+            meme_id = int(r["meme_id"])
+            if score > best.get(meme_id, -1.0):
+                best[meme_id] = score
+        db_id_to_idx = self._db_id_to_idx()
+        results: list[SearchResult] = []
+        for meme_id, score in sorted(best.items(), key=lambda kv: kv[1], reverse=True)[:top_k]:
+            res = self._face_result(meme_id, score, db_id_to_idx)
+            if res is not None:
+                results.append(res)
+        return results
+
     @staticmethod
     def _record_to_dict(record: IndexRecord) -> dict[str, Any]:
         return {

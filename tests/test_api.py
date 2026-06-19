@@ -56,6 +56,7 @@ def client():
     mock.list_collections.return_value = []
     mock.list_concepts.return_value = []
     mock.has_concept_tables.return_value = False
+    mock.has_face_tables.return_value = False
     mock.search_text.return_value = []
     mock.search_image.return_value = []
     mock.search_similar.return_value = []
@@ -594,6 +595,8 @@ class TestFreshDatabaseBoot:
         assert "memes" in tables
         assert "collections" in tables
         assert "concepts" in tables
+        assert "faces" in tables
+        assert "persons" in tables
 
         # Second launch on the now-existing file must NOT crash (the original bug).
         backend = server._reload_backend(cfg)
@@ -601,5 +604,5 @@ class TestFreshDatabaseBoot:
 
         # And the full HTTP stack must work on the fresh catalog.
         http = ASGITestClient(server.app)
-        for endpoint in ("/api/records", "/api/collections", "/api/concepts"):
+        for endpoint in ("/api/records", "/api/collections", "/api/concepts", "/api/persons"):
             assert http.get(endpoint).status_code == 200, endpoint

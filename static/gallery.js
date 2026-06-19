@@ -2,7 +2,7 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, mediaUrl, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=37';
+import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=38';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -73,6 +73,14 @@ export function initGallery() {
       imageInput.value = '';
       if (file) runGalleryImageSearch(file);
     });
+    const faceInput = document.getElementById('gallery-face-search');
+    if (faceInput) {
+      faceInput.addEventListener('change', () => {
+        const file = faceInput.files[0];
+        faceInput.value = '';
+        if (file) runGalleryFaceSearch(file);
+      });
+    }
     clearButton.addEventListener('click', clearGallerySearch);
     document.getElementById('gallery-random').addEventListener('click', () => {
       runGalleryRandom(parseInt(document.getElementById('search-topk')?.value) || 50);
@@ -234,6 +242,7 @@ function renderCard(record) {
         <div class="caption" title="${escapeHtml(record.arquivo)}">${name}</div>
         <div class="actions">
           <button class="btn" data-action="similar" data-index="${record.index}">Similares</button>
+          <button class="btn" data-action="face" data-index="${record.index}" title="Buscar a pessoa desta mídia">Pessoa</button>
           <button class="btn" data-action="detail" data-index="${record.index}">Detalhes</button>
         </div>
       </div>
@@ -260,6 +269,7 @@ function renderCard(record) {
       <div class="caption" title="${escapeHtml(record.arquivo)}">${name}</div>
       <div class="actions">
         <button class="btn" data-action="similar" data-index="${record.index}">Similares</button>
+        <button class="btn" data-action="face" data-index="${record.index}" title="Buscar a pessoa desta mídia">Pessoa</button>
         <button class="btn" data-action="detail" data-index="${record.index}">Detalhes</button>
       </div>
     </div>
@@ -329,6 +339,68 @@ async function runGalleryImageSearch(file) {
     document.getElementById('gallery-page-info').textContent = `${data.total} resultados`;
     if (Array.isArray(data.groups)) renderGroupedGrid(data.groups);
     else renderGrid(data.results);
+  } catch (error) {
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+// Busca por pessoa: detecta o rosto da foto enviada e traz mídias com aquela pessoa.
+export async function runGalleryFaceSearch(file) {
+  enterSearchMode();
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Procurando a pessoa...</p>';
+  try {
+    const data = await searchFace(file, { top_k: parseInt(document.getElementById('search-topk')?.value) || 50 });
+    document.getElementById('gallery-page-info').textContent = `${data.total} com essa pessoa`;
+    renderGrid(data.results);
+  } catch (error) {
+    const friendly = /422/.test(error.message)
+      ? 'Nenhum rosto detectado na imagem enviada. Tente uma foto mais nítida e de frente.'
+      : ('Erro: ' + error.message);
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">${escapeHtml(friendly)}</p>`;
+  }
+}
+
+// Busca por pessoa usando um item JÁ na galeria como referência (rosto mais forte).
+export async function runGalleryFaceByRecord(index) {
+  enterSearchMode();
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Procurando essa pessoa na biblioteca...</p>';
+  try {
+    const data = await searchFaceByRecord(index, { top_k: parseInt(document.getElementById('search-topk')?.value) || 50 });
+    document.getElementById('gallery-page-info').textContent = `${data.total} com essa pessoa`;
+    renderGrid(data.results);
+  } catch (error) {
+    const friendly = /422/.test(error.message)
+      ? 'Nenhum rosto detectado nesta mídia — não dá para buscar por pessoa a partir dela.'
+      : ('Erro: ' + error.message);
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">${escapeHtml(friendly)}</p>`;
+  }
+}
+
+// Busca por pessoa a partir de um rosto específico (chip no painel de detalhe).
+export async function runGalleryFaceByFace(faceId) {
+  enterSearchMode();
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Procurando essa pessoa...</p>';
+  try {
+    const data = await searchFaceByFace(faceId, { top_k: parseInt(document.getElementById('search-topk')?.value) || 50 });
+    document.getElementById('gallery-page-info').textContent = `${data.total} com essa pessoa`;
+    renderGrid(data.results);
+  } catch (error) {
+    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+// Navega todas as mídias de uma pessoa (clusters da aba Pessoas / rosto no detalhe).
+export async function runGalleryPerson(personId) {
+  enterSearchMode();
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Carregando mídias da pessoa...</p>';
+  try {
+    const data = await getPersonMedia(personId);
+    document.getElementById('gallery-page-info').textContent = `${data.total} dessa pessoa`;
+    renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
   }
@@ -469,6 +541,12 @@ document.addEventListener('click', (e) => {
   // Similar search
   if (btn.dataset.action === 'similar') {
     window.dispatchEvent(new CustomEvent('iris:similar', { detail: { index } }));
+    return;
+  }
+
+  // Search by person from this gallery item
+  if (btn.dataset.action === 'face') {
+    runGalleryFaceByRecord(index);
     return;
   }
 

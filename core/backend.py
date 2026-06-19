@@ -140,6 +140,43 @@ class SearchBackend(ABC):
     @abstractmethod
     def encode_image(self, img: Image.Image) -> Any: pass
 
+    # --- Faces / Persons ---
+    @abstractmethod
+    def has_face_tables(self) -> bool: pass
+
+    @abstractmethod
+    def search_face(self, image: Image.Image, top_k: int = 50) -> list[SearchResult] | None: pass
+
+    @abstractmethod
+    def search_face_by_record(self, idx: int, top_k: int = 50) -> list[SearchResult] | None: pass
+
+    @abstractmethod
+    def search_face_by_face(self, face_id: int, top_k: int = 50) -> list[SearchResult]: pass
+
+    @abstractmethod
+    def list_persons(self) -> list[dict]: pass
+
+    @abstractmethod
+    def get_person_media(self, person_id: int) -> list[SearchResult]: pass
+
+    @abstractmethod
+    def rename_person(self, person_id: int, name: str) -> None: pass
+
+    @abstractmethod
+    def merge_persons(self, source_id: int, target_id: int) -> None: pass
+
+    @abstractmethod
+    def delete_person(self, person_id: int) -> None: pass
+
+    @abstractmethod
+    def cluster_faces(self, recluster: bool = False) -> dict: pass
+
+    @abstractmethod
+    def get_media_faces(self, meme_id: int) -> list[dict]: pass
+
+    @abstractmethod
+    def get_face_thumbnail(self, face_id: int) -> bytes | None: pass
+
 class LocalBackend(SearchBackend):
     def __init__(self, db_path=None, model_name="sentence-transformers/clip-ViT-L-14", media_root=None, device=None, load_model=True):
         self.engine = IrisEngine(db_path=db_path, model_name=model_name, media_root=media_root, device=device, load_model=load_model)
@@ -284,3 +321,58 @@ class LocalBackend(SearchBackend):
 
     def encode_image(self, img: Image.Image) -> Any:
         return self.engine.encode_image(img)
+
+    # --- Faces / Persons ---
+    def has_face_tables(self) -> bool:
+        return self.engine._has_face_tables()
+
+    def search_face(self, image: Image.Image, top_k: int = 50) -> list[SearchResult] | None:
+        import core.faces as faces
+        embedding = faces.embed_query_face(image, device=self.engine.device)
+        if embedding is None:
+            return None
+        return self.engine.search_face(embedding, top_k=top_k)
+
+    def search_face_by_record(self, idx: int, top_k: int = 50) -> list[SearchResult] | None:
+        return self.engine.search_face_by_record(idx, top_k=top_k)
+
+    def search_face_by_face(self, face_id: int, top_k: int = 50) -> list[SearchResult]:
+        return self.engine.search_face_by_face(face_id, top_k=top_k)
+
+    def list_persons(self) -> list[dict]:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        return faces.list_persons(conn)
+
+    def get_person_media(self, person_id: int) -> list[SearchResult]:
+        return self.engine.get_person_media(person_id)
+
+    def rename_person(self, person_id: int, name: str) -> None:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        faces.rename_person(conn, person_id, name)
+
+    def merge_persons(self, source_id: int, target_id: int) -> None:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        faces.merge_persons(conn, source_id, target_id)
+
+    def delete_person(self, person_id: int) -> None:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        faces.delete_person(conn, person_id)
+
+    def cluster_faces(self, recluster: bool = False) -> dict:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        return faces.cluster_faces(conn, recluster=recluster)
+
+    def get_media_faces(self, meme_id: int) -> list[dict]:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        return faces.get_media_faces(conn, meme_id)
+
+    def get_face_thumbnail(self, face_id: int) -> bytes | None:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        return faces.get_face_thumbnail(conn, face_id)

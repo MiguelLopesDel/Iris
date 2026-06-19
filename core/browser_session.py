@@ -66,8 +66,22 @@ def _matching_browser_pids(profile_dir: str) -> list[int]:
         if "chrome" not in low and "chromium" not in low:
             continue
         if any(needle in cmd for needle in needles):
-            pids.append(pid)
+            pids.append(_namespace_pid(pid))
     return pids
+
+
+def _namespace_pid(proc_pid: int) -> int:
+    """Return the PID visible from our namespace when /proc shows host PIDs."""
+    try:
+        with open(f"/proc/{proc_pid}/status", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("NSpid:"):
+                    values = [int(value) for value in line.split()[1:]]
+                    if values:
+                        return values[-1]
+    except OSError:
+        pass
+    return proc_pid
 
 
 def kill_orphan_browsers(profile_dir: str = SHARED_PROFILE_DIR) -> int:

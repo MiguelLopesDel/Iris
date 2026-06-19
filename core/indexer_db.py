@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from core.concepts import create_concept_tables
+from core.faces import create_face_tables
 from core.import_review import ensure_tables as ensure_import_review_tables
 from core.web_enrichment import create_web_enrichment_tables
 
@@ -21,6 +22,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     create_media_collections_table(conn)
     create_media_libraries_table(conn)
     create_concept_tables(conn)
+    create_face_tables(conn)
     create_web_enrichment_tables(conn)
     ensure_import_review_tables(conn)
     # Order matters: normalise the table structure first (the rebuild drops the
@@ -188,6 +190,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS media_collections (meme_id INTEGER NOT NULL, collection_id INTEGER NOT NULL, added_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (meme_id, collection_id), FOREIGN KEY (meme_id) REFERENCES memes(id) ON DELETE CASCADE, FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE)"
     )
     create_concept_tables(conn)
+    create_face_tables(conn)
     create_web_enrichment_tables(conn)
 
 

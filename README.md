@@ -14,6 +14,7 @@ Iris grew out of a meme search tool and became something bigger: a self-hosted A
 |---|---|
 | **Semantic search** | "sad frog in a suit" finds the right image even without matching keywords |
 | **Visual search** | Upload an image to find visually similar files in your library |
+| **Face / person search** | Upload a photo of a person to find every image and video they appear in; faces are grouped into named people (InsightFace / ArcFace) |
 | **Semantic audio search** | Describe a sound ("male voice speaking", "electronic music") — CLAP bridges text and audio |
 | **OCR** | Extracts printed and handwritten text from images automatically |
 | **AI captions** | Florence-2 describes scene content; used as a search signal |
@@ -145,6 +146,27 @@ Teach Iris to recognize visual entities — people, characters, places, objects:
 
 ---
 
+## Face & person search
+
+Find every image and video where a specific person appears — independent of the rest of the
+scene (CLIP visual search looks at the whole frame; this looks at the **face**).
+
+1. Open the **Pessoas** tab and click **Agrupar rostos** — Iris clusters detected faces into people
+2. Name a person once; click their card to browse all their media
+3. Or, in the gallery, use **Buscar pessoa** to upload a photo and find that person across the library
+
+Faces are detected during indexing. For a library indexed **before** this feature existed, run the
+one-time backfill (it does **not** recompute CLIP embeddings):
+
+```bash
+python scripts/backfill_faces.py --db data/library.db
+```
+
+> First run downloads the InsightFace `buffalo_l` models (~300 MB). Disable face extraction during
+> indexing with `--no-faces` if you don't need it.
+
+---
+
 ## Architecture
 
 ```
@@ -152,6 +174,7 @@ core/indexer.py          — indexing pipeline: OCR → captions → Whisper →
 core/search_engine.py    — hybrid ranking: visual CLIP + description embeddings + lexical bonus + CLAP audio
 core/duplicates.py       — exact-hash, perceptual, and Chromaprint clustering with single-linkage merge
 core/concepts.py         — concept store: reference embeddings, auto-tagging, confirmed/rejected
+core/faces.py            — face detection + ArcFace embeddings (InsightFace), person clustering
 core/taxonomy.py         — zero-shot CLIP classification (style, source work, humor, context)
 core/web_enrichment.py   — reverse-image lookup (Google Lens) + LLM distillation of metadata
 core/media_metadata.py   — EXIF/ffprobe extraction (date, GPS, source app) at import
@@ -163,6 +186,7 @@ static/                  — CSS and JavaScript frontend modules
 
 **Visual embedding**: `sentence-transformers/clip-ViT-L-14` (768-dim, stored in FAISS)  
 **Audio embedding**: `laion/clap-htsat-unfused` (512-dim; optional, for semantic audio search and dedup)  
+**Face embedding**: InsightFace `buffalo_l` / ArcFace (512-dim; in-memory FAISS index, models auto-downloaded on first use)  
 **Caption model**: `microsoft/Florence-2-large` (can be disabled with `--caption-model none`)  
 **Transcription**: OpenAI Whisper (default: `tiny` model; disable with `--whisper-model none`)  
 **Database**: SQLite (schema v4) + FAISS flat indices for image, description, and audio embeddings

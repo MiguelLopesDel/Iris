@@ -778,7 +778,9 @@ async def get_info(check_missing: int = Query(0)):
         total = backend.get_total_records()
         missing_count = None
         if check_missing:
-            missing_count = await run_in_threadpool(_missing_count, backend, total)
+            missing_count = 0 if not records else await run_in_threadpool(
+                _missing_count, backend, total
+            )
         return {
             "total_records": total,
             "db_path": str(_active_config["db_path"]),
@@ -786,6 +788,7 @@ async def get_info(check_missing: int = Query(0)):
             "model_name": str(_active_config["model_name"]),
             "load_model": bool(_active_config["load_model"]),
             "has_concepts": backend.has_concept_tables(),
+            "has_faces": backend.has_face_tables(),
             "missing_count": missing_count,
             "extension_counts": extension_counts,
             "databases": _available_databases(),
@@ -857,7 +860,7 @@ async def open_folder(path: str = Form(...)):
     if not target.exists() or not target.is_dir():
         raise HTTPException(404, "Pasta não encontrada")
     try:
-        await run_in_threadpool(_open_folder_in_file_manager, target)
+        _open_folder_in_file_manager(target)
     except FileNotFoundError as exc:
         raise HTTPException(500, "Gerenciador de arquivos não encontrado neste ambiente") from exc
     except OSError as exc:
@@ -1654,6 +1657,60 @@ async def search_image(
         return response
 
 
+@app.post("/api/search/face")
+async def search_face(
+    file: Annotated[UploadFile, File()],
+    top_k: int = Form(50),
+):
+    backend = _get_backend()
+    with trace("api.search.face"):
+        from PIL import Image
+        try:
+            img = Image.open(file.file).convert("RGB")
+        except Exception as exc:
+            raise HTTPException(400, f"Could not open image file: {exc}") from exc
+        if not backend.has_face_tables():
+            raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
+        results = await run_in_threadpool(backend.search_face, img, top_k)
+        if results is None:
+            raise HTTPException(422, "Nenhum rosto detectado na imagem enviada.")
+        return {
+            "filename": file.filename,
+            "total": len(results),
+            "results": [_result_to_json(r) for r in results],
+        }
+
+
+@app.get("/api/search/face/by-record/{idx}")
+async def search_face_by_record(idx: int, top_k: int = Query(50)):
+    backend = _get_backend()
+    with trace("api.search.face.by_record"):
+        if not backend.has_face_tables():
+            raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
+        results = backend.search_face_by_record(idx, top_k)
+        if results is None:
+            raise HTTPException(422, "Nenhum rosto detectado nesta mídia.")
+        return {
+            "source_index": idx,
+            "total": len(results),
+            "results": [_result_to_json(r) for r in results],
+        }
+
+
+@app.get("/api/search/face/by-face/{face_id}")
+async def search_face_by_face(face_id: int, top_k: int = Query(50)):
+    backend = _get_backend()
+    with trace("api.search.face.by_face"):
+        if not backend.has_face_tables():
+            raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
+        results = backend.search_face_by_face(face_id, top_k)
+        return {
+            "source_face": face_id,
+            "total": len(results),
+            "results": [_result_to_json(r) for r in results],
+        }
+
+
 @app.get("/api/search/similar/{idx}")
 async def search_similar(
     idx: int,
@@ -1973,6 +2030,86 @@ async def reject_concept_media(concept_id: int, db_ids: str = Form(...)):
         ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
         backend.set_media_rejected(concept_id, ids)
         return {"ok": True}
+
+
+# ── Pessoas (rostos) ──────────────────────────────────────────────────────────
+
+
+@app.get("/api/persons")
+async def list_persons():
+    backend = _get_backend()
+    with trace("api.persons.list"):
+        if not backend.has_face_tables():
+            return {"persons": []}
+        return {"persons": backend.list_persons()}
+
+
+@app.get("/api/persons/{person_id}/media")
+async def person_media(person_id: int):
+    backend = _get_backend()
+    with trace("api.persons.media"):
+        results = backend.get_person_media(person_id)
+        return {
+            "person_id": person_id,
+            "total": len(results),
+            "results": [_result_to_json(r) for r in results],
+        }
+
+
+@app.post("/api/persons/{person_id}/rename")
+async def rename_person(person_id: int, name: str = Form("")):
+    backend = _get_backend()
+    with trace("api.persons.rename"):
+        backend.rename_person(person_id, name)
+        return {"ok": True}
+
+
+@app.post("/api/persons/merge")
+async def merge_persons(source_id: int = Form(...), target_id: int = Form(...)):
+    backend = _get_backend()
+    with trace("api.persons.merge"):
+        backend.merge_persons(source_id, target_id)
+        return {"ok": True}
+
+
+@app.post("/api/persons/{person_id}/delete")
+async def delete_person(person_id: int):
+    backend = _get_backend()
+    with trace("api.persons.delete"):
+        backend.delete_person(person_id)
+        return {"ok": True}
+
+
+@app.post("/api/persons/cluster")
+async def cluster_persons(recluster: bool = Form(False)):
+    backend = _get_backend()
+    with trace("api.persons.cluster"):
+        if not backend.has_face_tables():
+            raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
+        stats = await run_in_threadpool(backend.cluster_faces, recluster)
+        return {"ok": True, **stats}
+
+
+@app.get("/api/records/{idx}/faces")
+async def record_faces(idx: int):
+    backend = _get_backend()
+    with trace("api.records.faces"):
+        record = backend.get_record(idx)
+        if record is None or not record.db_id:
+            return {"faces": []}
+        if not backend.has_face_tables():
+            return {"faces": []}
+        return {"faces": backend.get_media_faces(record.db_id)}
+
+
+@app.get("/api/faces/{face_id}/thumb")
+async def face_thumb(face_id: int):
+    backend = _get_backend()
+    with trace("api.faces.thumb"):
+        blob = backend.get_face_thumbnail(face_id) if backend.has_face_tables() else None
+        if not blob:
+            raise HTTPException(404, "Rosto não encontrado.")
+        return Response(content=blob, media_type="image/jpeg")
 
 
 # ── Web enrichment ───────────────────────────────────────────────────────────

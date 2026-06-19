@@ -82,6 +82,7 @@ class IndexerConfig:
     collection_name: str | None = None
     clap_model: str = "none"
     force_reimport_video_audio: bool = False
+    extract_faces: bool = True
 
 
 @dataclass
@@ -156,6 +157,11 @@ def parse_arguments() -> IndexerConfig:
         default="none",
         help="Modelo CLAP para embeddings de audio. Use 'none' para desativar.",
     )
+    parser.add_argument(
+        "--no-faces",
+        action="store_true",
+        help="Desativa a detecção/embedding de rostos (economiza VRAM e tempo).",
+    )
     args = parser.parse_args()
 
     db_path = Path(args.db)
@@ -179,6 +185,7 @@ def parse_arguments() -> IndexerConfig:
         copy_to_library=args.copy_to_library,
         collection_name=args.collection,
         clap_model=args.clap_model,
+        extract_faces=not args.no_faces,
     )
 
 
@@ -772,6 +779,9 @@ def process_images(
                                 "perceptual_hash": _perceptual_hash,
                                 "candidate_thumb": candidate_thumb,
                                 "metadata_json": _metadata_json,
+                                "face_image": image,
+                                "is_video": _is_video_file,
+                                "is_audio": _is_audio,
                             }
                         )
                     except ImportSourceUnavailable:
@@ -959,6 +969,9 @@ def process_images(
                     )
                     known_hashes.add(str(item["content_hash"]))
                     _imported += 1
+                    _meme_id = int(cursor.lastrowid)
+                    if config.extract_faces and not item.get("is_audio"):
+                        _extract_faces_safe(conn, _meme_id, item, config.device)
                     if dedup is not None:
                         import_review.ledger_record(
                             conn, path=str(item["source_path"]),
@@ -1087,6 +1100,56 @@ def _audio_placeholder() -> Image.Image:
     return img
 
 
+def _extract_faces_safe(conn, meme_id: int, item: dict, device: str) -> None:
+    """Detecta e grava rostos de uma mídia recém-indexada. Nunca quebra a indexação."""
+    try:
+        from core import faces as faces_mod
+
+        if item.get("is_video"):
+            sampled = _sample_video_frames(Path(item["path"]), 6)
+            images = [img for img, _t in sampled]
+            times: list[float | None] = [t for _img, t in sampled]
+        else:
+            face_image = item.get("face_image")
+            if face_image is None:
+                return
+            images, times = [face_image], [None]
+        if images:
+            faces_mod.extract_faces_for_record(
+                conn, meme_id, images, frame_times=times, device=device
+            )
+    except Exception as exc:  # noqa: BLE001 — face extraction is best-effort
+        print(f"\n! Falha ao extrair rostos (meme {meme_id}): {exc}")
+
+
+def _sample_video_frames(path: Path, n_frames: int = 6) -> list[tuple[Image.Image, float]]:
+    """Amostra N frames significativos uniformemente (pula 10% inicial/final).
+
+    Retorna pares ``(imagem, tempo_em_segundos)``. Reusado pela embedding multi-frame e
+    pela extração de rostos em vídeo.
+    """
+    cap = cv2.VideoCapture(str(path))
+    total = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    # Sample evenly, skip first/last 10 % to avoid title cards and fade-outs
+    margin = max(int(total * 0.10), 1)
+    positions = [
+        margin + int((total - 2 * margin) * i / max(n_frames - 1, 1))
+        for i in range(n_frames)
+    ]
+    frames: list[tuple[Image.Image, float]] = []
+    for pos in positions:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(pos, 0))
+        ok, frame = cap.read()
+        if ok and _is_meaningful_frame(frame):
+            img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            _cap_image_size(img)
+            frame_time = (pos / fps) if fps > 0 else float(pos)
+            frames.append((img, frame_time))
+    cap.release()
+    return frames
+
+
 def _compute_video_multi_frame_embedding(
     path: Path,
     clip_model: SentenceTransformer,
@@ -1101,23 +1164,7 @@ def _compute_video_multi_frame_embedding(
 
     Returns None if no meaningful frames are found (video will fall back to placeholder).
     """
-    cap = cv2.VideoCapture(str(path))
-    total = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
-    # Sample evenly, skip first/last 10 % to avoid title cards and fade-outs
-    margin = max(int(total * 0.10), 1)
-    positions = [
-        margin + int((total - 2 * margin) * i / max(n_frames - 1, 1))
-        for i in range(n_frames)
-    ]
-    frames: list[Image.Image] = []
-    for pos in positions:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, max(pos, 0))
-        ok, frame = cap.read()
-        if ok and _is_meaningful_frame(frame):
-            img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            _cap_image_size(img)
-            frames.append(img)
-    cap.release()
+    frames = [img for img, _t in _sample_video_frames(path, n_frames)]
     if not frames:
         return None
     embeddings = clip_model.encode(frames, batch_size=len(frames), show_progress_bar=False)
@@ -1501,6 +1548,23 @@ def create_faiss_indices(db_path: Path, model_name: str | None = None) -> None:
 def run_index_pipeline(config: IndexerConfig) -> None:
     process_images(config)
     create_faiss_indices(config.db_path, config.model_name)
+    if config.extract_faces:
+        cluster_indexed_faces(config.db_path)
+
+
+def cluster_indexed_faces(db_path: Path) -> None:
+    """Agrupa os rostos extraídos em pessoas (idempotente, incremental)."""
+    try:
+        from core import faces as faces_mod
+
+        conn = sqlite3.connect(db_path)
+        try:
+            if faces_mod.has_face_tables(conn):
+                faces_mod.cluster_faces(conn)
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — clustering is best-effort
+        print(f"\n! Falha ao agrupar rostos: {exc}")
 
 
 def main() -> None:

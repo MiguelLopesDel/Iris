@@ -89,6 +89,25 @@ export async function searchSimilar(idx, options = {}) {
   return apiGet(`/api/search/similar/${idx}`, options);
 }
 
+export async function searchFace(file, options = {}) {
+  const fd = new FormData();
+  fd.append('file', file);
+  for (const [k, v] of Object.entries(options)) {
+    if (v !== '' && v !== undefined && v !== null) fd.append(k, v);
+  }
+  const res = await fetch('/api/search/face', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function searchFaceByRecord(idx, options = {}) {
+  return apiGet(`/api/search/face/by-record/${idx}`, options);
+}
+
+export async function searchFaceByFace(faceId, options = {}) {
+  return apiGet(`/api/search/face/by-face/${faceId}`, options);
+}
+
 export async function searchRandom(n = 20) {
   return apiGet('/api/search/random', { n });
 }
@@ -196,6 +215,40 @@ export async function confirmConceptMedia(conceptId, dbIds) {
 
 export async function rejectConceptMedia(conceptId, dbIds) {
   return apiPost(`/api/concepts/${conceptId}/reject`, { db_ids: dbIds.join(',') });
+}
+
+// ── Pessoas (rostos) ──────────────────────────────────────────────────────
+
+export async function listPersons() {
+  return apiGet('/api/persons');
+}
+
+export async function getPersonMedia(id) {
+  return apiGet(`/api/persons/${id}/media`);
+}
+
+export async function renamePerson(id, name) {
+  return apiPost(`/api/persons/${id}/rename`, { name });
+}
+
+export async function mergePersons(sourceId, targetId) {
+  return apiPost('/api/persons/merge', { source_id: sourceId, target_id: targetId });
+}
+
+export async function deletePerson(id) {
+  return apiPost(`/api/persons/${id}/delete`, {});
+}
+
+export async function clusterFaces(recluster = false) {
+  return apiPost('/api/persons/cluster', { recluster: recluster ? 'true' : 'false' });
+}
+
+export async function getRecordFaces(idx) {
+  return apiGet(`/api/records/${idx}/faces`);
+}
+
+export function faceThumbUrl(faceId) {
+  return `/api/faces/${faceId}/thumb`;
 }
 
 // ── Duplicates ────────────────────────────────────────────────────────────
