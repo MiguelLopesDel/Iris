@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Iterable
 from pathlib import Path
@@ -22,6 +23,8 @@ from core.search_types import (
     parse_query_terms,
 )
 from core.vector_store import VectorStore
+
+logger = logging.getLogger("iris")
 
 DEFAULT_MODEL = "sentence-transformers/clip-ViT-L-14"
 DEFAULT_WEIGHTS = {"balance": 0.5, "text_bonus": 2.0, "lexical_weight": 0.25}
@@ -431,6 +434,10 @@ class IrisEngine:
                 ))
             return results
         except Exception:
+            # Falha ao codificar/buscar com CLAP (modelo ausente, índice vazio,
+            # erro de runtime): degrada para "sem resultados", mas registra para
+            # não esconder a causa real.
+            logger.warning("busca de áudio (CLAP) falhou para a query %r", query, exc_info=True)
             return []
 
     @staticmethod

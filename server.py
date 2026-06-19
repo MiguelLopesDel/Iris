@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import shutil
@@ -57,6 +58,8 @@ from core.web_enrichment import (
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
+logger = logging.getLogger("iris")
+
 _THUMB_DIR = Path("data/thumbnails")
 
 
@@ -376,7 +379,11 @@ def _thumbnail_url_from_path(fp: str) -> str:
                 _generate_image_thumbnail(fp, thumb)
 
         return f"/thumbs/{key}.jpg" if thumb.exists() else ""
-    except Exception:
+    except Exception as exc:
+        # Corrupt/unreadable source, decode error or thumbnail write failure —
+        # degrade to "no thumbnail" so the gallery still renders, but make the
+        # failure visible instead of swallowing it silently.
+        logger.warning("thumbnail generation failed for %s: %s", fp, exc)
         return ""
 
 
