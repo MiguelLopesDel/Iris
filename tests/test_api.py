@@ -328,6 +328,14 @@ class TestCollectionsValidation:
         r = client.post("/api/collections")
         assert r.status_code == 422
 
+    def test_create_returns_collection_id(self, client):
+        import server
+
+        server._backend.create_collection.return_value = 7
+        r = client.post("/api/collections", data={"name": "Favoritos"})
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "collection_id": 7}
+
 
 class TestConceptsValidation:
     def test_create_needs_name(self, client):

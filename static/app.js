@@ -4,6 +4,7 @@
 import {
   addCollectionMembers,
   applyEnrichmentSuggestion,
+  createCollection,
   createEnrichmentJob,
   escapeHtml,
   fetchInfo,
@@ -337,6 +338,136 @@ async function resolveSelectedDbIds() {
   return records.map(function(record) { return record.db_id; }).filter(Boolean);
 }
 
+var collectionModal = document.getElementById('collection-modal');
+var collectionModalState = {
+  collections: [],
+  dbIds: [],
+  busy: false,
+};
+
+function setCollectionModalStatus(message, type) {
+  var status = document.getElementById('collection-modal-status');
+  status.textContent = message || '';
+  status.className = 'collection-modal-status' + (type ? ' ' + type : '');
+}
+
+function closeCollectionModal() {
+  collectionModal.hidden = true;
+  collectionModal.setAttribute('aria-hidden', 'true');
+  collectionModalState.collections = [];
+  collectionModalState.dbIds = [];
+  collectionModalState.busy = false;
+  document.getElementById('collection-modal-list').innerHTML = '';
+  document.getElementById('collection-modal-name').value = '';
+  setCollectionModalStatus('');
+}
+
+function renderCollectionChoices() {
+  var list = document.getElementById('collection-modal-list');
+  var collections = collectionModalState.collections;
+  if (!collections.length) {
+    list.innerHTML = '<p class="filter-empty">Nenhuma coleção ainda. Crie uma abaixo.</p>';
+    return;
+  }
+  list.innerHTML = collections.map(function(collection) {
+    return '<button class="collection-choice" type="button" data-collection-id="' + collection.id + '">'
+      + '<strong>' + escapeHtml(collection.name) + '</strong>'
+      + '<span>' + (collection.count || 0) + ' itens</span>'
+      + '</button>';
+  }).join('');
+}
+
+async function openCollectionModal() {
+  var selectedCount = window.__irisSelection.size;
+  if (!selectedCount) return;
+  collectionModal.hidden = false;
+  collectionModal.setAttribute('aria-hidden', 'false');
+  document.getElementById('collection-modal-count').textContent = selectedCount;
+  document.getElementById('collection-modal-list').innerHTML = '<p class="filter-empty">Carregando coleções...</p>';
+  setCollectionModalStatus('Resolvendo itens selecionados...');
+  try {
+    collectionModalState.dbIds = await resolveSelectedDbIds();
+    if (!collectionModalState.dbIds.length) {
+      throw new Error('Nenhum item selecionado possui ID no banco.');
+    }
+    setCollectionModalStatus('Escolha uma coleção ou crie uma nova.');
+    var data = await listCollections();
+    collectionModalState.collections = data.collections || [];
+    renderCollectionChoices();
+    document.getElementById('collection-modal-name').focus();
+  } catch (err) {
+    setCollectionModalStatus('Erro: ' + err.message, 'error');
+    toast('Erro: ' + err.message, 'error');
+  }
+}
+
+async function addSelectionToCollection(collectionId, collectionName) {
+  if (collectionModalState.busy) return;
+  collectionModalState.busy = true;
+  setCollectionModalStatus('Adicionando itens...');
+  try {
+    var result = await addCollectionMembers(collectionId, collectionModalState.dbIds);
+    var added = typeof result.added === 'number' ? result.added : collectionModalState.dbIds.length;
+    toast(added + ' item(ns) adicionados a ' + collectionName, 'success');
+    window.__irisSelection.clear();
+    window.dispatchEvent(new CustomEvent('iris:selection-changed'));
+    closeCollectionModal();
+    buildSidebar();
+  } catch (err) {
+    setCollectionModalStatus('Erro: ' + err.message, 'error');
+    toast('Erro: ' + err.message, 'error');
+    collectionModalState.busy = false;
+  }
+}
+
+collectionModal.addEventListener('click', function(event) {
+  if (event.target === collectionModal || event.target.id === 'collection-modal-close') {
+    closeCollectionModal();
+    return;
+  }
+  var choice = event.target.closest('.collection-choice');
+  if (!choice) return;
+  var collectionId = parseInt(choice.dataset.collectionId, 10);
+  var collection = collectionModalState.collections.find(function(item) {
+    return item.id === collectionId;
+  });
+  if (!collection) return;
+  addSelectionToCollection(collection.id, collection.name);
+});
+
+document.getElementById('collection-modal-create-form').addEventListener('submit', async function(event) {
+  event.preventDefault();
+  if (collectionModalState.busy) return;
+  var input = document.getElementById('collection-modal-name');
+  var name = input.value.trim();
+  if (!name) {
+    setCollectionModalStatus('Informe um nome para a coleção.', 'error');
+    input.focus();
+    return;
+  }
+  collectionModalState.busy = true;
+  setCollectionModalStatus('Criando coleção...');
+  try {
+    var created = await createCollection(name);
+    var collectionId = created.collection_id;
+    if (!collectionId) {
+      var data = await listCollections();
+      var normalized = name.toLowerCase();
+      var match = (data.collections || []).find(function(collection) {
+        return String(collection.name || '').toLowerCase() === normalized;
+      });
+      collectionId = match ? match.id : null;
+    }
+    if (!collectionId) throw new Error('Coleção criada, mas não consegui identificar o ID.');
+    collectionModalState.busy = false;
+    await addSelectionToCollection(collectionId, name);
+  } catch (err) {
+    setCollectionModalStatus('Erro: ' + err.message, 'error');
+    toast('Erro: ' + err.message, 'error');
+    collectionModalState.busy = false;
+  }
+});
+
 document.getElementById('btn-trash-selected').addEventListener('click', async function() {
   var count = window.__irisSelection.size;
   if (!count) return;
@@ -354,26 +485,7 @@ document.getElementById('btn-trash-selected').addEventListener('click', async fu
 });
 
 document.getElementById('btn-collection-selected').addEventListener('click', async function() {
-  if (!window.__irisSelection.size) return;
-  try {
-    var data = await listCollections();
-    var collections = data.collections || [];
-    if (!collections.length) {
-      toast('Crie uma colecao antes de adicionar itens', 'info');
-      return;
-    }
-    var menu = collections.map(function(collection, index) {
-      return (index + 1) + '. ' + collection.name;
-    }).join('\n');
-    var answer = prompt('Escolha a colecao:\n\n' + menu);
-    var position = parseInt(answer, 10) - 1;
-    if (!answer || position < 0 || position >= collections.length) return;
-    var ids = await resolveSelectedDbIds();
-    await addCollectionMembers(collections[position].id, ids);
-    toast(ids.length + ' item(ns) adicionados a ' + collections[position].name, 'success');
-  } catch (err) {
-    toast('Erro: ' + err.message, 'error');
-  }
+  openCollectionModal();
 });
 
 document.getElementById('btn-enrich-selected').addEventListener('click', async function() {
@@ -732,6 +844,10 @@ sidebarScrim.addEventListener('click', function() {
 
 document.addEventListener('keydown', function(event) {
   if (event.key !== 'Escape') return;
+  if (!collectionModal.hidden) {
+    closeCollectionModal();
+    return;
+  }
   if (lightbox.classList.contains('open')) {
     closeImageLightbox();
     return;

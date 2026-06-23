@@ -71,7 +71,7 @@ class SearchBackend(ABC):
     def list_collections(self) -> list[dict]: pass
 
     @abstractmethod
-    def create_collection(self, name: str) -> None: pass
+    def create_collection(self, name: str) -> int: pass
 
     @abstractmethod
     def rename_collection(self, collection_id: int, new_name: str) -> None: pass
@@ -184,8 +184,8 @@ class LocalBackend(SearchBackend):
     def list_collections(self) -> list[dict]:
         return self.engine.list_collections()
 
-    def create_collection(self, name: str) -> None:
-        self.engine.create_collection(name)
+    def create_collection(self, name: str) -> int:
+        return self.engine.create_collection(name)
 
     def rename_collection(self, collection_id: int, new_name: str) -> None:
         self.engine.rename_collection(collection_id, new_name)

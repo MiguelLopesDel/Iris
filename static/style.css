@@ -1939,6 +1939,138 @@ img[data-lightbox-src] {
   border-radius: 8px;
 }
 
+.collection-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.72);
+  backdrop-filter: blur(5px);
+}
+
+.collection-modal[hidden] {
+  display: none;
+}
+
+.collection-modal-card {
+  width: min(560px, 100%);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(18, 22, 30, 0.98);
+  box-shadow: var(--shadow-lg);
+}
+
+.collection-modal-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.collection-modal-card h3,
+.collection-modal-card h4,
+.collection-modal-card p {
+  margin: 0;
+}
+
+.collection-modal-card h3 {
+  margin-top: 4px;
+}
+
+.collection-modal-card p,
+.collection-modal-status {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.collection-modal-status {
+  min-height: 18px;
+  padding: 10px 22px 0;
+}
+
+.collection-modal-status.error {
+  color: #ff9cab;
+}
+
+.collection-modal-status.success {
+  color: var(--accent);
+}
+
+.collection-modal-section {
+  padding: 14px 22px;
+}
+
+.collection-modal-section h4 {
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.collection-modal-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.collection-choice {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.collection-choice:hover {
+  border-color: rgba(184, 255, 90, 0.35);
+  background: rgba(184, 255, 90, 0.06);
+}
+
+.collection-choice strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collection-choice span {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.collection-modal-create {
+  border-top: 1px solid var(--border);
+}
+
+#collection-modal-create-form {
+  display: flex;
+  gap: 8px;
+}
+
+#collection-modal-create-form input {
+  flex: 1;
+  min-width: 0;
+}
+
 #toast-container {
   position: fixed;
   z-index: 90;

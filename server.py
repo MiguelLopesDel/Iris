@@ -1626,8 +1626,10 @@ async def list_collections():
 async def create_collection(name: str = Form(...)):
     backend = _get_backend()
     with trace("api.collections.create"):
-        backend.create_collection(name)
-        return {"ok": True}
+        collection_id = backend.create_collection(name)
+        if not isinstance(collection_id, int):
+            collection_id = None
+        return {"ok": True, "collection_id": collection_id}
 
 
 @app.post("/api/collections/{col_id}/rename")

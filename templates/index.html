@@ -480,9 +480,34 @@
   </div>
 </div>
 
+<div id="collection-modal" class="collection-modal" role="dialog" aria-modal="true" aria-hidden="true" hidden>
+  <div class="collection-modal-card">
+    <header>
+      <div>
+        <span class="eyebrow">Coleções</span>
+        <h3>Adicionar seleção</h3>
+        <p><span id="collection-modal-count">0</span> item(ns) selecionado(s)</p>
+      </div>
+      <button id="collection-modal-close" class="icon-btn" type="button" aria-label="Fechar">×</button>
+    </header>
+    <div id="collection-modal-status" class="collection-modal-status"></div>
+    <section class="collection-modal-section">
+      <h4>Escolher existente</h4>
+      <div id="collection-modal-list" class="collection-modal-list"></div>
+    </section>
+    <section class="collection-modal-section collection-modal-create">
+      <h4>Criar agora</h4>
+      <form id="collection-modal-create-form">
+        <input id="collection-modal-name" type="text" placeholder="Nome da nova coleção" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Criar e adicionar</button>
+      </form>
+    </section>
+  </div>
+</div>
+
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=46"></script>
+<script type="module" src="/static/app.js?v=47"></script>
 
 </body>
 </html>
