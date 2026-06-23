@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -321,6 +322,36 @@ class TestSearchValidation:
     def test_search_image_requires_file(self, client):
         r = client.post("/api/search/image")
         assert r.status_code == 422
+
+    def test_search_filename_matches_file_name(self, client):
+        import server
+        from core.search_types import IndexRecord
+
+        original_records = server._backend.get_all_records.return_value
+        original_record = server._backend.get_record.return_value
+        server._backend.get_all_records.return_value = [
+            IndexRecord(
+                index=1, db_id=11, arquivo="gato-bravo-final.png", caminho="/media/gato.png",
+                resolved_path="/media/gato.png", texto_extraido="", descricao_ia="", tags="",
+                embedding=np.zeros(3, dtype=np.float32), desc_embedding=None,
+            ),
+            IndexRecord(
+                index=2, db_id=12, arquivo="cachorro.png", caminho="/media/cachorro.png",
+                resolved_path="/media/cachorro.png", texto_extraido="", descricao_ia="", tags="",
+                embedding=np.zeros(3, dtype=np.float32), desc_embedding=None,
+            ),
+        ]
+        server._backend.get_record.return_value = None
+        try:
+            r = client.get("/api/search/filename?q=gato%20bravo")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["total"] == 1
+            assert body["results"][0]["arquivo"] == "gato-bravo-final.png"
+            assert body["results"][0]["score_details"]["kind"] == "filename"
+        finally:
+            server._backend.get_all_records.return_value = original_records
+            server._backend.get_record.return_value = original_record
 
 
 class TestCollectionsValidation:

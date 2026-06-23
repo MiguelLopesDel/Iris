@@ -39,7 +39,7 @@ from core.backend import SearchBackend, create_backend
 from core.file_ops import move_to_trash
 from core.perf import dump, trace
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-from core.search_types import IndexRecord, SearchOptions, SearchResult
+from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
 from core.web_enrichment import (
     EnrichmentSuggestion,
     WebEnrichmentService,
@@ -1411,6 +1411,31 @@ def _sorted_records(backend: SearchBackend, sort_by: str, sort_asc: int) -> list
     return result
 
 
+def _filter_records(
+    records: list[IndexRecord],
+    backend: SearchBackend,
+    options: SearchOptions,
+) -> list[IndexRecord]:
+    if options.media_type == "video":
+        records = [
+            r for r in records if os.path.splitext(r.arquivo)[1].lower() in VIDEO_EXTENSIONS
+        ]
+    elif options.media_type == "image":
+        records = [
+            r for r in records if os.path.splitext(r.arquivo)[1].lower() in IMAGE_EXTENSIONS
+        ]
+
+    if options.collection_ids:
+        allowed = backend.get_collection_db_ids(options.collection_ids)
+        records = [r for r in records if r.db_id in allowed]
+
+    if options.concept_ids:
+        allowed = backend.get_concept_db_ids(options.concept_ids)
+        records = [r for r in records if r.db_id in allowed]
+
+    return records
+
+
 @app.get("/api/records")
 async def get_records(
     page: int = Query(1, ge=1),
@@ -1433,21 +1458,7 @@ async def get_records(
         # so collection/concept membership changes are never served stale.
         records = _sorted_records(backend, sort_by, sort_asc)
 
-        # Filter by media type
-        if options.media_type == "video":
-            records = [r for r in records if os.path.splitext(r.arquivo)[1].lower() in VIDEO_EXTENSIONS]
-        elif options.media_type == "image":
-            records = [r for r in records if os.path.splitext(r.arquivo)[1].lower() in IMAGE_EXTENSIONS]
-
-        # Filter by collection
-        if options.collection_ids:
-            allowed = backend.get_collection_db_ids(options.collection_ids)
-            records = [r for r in records if r.db_id in allowed]
-
-        # Filter by concept
-        if options.concept_ids:
-            allowed = backend.get_concept_db_ids(options.concept_ids)
-            records = [r for r in records if r.db_id in allowed]
+        records = _filter_records(records, backend, options)
 
         records_sorted = records
         total = len(records_sorted)
@@ -1502,6 +1513,38 @@ async def get_record_detail(idx: int):
 # ── Search ────────────────────────────────────────────────────────────────────
 
 
+def _filename_match_score(record: IndexRecord, query: str) -> float:
+    normalized_query = normalize_text(query)
+    normalized_name = normalize_text(Path(record.arquivo).name)
+    normalized_stem = normalize_text(Path(record.arquivo).stem)
+    if not normalized_query:
+        return 0.0
+    if normalized_name == normalized_query or normalized_stem == normalized_query:
+        return 1.0
+    if normalized_query in normalized_name:
+        return 0.85
+    words = [word for word in normalized_query.split() if word]
+    if not words:
+        return 0.0
+    matched = sum(1 for word in words if word in normalized_name)
+    return (matched / len(words)) * 0.7
+
+
+def _record_to_search_result(record: IndexRecord, score: float, kind: str) -> SearchResult:
+    return SearchResult(
+        score=score,
+        index=record.index,
+        arquivo=record.arquivo,
+        caminho=record.caminho,
+        resolved_path=record.resolved_path,
+        texto_extraido=record.texto_extraido,
+        descricao_ia=record.descricao_ia,
+        tags=record.tags,
+        embedding=record.embedding,
+        score_details={"filename": score, "kind": kind},
+    )
+
+
 @app.get("/api/search")
 async def search_text(
     q: str = Query(...),
@@ -1524,6 +1567,41 @@ async def search_text(
             collection_ids=collection_ids, concept_ids=concept_ids,
         )
         results = backend.search_text(q.strip(), options)
+        return {
+            "query": q,
+            "total": len(results),
+            "results": [_result_to_json(r) for r in results],
+        }
+
+
+@app.get("/api/search/filename")
+async def search_filename(
+    q: str = Query(...),
+    top_k: int = Query(50, ge=1, le=500),
+    media_type: str = Query("all"),
+    collection_ids: str = Query(""),
+    concept_ids: str = Query(""),
+):
+    backend = _get_backend()
+    with trace("api.search.filename"):
+        query = q.strip()
+        options = _options_from_params(
+            top_k=top_k,
+            media_type=media_type,
+            collection_ids=collection_ids,
+            concept_ids=concept_ids,
+        )
+        records = _filter_records(backend.get_all_records(), backend, options)
+        scored = [
+            (score, record)
+            for record in records
+            if (score := _filename_match_score(record, query)) > 0
+        ]
+        scored.sort(key=lambda item: (-item[0], item[1].arquivo.lower(), item[1].db_id))
+        results = [
+            _record_to_search_result(record, score, "filename")
+            for score, record in scored[:top_k]
+        ]
         return {
             "query": q,
             "total": len(results),

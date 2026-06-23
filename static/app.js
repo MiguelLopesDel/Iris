@@ -16,8 +16,8 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=36';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom } from './gallery.js?v=30';
+} from './api.js?v=37';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom } from './gallery.js?v=31';
 import { initCollections } from './collections.js?v=27';
 import { initConcepts } from './concepts.js?v=28';
 import { initDuplicates } from './duplicates.js?v=27';

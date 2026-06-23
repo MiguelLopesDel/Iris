@@ -70,6 +70,10 @@ export async function searchText(q, options = {}) {
   return apiGet('/api/search', { q, ...options });
 }
 
+export async function searchFilename(q, options = {}) {
+  return apiGet('/api/search/filename', { q, ...options });
+}
+
 export async function searchImage(file, options = {}) {
   const fd = new FormData();
   fd.append('file', file);
