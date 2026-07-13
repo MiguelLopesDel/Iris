@@ -1,6 +1,6 @@
 /* ── Iris Duplicates module ───────────────────────────────────────────────── */
 
-import { escapeHtml, fetchDuplicates, mediaUrl } from './api.js?v=38';
+import { escapeHtml, fetchDuplicates, mediaUrl } from './api.js?v=39';
 
 var viewMode = 'groups'; // 'groups' | 'flat'
 

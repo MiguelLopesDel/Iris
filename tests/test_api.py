@@ -494,6 +494,45 @@ def test_duplicates_include_generated_thumbnail(monkeypatch, tmp_path):
     assert list((tmp_path / "thumbs").glob("*.jpg"))
 
 
+class TestPersonAssignment:
+    def test_create_person_409_without_face_tables(self, client):
+        r = client.post("/api/persons", data={"name": "Alice"})
+        assert r.status_code == 409
+
+    def test_assign_face_409_without_face_tables(self, client):
+        r = client.post("/api/faces/1/person", data={"person_id": "2"})
+        assert r.status_code == 409
+
+    def test_assign_face_flows(self, client):
+        import server
+
+        server._backend.has_face_tables.return_value = True
+        server._backend.create_person.return_value = 7
+        try:
+            # Create person directly.
+            r = client.post("/api/persons", data={"name": "Alice"})
+            assert r.status_code == 200 and r.json()["person_id"] == 7
+
+            # Assign by name → creates then assigns.
+            r = client.post("/api/faces/3/person", data={"name": "Bob"})
+            assert r.status_code == 200 and r.json()["person_id"] == 7
+            server._backend.set_face_person.assert_called_with(3, 7)
+
+            # Unknown face/person → 404.
+            server._backend.set_face_person.side_effect = ValueError("face 3 not found")
+            r = client.post("/api/faces/3/person", data={"person_id": "9"})
+            assert r.status_code == 404
+        finally:
+            server._backend.has_face_tables.return_value = False
+            server._backend.set_face_person.side_effect = None
+
+    def test_records_include_persons_key(self, client):
+        r = client.get("/api/records?page=1&per_page=12")
+        assert r.status_code == 200
+        for record in r.json()["records"]:
+            assert "persons" in record
+
+
 class TestTrashValidation:
     def test_trash_needs_db_ids(self, client):
         r = client.post("/api/trash")

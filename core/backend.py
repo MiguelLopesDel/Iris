@@ -178,6 +178,15 @@ class SearchBackend(ABC):
     def get_media_faces(self, meme_id: int) -> list[dict]: pass
 
     @abstractmethod
+    def create_person(self, name: str) -> int: pass
+
+    @abstractmethod
+    def set_face_person(self, face_id: int, person_id: int | None) -> None: pass
+
+    @abstractmethod
+    def get_media_persons(self, meme_ids: list[int]) -> dict[int, list[dict]]: pass
+
+    @abstractmethod
     def get_face_thumbnail(self, face_id: int) -> bytes | None: pass
 
 class LocalBackend(SearchBackend):
@@ -389,3 +398,18 @@ class LocalBackend(SearchBackend):
         conn = self.engine.db.get_connection()
         import core.faces as faces
         return faces.get_face_thumbnail(conn, face_id)
+
+    def create_person(self, name: str) -> int:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        return faces.create_person(conn, name)
+
+    def set_face_person(self, face_id: int, person_id: int | None) -> None:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        faces.set_face_person(conn, face_id, person_id)
+
+    def get_media_persons(self, meme_ids: list[int]) -> dict[int, list[dict]]:
+        conn = self.engine.db.get_connection()
+        import core.faces as faces
+        return faces.get_media_persons(conn, meme_ids)

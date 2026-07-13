@@ -14,7 +14,7 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=38';
+} from './api.js?v=39';
 
 let initialized = false;
 let importPoll = null;

@@ -376,6 +376,66 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
     conn.commit()
 
 
+def create_person(conn: sqlite3.Connection, name: str) -> int:
+    """Create a (possibly unnamed) person and return its id.
+
+    Note: persons without faces are garbage-collected by ``_refresh_persons`` during
+    cluster/merge, so callers should assign a face right after creating.
+    """
+    now = _now_iso()
+    cur = conn.execute(
+        "INSERT INTO persons (name, cover_face_id, created_at, updated_at) VALUES (?, NULL, ?, ?)",
+        (name.strip() or None, now, now),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def set_face_person(conn: sqlite3.Connection, face_id: int, person_id: int | None) -> None:
+    """Assign a face to a person (``None`` unassigns). Raises ``ValueError`` if either is missing.
+
+    Refreshes person covers afterwards; a person left with zero faces is removed
+    (same behavior as merge/cluster), avoiding ghost entries in the Persons tab.
+    """
+    face = conn.execute("SELECT id FROM faces WHERE id = ?", (face_id,)).fetchone()
+    if face is None:
+        raise ValueError(f"face {face_id} not found")
+    if person_id is not None:
+        person = conn.execute("SELECT id FROM persons WHERE id = ?", (person_id,)).fetchone()
+        if person is None:
+            raise ValueError(f"person {person_id} not found")
+    conn.execute("UPDATE faces SET person_id = ? WHERE id = ?", (person_id, face_id))
+    if person_id is not None:
+        conn.execute(
+            "UPDATE persons SET updated_at = ? WHERE id = ?", (_now_iso(), person_id)
+        )
+    _refresh_persons(conn)
+    conn.commit()
+
+
+def get_media_persons(
+    conn: sqlite3.Connection, meme_ids: list[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Map ``meme_id -> [{id, name}]`` of persons present in each media (single query)."""
+    if not meme_ids or not has_face_tables(conn):
+        return {}
+    placeholders = ",".join("?" * len(meme_ids))
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT f.meme_id, p.id, p.name
+        FROM faces f
+        JOIN persons p ON p.id = f.person_id
+        WHERE f.meme_id IN ({placeholders})
+        ORDER BY f.meme_id, p.name IS NULL, p.name, p.id
+        """,
+        list(meme_ids),
+    ).fetchall()
+    out: dict[int, list[dict[str, Any]]] = {}
+    for meme_id, pid, name in rows:
+        out.setdefault(int(meme_id), []).append({"id": int(pid), "name": name or ""})
+    return out
+
+
 def get_media_faces(conn: sqlite3.Connection, meme_id: int) -> list[dict[str, Any]]:
     if not has_face_tables(conn):
         return []

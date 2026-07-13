@@ -6,7 +6,7 @@
    one import job, so importing many at once never collides), plus a lightbox
    to inspect any candidate (and its match) at full size. */
 
-import { escapeHtml, getImportReview, resolveImportReview } from './api.js?v=38';
+import { escapeHtml, getImportReview, resolveImportReview } from './api.js?v=39';
 
 let busy = false;
 const selected = new Set(); // item ids currently checked (persist across categories)

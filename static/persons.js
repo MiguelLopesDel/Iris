@@ -10,7 +10,7 @@ import {
   listPersons,
   mergePersons,
   renamePerson,
-} from './api.js?v=38';
+} from './api.js?v=39';
 
 let _persons = [];
 

@@ -250,6 +250,81 @@ def test_search_face_by_record_none_without_face(tmp_path):
     assert engine.search_face_by_record(0) is None
 
 
+def _add_face(conn: sqlite3.Connection, meme_id: int, emb: np.ndarray, det_score: float = 0.9) -> int:
+    cur = conn.execute(
+        "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
+        (meme_id, "[0,0,5,5]", det_score, emb.astype(np.float32).tobytes(), "now"),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def test_set_face_person_assign_and_unassign(conn):
+    mid = _add_meme(conn, "x.jpg")
+    fid = _add_face(conn, mid, _unit([1, 0, 0]))
+    pid = faces.create_person(conn, "Alice")
+
+    faces.set_face_person(conn, fid, pid)
+    assert conn.execute("SELECT person_id FROM faces WHERE id = ?", (fid,)).fetchone()[0] == pid
+    # Cover was refreshed to the assigned face.
+    assert conn.execute("SELECT cover_face_id FROM persons WHERE id = ?", (pid,)).fetchone()[0] == fid
+
+    # Unassign → the now-empty person is garbage-collected (same as merge/cluster).
+    faces.set_face_person(conn, fid, None)
+    assert conn.execute("SELECT person_id FROM faces WHERE id = ?", (fid,)).fetchone()[0] is None
+    assert faces._count_persons(conn) == 0
+
+
+def test_set_face_person_reassign_moves_between_persons(conn):
+    m1, m2 = _add_meme(conn, "a.jpg"), _add_meme(conn, "b.jpg")
+    f1 = _add_face(conn, m1, _unit([1, 0, 0]))
+    f2 = _add_face(conn, m2, _unit([0, 1, 0]))
+    faces.cluster_faces(conn, threshold=0.5)
+    persons = faces.list_persons(conn)
+    assert len(persons) == 2
+    target = next(p["id"] for p in persons if p["cover_face_id"] == f1)
+
+    faces.set_face_person(conn, f2, target)
+    assert faces._count_persons(conn) == 1  # the emptied person was removed
+    remaining = faces.list_persons(conn)[0]
+    assert remaining["id"] == target
+    assert remaining["face_count"] == 2
+
+
+def test_set_face_person_validates_ids(conn):
+    with pytest.raises(ValueError):
+        faces.set_face_person(conn, 999, None)
+    mid = _add_meme(conn, "x.jpg")
+    fid = _add_face(conn, mid, _unit([1, 0, 0]))
+    with pytest.raises(ValueError):
+        faces.set_face_person(conn, fid, 999)
+
+
+def test_create_person_trims_name(conn):
+    pid = faces.create_person(conn, "  Bia  ")
+    assert conn.execute("SELECT name FROM persons WHERE id = ?", (pid,)).fetchone()[0] == "Bia"
+    anon = faces.create_person(conn, "   ")
+    assert conn.execute("SELECT name FROM persons WHERE id = ?", (anon,)).fetchone()[0] is None
+
+
+def test_get_media_persons_bulk(conn):
+    m1, m2, m3 = _add_meme(conn, "a.jpg"), _add_meme(conn, "b.jpg"), _add_meme(conn, "c.jpg")
+    # Assign right after creating: empty persons are GC'd on the next assignment.
+    alice = faces.create_person(conn, "Alice")
+    faces.set_face_person(conn, _add_face(conn, m1, _unit([1, 0, 0])), alice)
+    bob = faces.create_person(conn, "Bob")
+    faces.set_face_person(conn, _add_face(conn, m1, _unit([0, 1, 0])), bob)
+    faces.set_face_person(conn, _add_face(conn, m2, _unit([0.9, 0.1, 0])), alice)
+    _add_face(conn, m3, _unit([0, 0, 1]))  # face without person → not listed
+
+    mapping = faces.get_media_persons(conn, [m1, m2, m3, 12345])
+    assert [p["name"] for p in mapping[m1]] == ["Alice", "Bob"]
+    assert [p["name"] for p in mapping[m2]] == ["Alice"]
+    assert m3 not in mapping
+    assert 12345 not in mapping
+    assert faces.get_media_persons(conn, []) == {}
+
+
 def test_get_person_media(tmp_path):
     from core.search_engine import IrisEngine
 

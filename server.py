@@ -335,6 +335,26 @@ def _result_to_json(r: SearchResult) -> dict[str, Any]:
     return base
 
 
+def _attach_persons(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bulk-attach the persons present in each media (single query, no N+1)."""
+    backend = _get_backend()
+    persons_map: dict[int, list[dict]] = {}
+    try:
+        if backend.has_face_tables():
+            ids = [d["db_id"] for d in dicts if d.get("db_id")]
+            if ids:
+                persons_map = backend.get_media_persons(ids)
+    except Exception:
+        persons_map = {}
+    for d in dicts:
+        d["persons"] = persons_map.get(d.get("db_id") or 0, [])
+    return dicts
+
+
+def _results_to_json(results: list[SearchResult]) -> list[dict[str, Any]]:
+    return _attach_persons([_result_to_json(r) for r in results])
+
+
 def _empty_record(r: SearchResult) -> IndexRecord:
     return IndexRecord(
         index=r.index, arquivo=r.arquivo, caminho=r.caminho,
@@ -1480,7 +1500,7 @@ async def get_records(
                 1 for r in page_records
                 if not r.resolved_path or not os.path.exists(r.resolved_path)
             ),
-            "records": [_record_to_json(r) for r in page_records],
+            "records": _attach_persons([_record_to_json(r) for r in page_records]),
         }
 
 
@@ -1495,6 +1515,7 @@ async def get_record_detail(idx: int):
         if r is None:
             raise HTTPException(404, "Record not found")
         d = _record_to_json(r)
+        _attach_persons([d])
         # Add extra detail fields
         d["caminho"] = r.caminho
         d["score_details"] = {}
@@ -1602,7 +1623,7 @@ async def search_text(
         return {
             "query": q,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -1637,7 +1658,7 @@ async def search_filename(
         return {
             "query": q,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -1673,14 +1694,14 @@ async def search_image(
         response = {
             "filename": file.filename,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
         if group_results:
             groups = _group_search_results(results, group_threshold)
             if not show_singletons:
                 groups = [group for group in groups if len(group) > 1]
             response["groups"] = [
-                [_result_to_json(result) for result in group]
+                _results_to_json(group)
                 for group in groups
             ]
         return response
@@ -1706,7 +1727,7 @@ async def search_face(
         return {
             "filename": file.filename,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -1722,7 +1743,7 @@ async def search_face_by_record(idx: int, top_k: int = Query(50)):
         return {
             "source_index": idx,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -1736,7 +1757,7 @@ async def search_face_by_face(face_id: int, top_k: int = Query(50)):
         return {
             "source_face": face_id,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -1761,7 +1782,7 @@ async def search_similar(
         return {
             "source_index": idx,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -1772,7 +1793,7 @@ async def search_random(n: int = Query(20, ge=1, le=100)):
         results = backend.random_results(n)
         return {
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -2081,7 +2102,7 @@ async def person_media(person_id: int):
         return {
             "person_id": person_id,
             "total": len(results),
-            "results": [_result_to_json(r) for r in results],
+            "results": _results_to_json(results),
         }
 
 
@@ -2107,6 +2128,36 @@ async def delete_person(person_id: int):
     with trace("api.persons.delete"):
         backend.delete_person(person_id)
         return {"ok": True}
+
+
+@app.post("/api/persons")
+async def create_person(name: str = Form("")):
+    backend = _get_backend()
+    with trace("api.persons.create"):
+        if not backend.has_face_tables():
+            raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
+        person_id = backend.create_person(name)
+        return {"ok": True, "person_id": person_id}
+
+
+@app.post("/api/faces/{face_id}/person")
+async def assign_face_person(
+    face_id: int,
+    person_id: int | None = Form(None),
+    name: str = Form(""),
+):
+    """Assign a face to a person. ``name`` creates the person first; neither → unassign."""
+    backend = _get_backend()
+    with trace("api.faces.assign"):
+        if not backend.has_face_tables():
+            raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
+        try:
+            if name.strip():
+                person_id = backend.create_person(name)
+            backend.set_face_person(face_id, person_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"ok": True, "person_id": person_id}
 
 
 @app.post("/api/persons/cluster")

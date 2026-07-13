@@ -243,8 +243,23 @@ export async function clusterFaces(recluster = false) {
   return apiPost('/api/persons/cluster', { recluster: recluster ? 'true' : 'false' });
 }
 
+export async function createPerson(name) {
+  return apiPost('/api/persons', { name });
+}
+
+export async function assignFacePerson(faceId, { personId = null, name = '' } = {}) {
+  const payload = {};
+  if (personId != null) payload.person_id = String(personId);
+  if (name) payload.name = name;
+  return apiPost(`/api/faces/${faceId}/person`, payload);
+}
+
 export async function getRecordFaces(idx) {
   return apiGet(`/api/records/${idx}/faces`);
+}
+
+export async function getRecordMetadata(idx) {
+  return apiGet(`/api/records/${idx}/metadata`);
 }
 
 export function faceThumbUrl(faceId) {
