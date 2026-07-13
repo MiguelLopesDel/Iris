@@ -95,9 +95,11 @@ function renderPersonCard(p) {
   </article>`;
 }
 
-/** Visual person picker; resolves the chosen person's id or null. */
-export function pickPersonModal({ persons, kicker = 'Pessoas', title = 'Escolher pessoa' }) {
+/** Visual person picker. Resolves `{ personId }`, `{ createName }` (when
+    `allowCreate` and the user typed a new name) or `null` on cancel. */
+export function pickPersonModal({ persons, kicker = 'Pessoas', title = 'Escolher pessoa', allowCreate = false }) {
   return new Promise((resolve) => {
+    const body = document.createElement('div');
     const grid = document.createElement('div');
     grid.className = 'person-pick-grid';
     for (const p of persons) {
@@ -109,14 +111,35 @@ export function pickPersonModal({ persons, kicker = 'Pessoas', title = 'Escolher
         <span class="person-pick-meta">${p.media_count || 0} mídia(s)</span>`;
       btn.addEventListener('click', () => {
         modal.close();
-        resolve(p.id);
+        resolve({ personId: p.id });
       });
       grid.appendChild(btn);
     }
+    if (!persons.length) {
+      grid.innerHTML = '<p class="filter-empty">Nenhuma pessoa ainda.</p>';
+    }
+    body.appendChild(grid);
+
+    if (allowCreate) {
+      const form = document.createElement('form');
+      form.className = 'person-pick-create';
+      form.innerHTML = `
+        <input type="text" placeholder="Ou criar nova pessoa…" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Criar</button>`;
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = form.querySelector('input').value.trim();
+        if (!name) return;
+        modal.close();
+        resolve({ createName: name });
+      });
+      body.appendChild(form);
+    }
+
     const modal = openModal({
       kicker,
       title,
-      body: grid,
+      body,
       onCancel: () => resolve(null),
     });
   });
@@ -174,13 +197,13 @@ document.addEventListener('click', async (e) => {
       toast('Não há outra pessoa para mesclar.', 'info');
       return;
     }
-    const targetId = await pickPersonModal({
+    const choice = await pickPersonModal({
       persons: others,
       title: `Mesclar "${(source && source.name) || 'Sem nome'}" em...`,
     });
-    if (targetId === null) return;
+    if (!choice) return;
     try {
-      await mergePersons(id, targetId);
+      await mergePersons(id, choice.personId);
       toast('Pessoas mescladas', 'success');
       await initPersons();
     } catch (err) {

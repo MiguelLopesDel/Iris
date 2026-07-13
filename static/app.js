@@ -12,19 +12,16 @@ import {
   listEnrichmentSuggestions,
   listCollections,
   listConcepts,
-  getRecordFaces,
-  faceThumbUrl,
-  mediaUrl,
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
 } from './api.js?v=39';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=34';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=35';
 import { initCollections } from './collections.js?v=29';
 import { initConcepts } from './concepts.js?v=30';
 import { initDuplicates } from './duplicates.js?v=29';
 import { initSystem } from './system.js?v=32';
-import { initPersons } from './persons.js?v=3';
+import { initPersons } from './persons.js?v=4';
 import { initImportReview } from './import-review.js?v=5';
 import { toast } from './ui.js?v=1';
 
@@ -177,149 +174,6 @@ window.addEventListener('iris:face', function(e) {
 window.addEventListener('iris:face-record', function(e) {
   runGalleryFaceByRecord(e.detail.index);
   switchTab('gallery');
-});
-
-window.addEventListener('iris:detail', async function(e) {
-  var index = e.detail.index;
-
-  // Toggle: if detail panel already open for the same item, close it
-  var old = document.getElementById('detail-panel');
-  if (old) {
-    var currentIndex = parseInt(old.dataset.detailIndex);
-    if (currentIndex === index) {
-      old.remove();
-      return;
-    }
-    old.remove();
-  }
-
-  var card = document.querySelector('.media-card[data-index="' + index + '"]');
-  if (!card) return;
-
-  var panel = document.createElement('div');
-  panel.id = 'detail-panel';
-  panel.className = 'detail-panel';
-  panel.dataset.detailIndex = index;
-  panel.innerHTML = '<p style="color:var(--text-muted);">Carregando...</p>';
-
-  // Insert after the card; CSS grid-column: 1/-1 makes it span full width
-  card.after(panel);
-
-  try {
-    var res = await fetch('/api/records/' + index);
-    if (!res.ok) throw new Error('Record not found');
-    var r = await res.json();
-    var hasFile = r.resolved_path && r.resolved_path !== 'None';
-    var ext = (r.arquivo || '').split('.').pop().toLowerCase();
-    var isVideo = ['mp4','webm','mkv','mov','ogg'].indexOf(ext) >= 0;
-    var inColIds = {};
-    (r.collections || []).forEach(function(c) { inColIds[c.id] = true; });
-    var inConcIds = {};
-    (r.concepts || []).forEach(function(c) { if (c.confirmed) inConcIds[c.id] = true; });
-
-    var html = '<div style="display:flex;gap:16px;align-items:start;flex-wrap:wrap;">';
-    if (r.thumbnail_url) {
-      var detailLightbox = !isVideo && hasFile
-        ? ' data-lightbox-src="' + escapeHtml(mediaUrl(r.resolved_path)) + '" data-lightbox-title="' + escapeHtml(r.arquivo || '') + '"'
-        : '';
-      html += '<img src="' + escapeHtml(r.thumbnail_url) + '"' + detailLightbox + ' style="width:260px;max-width:100%;border-radius:8px;flex-shrink:0;">';
-    }
-    html += '<div style="flex:1;min-width:280px;">';
-    html += '<h3 style="word-break:break-all;margin-bottom:6px;">' + escapeHtml(r.arquivo || '(sem nome)') + '</h3>';
-    if (hasFile) html += '<pre style="font-size:11px;max-width:100%;overflow-x:auto;background:var(--bg-primary);padding:6px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(r.resolved_path) + '</pre>';
-    html += '<p style="font-size:12px;color:var(--text-muted);margin-top:4px;">Indice: ' + index + ' · DB ID: ' + r.db_id + ' · ' + (isVideo ? '🎬 Video' : '🖼️ Imagem') + ' · ' + (r.file_size != null ? Math.round(r.file_size/1024) + 'KB' : '?') + '</p>';
-    html += '</div></div>';
-
-    // Metadata rows — use a two-column layout for better readability
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;">';
-
-    if (r.texto_extraido) {
-      html += '<div><strong style="font-size:12px;">📝 Texto extraido:</strong><pre style="font-size:11px;max-height:120px;overflow-y:auto;margin-top:4px;line-height:1.5;">' + escapeHtml(r.texto_extraido) + '</pre></div>';
-    }
-    if (r.descricao_ia) {
-      html += '<div><strong style="font-size:12px;">🤖 Descricao IA:</strong><pre style="font-size:11px;max-height:120px;overflow-y:auto;margin-top:4px;line-height:1.5;">' + escapeHtml(r.descricao_ia) + '</pre></div>';
-    }
-    html += '</div>';
-
-    if (r.tags) html += '<div style="margin-top:8px;"><strong style="font-size:12px;">🏷 Tags:</strong> <span style="font-size:12px;">' + escapeHtml(r.tags) + '</span></div>';
-
-    if (r.style || r.source_work || r.context || r.humor) {
-      html += '<div style="margin-top:8px;font-size:12px;color:var(--text-secondary);display:flex;flex-wrap:wrap;gap:4px 16px;">';
-      if (r.style) html += '<span>🎨 Estilo: <strong>' + escapeHtml(r.style) + '</strong></span>';
-      if (r.source_work) html += '<span>📖 Obra: <strong>' + escapeHtml(r.source_work) + '</strong></span>';
-      if (r.context) html += '<span>🌍 Contexto: <strong>' + escapeHtml(r.context) + '</strong></span>';
-      if (r.humor) html += '<span>😂 Humor: <strong>' + escapeHtml(r.humor) + '</strong></span>';
-      html += '</div>';
-    }
-
-    html += '<div style="margin-top:10px;font-size:12px;"><strong>📁 Colecoes:</strong><div id="detail-cols" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">Carregando...</div></div>';
-    html += '<div style="margin-top:8px;font-size:12px;"><strong>🏷 Conceitos:</strong><div id="detail-concs" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">Carregando...</div></div>';
-    html += '<div style="margin-top:8px;font-size:12px;"><strong>🧑 Rostos:</strong><div id="detail-faces" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">…</div></div>';
-
-    html += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);">';
-    if (hasFile) {
-      html += '<button type="button" class="btn" data-open-folder="' + escapeHtml(r.resolved_path) + '" style="font-size:12px;padding:6px 12px;">📁 Abrir pasta</button>';
-      html += '<a href="' + escapeHtml(mediaUrl(r.resolved_path)) + '" class="btn" style="font-size:12px;padding:6px 12px;" target="_blank">📄 Abrir arquivo</a>';
-    }
-    html += '<button class="btn" style="font-size:12px;padding:6px 12px;" onclick="window.dispatchEvent(new CustomEvent(\'iris:similar\',{detail:{index:' + index + '}}))">🔍 Similares</button>';
-    html += '<button class="btn" style="font-size:12px;padding:6px 12px;" onclick="this.closest(\'#detail-panel\').remove()">✕ Fechar</button>';
-    html += '</div>';
-
-    panel.innerHTML = html;
-
-    // Fetch all collections/concepts for toggle buttons
-    try {
-      var colData = await fetch('/api/collections').then(function(r){return r.json();});
-      var concData = await fetch('/api/concepts').then(function(r){return r.json();});
-
-      var colsEl = document.getElementById('detail-cols');
-      if (colsEl && colData.collections) {
-        colsEl.innerHTML = colData.collections.map(function(c) {
-          var inCol = inColIds[c.id];
-          return '<button class="btn" style="font-size:11px;padding:4px 10px;" onclick="window.__toggleCollection(' + c.id + ',' + r.db_id + ',' + (!inCol) + ',' + index + ')">' + (inCol ? '✓' : '＋') + ' ' + escapeHtml(c.name) + '</button>';
-        }).join('') || '<span style="color:var(--text-muted);font-size:11px;">(nenhuma)</span>';
-      }
-
-      var concsEl = document.getElementById('detail-concs');
-      if (concsEl && concData.concepts) {
-        concsEl.innerHTML = concData.concepts.map(function(c) {
-          var inConc = inConcIds[c.id];
-          return '<button class="btn" style="font-size:11px;padding:4px 10px;" onclick="window.__toggleConcept(' + c.id + ',' + r.db_id + ',' + (!inConc) + ',' + index + ')">' + (inConc ? '✓' : '＋') + ' ' + escapeHtml(c.name) + '</button>';
-        }).join('') || '<span style="color:var(--text-muted);font-size:11px;">(nenhum)</span>';
-      }
-    } catch(e) { console.warn('toggle load failed', e); }
-
-    // Rostos detectados nesta mídia → clicar busca todas as mídias da pessoa.
-    try {
-      var facesEl = document.getElementById('detail-faces');
-      if (facesEl) {
-        var faceData = await getRecordFaces(index);
-        var faces = faceData.faces || [];
-        if (!faces.length) {
-          facesEl.innerHTML = '<span style="color:var(--text-muted);font-size:11px;">(nenhum rosto detectado)</span>';
-        } else {
-          facesEl.innerHTML = faces.map(function(f) {
-            // Search by this exact face — works whether or not it's been clustered yet.
-            return '<button class="face-chip" title="Buscar esta pessoa"'
-              + ' onclick="window.dispatchEvent(new CustomEvent(\'iris:face\',{detail:{faceId:' + f.id + '}}))">'
-              + '<img src="' + escapeHtml(faceThumbUrl(f.id)) + '" alt="rosto"></button>';
-          }).join('');
-        }
-      }
-    } catch(e) { console.warn('faces load failed', e); }
-
-  } catch (err) {
-    panel.textContent = '';
-    var errP = document.createElement('p');
-    errP.style.color = 'var(--accent)';
-    errP.textContent = 'Erro: ' + err.message;
-    panel.appendChild(errP);
-    var closeBtn = document.createElement('button');
-    closeBtn.className = 'btn';
-    closeBtn.textContent = 'Fechar';
-    closeBtn.onclick = function() { panel.remove(); };
-    panel.appendChild(closeBtn);
-  }
 });
 
 // ── Sidebar build ────────────────────────────────────────────────────────
@@ -815,30 +669,6 @@ document.addEventListener('click', async function(event) {
     button.disabled = false;
   }
 });
-
-// ── Collection/Concept toggle helpers ────────────────────────────────────
-
-window.__toggleCollection = async function(colId, dbId, add, idx) {
-  try {
-    var url = add ? '/api/collections/' + colId + '/members' : '/api/collections/' + colId + '/members/remove';
-    await fetch(url, { method: 'POST', body: new URLSearchParams({ db_ids: String(dbId) }) });
-    toast(add ? 'Adicionado a colecao' : 'Removido da colecao', 'success');
-    var panel = document.getElementById('detail-panel');
-    if (panel) panel.remove();
-    window.dispatchEvent(new CustomEvent('iris:detail', { detail: { index: idx } }));
-  } catch(e) { toast('Erro: ' + e.message, 'error'); }
-};
-
-window.__toggleConcept = async function(concId, dbId, confirm, idx) {
-  try {
-    var url = confirm ? '/api/concepts/' + concId + '/confirm' : '/api/concepts/' + concId + '/reject';
-    await fetch(url, { method: 'POST', body: new URLSearchParams({ db_ids: String(dbId) }) });
-    toast(confirm ? 'Confirmado no conceito' : 'Rejeitado do conceito', 'success');
-    var panel = document.getElementById('detail-panel');
-    if (panel) panel.remove();
-    window.dispatchEvent(new CustomEvent('iris:detail', { detail: { index: idx } }));
-  } catch(e) { toast('Erro: ' + e.message, 'error'); }
-};
 
 // ── Search mode & parameter controls ────────────────────────────────────
 

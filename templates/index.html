@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
-  <link rel="stylesheet" href="/static/style.css?v=36">
+  <link rel="stylesheet" href="/static/style.css?v=37">
 </head>
 <body>
 
@@ -528,9 +528,20 @@
   </div>
 </div>
 
+<div id="detail-modal" class="detail-modal" role="dialog" aria-modal="true" hidden>
+  <div class="detail-stage">
+    <button id="detail-close" class="icon-btn detail-close" type="button" aria-label="Fechar detalhes">×</button>
+    <button id="detail-prev" class="detail-nav detail-nav-prev" type="button" aria-label="Anterior">‹</button>
+    <div id="detail-media" class="detail-media"></div>
+    <button id="detail-next" class="detail-nav detail-nav-next" type="button" aria-label="Próxima">›</button>
+    <div id="detail-counter" class="detail-counter"></div>
+  </div>
+  <aside id="detail-aside" class="detail-aside"></aside>
+</div>
+
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=53"></script>
+<script type="module" src="/static/app.js?v=54"></script>
 
 </body>
 </html>

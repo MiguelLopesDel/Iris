@@ -3,6 +3,7 @@
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
 import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=39';
+import { openDetail } from './detail.js?v=1';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -214,8 +215,16 @@ function jumpToTypedPage() {
 
 // ── Render ────────────────────────────────────────────────────────────────
 
+// Records currently rendered in the grid — the detail modal navigates this list.
+let currentRecords = [];
+
+function getCurrentRecords() {
+  return currentRecords;
+}
+
 function renderGrid(records) {
   const grid = document.getElementById('gallery-grid');
+  currentRecords = records || [];
   if (!records.length) {
     grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Nenhum item encontrado.</p>';
     return;
@@ -249,13 +258,9 @@ function renderCard(record) {
     </div>`;
   }
 
-  const fullSrc = record.media_type === 'image' ? mediaUrl(record.resolved_path) : '';
-  const lightboxAttrs = fullSrc
-    ? ` data-lightbox-src="${escapeHtml(fullSrc)}" data-lightbox-title="${escapeHtml(record.arquivo)}"`
-    : '';
-  const imgTag = `<img src="${thumb}" loading="lazy" alt="${name}"${lightboxAttrs}>`;
+  const imgTag = `<img src="${thumb}" loading="lazy" alt="${name}" data-open-detail="${record.index}">`;
   const playBtn = record.media_type === 'video'
-    ? `<button class="play-overlay" data-index="${record.index}" data-path="${escapeHtml(record.resolved_path || '')}">▶</button>`
+    ? `<button class="play-overlay" data-index="${record.index}">▶</button>`
     : '';
 
   return `<div class="media-card" data-index="${record.index}">
@@ -436,6 +441,7 @@ export async function runGalleryRandom(n = 50) {
 
 function renderGroupedGrid(groups) {
   const grid = document.getElementById('gallery-grid');
+  currentRecords = groups.flat();
   if (!groups.length) {
     grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Nenhum grupo encontrado.</p>';
     return;
@@ -522,19 +528,30 @@ function observeLazyImages(container) {
 
 // ── Event delegation (video play, similar, detail, checkbox) ──────────────
 
+function openDetailAt(index) {
+  const pos = currentRecords.findIndex((r) => r.index === index);
+  if (pos >= 0) openDetail(currentRecords, pos);
+  else openDetail([{ index }], 0);
+}
+
 document.addEventListener('click', (e) => {
+  // Clicking the card image opens the detail modal (replaces the lightbox here).
+  const img = e.target.closest('img[data-open-detail]');
+  if (img) {
+    e.preventDefault();
+    openDetailAt(parseInt(img.dataset.openDetail));
+    return;
+  }
+
   const btn = e.target.closest('button');
   if (!btn) return;
 
   const index = parseInt(btn.dataset.index);
   if (isNaN(index)) return;
 
-  // ▶ Play video
+  // ▶ Video: open the detail modal, which plays it in the stage
   if (btn.classList.contains('play-overlay')) {
-    const path = btn.dataset.path;
-    if (!path) return;
-    const container = document.getElementById(`card-img-${index}`);
-    container.innerHTML = `<video src="/media/${path}" controls autoplay style="width:100%;height:100%;object-fit:contain;background:#000;"></video>`;
+    openDetailAt(index);
     return;
   }
 
@@ -550,9 +567,9 @@ document.addEventListener('click', (e) => {
     return;
   }
 
-  // Detail panel
+  // Detail modal
   if (btn.dataset.action === 'detail') {
-    window.dispatchEvent(new CustomEvent('iris:detail', { detail: { index } }));
+    openDetailAt(index);
     return;
   }
 
@@ -578,9 +595,10 @@ document.addEventListener('change', (e) => {
 // ── Keyboard navigation ──────────────────────────────────────────────────
 
 document.addEventListener('keydown', (e) => {
-  // Only when gallery tab is active
+  // Only when gallery tab is active and the detail modal is not capturing keys
   const galleryPane = document.getElementById('tab-gallery');
   if (!galleryPane.classList.contains('active')) return;
+  if (document.body.classList.contains('detail-open')) return;
   if (e.target.matches('input, textarea, select, [contenteditable="true"]')) return;
 
   if (e.key === 'ArrowLeft') { e.preventDefault(); goToPage(currentPage - 1); }
@@ -589,4 +607,4 @@ document.addEventListener('keydown', (e) => {
 
 // ── Export for app.js ─────────────────────────────────────────────────────
 
-export { loadPage, goToPage, renderGrid, invalidateCache, currentPage, totalPages };
+export { loadPage, goToPage, renderGrid, invalidateCache, currentPage, totalPages, getCurrentRecords };
