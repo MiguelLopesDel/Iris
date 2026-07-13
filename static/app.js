@@ -24,8 +24,9 @@ import { initCollections } from './collections.js?v=29';
 import { initConcepts } from './concepts.js?v=30';
 import { initDuplicates } from './duplicates.js?v=29';
 import { initSystem } from './system.js?v=32';
-import { initPersons } from './persons.js?v=2';
+import { initPersons } from './persons.js?v=3';
 import { initImportReview } from './import-review.js?v=5';
+import { toast } from './ui.js?v=1';
 
 window.__irisSelection = window.__irisSelection || new Map();
 
@@ -814,18 +815,6 @@ document.addEventListener('click', async function(event) {
     button.disabled = false;
   }
 });
-
-// ── Toast ────────────────────────────────────────────────────────────────
-
-function toast(msg, level) {
-  level = level || 'info';
-  var container = document.getElementById('toast-container');
-  var el = document.createElement('div');
-  el.className = 'toast ' + level;
-  el.textContent = msg;
-  container.appendChild(el);
-  setTimeout(function() { el.remove(); }, 3500);
-}
 
 // ── Collection/Concept toggle helpers ────────────────────────────────────
 

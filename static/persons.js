@@ -11,6 +11,7 @@ import {
   mergePersons,
   renamePerson,
 } from './api.js?v=39';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=1';
 
 let _persons = [];
 
@@ -37,10 +38,12 @@ function wireToolbar() {
   }
   if (recluster && recluster.dataset.initialized !== 'true') {
     recluster.dataset.initialized = 'true';
-    recluster.addEventListener('click', () => {
-      if (confirm('Reagrupar do zero? Isso descarta os agrupamentos atuais (e nomes) e refaz tudo.')) {
-        runCluster(true);
-      }
+    recluster.addEventListener('click', async () => {
+      const ok = await confirmModal(
+        'Isso descarta os agrupamentos atuais (e os nomes dados) e refaz tudo do zero.',
+        { kicker: 'Pessoas', title: 'Reagrupar do zero?', confirmLabel: 'Reagrupar', danger: true },
+      );
+      if (ok) runCluster(true);
     });
   }
 }
@@ -50,10 +53,12 @@ async function runCluster(recluster) {
   if (status) status.textContent = recluster ? 'Reagrupando rostos...' : 'Agrupando novos rostos...';
   try {
     const res = await clusterFaces(recluster);
-    if (status) status.textContent = `${res.persons} pessoa(s) · ${res.assigned} rosto(s) atribuído(s)`;
+    if (status) status.textContent = '';
+    toast(`${res.persons} pessoa(s) · ${res.assigned} rosto(s) atribuído(s)`, 'success');
     await initPersons();
   } catch (err) {
-    if (status) status.textContent = 'Erro: ' + err.message;
+    if (status) status.textContent = '';
+    toast('Erro ao agrupar: ' + err.message, 'error');
   }
 }
 
@@ -66,14 +71,17 @@ function renderPersons() {
   container.innerHTML = _persons.map(renderPersonCard).join('');
 }
 
-function renderPersonCard(p) {
-  const cover = p.cover_face_id
+function personCover(p) {
+  return p.cover_face_id
     ? `<img src="${faceThumbUrl(p.cover_face_id)}" alt="" loading="lazy">`
     : '<div class="person-cover-empty">?</div>';
+}
+
+function renderPersonCard(p) {
   const name = p.name ? escapeHtml(p.name) : '<em>Sem nome</em>';
   return `<article class="person-card" data-person-id="${p.id}">
     <button class="person-cover" data-action="person-open" data-person-id="${p.id}" title="Ver mídias">
-      ${cover}
+      ${personCover(p)}
     </button>
     <div class="person-card-body">
       <div class="person-name" data-action="person-open" data-person-id="${p.id}">${name}</div>
@@ -85,6 +93,33 @@ function renderPersonCard(p) {
       </div>
     </div>
   </article>`;
+}
+
+/** Visual person picker; resolves the chosen person's id or null. */
+export function pickPersonModal({ persons, kicker = 'Pessoas', title = 'Escolher pessoa' }) {
+  return new Promise((resolve) => {
+    const grid = document.createElement('div');
+    grid.className = 'person-pick-grid';
+    for (const p of persons) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'person-pick';
+      btn.innerHTML = `${personCover(p)}
+        <span class="person-pick-name">${p.name ? escapeHtml(p.name) : '<em>Sem nome</em>'}</span>
+        <span class="person-pick-meta">${p.media_count || 0} mídia(s)</span>`;
+      btn.addEventListener('click', () => {
+        modal.close();
+        resolve(p.id);
+      });
+      grid.appendChild(btn);
+    }
+    const modal = openModal({
+      kicker,
+      title,
+      body: grid,
+      onCancel: () => resolve(null),
+    });
+  });
 }
 
 document.addEventListener('click', async (e) => {
@@ -100,27 +135,57 @@ document.addEventListener('click', async (e) => {
   }
   if (action === 'person-rename') {
     const current = _persons.find(p => p.id === id);
-    const name = prompt('Nome da pessoa:', (current && current.name) || '');
+    const name = await promptModal({
+      kicker: 'Pessoas',
+      title: 'Nomear pessoa',
+      label: 'Nome',
+      value: (current && current.name) || '',
+      placeholder: 'Ex.: Maria',
+    });
     if (name === null) return;
-    await renamePerson(id, name.trim());
-    await initPersons();
+    try {
+      await renamePerson(id, name.trim());
+      toast(name.trim() ? `Pessoa nomeada: ${name.trim()}` : 'Nome removido', 'success');
+      await initPersons();
+    } catch (err) {
+      toast('Erro ao renomear: ' + err.message, 'error');
+    }
     return;
   }
   if (action === 'person-delete') {
-    if (!confirm('Remover esta pessoa? Os rostos continuam no catálogo, apenas deixam de estar agrupados.')) return;
-    await deletePerson(id);
-    await initPersons();
+    const ok = await confirmModal(
+      'Os rostos continuam no catálogo, apenas deixam de estar agrupados nesta pessoa.',
+      { kicker: 'Pessoas', title: 'Remover esta pessoa?', confirmLabel: 'Remover', danger: true },
+    );
+    if (!ok) return;
+    try {
+      await deletePerson(id);
+      toast('Pessoa removida', 'success');
+      await initPersons();
+    } catch (err) {
+      toast('Erro ao remover: ' + err.message, 'error');
+    }
     return;
   }
   if (action === 'person-merge') {
+    const source = _persons.find(p => p.id === id);
     const others = _persons.filter(p => p.id !== id);
-    if (!others.length) { alert('Não há outra pessoa para mesclar.'); return; }
-    const menu = others.map((p, i) => `${i + 1}. ${p.name || '(sem nome)'} — ${p.media_count} mídia(s)`).join('\n');
-    const answer = prompt('Mesclar ESTA pessoa em qual? (a atual será absorvida)\n\n' + menu);
-    const pos = parseInt(answer, 10) - 1;
-    if (isNaN(pos) || pos < 0 || pos >= others.length) return;
-    await mergePersons(id, others[pos].id);
-    await initPersons();
+    if (!others.length) {
+      toast('Não há outra pessoa para mesclar.', 'info');
+      return;
+    }
+    const targetId = await pickPersonModal({
+      persons: others,
+      title: `Mesclar "${(source && source.name) || 'Sem nome'}" em...`,
+    });
+    if (targetId === null) return;
+    try {
+      await mergePersons(id, targetId);
+      toast('Pessoas mescladas', 'success');
+      await initPersons();
+    } catch (err) {
+      toast('Erro ao mesclar: ' + err.message, 'error');
+    }
     return;
   }
 });
