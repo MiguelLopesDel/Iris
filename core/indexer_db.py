@@ -32,8 +32,42 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     rebuild_memes_if_legacy_unique(conn)
     migrate_schema(conn)
     ensure_memes_indexes(conn)
+    heal_library_roots(conn, db_path.parent / "library")
     conn.commit()
     return conn
+
+
+def heal_library_roots(conn: sqlite3.Connection, library_base: Path) -> int:
+    """Re-point library roots whose stored absolute path no longer exists.
+
+    ``media_libraries.root_path`` keeps the absolute path baked in at import time. When the
+    project is moved/renamed that path breaks, so every media that resolves via
+    ``library_id`` + ``storage_path`` shows up as "arquivo indisponível" even though the
+    files are still under ``data/library/<name>``. If a matching ``<library_base>/<name>``
+    (or ``<library_base>`` itself) directory exists locally, rewrite the root to that
+    absolute path. Idempotent and non-destructive — only UPDATEs the path, never touches
+    media, and leaves valid roots (including custom ones outside the project) untouched.
+    """
+    exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='media_libraries'"
+    ).fetchone()
+    if not exists:
+        return 0
+    healed = 0
+    for lib_id, name, root in conn.execute("SELECT id, name, root_path FROM media_libraries").fetchall():
+        if root and Path(root).exists():
+            continue
+        candidates = [library_base / (name or ""), library_base]
+        target = next((c for c in candidates if c.is_dir()), None)
+        if target is None:
+            continue
+        new_root = str(target.resolve())
+        if new_root != root:
+            conn.execute("UPDATE media_libraries SET root_path = ? WHERE id = ?", (new_root, lib_id))
+            healed += 1
+    if healed:
+        print(f"[iris] biblioteca(s) reapontada(s) para o local atual: {healed}")
+    return healed
 
 
 def create_collections_table(conn: sqlite3.Connection) -> None:

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from core import import_review
-from core.indexer_db import _MEMES_COLUMNS, init_db
+from core.indexer_db import _MEMES_COLUMNS, heal_library_roots, init_db
 
 CANONICAL = {name for name, _ in _MEMES_COLUMNS} | {"id"}
 # Columns the indexer's INSERT writes — all must exist on a fresh DB.
@@ -110,6 +110,43 @@ def test_create_and_rebuild_share_one_definition(tmp_path):
     rebuilt = _columns(init_db(db))
 
     assert fresh == rebuilt == CANONICAL
+
+
+def _register_library(conn: sqlite3.Connection, root: str) -> None:
+    conn.execute(
+        "INSERT INTO media_libraries (id, name, root_path, created_at) VALUES (1, 'default', ?, 'now')",
+        (root,),
+    )
+    conn.commit()
+
+
+def test_heal_relinks_missing_library_root(tmp_path):
+    # A moved project leaves media_libraries.root_path pointing at a dead absolute path;
+    # heal must re-point it to the local data/library/<name> so media resolves again.
+    conn = init_db(tmp_path / "cat.db")
+    _register_library(conn, "/gone/old/data/library/default")
+    lib = tmp_path / "library" / "default"
+    lib.mkdir(parents=True)
+    (lib / "a.jpg").write_bytes(b"x")
+
+    assert heal_library_roots(conn, tmp_path / "library") == 1
+    conn.commit()
+    root = conn.execute("SELECT root_path FROM media_libraries WHERE id=1").fetchone()[0]
+    assert Path(root) == (tmp_path / "library" / "default").resolve()
+    # Idempotent once the root is valid.
+    assert heal_library_roots(conn, tmp_path / "library") == 0
+
+
+def test_heal_leaves_valid_root_untouched(tmp_path):
+    # A custom root that still exists (even outside the project) must not be rewritten.
+    conn = init_db(tmp_path / "cat.db")
+    good = tmp_path / "custom_lib"
+    good.mkdir()
+    _register_library(conn, str(good.resolve()))
+
+    assert heal_library_roots(conn, tmp_path / "library") == 0
+    root = conn.execute("SELECT root_path FROM media_libraries WHERE id=1").fetchone()[0]
+    assert Path(root) == good.resolve()
 
 
 # ── Opt-in end-to-end pipeline (real models) ────────────────────────────────────
