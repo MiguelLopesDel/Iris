@@ -72,6 +72,105 @@ def extract_metadata(path: str | Path) -> dict:
     return meta
 
 
+def extract_full_metadata(path: str | Path) -> dict:
+    """Return the complete raw metadata of a file for on-demand display.
+
+    Unlike :func:`extract_metadata` (curated subset stored at index time), this reads
+    everything available: named EXIF tags for images, full ffprobe format/streams for
+    videos. Best-effort — any failure or unknown extension yields ``{}``.
+    """
+    path = Path(path)
+    ext = path.suffix.lower()
+    try:
+        if not path.is_file():
+            return {}
+        if ext in IMAGE_EXTS:
+            return _full_image_metadata(path)
+        if ext in VIDEO_EXTS:
+            return _full_video_metadata(path)
+    except Exception:
+        pass
+    return {}
+
+
+_MAX_VALUE_CHARS = 200
+
+
+def _json_safe(value):
+    """Coerce arbitrary EXIF/ffprobe values into JSON-serializable ones."""
+    if isinstance(value, bool) or value is None or isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if value == value and abs(value) != float("inf") else str(value)
+    if isinstance(value, str):
+        return value.replace("\x00", "").strip()[:_MAX_VALUE_CHARS]
+    if isinstance(value, bytes):
+        decoded = value.decode("utf-8", "replace")
+        text = "".join(ch for ch in decoded if ch.isprintable() or ch in "\n\t").strip()
+        return text[:_MAX_VALUE_CHARS] if text else f"<{len(value)} bytes>"
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    try:
+        return float(value)  # IFDRational and friends
+    except Exception:
+        return str(value)[:_MAX_VALUE_CHARS]
+
+
+def _full_image_metadata(path: Path) -> dict:
+    from PIL import Image
+    from PIL.ExifTags import GPSTAGS, TAGS
+
+    with Image.open(path) as img:
+        info: dict = {
+            "kind": "image",
+            "format": img.format or "",
+            "mode": img.mode,
+            "width": img.width,
+            "height": img.height,
+        }
+        exif = img.getexif()
+
+    named: dict = {}
+    for tag_id, value in exif.items():
+        if tag_id in (_IFD_EXIF, _IFD_GPS):
+            continue  # sub-IFD pointers, expanded below
+        named[TAGS.get(tag_id, str(tag_id))] = _json_safe(value)
+    try:
+        for tag_id, value in exif.get_ifd(_IFD_EXIF).items():
+            named[TAGS.get(tag_id, str(tag_id))] = _json_safe(value)
+    except Exception:
+        pass
+    try:
+        gps = {GPSTAGS.get(t, str(t)): _json_safe(v) for t, v in exif.get_ifd(_IFD_GPS).items()}
+        if gps:
+            named["GPSInfo"] = gps
+    except Exception:
+        pass
+    if named:
+        info["exif"] = named
+    return info
+
+
+def _full_video_metadata(path: Path) -> dict:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-print_format", "json",
+            "-show_format", "-show_streams", str(path),
+        ],
+        capture_output=True, text=True, timeout=15,
+    )
+    data = json.loads(result.stdout or "{}")
+    if not data:
+        return {}
+    return {
+        "kind": "video",
+        "format": _json_safe(data.get("format", {})),
+        "streams": _json_safe(data.get("streams", [])),
+    }
+
+
 # ── Images ───────────────────────────────────────────────────────────────────
 
 

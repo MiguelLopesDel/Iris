@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,8 +9,10 @@ from PIL import Image
 
 from core.media_metadata import (
     _gps_from_ifd,
+    _json_safe,
     _parse_exif_datetime,
     _parse_iso6709,
+    extract_full_metadata,
     extract_metadata,
 )
 
@@ -58,6 +61,41 @@ class ImageMetadataTests(unittest.TestCase):
             meta = extract_metadata(path)
             self.assertEqual(meta["source_app"], "")
             self.assertIsNone(meta["gps"])
+
+
+class FullMetadataTests(unittest.TestCase):
+    def test_image_full_metadata_has_dimensions_and_named_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "photo.jpg"
+            _write_jpeg(path, {271: "Apple", 272: "iPhone 13", 305: "WhatsApp"})
+            full = extract_full_metadata(path)
+            self.assertEqual(full["kind"], "image")
+            self.assertEqual(full["format"], "JPEG")
+            self.assertEqual(full["width"], 16)
+            self.assertEqual(full["height"], 16)
+            self.assertEqual(full["exif"]["Make"], "Apple")
+            self.assertEqual(full["exif"]["Model"], "iPhone 13")
+            json.dumps(full)  # must be JSON-serializable end to end
+
+    def test_missing_or_unknown_file_yields_empty(self) -> None:
+        self.assertEqual(extract_full_metadata("/nope/void.jpg"), {})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "note.txt"
+            path.write_text("hello")
+            self.assertEqual(extract_full_metadata(path), {})
+
+    def test_json_safe_sanitizes_exotic_values(self) -> None:
+        self.assertEqual(_json_safe(b"abc\x00"), "abc")
+        self.assertEqual(_json_safe(b"\x00\x01\x02"), "<3 bytes>")  # binary blob placeholder
+        self.assertEqual(_json_safe((1, 2)), [1, 2])
+        self.assertEqual(_json_safe(float("inf")), "inf")
+        self.assertEqual(_json_safe("x" * 500), "x" * 200)
+
+        class Rational:
+            def __float__(self) -> float:
+                return 0.5
+
+        self.assertEqual(_json_safe(Rational()), 0.5)
 
 
 class GpsAndHelperTests(unittest.TestCase):

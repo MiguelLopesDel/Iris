@@ -46,6 +46,9 @@ class SearchBackend(ABC):
     @abstractmethod
     def get_total_records(self) -> int: pass
 
+    @abstractmethod
+    def get_record_metadata_json(self, db_id: int) -> str: pass
+
     # --- Search ---
     @abstractmethod
     def search_text(self, query: str, options: SearchOptions) -> list[SearchResult]: pass
@@ -199,6 +202,16 @@ class LocalBackend(SearchBackend):
 
     def get_total_records(self) -> int:
         return len(self.engine.records)
+
+    def get_record_metadata_json(self, db_id: int) -> str:
+        conn = self.engine.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT metadata_json FROM memes WHERE id = ?", (db_id,)
+            ).fetchone()
+        except Exception:
+            return ""  # pre-migration DBs may lack the column
+        return (row[0] or "") if row else ""
 
     def search_text(self, query: str, options: SearchOptions) -> list[SearchResult]:
         return self.engine.search_text(query, options)

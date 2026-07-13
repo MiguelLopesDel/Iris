@@ -413,6 +413,56 @@ class TestRecordDetail:
         assert r.status_code == 404
 
 
+class TestRecordMetadata:
+    def test_metadata_404_when_record_missing(self, client):
+        r = client.get("/api/records/99999999/metadata")
+        assert r.status_code == 404
+
+    def test_metadata_returns_curated_and_full(self, client, tmp_path):
+        import server
+
+        media_path = tmp_path / "photo.jpg"
+        exif = Image.Exif()
+        exif[271] = "Apple"
+        Image.new("RGB", (16, 16), (9, 9, 9)).save(media_path, exif=exif)
+
+        record = SimpleNamespace(index=1, db_id=42, resolved_path=str(media_path))
+        original = server._backend.get_record.return_value
+        server._backend.get_record.return_value = record
+        server._backend.get_record_metadata_json.return_value = (
+            '{"captured_at": "2026-01-01T00:00:00"}'
+        )
+        try:
+            r = client.get("/api/records/1/metadata")
+        finally:
+            server._backend.get_record.return_value = original
+
+        assert r.status_code == 200
+        data = r.json()
+        assert data["path_exists"] is True
+        assert data["curated"]["captured_at"] == "2026-01-01T00:00:00"
+        assert data["full"]["kind"] == "image"
+        assert data["full"]["exif"]["Make"] == "Apple"
+
+    def test_metadata_missing_file_keeps_curated_only(self, client):
+        import server
+
+        record = SimpleNamespace(index=2, db_id=43, resolved_path="/nope/gone.jpg")
+        original = server._backend.get_record.return_value
+        server._backend.get_record.return_value = record
+        server._backend.get_record_metadata_json.return_value = '{"device": "Pixel 8"}'
+        try:
+            r = client.get("/api/records/2/metadata")
+        finally:
+            server._backend.get_record.return_value = original
+
+        assert r.status_code == 200
+        data = r.json()
+        assert data["path_exists"] is False
+        assert data["curated"]["device"] == "Pixel 8"
+        assert data["full"] == {}
+
+
 def test_duplicates_include_generated_thumbnail(monkeypatch, tmp_path):
     import server
 

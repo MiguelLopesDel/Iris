@@ -37,6 +37,7 @@ from core import app_config, import_review
 from core import backup as backup_mod
 from core.backend import SearchBackend, create_backend
 from core.file_ops import move_to_trash
+from core.media_metadata import extract_full_metadata, extract_metadata
 from core.perf import dump, trace
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
@@ -1511,6 +1512,34 @@ async def get_record_detail(idx: int):
         except Exception:
             d["concepts"] = []
         return d
+
+
+@app.get("/api/records/{idx}/metadata")
+async def get_record_metadata(idx: int):
+    """Curated (stored) + full (read on demand from the original file) metadata."""
+    backend = _get_backend()
+    with trace("api.record_metadata"):
+        r = backend.get_record(idx)
+        if r is None:
+            raise HTTPException(404, "Record not found")
+        path = r.resolved_path or ""
+        path_exists = bool(path) and os.path.exists(path)
+
+        curated: dict = {}
+        try:
+            raw = backend.get_record_metadata_json(r.db_id) if r.db_id else ""
+            if raw:
+                curated = json.loads(raw)
+        except Exception:
+            curated = {}
+        if not curated and path_exists:
+            # Legacy rows indexed before metadata extraction existed.
+            curated = await run_in_threadpool(extract_metadata, path)
+
+        full: dict = {}
+        if path_exists:
+            full = await run_in_threadpool(extract_full_metadata, path)
+        return {"curated": curated, "full": full, "path_exists": path_exists}
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
