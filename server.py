@@ -2099,8 +2099,13 @@ async def person_media(person_id: int):
     backend = _get_backend()
     with trace("api.persons.media"):
         results = backend.get_person_media(person_id)
+        try:
+            person = next((p for p in backend.list_persons() if p["id"] == person_id), None)
+        except Exception:
+            person = None
         return {
             "person_id": person_id,
+            "person_name": (person or {}).get("name") or "",
             "total": len(results),
             "results": _results_to_json(results),
         }

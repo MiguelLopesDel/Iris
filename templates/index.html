@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
-  <link rel="stylesheet" href="/static/style.css?v=37">
+  <link rel="stylesheet" href="/static/style.css?v=38">
 </head>
 <body>
 
@@ -241,6 +241,11 @@
           <button id="gallery-prev" class="icon-btn" disabled aria-label="Página anterior">←</button>
           <button id="gallery-next" class="icon-btn" disabled aria-label="Próxima página">→</button>
         </div>
+      </div>
+      <div id="gallery-context" class="gallery-context" hidden>
+        <span class="gallery-context-icon" aria-hidden="true">⌕</span>
+        <span id="gallery-context-label"></span>
+        <button id="gallery-context-clear" class="btn btn-subtle" type="button">Limpar</button>
       </div>
       <div id="gallery-grid" class="media-grid"></div>
       <div id="gallery-pagination-bottom"></div>
@@ -541,7 +546,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=54"></script>
+<script type="module" src="/static/app.js?v=55"></script>
 
 </body>
 </html>

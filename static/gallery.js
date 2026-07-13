@@ -83,6 +83,7 @@ export function initGallery() {
       });
     }
     clearButton.addEventListener('click', clearGallerySearch);
+    document.getElementById('gallery-context-clear').addEventListener('click', clearGallerySearch);
     document.getElementById('gallery-random').addEventListener('click', () => {
       runGalleryRandom(parseInt(document.getElementById('search-topk')?.value) || 50);
     });
@@ -233,6 +234,20 @@ function renderGrid(records) {
   observeLazyImages(grid);
 }
 
+// Chips of named persons present in the media (comes for free in the records
+// payload). Click → browse all media of that person.
+function personChips(record) {
+  const named = (record.persons || []).filter(p => p.name);
+  if (!named.length) return '';
+  const shown = named.slice(0, 2);
+  const extra = named.length - shown.length;
+  const chips = shown.map(p =>
+    `<button class="person-chip" data-person-chip="${p.id}" title="Ver mídias de ${escapeHtml(p.name)}">${escapeHtml(p.name)}</button>`
+  ).join('');
+  const more = extra > 0 ? `<span class="person-chip-more">+${extra}</span>` : '';
+  return `<div class="card-persons">${chips}${more}</div>`;
+}
+
 function renderCard(record) {
   const sel = window.__irisSelection.has(record.index) ? 'checked' : '';
   const thumb = record.thumbnail_url || '';
@@ -249,6 +264,7 @@ function renderCard(record) {
       </div>
       <div class="media-card-body">
         <div class="caption" title="${escapeHtml(record.arquivo)}">${name}</div>
+        ${personChips(record)}
         <div class="actions">
           <button class="btn" data-action="similar" data-index="${record.index}">Similares</button>
           <button class="btn" data-action="face" data-index="${record.index}" title="Buscar a pessoa desta mídia">Pessoa</button>
@@ -272,6 +288,7 @@ function renderCard(record) {
     </div>
     <div class="media-card-body">
       <div class="caption" title="${escapeHtml(record.arquivo)}">${name}</div>
+      ${personChips(record)}
       <div class="actions">
         <button class="btn" data-action="similar" data-index="${record.index}">Similares</button>
         <button class="btn" data-action="face" data-index="${record.index}" title="Buscar a pessoa desta mídia">Pessoa</button>
@@ -323,6 +340,7 @@ async function runGalleryTextSearch(query) {
       ? await searchFilename(query, gallerySearchOptions())
       : await searchText(query, gallerySearchOptions());
     document.getElementById('gallery-page-info').textContent = `${data.total} resultados`;
+    setGalleryContext(`Busca: <strong>${escapeHtml(query)}</strong> · ${data.total} resultado(s)`);
     renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
@@ -342,6 +360,7 @@ async function runGalleryImageSearch(file) {
     };
     const data = await searchImage(file, opts);
     document.getElementById('gallery-page-info').textContent = `${data.total} resultados`;
+    setGalleryContext(`Busca por imagem · ${data.total} resultado(s)`);
     if (Array.isArray(data.groups)) renderGroupedGrid(data.groups);
     else renderGrid(data.results);
   } catch (error) {
@@ -357,6 +376,7 @@ export async function runGalleryFaceSearch(file) {
   try {
     const data = await searchFace(file, { top_k: parseInt(document.getElementById('search-topk')?.value) || 50 });
     document.getElementById('gallery-page-info').textContent = `${data.total} com essa pessoa`;
+    setGalleryContext(`Pessoa da foto enviada · ${data.total} mídia(s)`);
     renderGrid(data.results);
   } catch (error) {
     const friendly = /422/.test(error.message)
@@ -374,6 +394,7 @@ export async function runGalleryFaceByRecord(index) {
   try {
     const data = await searchFaceByRecord(index, { top_k: parseInt(document.getElementById('search-topk')?.value) || 50 });
     document.getElementById('gallery-page-info').textContent = `${data.total} com essa pessoa`;
+    setGalleryContext(`Mídias com a pessoa desta mídia · ${data.total} item(ns)`);
     renderGrid(data.results);
   } catch (error) {
     const friendly = /422/.test(error.message)
@@ -391,6 +412,7 @@ export async function runGalleryFaceByFace(faceId) {
   try {
     const data = await searchFaceByFace(faceId, { top_k: parseInt(document.getElementById('search-topk')?.value) || 50 });
     document.getElementById('gallery-page-info').textContent = `${data.total} com essa pessoa`;
+    setGalleryContext(`Mídias com o rosto selecionado · ${data.total} item(ns)`);
     renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
@@ -405,6 +427,7 @@ export async function runGalleryPerson(personId) {
   try {
     const data = await getPersonMedia(personId);
     document.getElementById('gallery-page-info').textContent = `${data.total} dessa pessoa`;
+    setGalleryContext(`Pessoa: <strong>${escapeHtml(data.person_name || 'Sem nome')}</strong> · ${data.total} mídia(s)`);
     renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
@@ -420,6 +443,7 @@ export async function runGallerySimilar(index) {
   try {
     const data = await searchSimilar(index, gallerySearchOptions());
     document.getElementById('gallery-page-info').textContent = `${data.total} similares`;
+    setGalleryContext(`Similares · ${data.total} item(ns)`);
     renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
@@ -433,6 +457,7 @@ export async function runGalleryRandom(n = 50) {
   try {
     const data = await searchRandom(n);
     document.getElementById('gallery-page-info').textContent = `${data.total} aleatórios`;
+    setGalleryContext(`Exploração aleatória · ${data.total} item(ns)`);
     renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;
@@ -481,11 +506,27 @@ function enterSearchMode() {
   setBrowseControlsDisabled(true);
 }
 
+// Context bar: tells the user WHAT the grid is currently showing (search
+// results, a person's media, similars…) and offers a one-click way back.
+function setGalleryContext(html) {
+  const bar = document.getElementById('gallery-context');
+  const label = document.getElementById('gallery-context-label');
+  if (!bar || !label) return;
+  label.innerHTML = html;
+  bar.hidden = false;
+}
+
+function clearGalleryContext() {
+  const bar = document.getElementById('gallery-context');
+  if (bar) bar.hidden = true;
+}
+
 function resetGallerySearchState() {
   searchActive = false;
   document.getElementById('gallery-search').value = '';
   document.getElementById('gallery-image-search').value = '';
   document.getElementById('gallery-clear-search').hidden = true;
+  clearGalleryContext();
   setBrowseControlsDisabled(false);
 }
 
@@ -540,6 +581,13 @@ document.addEventListener('click', (e) => {
   if (img) {
     e.preventDefault();
     openDetailAt(parseInt(img.dataset.openDetail));
+    return;
+  }
+
+  // Person chip on a card → browse all media of that person.
+  const chip = e.target.closest('[data-person-chip]');
+  if (chip) {
+    window.dispatchEvent(new CustomEvent('iris:person', { detail: { personId: parseInt(chip.dataset.personChip) } }));
     return;
   }
 

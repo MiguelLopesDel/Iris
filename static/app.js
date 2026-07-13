@@ -16,7 +16,7 @@ import {
   rejectEnrichmentSuggestion,
   trashRecords
 } from './api.js?v=39';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=35';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=36';
 import { initCollections } from './collections.js?v=29';
 import { initConcepts } from './concepts.js?v=30';
 import { initDuplicates } from './duplicates.js?v=29';

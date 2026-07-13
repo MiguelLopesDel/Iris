@@ -2286,6 +2286,71 @@ img[data-lightbox-src] {
   font-size: 11px;
 }
 
+/* ── Gallery context bar + person chips ─────────────────────────────────── */
+
+.gallery-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid rgba(184, 255, 90, 0.22);
+  border-radius: 12px;
+  background: rgba(184, 255, 90, 0.05);
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.gallery-context[hidden] {
+  display: none;
+}
+
+.gallery-context-icon {
+  color: var(--accent);
+}
+
+.gallery-context strong {
+  color: var(--text);
+}
+
+.gallery-context .btn {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 4px 12px;
+}
+
+.card-persons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+
+.person-chip {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.person-chip:hover {
+  border-color: rgba(184, 255, 90, 0.4);
+  color: var(--accent);
+}
+
+.person-chip-more {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
 /* ── Detail modal (detail.js) ───────────────────────────────────────────── */
 
 .detail-modal {
