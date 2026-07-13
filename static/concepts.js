@@ -16,6 +16,7 @@ import {
   updateConcept,
   mediaUrl,
 } from './api.js?v=39';
+import { confirmModal, toast } from './ui.js?v=1';
 
 var wizardStep = 0;
 var wizardData = {};
@@ -64,7 +65,7 @@ function renderWizardStep1(wiz) {
 window.__wizNext = function() {
   wizardData.name = document.getElementById('wiz-name').value.trim();
   wizardData.category = document.getElementById('wiz-category').value;
-  if (!wizardData.name) { alert('Nome obrigatorio'); return; }
+  if (!wizardData.name) { toast('Informe um nome para o conceito.', 'error'); return; }
   wizardStep = 2;
   renderWizard();
 };
@@ -139,7 +140,7 @@ window.__wizBack = function() {
 
 window.__wizRefsNext = function() {
   if (!wizardData.refs.length) {
-    alert('Adicione pelo menos uma imagem de referência.');
+    toast('Adicione pelo menos uma imagem de referência.', 'error');
     return;
   }
   wizardStep = 4;
@@ -172,7 +173,7 @@ window.__wizCreate = async function() {
     wizardStep = 0;
     loadConcepts();
   } catch(err) {
-    alert('Erro: ' + err.message);
+    toast('Erro: ' + err.message, 'error');
     if (button) button.disabled = false;
   }
 };
@@ -185,7 +186,7 @@ async function loadConcepts() {
     var data = await listConcepts();
     conceptsById = new Map(data.concepts.map(function(concept) { return [concept.id, concept]; }));
     if (!data.concepts.length) {
-      container.innerHTML = '<p style="color:var(--text-muted);">Nenhum conceito. Crie um acima.</p>';
+      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">✦</span><p>Nenhum conceito ainda.</p><small>Crie um com “+ Novo conceito” e adicione imagens de referência.</small></div>';
       return;
     }
     container.innerHTML = data.concepts.map(function(c) {
@@ -201,7 +202,7 @@ async function loadConcepts() {
         + '<button class="btn" onclick="window.__autoMatch(' + c.id + ')">Auto-match</button>'
         + '<button class="btn" onclick="window.__viewAssoc(' + c.id + ')">Associacoes</button>'
         + '<button class="btn" onclick="window.__viewRefs(' + c.id + ')">Referencias</button>'
-        + '<button class="btn btn-danger" onclick="if(confirm(\'Deletar?\'))window.__delConcept(' + c.id + ')">Deletar</button>'
+        + '<button class="btn btn-danger" onclick="window.__delConcept(' + c.id + ')">Deletar</button>'
         + '</div>'
         + '<div id="conc-extras-' + c.id + '" style="margin-top:8px;"></div>'
         + '</div>';
@@ -238,7 +239,7 @@ window.__saveConcept = async function(id) {
     });
     document.getElementById('conc-extras-' + id).innerHTML = '';
     loadConcepts();
-  } catch(err) { alert('Erro: ' + err.message); }
+  } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };
 
 // ── Auto-match ──────────────────────────────────────────────────────────────
@@ -294,10 +295,10 @@ window.__applyMatches = async function(conceptId) {
   try {
     if (confirmIds.length) await confirmConceptMedia(conceptId, confirmIds);
     if (rejectIds.length) await rejectConceptMedia(conceptId, rejectIds);
-    alert('Aplicado: ' + confirmIds.length + ' confirmados, ' + rejectIds.length + ' rejeitados');
+    toast('Aplicado: ' + confirmIds.length + ' confirmado(s), ' + rejectIds.length + ' rejeitado(s)', 'success');
     document.getElementById('conc-extras-' + conceptId).innerHTML = '';
     loadConcepts();
-  } catch(err) { alert('Erro: ' + err.message); }
+  } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };
 
 // ── View associations ───────────────────────────────────────────────────────
@@ -336,13 +337,13 @@ window.__viewAssoc = async function(conceptId, page) {
 window.__removeAssoc = async function(conceptId) {
   var ids = [];
   document.querySelectorAll('.assoc-reject:checked').forEach(function(cb) { ids.push(parseInt(cb.dataset.dbid)); });
-  if (!ids.length) { alert('Nenhum selecionado'); return; }
+  if (!ids.length) { toast('Nenhum item selecionado.', 'info'); return; }
   try {
     await rejectConceptMedia(conceptId, ids);
-    alert(ids.length + ' removido(s)');
+    toast(ids.length + ' removido(s)', 'success');
     window.__viewAssoc(conceptId);
     loadConcepts();
-  } catch(err) { alert('Erro: ' + err.message); }
+  } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };
 
 // ── View references ─────────────────────────────────────────────────────────
@@ -377,7 +378,7 @@ window.__addRef = async function(conceptId) {
   try {
     await addConceptReferences(conceptId, fileInput.files);
     window.__viewRefs(conceptId);
-  } catch(err) { alert('Erro: ' + err.message); }
+  } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };
 
 window.__delRef = async function(conceptId, refId) {
@@ -385,12 +386,17 @@ window.__delRef = async function(conceptId, refId) {
     await deleteConceptReference(conceptId, refId);
     window.__viewRefs(conceptId);
     loadConcepts();
-  } catch(err) { alert('Erro: ' + err.message); }
+  } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };
 
 window.__delConcept = async function(id) {
+  var ok = await confirmModal('As mídias associadas continuam na biblioteca.', {
+    kicker: 'Conceitos', title: 'Deletar este conceito?', confirmLabel: 'Deletar', danger: true,
+  });
+  if (!ok) return;
   try {
     await deleteConcept(id);
+    toast('Conceito deletado', 'success');
     loadConcepts();
-  } catch(err) { alert('Erro: ' + err.message); }
+  } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };

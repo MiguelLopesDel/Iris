@@ -16,14 +16,14 @@ import {
   rejectEnrichmentSuggestion,
   trashRecords
 } from './api.js?v=39';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=36';
-import { initCollections } from './collections.js?v=29';
-import { initConcepts } from './concepts.js?v=30';
-import { initDuplicates } from './duplicates.js?v=29';
-import { initSystem } from './system.js?v=32';
-import { initPersons } from './persons.js?v=4';
-import { initImportReview } from './import-review.js?v=5';
-import { toast } from './ui.js?v=1';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=37';
+import { initCollections } from './collections.js?v=30';
+import { initConcepts } from './concepts.js?v=31';
+import { initDuplicates } from './duplicates.js?v=30';
+import { initSystem } from './system.js?v=33';
+import { initPersons } from './persons.js?v=5';
+import { initImportReview } from './import-review.js?v=6';
+import { confirmModal, toast } from './ui.js?v=1';
 
 window.__irisSelection = window.__irisSelection || new Map();
 
@@ -94,15 +94,15 @@ function switchTab(name) {
     gallery: {
       kicker: 'Biblioteca',
       title: 'Galeria',
-      description: 'Navegue por toda a sua colecao visual.'
+      description: 'Navegue por toda a sua coleção visual.'
     },
     collections: {
-      kicker: 'Organizacao',
-      title: 'Colecoes',
+      kicker: 'Organização',
+      title: 'Coleções',
       description: 'Agrupe e mantenha seus conjuntos importantes por perto.'
     },
     concepts: {
-      kicker: 'Semantica',
+      kicker: 'Semântica',
       title: 'Conceitos',
       description: 'Ensine entidades e contextos recorrentes ao Iris.'
     },
@@ -112,17 +112,38 @@ function switchTab(name) {
       description: 'Encontre e agrupe mídias pela pessoa que aparece nelas.'
     },
     duplicates: {
-      kicker: 'Manutencao',
+      kicker: 'Manutenção',
       title: 'Duplicatas',
-      description: 'Revise arquivos visualmente proximos com seguranca.'
+      description: 'Revise arquivos visualmente próximos com segurança.'
     },
     system: {
-      kicker: 'Operacao',
+      kicker: 'Operação',
       title: 'Sistema',
       description: 'Configure, importe, indexe e proteja a biblioteca.'
     }
   };
+  // Per-tab sidebar hint (the search filters only affect the gallery, so they
+  // are hidden elsewhere and replaced by a short context block).
+  var sidebarHints = {
+    collections: 'Para adicionar mídias em lote, selecione cards na Galeria e use a ação <strong>Coleção</strong>.',
+    concepts: 'Conceitos aprendem com exemplos. Crie um e confirme/rejeite sugestões para refinar.',
+    persons: 'Rostos são agrupados por similaridade. Nomeie pessoas para vê-las nos cards da Galeria.',
+    duplicates: 'Ajuste a similaridade e analise a biblioteca. Deleções vão para a lixeira do sistema.',
+    system: 'Configuração do catálogo, importação, indexação e backups.'
+  };
   var meta = viewMeta[name] || viewMeta.gallery;
+  document.querySelectorAll('[data-scope="gallery"]').forEach(function(el) {
+    el.hidden = name !== 'gallery';
+  });
+  var tabContext = document.getElementById('sidebar-tab-context');
+  if (tabContext) {
+    if (name !== 'gallery' && sidebarHints[name]) {
+      tabContext.innerHTML = '<span class="eyebrow">' + meta.title + '</span><p>' + sidebarHints[name] + '</p>';
+      tabContext.hidden = false;
+    } else {
+      tabContext.hidden = true;
+    }
+  }
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   var btn = document.querySelector('[data-tab="' + name + '"]');
   if (btn) btn.classList.add('active');
@@ -379,7 +400,8 @@ document.getElementById('collection-modal-create-form').addEventListener('submit
 document.getElementById('btn-trash-selected').addEventListener('click', async function() {
   var count = window.__irisSelection.size;
   if (!count) return;
-  if (!confirm('Mover ' + count + ' item(ns) para lixeira?')) return;
+  var okTrash = await confirmModal('Mover ' + count + ' item(ns) para a lixeira do sistema?', { kicker: 'Seleção', title: 'Enviar para a lixeira?', confirmLabel: 'Mover', danger: true });
+  if (!okTrash) return;
   try {
     var ids = await resolveSelectedDbIds();
     var result = await trashRecords(ids);
@@ -487,22 +509,28 @@ function showWebEnrichmentPanel() {
 }
 
 // Reaproveita as fontes já encontradas e só re-roda a IA (sem nova busca no Lens).
-document.getElementById('web-enrichment-redistill').addEventListener('click', function() {
+document.getElementById('web-enrichment-redistill').addEventListener('click', async function() {
   var ids = window.__irisLastEnrichIds || [];
   if (!ids.length) return;
-  if (!confirm('Re-enviar ' + ids.length + ' imagem(ns) para ' + backendLabel()
-    + ' usando as fontes já encontradas (sem nova busca no Lens)?')) return;
+  var okRedistill = await confirmModal(
+    'Re-enviar ' + ids.length + ' imagem(ns) para ' + backendLabel()
+    + ' usando as fontes já encontradas (sem nova busca no Lens)?',
+    { kicker: 'Web', title: 'Reprocessar?', confirmLabel: 'Re-enviar' });
+  if (!okRedistill) return;
   runWebEnrichment(ids, true, false).catch(function(err) {
     toast('Erro: ' + err.message, 'error');
   });
 });
 
 // Refaz a busca no Lens do zero (pode abrir o navegador, demorar e pedir CAPTCHA).
-document.getElementById('web-enrichment-research').addEventListener('click', function() {
+document.getElementById('web-enrichment-research').addEventListener('click', async function() {
   var ids = window.__irisLastEnrichIds || [];
   if (!ids.length) return;
-  if (!confirm('Re-buscar ' + ids.length + ' imagem(ns) no Google Lens do zero? '
-    + 'Pode abrir o navegador, demorar e (no modo local) pedir CAPTCHA.')) return;
+  var okResearch = await confirmModal(
+    'Re-buscar ' + ids.length + ' imagem(ns) no Google Lens do zero? '
+    + 'Pode abrir o navegador, demorar e (no modo local) pedir CAPTCHA.',
+    { kicker: 'Web', title: 'Re-buscar?', confirmLabel: 'Re-buscar' });
+  if (!okResearch) return;
   runWebEnrichment(ids, true, true).catch(function(err) {
     toast('Erro: ' + err.message, 'error');
   });

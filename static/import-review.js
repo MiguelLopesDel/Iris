@@ -7,6 +7,7 @@
    to inspect any candidate (and its match) at full size. */
 
 import { escapeHtml, getImportReview, resolveImportReview } from './api.js?v=39';
+import { confirmModal, toast } from './ui.js?v=1';
 
 let busy = false;
 const selected = new Set(); // item ids currently checked (persist across categories)
@@ -198,7 +199,7 @@ async function itemResolve(id, action) {
   try {
     await resolveImportReview({ ids: [Number(id)], action });
   } catch (error) {
-    alert(`Erro: ${error.message}`);
+    toast(`Erro: ${error.message}`, 'error');
     await initImportReview(); // resync on failure
   }
 }
@@ -234,13 +235,18 @@ async function selectionAction(action) {
   }
   if (busy || !selected.size) return;
   const ids = [...selected];
-  if (action === 'trash' && !confirm(`Mover ${ids.length} original(is) para a lixeira?`)) return;
+  if (action === 'trash') {
+    const ok = await confirmModal(`Mover ${ids.length} original(is) para a lixeira do sistema?`, {
+      kicker: 'Revisão de importação', title: 'Enviar para a lixeira?', confirmLabel: 'Mover', danger: true,
+    });
+    if (!ok) return;
+  }
   busy = true;
   try {
     await resolveImportReview({ ids, action });
     await initImportReview();
   } catch (error) {
-    alert(`Erro: ${error.message}`);
+    toast(`Erro: ${error.message}`, 'error');
   } finally {
     busy = false;
   }
@@ -253,13 +259,16 @@ async function bulkResolve(detection, action) {
   }
   if (busy) return;
   const verb = action === 'trash' ? 'mover os originais para a lixeira' : 'ignorar';
-  if (!confirm(`Confirma ${verb} de TODOS os itens em "${detection}"?`)) return;
+  const ok = await confirmModal(`Isso aplica ${verb} a TODOS os itens em "${detection}".`, {
+    kicker: 'Revisão de importação', title: 'Aplicar em massa?', confirmLabel: 'Aplicar', danger: true,
+  });
+  if (!ok) return;
   busy = true;
   try {
     await resolveImportReview({ detection, action });
     await initImportReview();
   } catch (error) {
-    alert(`Erro: ${error.message}`);
+    toast(`Erro: ${error.message}`, 'error');
   } finally {
     busy = false;
   }

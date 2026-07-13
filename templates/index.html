@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
-  <link rel="stylesheet" href="/static/style.css?v=38">
+  <link rel="stylesheet" href="/static/style.css?v=39">
 </head>
 <body>
 
@@ -27,12 +27,12 @@
   </div>
 
   <div id="sidebar-filters">
-    <div class="sidebar-intro">
+    <div class="sidebar-intro" data-scope="gallery">
       <span class="eyebrow">Refine a biblioteca</span>
       <p>Combine filtros e estratégia para encontrar a mídia certa.</p>
     </div>
 
-    <section class="filter-group">
+    <section class="filter-group" data-scope="gallery">
       <div class="filter-heading">
         <span class="filter-step">01</span>
         <label class="filter-label" for="filtro-media-type">Formato</label>
@@ -44,7 +44,7 @@
       </select>
     </section>
 
-    <section class="filter-group" id="collections-group">
+    <section class="filter-group" id="collections-group" data-scope="gallery">
       <div class="filter-heading">
         <span class="filter-step">02</span>
         <label class="filter-label">Coleções</label>
@@ -54,7 +54,7 @@
       </div>
     </section>
 
-    <section class="filter-group" id="concepts-group">
+    <section class="filter-group" id="concepts-group" data-scope="gallery">
       <div class="filter-heading">
         <span class="filter-step">03</span>
         <label class="filter-label">Conceitos</label>
@@ -64,7 +64,7 @@
       </div>
     </section>
 
-    <section class="filter-group">
+    <section class="filter-group" data-scope="gallery">
       <div class="filter-heading">
         <span class="filter-step">04</span>
         <label class="filter-label" for="search-mode">Estratégia de busca</label>
@@ -86,7 +86,7 @@
       </div>
     </section>
 
-    <section class="filter-group filter-group-compact">
+    <section class="filter-group filter-group-compact" data-scope="gallery">
       <div class="range-row">
         <label class="filter-label" for="search-threshold">Similaridade</label>
         <output id="threshold-val">0.15</output>
@@ -106,7 +106,7 @@
       </label>
     </section>
 
-    <section class="filter-group sidebar-actions">
+    <section class="filter-group sidebar-actions" data-scope="gallery">
       <button id="btn-surprise" class="btn btn-primary">
         <span>Explorar aleatoriamente</span><b aria-hidden="true">↗</b>
       </button>
@@ -115,7 +115,8 @@
         <button id="btn-stats" class="btn btn-subtle" onclick="window.__showStats()">Estatísticas</button>
       </div>
     </section>
-    <div id="stats-container" class="stats-container" style="display:none;"></div>
+    <div id="stats-container" class="stats-container" style="display:none;" data-scope="gallery"></div>
+    <div id="sidebar-tab-context" class="sidebar-tab-context" hidden></div>
   </div>
 
   <div id="sidebar-selection">
@@ -153,8 +154,9 @@
       <button class="tab-btn" data-tab="collections"><span class="tab-icon">◇</span><span>Coleções</span></button>
       <button class="tab-btn" data-tab="concepts"><span class="tab-icon">✦</span><span>Conceitos</span></button>
       <button class="tab-btn" data-tab="persons"><span class="tab-icon">☻</span><span>Pessoas</span></button>
-      <button class="tab-btn" data-tab="duplicates"><span class="tab-icon">≋</span><span>Duplicatas</span></button>
-      <button class="tab-btn" data-tab="system"><span class="tab-icon">⚙</span><span>Sistema</span></button>
+      <span class="tab-divider" aria-hidden="true"></span>
+      <button class="tab-btn tab-btn-ops" data-tab="duplicates"><span class="tab-icon">≋</span><span>Duplicatas</span></button>
+      <button class="tab-btn tab-btn-ops" data-tab="system"><span class="tab-icon">⚙</span><span>Sistema</span></button>
     </nav>
   </header>
 
@@ -257,8 +259,6 @@
         <div class="section-lead section-lead-compact">
           <div>
             <span class="eyebrow">Curadoria manual</span>
-            <h3>Coleções</h3>
-            <p>Organize mídias em grupos que façam sentido para você.</p>
           </div>
           <button id="btn-new-collection" class="btn btn-primary">+ Nova coleção</button>
         </div>
@@ -272,8 +272,6 @@
         <div class="section-lead section-lead-compact">
           <div>
             <span class="eyebrow">Inteligência semântica</span>
-            <h3>Conceitos</h3>
-            <p>Ensine ao Iris pessoas, objetos e contextos recorrentes.</p>
           </div>
           <button id="btn-new-concept" class="btn btn-primary">+ Novo conceito</button>
         </div>
@@ -288,8 +286,6 @@
         <div class="section-lead section-lead-compact">
           <div>
             <span class="eyebrow">Reconhecimento facial</span>
-            <h3>Pessoas</h3>
-            <p>Agrupa rostos por similaridade. Nomeie uma pessoa e navegue todas as mídias dela.</p>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button id="persons-cluster" class="btn btn-primary" type="button">Agrupar rostos</button>
@@ -307,8 +303,6 @@
         <div class="section-lead section-lead-compact">
           <div>
             <span class="eyebrow">Limpeza inteligente</span>
-            <h3>Duplicatas</h3>
-            <p>Compare arquivos visualmente próximos antes de limpar a biblioteca.</p>
           </div>
         </div>
         <div class="control-surface duplicates-controls">
@@ -346,8 +340,6 @@
       <div class="section-lead section-lead-compact">
         <div>
           <span class="eyebrow">Operação local</span>
-          <h3>Sistema</h3>
-          <p>Configure a biblioteca, importe mídias e proteja seus dados.</p>
         </div>
       </div>
 
@@ -546,7 +538,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=55"></script>
+<script type="module" src="/static/app.js?v=56"></script>
 
 </body>
 </html>

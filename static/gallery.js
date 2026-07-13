@@ -3,7 +3,7 @@
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
 import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=39';
-import { openDetail } from './detail.js?v=1';
+import { openDetail } from './detail.js?v=2';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -227,7 +227,7 @@ function renderGrid(records) {
   const grid = document.getElementById('gallery-grid');
   currentRecords = records || [];
   if (!records.length) {
-    grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Nenhum item encontrado.</p>';
+    grid.innerHTML = '<div class="empty-state"><span class="empty-state-icon">⌕</span><p>Nenhum item encontrado.</p><small>Ajuste os termos da busca ou limpe os filtros da barra lateral.</small></div>';
     return;
   }
   grid.innerHTML = records.map(r => renderCard(r)).join('');

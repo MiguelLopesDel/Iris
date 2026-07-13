@@ -65,7 +65,7 @@ async function runCluster(recluster) {
 function renderPersons() {
   const container = document.getElementById('persons-list');
   if (!_persons.length) {
-    container.innerHTML = '<p class="filter-empty">Nenhuma pessoa ainda. Indexe mídias com rostos ou rode o backfill e clique em "Agrupar rostos".</p>';
+    container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">☻</span><p>Nenhuma pessoa ainda.</p><small>Indexe mídias com rostos (ou rode o backfill) e clique em “Agrupar rostos”.</small></div>';
     return;
   }
   container.innerHTML = _persons.map(renderPersonCard).join('');

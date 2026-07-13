@@ -2286,6 +2286,66 @@ img[data-lightbox-src] {
   font-size: 11px;
 }
 
+/* ── Navigation cohesion (tab groups, sidebar tab context, empty states) ── */
+
+.tab-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+.tab-btn-ops:not(.active) {
+  opacity: 0.75;
+}
+
+.sidebar-tab-context {
+  margin-top: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.sidebar-tab-context p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.sidebar-tab-context strong {
+  color: var(--text-soft);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 48px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty-state .empty-state-icon {
+  font-size: 26px;
+  opacity: 0.7;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.empty-state small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* ── Gallery context bar + person chips ─────────────────────────────────── */
 
 .gallery-context {

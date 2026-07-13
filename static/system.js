@@ -15,6 +15,7 @@ import {
   updateSettings,
   escapeHtml,
 } from './api.js?v=39';
+import { confirmModal } from './ui.js?v=1';
 
 let initialized = false;
 let importPoll = null;
@@ -337,7 +338,8 @@ async function runRestoreSnapshot(id, mode) {
   const label = mode === 'mirror'
     ? 'Restaurar em modo ESPELHO apaga bancos/índices órfãos. Continuar?'
     : 'Restaurar este snapshot por cima do estado atual? (um snapshot de segurança será criado antes)';
-  if (!confirm(label)) return;
+  const ok = await confirmModal(label, { kicker: 'Sistema', title: 'Confirmar operação?', confirmLabel: 'Continuar', danger: true });
+  if (!ok) return;
   const status = document.getElementById('snapshot-status');
   status.textContent = 'Restaurando...';
   try {
@@ -362,7 +364,8 @@ async function runReconcile() {
 
 async function runExport() {
   const status = document.getElementById('media-status');
-  if (!confirm('Exportar a biblioteca inteira para o disco externo? Pode ser grande e demorado.')) return;
+  const okExport = await confirmModal('Exportar a biblioteca inteira para o disco externo? Pode ser grande e demorado.', { kicker: 'Sistema', title: 'Exportar biblioteca?', confirmLabel: 'Exportar' });
+  if (!okExport) return;
   status.textContent = 'Exportando biblioteca (streaming)...';
   try {
     const res = await exportMedia();

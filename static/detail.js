@@ -15,7 +15,7 @@ import {
   mediaUrl,
 } from './api.js?v=39';
 import { toast } from './ui.js?v=1';
-import { pickPersonModal } from './persons.js?v=4';
+import { pickPersonModal } from './persons.js?v=5';
 
 const modal = document.getElementById('detail-modal');
 const stageMedia = document.getElementById('detail-media');

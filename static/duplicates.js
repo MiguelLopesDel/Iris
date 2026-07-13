@@ -41,7 +41,7 @@ async function loadDuplicates() {
     var data = await fetchDuplicates(threshold, neighbors, minGroup);
     var groups = sortDuplicateGroups(data.groups, sortMode);
     if (!groups.length) {
-      container.innerHTML = '<p style="color:var(--text-muted);padding:16px;">Nenhuma duplicata encontrada (threshold: ' + threshold + ').</p>';
+      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">≋</span><p>Nenhuma duplicata encontrada.</p><small>Similaridade usada: ' + threshold + '. Reduza o valor para uma análise mais agressiva.</small></div>';
       return;
     }
     await hydrateMissingThumbnails(groups);

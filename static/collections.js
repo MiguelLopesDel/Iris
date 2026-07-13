@@ -1,15 +1,17 @@
 /* ── Iris Collections module ──────────────────────────────────────────────── */
 
 import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml, mediaUrl } from './api.js?v=39';
+import { confirmModal, promptModal, toast } from './ui.js?v=1';
 
 var currentColId = null;
 
 export function initCollections() {
   loadCollections();
   document.getElementById('btn-new-collection').onclick = async function() {
-    var name = prompt('Nome da colecao:');
-    if (!name) return;
-    await createCollection(name);
+    var name = await promptModal({ kicker: 'Coleções', title: 'Nova coleção', label: 'Nome', placeholder: 'Ex.: Viagens 2026' });
+    if (!name || !name.trim()) return;
+    await createCollection(name.trim());
+    toast('Coleção criada', 'success');
     loadCollections();
   };
 }
@@ -19,7 +21,7 @@ async function loadCollections() {
   try {
     var data = await listCollections();
     if (!data.collections.length) {
-      container.innerHTML = '<p style="color:var(--text-muted);">Nenhuma colecao.</p>';
+      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">◇</span><p>Nenhuma coleção ainda.</p><small>Crie uma com “+ Nova coleção” ou selecione cards na Galeria.</small></div>';
       return;
     }
     container.innerHTML = data.collections.map(function(c) {
@@ -39,15 +41,18 @@ async function loadCollections() {
 }
 
 window.__renameCol = async function(id) {
-  var name = prompt('Novo nome:');
-  if (!name) return;
-  await renameCollection(id, name);
+  var name = await promptModal({ kicker: 'Coleções', title: 'Renomear coleção', label: 'Novo nome' });
+  if (!name || !name.trim()) return;
+  await renameCollection(id, name.trim());
+  toast('Coleção renomeada', 'success');
   loadCollections();
 };
 
 window.__deleteCol = async function(id) {
-  if (!confirm('Deletar colecao?')) return;
+  var ok = await confirmModal('As mídias continuam na biblioteca; apenas o grupo é removido.', { kicker: 'Coleções', title: 'Deletar esta coleção?', confirmLabel: 'Deletar', danger: true });
+  if (!ok) return;
   await deleteCollection(id);
+  toast('Coleção deletada', 'success');
   loadCollections();
 };
 
@@ -94,6 +99,6 @@ window.__removeMember = async function(colId, dbId) {
     window.__viewMembers(colId); // refresh
     setTimeout(loadCollections, 1000);
   } catch(err) {
-    alert('Erro: ' + err.message);
+    toast('Erro: ' + err.message, 'error');
   }
 };
