@@ -20,12 +20,12 @@ import {
   trashRecords
 } from './api.js?v=38';
 import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=33';
-import { initCollections } from './collections.js?v=27';
-import { initConcepts } from './concepts.js?v=28';
-import { initDuplicates } from './duplicates.js?v=27';
-import { initSystem } from './system.js?v=30';
+import { initCollections } from './collections.js?v=28';
+import { initConcepts } from './concepts.js?v=29';
+import { initDuplicates } from './duplicates.js?v=28';
+import { initSystem } from './system.js?v=31';
 import { initPersons } from './persons.js?v=1';
-import { initImportReview } from './import-review.js?v=3';
+import { initImportReview } from './import-review.js?v=4';
 
 window.__irisSelection = window.__irisSelection || new Map();
 
