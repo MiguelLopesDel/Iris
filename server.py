@@ -1081,7 +1081,8 @@ async def serve_setup():
         return RedirectResponse("/", status_code=303)
     return HTMLResponse(
         "<main><h1>Iris precisa da primeira conta</h1>"
-        "<p>Execute o bootstrap no servidor antes de publicar bibliotecas.</p>"
+        "<p>Crie a primeira conta no servidor. Em uma instalação vazia, o comando cria uma biblioteca privada vazia; "
+        "em uma instalação antiga, ele migra automaticamente o catálogo e a mídia existentes.</p>"
         "<pre>docker compose run --rm iris python scripts/bootstrap_admin.py --username administrador</pre>"
         "</main>",
         status_code=503,

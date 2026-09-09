@@ -1,10 +1,12 @@
 #!/bin/bash
+set -euo pipefail
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${GREEN}=== Instalador Automático do Iris ===${NC}"
+echo "For a private Docker server, use ./scripts/server.sh install instead."
 
 if ! command -v python3 &> /dev/null; then
     echo -e "${RED}Erro: Python 3 não encontrado. Por favor, instale o Python 3 antes de continuar.${NC}"
@@ -26,6 +28,7 @@ pip install --upgrade pip
 if pip install -r requirements.txt; then
     echo -e "${GREEN}✅ Instalação concluída com sucesso!${NC}"
     echo ""
+    echo "This installer is for local development or a single-user local run."
     echo "Para indexar suas imagens, execute:"
     echo "  source venv/bin/activate"
     echo "  python -m core.indexer"

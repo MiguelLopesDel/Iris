@@ -244,7 +244,7 @@ static/                  — CSS and JavaScript frontend modules
 
 **Visual embedding**: `sentence-transformers/clip-ViT-L-14` (768-dim, stored in FAISS)  
 **Audio embedding**: `laion/clap-htsat-unfused` (512-dim; optional, for semantic audio search and dedup)  
-**Face embedding**: InsightFace `buffalo_l` / ArcFace (512-dim; in-memory FAISS index, models auto-downloaded on first use)  
+**Face embedding**: InsightFace `buffalo_l` / ArcFace (512-dim; in-memory FAISS index, models auto-downloaded on first use)
 **Caption model**: `microsoft/Florence-2-large` (can be disabled with `--caption-model none`)  
 **Transcription**: OpenAI Whisper (default: `tiny` model; disable with `--whisper-model none`)  
 **Database**: SQLite (schema v4) + FAISS flat indices for image, description, and audio embeddings

@@ -11,6 +11,7 @@ cd Iris
 python3 -m venv venv
 source venv/bin/activate
 pip install -e '.[dev]'
+./scripts/install_git_hooks.sh
 python scripts/dev.py start
 ```
 
@@ -64,3 +65,7 @@ aceita apagar a raiz do repositório ou uma pasta sem esse marcador.
   uma conta administradora.
 - Não inclua `.iris-dev/`, `data/`, mídia, bancos, relatórios pessoais ou segredos.
 - Descreva no PR como a mudança foi testada e se exige reindexação/migração.
+
+O gancho `pre-push` verifica os commits enviados por segredos comuns, bancos,
+índices, arquivos de mídia fora das pastas de assets aprovadas e `.env`. Ele não
+substitui revisão humana, mas evita os acidentes mais comuns antes de publicar.

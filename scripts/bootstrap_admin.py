@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Move one existing Iris library into the first private administrator account."""
+"""Create the first private administrator, optionally migrating a legacy library."""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.auth import hash_password
+from core.indexer_db import init_db
 from core.users_db import create_user, has_users
 
 
@@ -39,17 +40,18 @@ def main() -> int:
     source_media = args.media_root.resolve()
     if has_users(users_db):
         parser.error("data/users.db já possui contas; o bootstrap só roda uma vez")
-    if not source_db.exists():
-        parser.error(f"Banco não encontrado: {source_db}")
-    if not source_media.is_dir():
-        parser.error(f"Biblioteca de mídia não encontrada: {source_media}")
+    has_legacy_db = source_db.exists()
+    has_legacy_media = source_media.is_dir()
+    if has_legacy_db != has_legacy_media:
+        parser.error("Migração incompleta: banco e pasta de mídia antigos devem existir juntos")
 
     password = getpass.getpass("Senha do administrador (mínimo 12 caracteres): ")
     confirmation = getpass.getpass("Repita a senha: ")
     if password != confirmation:
         parser.error("As senhas não conferem")
     if args.dry_run:
-        print(f"Criaria a conta {args.username!r} e moveria {source_db} e {source_media}.")
+        action = f"moveria {source_db} e {source_media}" if has_legacy_db else "criaria uma biblioteca vazia"
+        print(f"Criaria a conta {args.username!r} e {action}.")
         return 0
 
     user = create_user(
@@ -57,6 +59,11 @@ def main() -> int:
         display_name=args.display_name, is_admin=True,
     )
     destination_root = user.db_path.parent
+    if not has_legacy_db:
+        init_db(user.db_path).close()
+        print(f"Conta administradora criada: {user.username}")
+        print("Biblioteca privada vazia criada. Reinicie o Iris para abrir a tela de login.")
+        return 0
     assets = [source_db, *_faiss_files(source_db)]
     try:
         # create_user creates this private directory; remove the known-empty

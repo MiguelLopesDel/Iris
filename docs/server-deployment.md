@@ -16,14 +16,12 @@ Serve é a única camada que publica o serviço para dispositivos autorizados da
 ```bash
 git clone https://github.com/MiguelLopesDel/Iris.git
 cd Iris
-cp .env.example .env
-id -u
-id -g
+./scripts/server.sh install
 ```
 
-Edite `IRIS_UID` e `IRIS_GID` em `.env` com os valores retornados por `id`. Crie
-`data/` e `media/` com esse mesmo dono antes de iniciar; o container não roda como
-root. Se necessário, ajuste os donos no host com `sudo chown -R <uid>:<gid> data media`.
+O instalador verifica Docker Compose, cria `.env` com o UID/GID do usuário atual,
+prepara `data/` e `media/` com permissão `0700`, constrói o container e espera o
+health check. Para configuração avançada, edite `.env` antes ou depois da instalação.
 
 O mesmo `.env` define os limites por conta. Os padrões são deliberadamente altos:
 32 GiB por arquivo, 10.000 arquivos por envio, 10 TiB por biblioteca e 500 milhões
@@ -34,28 +32,16 @@ As variáveis `IRIS_MAX_SEARCH_TOP_K` e `IRIS_MAX_SEARCH_CANDIDATES` também
 limitam consultas excepcionalmente grandes (os padrões são 1.000 e 20.000). Elas
 protegem a CPU/RAM sem restringir a busca normal da galeria.
 
-```bash
-mkdir -p data media
-docker compose up -d --build
-docker compose logs -f iris
-```
-
-Confirme localmente que o processo está pronto:
-
-```bash
-curl http://127.0.0.1:8501/healthz
-```
+Use `./scripts/server.sh status` e `./scripts/server.sh logs` para acompanhar o serviço.
 
 ## Ativar contas
 
-Em uma instalação nova, importe mídia pela interface após criar a primeira conta.
-Para migrar uma biblioteca Iris já existente, pare o container e faça backup de
-`data/` e `media/`; então execute:
+Em uma instalação nova, crie a primeira conta — o comando cria uma biblioteca privada
+vazia. Para migrar uma biblioteca Iris já existente, pare o container e faça backup de
+`data/` e `media/`; o mesmo comando detecta e move o catálogo existente:
 
 ```bash
-docker compose run --rm iris python scripts/bootstrap_admin.py \
-  --username administrador --display-name "Seu nome"
-docker compose up -d
+./scripts/server.sh create-admin --username administrador --display-name "Seu nome"
 ```
 
 O bootstrap move a biblioteca antiga para `data/users/1/` e, no próximo início,
@@ -81,10 +67,14 @@ disco. Preserve `data/secret_key` ou defina `IRIS_SECRET_KEY` estável: perder a
 encerra todas as sessões e pode exigir novo login.
 
 ```bash
-git pull
-docker compose up -d --build
-docker compose ps
+./scripts/server.sh update
+./scripts/server.sh status
 ```
+
+O update exige uma árvore Git limpa e usa `git pull --ff-only`, evitando merges
+surpresa. Antes de atualizar, guarde o commit atual (`git rev-parse HEAD`) e uma cópia
+de `data/` e `media/`; se for necessário voltar, retorne ao commit guardado e execute
+`docker compose up -d --build` novamente.
 
 O Iris mantém fotos em texto claro no servidor para gerar busca, pessoas e
 duplicatas. Contas isolam pessoas entre si, mas quem controla o host/Docker pode
