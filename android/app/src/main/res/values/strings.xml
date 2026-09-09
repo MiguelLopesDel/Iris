@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Iris</string>
+    <string name="tab_gallery">Galeria</string>
+    <string name="tab_search">Busca</string>
+    <string name="tab_persons">Pessoas</string>
+    <string name="tab_collections">Coleções</string>
+    <string name="tab_settings">Configurações</string>
+</resources>
