@@ -255,6 +255,7 @@ window.addEventListener('iris:face-record', function(e) {
 async function buildSidebar() {
   try {
     var info = await fetchInfo();
+    applyCapabilities(info.capabilities || {});
     document.getElementById('status-badge').innerHTML =
       '<i></i>' + info.total_records + ' itens';
 
@@ -283,6 +284,45 @@ async function buildSidebar() {
     });
   } catch (err) {
     document.getElementById('status-badge').innerHTML = '<i></i>offline';
+  }
+}
+
+function applyCapabilities(capabilities) {
+  window.__irisCapabilities = capabilities;
+  var semanticSearch = capabilities.semantic_search !== false;
+  var imageSearch = capabilities.image_search !== false;
+  var faceSearch = capabilities.face_search !== false;
+
+  document.querySelectorAll('[data-requires-semantic]').forEach(function(element) {
+    element.hidden = !semanticSearch;
+    element.disabled = !semanticSearch;
+  });
+  document.querySelectorAll('[data-requires-image]').forEach(function(element) {
+    element.hidden = !imageSearch;
+  });
+  document.querySelectorAll('[data-requires-face]').forEach(function(element) {
+    element.hidden = !faceSearch;
+  });
+  var searchInput = document.getElementById('gallery-search');
+  if (searchInput) {
+    searchInput.placeholder = semanticSearch
+      ? 'Descreva uma ideia, cole texto ou contexto…'
+      : 'Buscar pelo nome do arquivo…';
+  }
+  var searchMode = document.getElementById('search-mode');
+  if (!semanticSearch && searchMode) searchMode.value = 'filename';
+
+  var webchatOption = document.querySelector('[data-webchat-option]');
+  if (webchatOption) {
+    var webchatAvailable = capabilities.webchat_enrichment !== false;
+    webchatOption.hidden = !webchatAvailable;
+    webchatOption.disabled = !webchatAvailable;
+    var backend = document.getElementById('we-backend');
+    if (!webchatAvailable && backend && backend.value === 'webchat') {
+      backend.value = '';
+      localStorage.setItem('irisEnrichBackend', JSON.stringify(getEnrichBackendConfig()));
+      syncEnrichBackendFields();
+    }
   }
 }
 

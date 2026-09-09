@@ -23,9 +23,14 @@ let importPoll = null;
 let previousImportStatus = null;
 
 export function initSystem() {
-  loadSystemInfo();
-  loadBackupSection();
-  pollImportStatus();
+  loadSystemInfo().then((info) => {
+    if (!info) return;
+    if (info.capabilities?.host_administration) {
+      loadBackupSection();
+      browseFolder(document.getElementById('import-folder').value);
+    }
+    pollImportStatus();
+  });
   if (initialized) return;
   initialized = true;
 
@@ -43,26 +48,39 @@ export function initSystem() {
   document.getElementById('media-reconcile').addEventListener('click', runReconcile);
   document.getElementById('media-export').addEventListener('click', runExport);
   document.getElementById('account-create').addEventListener('click', createAccount);
-  browseFolder(document.getElementById('import-folder').value);
 }
 
 async function loadSystemInfo() {
   const health = document.getElementById('system-health');
   try {
     const info = await fetchInfo();
-    const dbSelect = document.getElementById('system-db');
-    const activePath = info.db_path;
-    const databases = [...new Set([activePath, ...(info.databases || [])])];
-    dbSelect.innerHTML = databases.map(path =>
-      `<option value="${escapeHtml(path)}"${path === activePath ? ' selected' : ''}>${escapeHtml(path)}</option>`
-    ).join('');
-    document.getElementById('system-media-root').value = info.media_root || 'media';
-    document.getElementById('system-model').value = info.model_name || '';
+    const hostAdministration = !!info.capabilities?.host_administration;
+    document.querySelectorAll('[data-host-only], [data-host-import]').forEach((element) => {
+      element.hidden = !hostAdministration;
+    });
+    if (hostAdministration) {
+      const dbSelect = document.getElementById('system-db');
+      const activePath = info.db_path;
+      const databases = [...new Set([activePath, ...(info.databases || [])])];
+      dbSelect.innerHTML = databases.map(path =>
+        `<option value="${escapeHtml(path)}"${path === activePath ? ' selected' : ''}>${escapeHtml(path)}</option>`
+      ).join('');
+      document.getElementById('system-media-root').value = info.media_root || 'media';
+      document.getElementById('system-model').value = info.model_name || '';
+    }
     document.getElementById('account-management').hidden = !(info.multiuser && info.current_user?.is_admin);
-    health.innerHTML = `<strong>${info.total_records}</strong> itens indexados`
-      + (info.missing_count ? ` · <span class="danger-text">${info.missing_count} ausentes</span>` : ' · arquivos disponíveis');
+    const privateHealth = document.getElementById('private-library-health');
+    privateHealth.hidden = hostAdministration;
+    privateHealth.innerHTML = `<strong>${info.total_records}</strong> itens na sua biblioteca`
+      + (info.capabilities?.semantic_search ? '' : ' · busca por IA indisponível neste servidor');
+    if (hostAdministration) {
+      health.innerHTML = `<strong>${info.total_records}</strong> itens indexados`
+        + (info.missing_count ? ` · <span class="danger-text">${info.missing_count} ausentes</span>` : ' · arquivos disponíveis');
+    }
+    return info;
   } catch (error) {
     health.textContent = `Erro: ${error.message}`;
+    return null;
   }
 }
 

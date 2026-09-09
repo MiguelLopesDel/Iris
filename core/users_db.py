@@ -31,6 +31,17 @@ class IrisUser:
     session_version: int
 
 
+@dataclass(frozen=True)
+class IrisDevice:
+    id: str
+    user_id: int
+    name: str
+    platform: str
+    refresh_token_hash: str
+    token_version: int
+    revoked_at: str | None
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -62,6 +73,23 @@ def init_users_db(path: Path) -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS devices (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                platform TEXT NOT NULL DEFAULT '',
+                refresh_token_hash TEXT NOT NULL,
+                token_version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                revoked_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)")
 
 
 def has_users(path: Path) -> bool:
@@ -161,3 +189,59 @@ def list_users(path: Path) -> list[IrisUser]:
     with _connect(path) as conn:
         rows = conn.execute("SELECT * FROM users ORDER BY username").fetchall()
     return [_from_row(row) for row in rows]
+
+
+def _device_from_row(row: sqlite3.Row) -> IrisDevice:
+    return IrisDevice(
+        id=str(row["id"]), user_id=int(row["user_id"]), name=str(row["name"]),
+        platform=str(row["platform"]), refresh_token_hash=str(row["refresh_token_hash"]),
+        token_version=int(row["token_version"]), revoked_at=row["revoked_at"],
+    )
+
+
+def create_device(path: Path, user_id: int, name: str, platform: str, refresh_token_hash: str) -> IrisDevice:
+    init_users_db(path)
+    device_id = os.urandom(16).hex()
+    now = now_iso()
+    with _connect(path) as conn:
+        conn.execute(
+            "INSERT INTO devices (id, user_id, name, platform, refresh_token_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (device_id, user_id, name.strip()[:120] or "Unnamed device", platform.strip()[:60], refresh_token_hash, now, now),
+        )
+        row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+    assert row is not None
+    return _device_from_row(row)
+
+
+def get_device(path: Path, device_id: str) -> IrisDevice | None:
+    if not path.exists():
+        return None
+    init_users_db(path)
+    with _connect(path) as conn:
+        row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+    return _device_from_row(row) if row else None
+
+
+def rotate_device_refresh_token(path: Path, device_id: str, token_hash: str) -> bool:
+    with _connect(path) as conn:
+        cursor = conn.execute(
+            "UPDATE devices SET refresh_token_hash = ?, last_seen_at = ? WHERE id = ? AND revoked_at IS NULL",
+            (token_hash, now_iso(), device_id),
+        )
+    return cursor.rowcount == 1
+
+
+def revoke_device(path: Path, user_id: int, device_id: str) -> bool:
+    with _connect(path) as conn:
+        cursor = conn.execute(
+            "UPDATE devices SET revoked_at = ?, token_version = token_version + 1 WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+            (now_iso(), device_id, user_id),
+        )
+    return cursor.rowcount == 1
+
+
+def list_devices(path: Path, user_id: int) -> list[IrisDevice]:
+    init_users_db(path)
+    with _connect(path) as conn:
+        rows = conn.execute("SELECT * FROM devices WHERE user_id = ? ORDER BY last_seen_at DESC", (user_id,)).fetchall()
+    return [_device_from_row(row) for row in rows]

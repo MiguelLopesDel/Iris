@@ -82,6 +82,10 @@ function hasFile(r) {
   return r && r.resolved_path && r.resolved_path !== 'None';
 }
 
+function canOpenHostFolder() {
+  return window.__irisCapabilities?.open_host_folder !== false;
+}
+
 function renderStage(r) {
   teardownVideo();
   if (r.media_type === 'video' && hasFile(r)) {
@@ -188,7 +192,8 @@ function renderAside(r, token) {
     </header>
     <div class="detail-actions">
       <button class="btn btn-subtle" data-detail-action="similar">Buscar similares</button>
-      ${hasFile(r) ? `<button class="btn btn-subtle" data-open-folder="${escapeHtml(r.resolved_path)}">Abrir pasta</button>
+      ${hasFile(r) && canOpenHostFolder() ? `<button class="btn btn-subtle" data-open-folder="${escapeHtml(r.resolved_path)}">Abrir pasta</button>` : ''}
+      ${hasFile(r) ? `
       <a class="btn btn-subtle" href="${escapeHtml(mediaUrl(r.resolved_path))}" target="_blank" rel="noopener">Abrir arquivo</a>` : ''}
     </div>
     ${section('Pessoas', '<div class="detail-faces" id="detail-faces">…</div>')}

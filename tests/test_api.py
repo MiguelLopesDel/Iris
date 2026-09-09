@@ -95,6 +95,7 @@ class TestInfoEndpoint:
         assert "total_records" in r.json()
         assert "missing_count" in r.json()
         assert "extension_counts" in r.json()
+        assert isinstance(r.json()["capabilities"]["semantic_search"], bool)
 
     def test_missing_count_is_optin(self, client):
         # Default: no O(N) stat scan → missing_count is null (not computed).

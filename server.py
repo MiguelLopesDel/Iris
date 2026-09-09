@@ -43,13 +43,14 @@ from core import backup as backup_mod
 from core.auth import load_or_create_secret
 from core.backend import SearchBackend, create_backend
 from core.backend_registry import BackendRegistry
+from core.device_tokens import read_access_token
 from core.file_ops import move_to_trash
 from core.media_metadata import extract_full_metadata, extract_metadata
 from core.observability import configure_logging, request_path
 from core.perf import dump, trace
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
-from core.users_db import IrisUser, get_user_by_id, has_users
+from core.users_db import IrisUser, get_device, get_user_by_id, has_users
 from core.web_enrichment import (
     EnrichmentSuggestion,
     WebEnrichmentService,
@@ -67,6 +68,7 @@ from core.web_enrichment import (
     update_job,
 )
 from routers.auth import router as auth_router
+from routers.sync import router as sync_router
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 configure_logging()
@@ -96,6 +98,12 @@ _DEFAULT_DB = _default_db_path()
 _MEDIA_ROOT = os.environ.get("IRIS_MEDIA_ROOT", "media")
 _LOAD_MODEL = os.environ.get("IRIS_LOAD_MODEL", "1").lower() not in {"0", "false", "no"}
 _USERS_DB = _DATA_DIR / "users.db"
+
+
+def _require_search_model() -> None:
+    """Return a clear API error when semantic features were intentionally disabled."""
+    if not _LOAD_MODEL:
+        raise HTTPException(409, "Semantic search is disabled because IRIS_LOAD_MODEL=0")
 
 
 def _positive_env_int(name: str, default: int) -> int:
@@ -412,6 +420,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, title="Iris")
 app.state.data_dir = _DATA_DIR
 app.state.users_db_path = _USERS_DB
+app.state.auth_secret = load_or_create_secret(_DATA_DIR / "secret_key")
+app.state.account_quota_bytes = _ACCOUNT_QUOTA_BYTES
+app.state.load_model = _LOAD_MODEL
 _server_mode = os.environ.get("IRIS_SERVER_MODE", "legacy").lower()
 _private_server_requested = _server_mode in {"private", "multiuser"}
 _has_users = has_users(_USERS_DB)
@@ -440,7 +451,7 @@ async def authenticate_library_request(request: Request, call_next):
         return Response(status_code=413, content='{"detail":"Requisição excede o limite configurado"}', media_type="application/json")
     path = request.url.path
     public = (
-        path in {"/login", "/setup", "/healthz", "/favicon.ico", "/api/auth/login"}
+        path in {"/login", "/setup", "/healthz", "/favicon.ico", "/api/auth/login", "/api/auth/devices/login", "/api/auth/devices/refresh"}
         or path.startswith("/static/")
     )
     if public:
@@ -452,6 +463,17 @@ async def authenticate_library_request(request: Request, call_next):
     session = request.session
     user_id = session.get("user_id")
     session_version = session.get("session_version")
+    device_id = None
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        payload = read_access_token(request.app.state.auth_secret, authorization[7:].strip())
+        if payload:
+            user_id = payload.get("user_id")
+            session_version = payload.get("session_version")
+            device_id = payload.get("device_id")
+            device = get_device(request.app.state.users_db_path, str(device_id)) if device_id else None
+            if device is None or device.revoked_at or device.user_id != user_id or device.token_version != payload.get("token_version"):
+                user_id = None
     user = get_user_by_id(request.app.state.users_db_path, int(user_id)) if isinstance(user_id, int) else None
     if user is None or user.session_version != session_version:
         session.clear()
@@ -469,6 +491,7 @@ async def authenticate_library_request(request: Request, call_next):
         session.clear()
         return Response(status_code=401, content='{"detail":"Sessão inválida"}', media_type="application/json")
     request.state.iris_user = user
+    request.state.iris_device_id = device_id
     request.state.backend = backend
     backend_token = _request_backend.set(backend)
     user_token = _request_user.set(user)
@@ -528,7 +551,7 @@ if app.state.multiuser_enabled:
     # Must be outermost so the authentication middleware can read request.session.
     app.add_middleware(
         SessionMiddleware,
-        secret_key=load_or_create_secret(_DATA_DIR / "secret_key"),
+        secret_key=app.state.auth_secret,
         session_cookie="iris_session",
         max_age=60 * 60 * 24 * 14,
         same_site="lax",
@@ -543,6 +566,7 @@ static_dir.mkdir(parents=True, exist_ok=True)
 template_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 app.include_router(auth_router)
+app.include_router(sync_router)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1119,6 +1143,7 @@ async def get_info(check_missing: int = Query(0)):
                 _missing_count, backend, total
             )
         user = _current_user()
+        private_library = _multiuser_enabled()
         return {
             "total_records": total,
             "db_path": "" if user else str(_active_config["db_path"]),
@@ -1135,6 +1160,16 @@ async def get_info(check_missing: int = Query(0)):
             "missing_count": missing_count,
             "extension_counts": extension_counts,
             "databases": [] if user else _available_databases(),
+            "capabilities": {
+                "semantic_search": _LOAD_MODEL,
+                "image_search": _LOAD_MODEL,
+                "face_search": _LOAD_MODEL and backend.has_face_tables(),
+                "host_administration": not private_library,
+                "folder_import": not private_library,
+                "host_backup": not private_library,
+                "open_host_folder": not private_library,
+                "webchat_enrichment": not private_library,
+            },
         }
 
 
@@ -1990,6 +2025,7 @@ async def search_text(
     collection_ids: str = Query(""),
     concept_ids: str = Query(""),
 ):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.text"):
         options = _options_from_params(
@@ -2056,6 +2092,7 @@ async def search_image(
     group_threshold: float = Form(0.90),
     show_singletons: bool = Form(True),
 ):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.image"):
         img = await run_in_threadpool(_open_uploaded_image, file)
@@ -2087,6 +2124,7 @@ async def search_face(
     file: Annotated[UploadFile, File()],
     top_k: int = Form(50),
 ):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.face"):
         img = await run_in_threadpool(_open_uploaded_image, file)
@@ -2106,6 +2144,7 @@ async def search_face(
 
 @app.get("/api/search/face/by-record/{idx}")
 async def search_face_by_record(idx: int, top_k: int = Query(50)):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.face.by_record"):
         if not backend.has_face_tables():
@@ -2122,6 +2161,7 @@ async def search_face_by_record(idx: int, top_k: int = Query(50)):
 
 @app.get("/api/search/face/by-face/{face_id}")
 async def search_face_by_face(face_id: int, top_k: int = Query(50)):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.face.by_face"):
         if not backend.has_face_tables():

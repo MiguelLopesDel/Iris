@@ -71,10 +71,10 @@
         <label class="filter-label" for="search-mode">Como procurar</label>
       </div>
       <select id="search-mode">
-        <option value="hybrid">Tudo que o Iris entende</option>
-        <option value="text">Texto e descrições</option>
+        <option value="hybrid" data-requires-semantic>Tudo que o Iris entende</option>
+        <option value="text" data-requires-semantic>Texto e descrições</option>
         <option value="filename">Nome do arquivo</option>
-        <option value="visual">Aparência da imagem</option>
+        <option value="visual" data-requires-semantic>Aparência da imagem</option>
       </select>
     </section>
 
@@ -157,7 +157,7 @@
         <span aria-hidden="true">⌕</span>
         <input id="home-search-input" type="search" placeholder="Ex.: viagem à praia com Ana" autocomplete="off">
         <button class="btn btn-primary" type="submit">Buscar</button>
-        <button id="home-image-search" class="btn btn-subtle" type="button">Usar imagem</button>
+        <button id="home-image-search" class="btn btn-subtle" type="button" data-requires-image>Usar imagem</button>
       </form>
       <section class="home-section">
         <div class="home-section-title">
@@ -184,14 +184,14 @@
           <span aria-hidden="true">⌕</span>
           <input type="text" id="gallery-search" placeholder="Descreva uma ideia, cole texto ou contexto…" autocomplete="off">
         </div>
-        <label class="btn btn-primary" for="gallery-image-search">Usar imagem</label>
+        <label class="btn btn-primary" for="gallery-image-search" data-requires-image>Usar imagem</label>
         <input type="file" id="gallery-image-search" accept="image/*" hidden>
-        <label class="btn btn-subtle" for="gallery-face-search" title="Encontrar mídias com a pessoa da foto">Buscar pessoa</label>
+        <label class="btn btn-subtle" for="gallery-face-search" title="Encontrar mídias com a pessoa da foto" data-requires-face>Buscar pessoa</label>
         <input type="file" id="gallery-face-search" accept="image/*" hidden>
         <button id="gallery-random" class="btn btn-subtle" type="button">Aleatório</button>
         <button id="gallery-clear-search" class="btn btn-subtle" hidden>Limpar busca</button>
-        <button id="gallery-search-advanced" class="btn btn-subtle" type="button" aria-expanded="false">Agrupar ▾</button>
-        <div id="gallery-group-controls" class="image-group-controls" hidden>
+        <button id="gallery-search-advanced" class="btn btn-subtle" type="button" aria-expanded="false" data-requires-image>Agrupar ▾</button>
+        <div id="gallery-group-controls" class="image-group-controls" hidden data-requires-image>
           <label class="switch-row">
             <input type="checkbox" id="image-group-enabled" checked>
             <span class="switch-control"></span>
@@ -397,7 +397,7 @@
       </section>
 
       <div class="system-grid">
-        <section class="detail-panel system-card">
+        <section class="detail-panel system-card" data-host-only>
           <span class="eyebrow">Configuração ativa</span>
           <h4>Banco e modelos</h4>
           <label>Banco de dados
@@ -416,7 +416,8 @@
         <section class="detail-panel system-card system-card-wide">
           <span class="eyebrow">Entrada de mídia</span>
           <h4>Importar e indexar</h4>
-          <div class="folder-browser">
+          <p id="private-library-health" class="system-status" hidden></p>
+          <div class="folder-browser" data-host-import>
             <label>Pasta
               <input type="text" id="import-folder" placeholder="/caminho/da/pasta">
             </label>
@@ -429,7 +430,7 @@
           <label>Ou envie arquivos
             <input type="file" id="import-files" accept="image/*,video/*,audio/*,.svg" multiple>
           </label>
-          <div class="form-grid">
+          <div class="form-grid" data-host-import>
             <label>Biblioteca<input type="text" id="import-library" value="default"></label>
             <label>Raiz gerenciada<input type="text" id="import-library-root" value="data/library"></label>
             <label>Batch size<input type="number" id="import-batch" value="8" min="1" max="64"></label>
@@ -444,7 +445,7 @@
             <label>Caption model<input type="text" id="import-caption" value="microsoft/Florence-2-large"></label>
             <label>Whisper model<input type="text" id="import-whisper" value="tiny"></label>
           </div>
-          <div class="inline-switches">
+          <div class="inline-switches" data-host-import>
             <label class="switch-row"><input type="checkbox" id="import-low-resource"><span class="switch-control"></span><span>Modo PC fraco (CPU, modelo menor; desativa recursos extras)</span></label>
             <label class="switch-row"><input type="checkbox" id="import-use-folder"><span class="switch-control"></span><span>Importar a pasta exibida acima</span></label>
             <label class="switch-row"><input type="checkbox" id="import-recursive" checked><span class="switch-control"></span><span>Incluir subpastas</span></label>
@@ -461,7 +462,7 @@
           <div id="import-review" class="import-review"></div>
         </section>
 
-        <section class="detail-panel system-card system-card-wide">
+        <section class="detail-panel system-card system-card-wide" data-host-only>
           <span class="eyebrow">Portabilidade</span>
           <h4>Backup do catálogo (snapshots)</h4>
           <p class="backup-hint">Salva só o catálogo (banco + embeddings) num destino externo, fora da cota. FAISS é reconstruído na restauração; a mídia é tratada à parte.</p>
@@ -533,7 +534,7 @@
         <option value="">Heurística (sem IA)</option>
         <option value="openai">API ChatGPT (OpenAI)</option>
         <option value="gemini">API Gemini</option>
-        <option value="webchat">Web-chat: ChatGPT (meu navegador)</option>
+        <option value="webchat" data-webchat-option>Web-chat: ChatGPT (meu navegador)</option>
       </select>
     </label>
     <label id="we-model-wrap" hidden>Modelo:

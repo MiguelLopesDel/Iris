@@ -36,6 +36,19 @@ with TestClient(server.app) as client:
     assert info.status_code == 200
     assert info.json()["db_path"] == ""
     assert info.json()["media_root"] == ""
+    assert info.json()["capabilities"] == {
+        "semantic_search": False,
+        "image_search": False,
+        "face_search": False,
+        "host_administration": False,
+        "folder_import": False,
+        "host_backup": False,
+        "open_host_folder": False,
+        "webchat_enrichment": False,
+    }
+    assert client.get("/api/filesystem").status_code == 404
+    assert client.get("/api/search", params={"q": "segredo"}).status_code == 409
+    assert client.get("/api/search/filename", params={"q": "alice"}).status_code == 200
     # Populate the sorted-record cache with Alice's library first. Bob must not
     # receive that cached list after the account changes.
     alice_records = client.get("/api/records").json()["records"]
