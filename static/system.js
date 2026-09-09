@@ -1,5 +1,6 @@
 import {
   browseFilesystem,
+  createUser,
   createCollectionFromSuggestion,
   createSnapshot,
   exportMedia,
@@ -14,7 +15,7 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=39';
+} from './api.js?v=40';
 import { confirmModal } from './ui.js?v=1';
 
 let initialized = false;
@@ -41,6 +42,7 @@ export function initSystem() {
   document.getElementById('snapshot-now').addEventListener('click', runSnapshot);
   document.getElementById('media-reconcile').addEventListener('click', runReconcile);
   document.getElementById('media-export').addEventListener('click', runExport);
+  document.getElementById('account-create').addEventListener('click', createAccount);
   browseFolder(document.getElementById('import-folder').value);
 }
 
@@ -56,10 +58,30 @@ async function loadSystemInfo() {
     ).join('');
     document.getElementById('system-media-root').value = info.media_root || 'media';
     document.getElementById('system-model').value = info.model_name || '';
+    document.getElementById('account-management').hidden = !(info.multiuser && info.current_user?.is_admin);
     health.innerHTML = `<strong>${info.total_records}</strong> itens indexados`
       + (info.missing_count ? ` · <span class="danger-text">${info.missing_count} ausentes</span>` : ' · arquivos disponíveis');
   } catch (error) {
     health.textContent = `Erro: ${error.message}`;
+  }
+}
+
+async function createAccount() {
+  const status = document.getElementById('account-status');
+  const button = document.getElementById('account-create');
+  button.disabled = true;
+  try {
+    const result = await createUser({
+      username: document.getElementById('account-username').value,
+      display_name: document.getElementById('account-display-name').value,
+      password: document.getElementById('account-password').value,
+    });
+    status.textContent = `Conta de ${result.user.display_name || result.user.username} criada.`;
+    document.getElementById('account-password').value = '';
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -121,6 +143,7 @@ async function runImport() {
   form.append('device', document.getElementById('import-device').value);
   form.append('caption_model', document.getElementById('import-caption').value);
   form.append('whisper_model', document.getElementById('import-whisper').value);
+  form.append('low_resource', document.getElementById('import-low-resource').checked);
 
   button.disabled = true;
   status.textContent = 'Enviando importação...';
@@ -190,7 +213,7 @@ function showSuggestionModal(suggestions) {
   overlay.innerHTML = `
     <div class="suggest-card">
       <header>
-        <h3>Organizar em coleções?</h3>
+        <h3>Organizar em álbuns?</h3>
         <p>Detectamos grupos pelos metadados das mídias importadas. Escolha e edite os nomes.</p>
       </header>
       <div class="suggest-list"></div>
@@ -235,7 +258,7 @@ function showSuggestionModal(suggestions) {
         statusEl.textContent = `Erro em “${name}”: ${err.message}`;
       }
     }
-    statusEl.textContent = `${created} coleção(ões) criada(s). Atualizando…`;
+    statusEl.textContent = `${created} álbum(ns) criado(s). Atualizando…`;
     setTimeout(close, 700);
   });
 

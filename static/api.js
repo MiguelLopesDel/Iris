@@ -9,6 +9,7 @@ async function apiGet(path, params = {}) {
     if (v !== '' && v !== undefined && v !== null) url.searchParams.set(k, v);
   }
   const res = await fetch(url);
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -19,6 +20,7 @@ async function apiPost(path, body) {
     if (v !== undefined && v !== null) fd.append(k, v);
   }
   const res = await fetch(path, { method: 'POST', body: fd });
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -29,6 +31,7 @@ async function apiDelete(path, body = {}) {
     if (v !== undefined && v !== null) fd.append(k, v);
   }
   const res = await fetch(path, { method: 'DELETE', body: fd });
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -53,6 +56,10 @@ export async function browseFilesystem(path = '') {
 
 export async function openFolder(path) {
   return apiPost('/api/open-folder', { path });
+}
+
+export async function createUser(data) {
+  return apiPost('/api/auth/users', data);
 }
 
 // ── Records ───────────────────────────────────────────────────────────────
@@ -361,7 +368,6 @@ export async function createEnrichmentJob(dbIds, force = false, config = {}, res
     research: research ? '1' : '',
     llm_backend: config.backend || '',
     llm_model: config.model || '',
-    webchat_cdp: config.cdp || '',
     webchat_temporary: config.temporary ? '1' : '0',
   });
 }

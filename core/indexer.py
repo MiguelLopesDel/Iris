@@ -43,7 +43,7 @@ from core.media_inventory import (
     read_manifest,
 )
 from core.media_metadata import extract_metadata
-from core.search_engine import DEFAULT_MODEL, normalize_text
+from core.search_engine import DEFAULT_MODEL, LOW_RESOURCE_MODEL, normalize_text
 from core.taxonomy import (
     build_taxonomy_prompt_rows,
     classify_embedding,
@@ -109,6 +109,10 @@ def parse_arguments() -> IndexerConfig:
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL, help="Modelo CLIP.")
     parser.add_argument("--batch-size", "-bs", type=int, default=8, help="Tamanho do lote.")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
+    parser.add_argument(
+        "--low-resource", action="store_true",
+        help="Perfil CPU/iGPU fraca: modelo menor, lote 1 e sem recursos extras.",
+    )
     parser.add_argument("--recursive", action="store_true", help="Indexa subpastas.")
     parser.add_argument("--limit", type=int, default=None, help="Limita a quantidade de arquivos.")
     parser.add_argument(
@@ -167,6 +171,14 @@ def parse_arguments() -> IndexerConfig:
     db_path = Path(args.db)
     if not db_path.is_absolute():
         db_path = Path("data") / db_path
+
+    if args.low_resource:
+        args.model = LOW_RESOURCE_MODEL
+        args.batch_size = 1
+        args.device = "cpu"
+        args.caption_model = "none"
+        args.whisper_model = "none"
+        args.no_faces = True
 
     return IndexerConfig(
         media_dir=Path(args.dir),
@@ -483,6 +495,18 @@ def process_images(
         raise ImportSourceUnavailable(str(config.media_dir))
 
     conn = init_db(config.db_path)
+    existing_models = {
+        row[0] for row in conn.execute(
+            "SELECT DISTINCT model_name FROM memes "
+            "WHERE embedding IS NOT NULL AND model_name IS NOT NULL AND model_name != ''"
+        )
+    }
+    if existing_models and existing_models != {config.model_name}:
+        conn.close()
+        raise ValueError(
+            "O catalogo ja usa outro modelo CLIP ("
+            f"{', '.join(sorted(existing_models))}). Use o mesmo modelo ou reindexe."
+        )
     processed = already_processed(conn)
     known_hashes = existing_hashes(conn)
     _deleted_hashes = load_deleted_content_hashes(conn)

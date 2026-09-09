@@ -1,6 +1,6 @@
 /* ── Iris Collections module ──────────────────────────────────────────────── */
 
-import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml, mediaUrl } from './api.js?v=39';
+import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml, mediaUrl } from './api.js?v=40';
 import { confirmModal, promptModal, toast } from './ui.js?v=1';
 
 var currentColId = null;
@@ -8,10 +8,10 @@ var currentColId = null;
 export function initCollections() {
   loadCollections();
   document.getElementById('btn-new-collection').onclick = async function() {
-    var name = await promptModal({ kicker: 'Coleções', title: 'Nova coleção', label: 'Nome', placeholder: 'Ex.: Viagens 2026' });
+    var name = await promptModal({ kicker: 'Álbuns', title: 'Novo álbum', label: 'Nome', placeholder: 'Ex.: Viagens 2026' });
     if (!name || !name.trim()) return;
     await createCollection(name.trim());
-    toast('Coleção criada', 'success');
+    toast('Álbum criado', 'success');
     loadCollections();
   };
 }
@@ -21,7 +21,7 @@ async function loadCollections() {
   try {
     var data = await listCollections();
     if (!data.collections.length) {
-      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">◇</span><p>Nenhuma coleção ainda.</p><small>Crie uma com “+ Nova coleção” ou selecione cards na Galeria.</small></div>';
+      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">◇</span><p>Nenhum álbum ainda.</p><small>Crie um álbum ou selecione itens em Fotos.</small></div>';
       return;
     }
     container.innerHTML = data.collections.map(function(c) {
@@ -30,7 +30,7 @@ async function loadCollections() {
         + '<div style="display:flex;gap:6px;margin:6px 0;">'
         + '<button class="btn" onclick="window.__renameCol(' + c.id + ')">Renomear</button>'
         + '<button class="btn" onclick="window.__deleteCol(' + c.id + ')">Deletar</button>'
-        + '<button class="btn" onclick="window.__viewMembers(' + c.id + ')">Ver membros</button>'
+        + '<button class="btn" onclick="window.__viewMembers(' + c.id + ')">Ver itens</button>'
         + '</div>'
         + '<div id="col-members-' + c.id + '" style="display:none;margin-top:8px;"></div>'
         + '</div>';
@@ -41,18 +41,18 @@ async function loadCollections() {
 }
 
 window.__renameCol = async function(id) {
-  var name = await promptModal({ kicker: 'Coleções', title: 'Renomear coleção', label: 'Novo nome' });
+  var name = await promptModal({ kicker: 'Álbuns', title: 'Renomear álbum', label: 'Novo nome' });
   if (!name || !name.trim()) return;
   await renameCollection(id, name.trim());
-  toast('Coleção renomeada', 'success');
+  toast('Álbum renomeado', 'success');
   loadCollections();
 };
 
 window.__deleteCol = async function(id) {
-  var ok = await confirmModal('As mídias continuam na biblioteca; apenas o grupo é removido.', { kicker: 'Coleções', title: 'Deletar esta coleção?', confirmLabel: 'Deletar', danger: true });
+  var ok = await confirmModal('Os itens continuam na biblioteca; apenas o álbum é removido.', { kicker: 'Álbuns', title: 'Excluir este álbum?', confirmLabel: 'Excluir', danger: true });
   if (!ok) return;
   await deleteCollection(id);
-  toast('Coleção deletada', 'success');
+  toast('Álbum excluído', 'success');
   loadCollections();
 };
 
@@ -68,7 +68,7 @@ window.__viewMembers = async function(colId) {
   try {
     var data = await getCollectionMembers(colId);
     if (!data.records || !data.records.length) {
-      container.innerHTML = '<p style="color:var(--text-muted);">Colecao vazia.</p>';
+      container.innerHTML = '<p style="color:var(--text-muted);">Álbum vazio.</p>';
       return;
     }
     var html = '<p style="font-size:11px;color:var(--text-secondary);margin-bottom:6px;">'

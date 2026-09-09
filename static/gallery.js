@@ -2,8 +2,8 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=39';
-import { openDetail } from './detail.js?v=2';
+import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=40';
+import { openDetail } from './detail.js?v=3';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;

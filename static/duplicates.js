@@ -1,16 +1,21 @@
 /* ── Iris Duplicates module ───────────────────────────────────────────────── */
 
-import { escapeHtml, fetchDuplicates, mediaUrl } from './api.js?v=39';
+import { escapeHtml, fetchDuplicates, mediaUrl } from './api.js?v=40';
 
 var viewMode = 'groups'; // 'groups' | 'flat'
+var duplicateLevels = {
+  exact: { threshold: 0.995, help: 'Prioriza cópias praticamente iguais.' },
+  close: { threshold: 0.985, help: 'Bom para cópias redimensionadas ou recomprimidas.' },
+  explore: { threshold: 0.94, help: 'Inclui variações visuais que precisam de revisão.' },
+};
 
 export function initDuplicates() {
-  var slider = document.getElementById('dup-threshold');
-  if (slider) {
-    slider.oninput = function() {
-      document.getElementById('dup-threshold-val').textContent = this.value;
-    };
-  }
+  var level = document.getElementById('dup-level');
+  level.onchange = function() {
+    var preset = duplicateLevels[this.value] || duplicateLevels.close;
+    document.getElementById('dup-threshold').value = preset.threshold;
+    document.getElementById('dup-level-help').textContent = preset.help;
+  };
   document.getElementById('btn-find-duplicates').onclick = loadDuplicates;
   document.getElementById('dup-view-mode').onchange = function() {
     viewMode = this.value;
@@ -41,12 +46,12 @@ async function loadDuplicates() {
     var data = await fetchDuplicates(threshold, neighbors, minGroup);
     var groups = sortDuplicateGroups(data.groups, sortMode);
     if (!groups.length) {
-      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">≋</span><p>Nenhuma duplicata encontrada.</p><small>Similaridade usada: ' + threshold + '. Reduza o valor para uma análise mais agressiva.</small></div>';
+      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">≋</span><p>Nenhuma duplicata encontrada.</p><small>Tente uma comparação mais abrangente se quiser explorar possíveis variações.</small></div>';
       return;
     }
     await hydrateMissingThumbnails(groups);
     var totalItems = groups.reduce(function(s, g) { return s + g.items.length; }, 0);
-    container.innerHTML = '<p style="margin-bottom:10px;">' + groups.length + ' grupo(s), ' + totalItems + ' imagem(ns) envolvidas (threshold: ' + threshold + ')</p>'
+    container.innerHTML = '<p style="margin-bottom:10px;">' + groups.length + ' grupo(s), ' + totalItems + ' item(ns) para revisar</p>'
       + (viewMode === 'flat' ? renderFlat(groups) : renderGroups(groups));
     installThumbnailFallbacks(container);
   } catch (err) {
@@ -133,7 +138,7 @@ function mediaUrlFromPath(path) {
 function renderGroups(groups) {
   return groups.map(function(g) {
     return '<details class="detail-panel" style="margin-bottom:8px;" ' + (g.group_id <= 5 ? 'open' : '') + '>'
-      + '<summary>Grupo #' + g.group_id + ' — ' + g.items.length + ' imagens — score ' + g.score.toFixed(4) + '</summary>'
+      + '<summary>Grupo #' + g.group_id + ' — ' + g.items.length + ' itens parecidos</summary>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px;">'
       + g.items.map(renderItem).join('')
       + '</div></details>';
@@ -143,7 +148,7 @@ function renderGroups(groups) {
 function renderFlat(groups) {
   var html = '';
   groups.forEach(function(g) {
-    html += '<div style="margin:8px 0;padding:4px 0;border-bottom:1px solid var(--border);"><strong>Grupo #' + g.group_id + '</strong> | ' + g.items.length + ' imagens | score ' + g.score.toFixed(4) + '</div>';
+    html += '<div style="margin:8px 0;padding:4px 0;border-bottom:1px solid var(--border);"><strong>Grupo #' + g.group_id + '</strong> · ' + g.items.length + ' itens parecidos</div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;">';
     html += g.items.map(renderItem).join('');
     html += '</div>';

@@ -176,6 +176,12 @@ class TestGzip:
 
         assert any(m.cls is GZipMiddleware for m in server.app.user_middleware)
 
+    def test_healthz_is_public_and_does_not_expose_library_details(self, client):
+        response = client.get("/healthz")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        assert "db_path" not in response.json()
+
 
 class TestSystemEndpoints:
     def test_import_requires_source(self, client):

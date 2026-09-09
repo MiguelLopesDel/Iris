@@ -46,7 +46,15 @@ Iris grew out of a meme search tool and became something bigger: a self-hosted A
 - 16 GB RAM or more
 - ~10 GB disk for AI model weights (downloaded on first run)
 
-CPU fallback exists but indexing is significantly slower.
+CPU search is fully supported. For an older APU such as a Ryzen 3 3200G, use the
+low-resource profile below; its integrated GPU is not a CUDA device, so Iris uses
+the CPU and system RAM deliberately.
+
+### Development / contributing
+
+For a local disposable two-account sandbox with hot reload, see
+[CONTRIBUTING.md](CONTRIBUTING.md). It does not require Docker, Tailscale, a second
+computer, personal media, or an AI model download.
 
 ### Install
 
@@ -58,6 +66,10 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+This installs CPU PyTorch by default, so an NVIDIA GPU is not required. On
+NVIDIA/CUDA 12.6 machines, use `pip install --force-reinstall -r requirements-cuda.txt`
+afterwards to replace the CPU runtime.
 
 ### Run
 
@@ -81,9 +93,44 @@ You can also override the startup paths through environment variables:
 IRIS_DB=data/library.db IRIS_MEDIA_ROOT=/path/to/media ./scripts/run_app.sh
 ```
 
+### Servidor privado para família ou equipe
+
+Iris começa no modo de biblioteca única para preservar instalações existentes. Para
+ativar contas e bibliotecas realmente isoladas, faça backup de `data/` e `media/`,
+pare o Iris e execute uma única vez:
+
+```bash
+python scripts/bootstrap_admin.py --username administrador --display-name "Seu nome"
+```
+
+O script move o catálogo, índices FAISS, miniaturas e mídia atuais para a primeira
+biblioteca privada. Ao reiniciar, o Iris ativa login; somente essa conta administradora
+cria contas adicionais. Cada conta recebe seu próprio SQLite, índices FAISS, mídia,
+miniaturas e fila de importação.
+
+Para acesso remoto, mantenha o Iris em `127.0.0.1` e publique-o apenas na sua tailnet
+com Tailscale Serve:
+
+```bash
+tailscale serve 8501
+```
+
+Não exponha a porta diretamente à Internet. O servidor processa originais para busca,
+pessoas e duplicatas; portanto, o operador do host pode tecnicamente ler os arquivos.
+Permissões de conta isolam usuários entre si, mas não substituem criptografia ponta a
+ponta contra quem controla o servidor.
+
+Para validar uma instalação real e medir navegação/busca com clientes concorrentes,
+consulte [docs/testing.md](docs/testing.md) e
+[docs/performance-testing.md](docs/performance-testing.md).
+
 ---
 
 ## Docker
+
+Para instalar como servidor privado multiusuário, siga o guia completo em
+[docs/server-deployment.md](docs/server-deployment.md). O Compose padrão publica
+somente em `127.0.0.1`; use Tailscale Serve para acesso remoto pela tailnet.
 
 ### CPU (no GPU required)
 
@@ -129,7 +176,18 @@ python -m core.indexer --dir /path/to/media --db data/library.db \
 
 # Rebuild FAISS index only (after manual DB edits)
 python -m core.indexer --db data/library.db --rebuild-faiss-only
+
+# Older CPU / integrated graphics: creates a smaller, CPU-only semantic index.
+python -m core.indexer --dir /path/to/media --db data/iris_light.db \
+  --recursive --low-resource
+IRIS_DB=data/iris_light.db IRIS_MODEL=sentence-transformers/clip-ViT-B-32 \
+  ./scripts/run_app.sh
 ```
+
+The **Sistema → Importar** panel also has **Modo PC fraco**. It applies the same
+profile: CPU, batch 1, smaller CLIP, and no caption/transcription/face models.
+Use it for a new catalog (or reindex an old one): different CLIP models cannot be
+mixed in a database.
 
 ---
 

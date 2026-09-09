@@ -13,7 +13,7 @@ import {
   getRecordMetadata,
   listPersons,
   mediaUrl,
-} from './api.js?v=39';
+} from './api.js?v=40';
 import { toast } from './ui.js?v=1';
 import { pickPersonModal } from './persons.js?v=5';
 
@@ -196,8 +196,8 @@ function renderAside(r, token) {
     ${section('Descrição da IA', r.descricao_ia ? `<pre class="detail-pre">${escapeHtml(r.descricao_ia)}</pre>` : '', { open: false })}
     ${r.tags ? section('Tags', `<p class="detail-text">${escapeHtml(r.tags)}</p>`) : ''}
     ${classif ? section('Classificação', `<div class="detail-classif">${classif}</div>`) : ''}
-    ${section('Coleções', '<div class="detail-chips" id="detail-cols">Carregando…</div>')}
-    ${section('Conceitos', '<div class="detail-chips" id="detail-concs">Carregando…</div>')}
+    ${section('Álbuns', '<div class="detail-chips" id="detail-cols">Carregando…</div>')}
+    ${section('Ensinados ao Iris', '<div class="detail-chips" id="detail-concs">Carregando…</div>')}
     <section class="detail-section" id="detail-metadata-section">
       <h4>Metadados</h4>
       <button class="btn btn-subtle" data-detail-action="metadata">Exibir metadados</button>
@@ -240,7 +240,7 @@ async function loadToggles(r, token) {
       async (id, add) => {
         const url = add ? `/api/collections/${id}/members` : `/api/collections/${id}/members/remove`;
         await fetch(url, { method: 'POST', body: new URLSearchParams({ db_ids: String(r.db_id) }) });
-        toast(add ? 'Adicionado à coleção' : 'Removido da coleção', 'success');
+        toast(add ? 'Adicionado ao álbum' : 'Removido do álbum', 'success');
       },
     );
     renderToggleChips(
@@ -248,7 +248,7 @@ async function loadToggles(r, token) {
       async (id, add) => {
         const url = add ? `/api/concepts/${id}/confirm` : `/api/concepts/${id}/reject`;
         await fetch(url, { method: 'POST', body: new URLSearchParams({ db_ids: String(r.db_id) }) });
-        toast(add ? 'Confirmado no conceito' : 'Rejeitado do conceito', 'success');
+        toast(add ? 'Reconhecimento confirmado' : 'Reconhecimento descartado', 'success');
       },
     );
   } catch (err) {
