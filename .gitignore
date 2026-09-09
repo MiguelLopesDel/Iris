@@ -144,7 +144,7 @@ build_test_release/
 tmp_test_images/
 
 # Data directory (databases, indexes, logs, eval, reports — all generated/personal)
-data/
+/data/
 *.db
 *.faiss
 

@@ -6,13 +6,19 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import coil.util.DebugLogger
+import com.iris.app.data.local.DeviceCredentialsStore
+import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.ServerSettingsRepository
+import com.iris.app.data.sync.ChangeFeedSyncManager
+import com.iris.app.data.sync.MediaSyncWorker
+import com.iris.app.data.sync.MediaStoreScanner
+import com.iris.app.data.sync.SyncUploadManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -23,7 +29,22 @@ class IrisApplication : Application(), ImageLoaderFactory {
     lateinit var settingsRepository: ServerSettingsRepository
         private set
 
+    lateinit var credentialsStore: DeviceCredentialsStore
+        private set
+
+    lateinit var dbHelper: UploadDatabaseHelper
+        private set
+
     lateinit var apiClient: IrisApiClient
+        private set
+
+    lateinit var syncUploadManager: SyncUploadManager
+        private set
+
+    lateinit var mediaStoreScanner: MediaStoreScanner
+        private set
+
+    lateinit var changeFeedSyncManager: ChangeFeedSyncManager
         private set
 
     lateinit var irisRepository: IrisRepository
@@ -34,16 +55,71 @@ class IrisApplication : Application(), ImageLoaderFactory {
         instance = this
 
         settingsRepository = ServerSettingsRepository(this)
-        apiClient = IrisApiClient()
-        irisRepository = IrisRepository(apiClient)
+        credentialsStore = DeviceCredentialsStore(this)
+        dbHelper = UploadDatabaseHelper(this)
 
-        // Observe server URL changes from DataStore and update the API client
+        apiClient = IrisApiClient(
+            credentialsStore = credentialsStore
+        )
+
+        syncUploadManager = SyncUploadManager(
+            contentResolver = contentResolver,
+            dbHelper = dbHelper,
+            apiServiceProvider = { apiClient.apiService }
+        )
+
+        mediaStoreScanner = MediaStoreScanner(
+            contentResolver = contentResolver,
+            uploadManager = syncUploadManager
+        )
+
+        changeFeedSyncManager = ChangeFeedSyncManager(
+            dbHelper = dbHelper,
+            apiServiceProvider = { apiClient.apiService }
+        )
+
+        irisRepository = IrisRepository(
+            apiClient = apiClient,
+            credentialsStore = credentialsStore,
+            dbHelper = dbHelper,
+            uploadManager = syncUploadManager,
+            mediaScanner = mediaStoreScanner,
+            changeFeedSync = changeFeedSyncManager
+        )
+
+        // Observe server URL changes from DataStore
         applicationScope.launch {
             val initialUrl = settingsRepository.serverUrl.first()
             apiClient.updateBaseUrl(initialUrl)
 
             settingsRepository.serverUrl.collect { url ->
                 apiClient.updateBaseUrl(url)
+            }
+        }
+
+        // Schedule periodic WorkManager sync respecting user preferences
+        applicationScope.launch {
+            combine(
+                settingsRepository.syncWifiOnly,
+                settingsRepository.syncChargingOnly,
+                settingsRepository.autoBackupEnabled
+            ) { wifiOnly, chargingOnly, autoBackup ->
+                Triple(wifiOnly, chargingOnly, autoBackup)
+            }.collect { (wifiOnly, chargingOnly, autoBackup) ->
+                if (autoBackup) {
+                    MediaSyncWorker.schedulePeriodic(
+                        context = this@IrisApplication,
+                        wifiOnly = wifiOnly,
+                        requiresCharging = chargingOnly
+                    )
+                }
+            }
+        }
+
+        // Poll change feed on app open (contract section 38)
+        applicationScope.launch(Dispatchers.IO) {
+            if (credentialsStore.hasValidCredentials()) {
+                changeFeedSyncManager.syncChanges()
             }
         }
     }

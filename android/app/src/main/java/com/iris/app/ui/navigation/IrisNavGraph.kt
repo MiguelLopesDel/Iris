@@ -43,6 +43,10 @@ import com.iris.app.ui.screens.persons.PersonsScreen
 import com.iris.app.ui.screens.persons.PersonsViewModel
 import com.iris.app.ui.screens.search.SearchScreen
 import com.iris.app.ui.screens.search.SearchViewModel
+import com.iris.app.ui.screens.sync.SyncScreen
+import com.iris.app.ui.screens.sync.SyncViewModel
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.outlined.CloudUpload
 import com.iris.app.ui.screens.settings.SettingsScreen
 import com.iris.app.ui.screens.settings.SettingsViewModel
 import com.iris.app.ui.theme.IrisAccentInk
@@ -91,6 +95,12 @@ fun IrisNavGraph(
             label = "Coleções",
             selectedIcon = Icons.Filled.Folder,
             unselectedIcon = Icons.Outlined.Folder
+        ),
+        BottomNavItem(
+            route = NavRoute.Sync.route,
+            label = "Backup",
+            selectedIcon = Icons.Filled.CloudUpload,
+            unselectedIcon = Icons.Outlined.CloudUpload
         )
     )
 
@@ -263,6 +273,17 @@ fun IrisNavGraph(
                         navController.navigate(NavRoute.PersonMedia.createRoute(personId, personName))
                     }
                 )
+            }
+
+            composable(NavRoute.Sync.route) {
+                val viewModel: SyncViewModel = viewModel(
+                    factory = SyncViewModel.Factory(
+                        application.irisRepository,
+                        application.settingsRepository,
+                        application.credentialsStore
+                    )
+                )
+                SyncScreen(viewModel = viewModel)
             }
 
             composable(NavRoute.Settings.route) {

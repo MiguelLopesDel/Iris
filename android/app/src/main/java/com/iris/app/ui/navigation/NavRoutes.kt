@@ -20,5 +20,6 @@ sealed class NavRoute(val route: String) {
     object Detail : NavRoute("detail/{recordIndex}") {
         fun createRoute(recordIndex: Int): String = "detail/$recordIndex"
     }
+    object Sync : NavRoute("sync")
     object Settings : NavRoute("settings")
 }

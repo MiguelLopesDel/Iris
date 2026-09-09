@@ -139,4 +139,135 @@ class IrisClientTest {
         assertEquals(0.895f, response.results[0].score)
         assertTrue(response.results[0].isVideo)
     }
+
+    @Test
+    fun testDeviceLoginResponseDeserialization() {
+        val jsonString = """
+            {
+                "user": {
+                    "id": 1,
+                    "username": "alice",
+                    "display_name": "Alice",
+                    "is_admin": true
+                },
+                "access_token": "mock_access_token_123",
+                "refresh_token": "mock_refresh_token_456",
+                "token_type": "Bearer",
+                "expires_in": 900,
+                "device_id": "dev_789"
+            }
+        """.trimIndent()
+
+        val response = json.decodeFromString<com.iris.app.data.model.DeviceLoginResponse>(jsonString)
+        assertEquals("alice", response.user?.username)
+        assertEquals("mock_access_token_123", response.accessToken)
+        assertEquals("mock_refresh_token_456", response.refreshToken)
+        assertEquals("dev_789", response.deviceId)
+        assertEquals(900L, response.expiresIn)
+    }
+
+    @Test
+    fun testUploadLifecycleResponses() {
+        val initJson = """
+            {
+                "upload_id": "up_001",
+                "offset": 0,
+                "chunk_size": 33554432
+            }
+        """.trimIndent()
+        val initResp = json.decodeFromString<com.iris.app.data.model.UploadInitResponse>(initJson)
+        assertEquals("up_001", initResp.uploadId)
+        assertEquals(0L, initResp.offset)
+        assertEquals(33554432, initResp.chunkSize)
+
+        val statusJson = """
+            {
+                "upload_id": "up_001",
+                "offset": 16777216,
+                "size": 33554432,
+                "state": "uploading"
+            }
+        """.trimIndent()
+        val statusResp = json.decodeFromString<com.iris.app.data.model.UploadStatusResponse>(statusJson)
+        assertEquals(16777216L, statusResp.offset)
+        assertEquals("uploading", statusResp.state)
+
+        val completePendingJson = """
+            {
+                "upload_id": "up_001",
+                "state": "pending_processing",
+                "cursor": 42,
+                "path": "/data/uploads/2026-09/photo.jpg"
+            }
+        """.trimIndent()
+        val completeResp = json.decodeFromString<com.iris.app.data.model.UploadCompleteResponse>(completePendingJson)
+        assertEquals("pending_processing", completeResp.state)
+        assertEquals(42L, completeResp.cursor)
+
+        val duplicateJson = """
+            {
+                "upload_id": "up_001",
+                "state": "duplicate",
+                "media_id": 99,
+                "cursor": 43
+            }
+        """.trimIndent()
+        val duplicateResp = json.decodeFromString<com.iris.app.data.model.UploadCompleteResponse>(duplicateJson)
+        assertEquals("duplicate", duplicateResp.state)
+        assertEquals(99, duplicateResp.mediaId)
+    }
+
+    @Test
+    fun testChangesFeedDeserialization() {
+        val changesJson = """
+            {
+                "changes": [
+                    {
+                        "cursor": 1,
+                        "entity_type": "media",
+                        "entity_id": "up_001",
+                        "operation": "created",
+                        "version": 1,
+                        "payload": {
+                            "upload_id": "up_001",
+                            "state": "pending_processing"
+                        }
+                    },
+                    {
+                        "cursor": 2,
+                        "entity_type": "media",
+                        "entity_id": "up_001",
+                        "operation": "updated",
+                        "version": 2,
+                        "payload": {
+                            "upload_id": "up_001",
+                            "state": "ready"
+                        }
+                    }
+                ],
+                "next_cursor": 2,
+                "has_more": false
+            }
+        """.trimIndent()
+
+        val changesResp = json.decodeFromString<com.iris.app.data.model.ChangesResponse>(changesJson)
+        assertEquals(2, changesResp.changes.size)
+        assertEquals(2L, changesResp.nextCursor)
+        assertFalse(changesResp.hasMore)
+        assertEquals("pending_processing", changesResp.changes[0].payload?.get("state")?.toString()?.replace("\"", ""))
+        assertEquals("ready", changesResp.changes[1].payload?.get("state")?.toString()?.replace("\"", ""))
+    }
+
+    @Test
+    fun testAllRequiredUploadStatesExist() {
+        val states = com.iris.app.data.model.UploadJobState.values().map { it.name }
+        assertTrue(states.contains("QUEUED"))
+        assertTrue(states.contains("UPLOADING"))
+        assertTrue(states.contains("PENDING_PROCESSING"))
+        assertTrue(states.contains("PROCESSING"))
+        assertTrue(states.contains("READY"))
+        assertTrue(states.contains("DUPLICATE"))
+        assertTrue(states.contains("FAILED"))
+        assertTrue(states.contains("FAILED_PROCESSING"))
+    }
 }
