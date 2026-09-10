@@ -61,9 +61,19 @@ if ! printf '%s' "$health" | grep -q '"status":"setup_required"'; then
     exit 1
 fi
 
+# Before the first account exists the server is in setup-required state, and the
+# API says so (503) rather than "unauthorized" (401). What matters here is that
+# an anonymous caller cannot read the library either way; the 401 case is
+# asserted by verify_server.py further down, once an account makes 401 the
+# correct answer. Demanding 401 at this point contradicted the server and made
+# this whole job fail from a clean install.
 status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$base_url/api/info")"
-if [ "$status" != "401" ]; then
-    echo "Anonymous /api/info should return 401, got $status." >&2
+if [ "$status" = "200" ]; then
+    echo "Anonymous /api/info leaked the library before setup, got $status." >&2
+    exit 1
+fi
+if [ "$status" != "503" ] && [ "$status" != "401" ]; then
+    echo "Anonymous /api/info should refuse before setup, got $status." >&2
     exit 1
 fi
 
