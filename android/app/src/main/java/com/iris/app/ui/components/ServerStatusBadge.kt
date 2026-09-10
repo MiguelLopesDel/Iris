@@ -31,18 +31,26 @@ fun ServerStatusBadge(
     serverInfo: ServerInfo?,
     isConnecting: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isServerOnline: Boolean = false,
+    totalRecords: Int = 0,
+    isDeviceLoggedIn: Boolean = true
 ) {
-    val isOnline = serverInfo != null
+    val isOnline = isServerOnline || serverInfo != null
+    val effectiveRecords = if (totalRecords > 0) totalRecords else (serverInfo?.records ?: 0)
+
     val dotColor = when {
         isConnecting -> Color(0xFFFFB300)
-        isOnline -> IrisAccentLime
-        else -> IrisDanger
+        !isOnline -> IrisDanger
+        !isDeviceLoggedIn -> Color(0xFFFFB300)
+        else -> IrisAccentLime
     }
     val label = when {
         isConnecting -> "Conectando…"
-        isOnline -> "${serverInfo?.records ?: 0} mídias"
-        else -> "Offline"
+        !isOnline -> "Offline"
+        effectiveRecords > 0 -> "$effectiveRecords mídias"
+        !isDeviceLoggedIn -> "Login nec."
+        else -> "Online"
     }
 
     Row(

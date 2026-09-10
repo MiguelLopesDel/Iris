@@ -139,10 +139,14 @@ class GalleryViewModel(
                     )
                 }
             }.onFailure { ex ->
-                val errorMsg = if (ex.message?.contains("401") == true) {
-                    "AUTH_REQUIRED"
-                } else {
-                    ex.localizedMessage ?: "Erro ao carregar mídias da biblioteca"
+                val rawMsg = ex.localizedMessage ?: ex.message ?: ""
+                val errorMsg = when {
+                    rawMsg.contains("401") -> "AUTH_REQUIRED"
+                    rawMsg.contains("Unexpected token", ignoreCase = true) ->
+                        "Resposta inesperada do servidor (verifique a URL em Configurações)"
+                    rawMsg.contains("Connection refused", ignoreCase = true) || rawMsg.contains("ConnectException", ignoreCase = true) ->
+                        "SERVER_OFFLINE"
+                    else -> rawMsg.ifBlank { "Erro ao carregar mídias da biblioteca" }
                 }
                 _uiState.update {
                     it.copy(

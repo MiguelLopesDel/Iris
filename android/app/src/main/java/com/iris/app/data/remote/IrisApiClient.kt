@@ -13,6 +13,7 @@ import okhttp3.Route
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
+import okhttp3.ResponseBody.Companion.toResponseBody
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -30,6 +31,8 @@ class IrisApiClient(
         isLenient = true
         coerceInputValues = true
     }
+
+    private val tokenRefreshLock = Any()
 
     // Custom safe logger: NEVER log passwords, refresh tokens, or media bytes (Rule 51)
     private val safeLoggingInterceptor = Interceptor { chain ->
@@ -58,13 +61,24 @@ class IrisApiClient(
         } else {
             original
         }
-        chain.proceed(newRequest)
+        val response = chain.proceed(newRequest)
+
+        // If backend returns a redirect to /login or /setup (302/303), transform to 401 JSON
+        // so Authenticator and Retrofit can handle it without attempting to parse HTML as JSON.
+        if ((response.code == 302 || response.code == 303) && response.header("Location")?.contains("/login") == true) {
+            val jsonMediaType = "application/json".toMediaType()
+            return@Interceptor response.newBuilder()
+                .code(401)
+                .message("Autenticação necessária")
+                .body("{\"detail\":\"Autenticação necessária\"}".toResponseBody(jsonMediaType))
+                .build()
+        }
+
+        response
     }
 
     private val tokenAuthenticator = Authenticator { _: Route?, response: Response ->
         if (credentialsStore == null) return@Authenticator null
-        val deviceId = credentialsStore.getDeviceId() ?: return@Authenticator null
-        val refreshToken = credentialsStore.getRefreshToken() ?: return@Authenticator null
 
         // Prevent infinite loops if refresh itself fails
         if (response.request.url.encodedPath.contains("/auth/devices/refresh")) {
@@ -72,7 +86,9 @@ class IrisApiClient(
             return@Authenticator null
         }
 
-        synchronized(this) {
+        synchronized(tokenRefreshLock) {
+            val deviceId = credentialsStore.getDeviceId() ?: return@Authenticator null
+            val refreshToken = credentialsStore.getRefreshToken() ?: return@Authenticator null
             val currentToken = credentialsStore.getAccessToken()
             val requestToken = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
 
@@ -98,8 +114,8 @@ class IrisApiClient(
             try {
                 // Use a bare OkHttpClient to avoid circular interceptor calls
                 val bareClient = OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
+                    .connectTimeout(15, TimeUnit.SECONDS)
+                    .readTimeout(15, TimeUnit.SECONDS)
                     .build()
 
                 val refreshResponse = bareClient.newCall(refreshRequest).execute()
@@ -119,12 +135,16 @@ class IrisApiClient(
                     return@Authenticator response.request.newBuilder()
                         .header("Authorization", "Bearer $newAccess")
                         .build()
-                } else {
-                    // Refresh failed or device revoked (401) -> erase credentials and abort
+                } else if (refreshResponse.code == 401) {
+                    // Only clear credentials if the refresh token was explicitly rejected / session revoked
                     credentialsStore.clearCredentials()
+                    return@Authenticator null
+                } else {
+                    // Temporary 5xx or server glitch: do NOT wipe credentials
                     return@Authenticator null
                 }
             } catch (e: Exception) {
+                // Network failure during refresh: do NOT wipe credentials
                 return@Authenticator null
             }
         }
@@ -134,6 +154,8 @@ class IrisApiClient(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
         .addInterceptor(authInterceptor)
         .addInterceptor(safeLoggingInterceptor)
         .authenticator(tokenAuthenticator)

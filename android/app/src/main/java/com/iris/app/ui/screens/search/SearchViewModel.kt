@@ -133,11 +133,18 @@ class SearchViewModel(
                     )
                 }
             }.onFailure { ex ->
+                val rawMsg = ex.localizedMessage ?: ex.message ?: ""
+                val errorMsg = when {
+                    rawMsg.contains("401") -> "Autenticação necessária (faça login na aba Backup)"
+                    rawMsg.contains("Unexpected token", ignoreCase = true) ->
+                        "Resposta inesperada do servidor (verifique a URL em Configurações)"
+                    else -> rawMsg.ifBlank { "Erro na busca" }
+                }
                 _uiState.update {
                     it.copy(
                         isSearching = false,
                         hasSearched = true,
-                        error = ex.localizedMessage ?: "Erro na busca"
+                        error = errorMsg
                     )
                 }
             }

@@ -96,6 +96,9 @@ fun GalleryScreen(
                         ServerStatusBadge(
                             serverInfo = uiState.serverInfo,
                             isConnecting = uiState.isServerChecking,
+                            isServerOnline = uiState.isServerOnline == true,
+                            totalRecords = if (uiState.totalRecords > 0) uiState.totalRecords else uiState.records.size,
+                            isDeviceLoggedIn = uiState.isDeviceLoggedIn,
                             onClick = onSettingsClick
                         )
                     }
