@@ -458,7 +458,10 @@ fun MediaDetailScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 contentPadding = PaddingValues(end = 16.dp)
                             ) {
-                                items(uiState.similarRecords) { simRecord ->
+                                items(
+                                    items = uiState.similarRecords,
+                                    key = { it.index }
+                                ) { simRecord ->
                                     MediaCard(
                                         record = simRecord,
                                         onClick = { onMediaClick(simRecord.index) },

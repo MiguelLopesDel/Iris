@@ -12,8 +12,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody
+import okio.BufferedSink
+import java.io.FileInputStream
 import java.io.InputStream
 import java.security.MessageDigest
 import kotlin.math.min
@@ -23,6 +26,8 @@ class SyncUploadManager(
     private val dbHelper: UploadDatabaseHelper,
     private val apiServiceProvider: () -> IrisApiService
 ) {
+
+    private val uploadMutex = Mutex()
 
     private val _isUploading = MutableStateFlow(false)
     val isUploading: StateFlow<Boolean> = _isUploading.asStateFlow()
@@ -51,11 +56,15 @@ class SyncUploadManager(
     }
 
     suspend fun processQueue(): Boolean = withContext(Dispatchers.IO) {
+        // Prevent multiple workers or UI buttons from running concurrent upload loops
+        if (!uploadMutex.tryLock()) {
+            return@withContext false
+        }
         _isUploading.value = true
         var processedAny = false
         try {
             while (true) {
-                val nextJob = dbHelper.getNextPendingJob() ?: break
+                val nextJob = dbHelper.claimNextPendingJob() ?: break
                 processedAny = true
                 val success = executeUpload(nextJob)
                 if (!success) {
@@ -66,6 +75,7 @@ class SyncUploadManager(
         } finally {
             _isUploading.value = false
             _currentProgress.value = 0f
+            uploadMutex.unlock()
         }
         processedAny
     }
@@ -99,15 +109,13 @@ class SyncUploadManager(
 
             // Step 2: Sequential chunk upload loop
             val uri = Uri.parse(job.localUri)
-            val octetStreamMediaType = "application/octet-stream".toMediaType()
             var conflictCount = 0
 
             while (currentOffset < job.byteSize) {
                 val remaining = job.byteSize - currentOffset
-                val bytesToRead = min(remaining, chunkSize.toLong()).toInt()
-                val chunkBytes = readChunkBytes(uri, currentOffset, bytesToRead)
+                val bytesToRead = min(remaining, chunkSize.toLong())
+                val requestBody = createChunkRequestBody(uri, currentOffset, bytesToRead)
 
-                val requestBody = chunkBytes.toRequestBody(octetStreamMediaType)
                 val response = apiService.uploadChunk(
                     uploadId = uploadId,
                     offset = currentOffset,
@@ -115,7 +123,7 @@ class SyncUploadManager(
                 )
 
                 if (response.isSuccessful) {
-                    val nextOffset = response.body()?.offset ?: (currentOffset + chunkBytes.size)
+                    val nextOffset = response.body()?.offset ?: (currentOffset + bytesToRead)
                     currentOffset = nextOffset
                     conflictCount = 0
                     dbHelper.updateOffsetTransactionally(job.id, currentOffset)
@@ -147,8 +155,7 @@ class SyncUploadManager(
                         }
                     }
                 } else if (response.code() == 401) {
-                    // Session expired or revoked
-                    dbHelper.updateJobState(job.id, UploadJobState.FAILED, "Autenticação revogada (401)")
+                    // Session might be refreshing; do not permanently fail, let WorkManager retry
                     return@withContext false
                 } else {
                     val err = response.errorBody()?.string() ?: "Erro HTTP ${response.code()}"
@@ -186,22 +193,57 @@ class SyncUploadManager(
         }
     }
 
-    private fun readChunkBytes(uri: Uri, offset: Long, length: Int): ByteArray {
-        contentResolver.openInputStream(uri)?.use { stream ->
-            skipFully(stream, offset)
-            val buffer = ByteArray(length)
-            var bytesReadTotal = 0
-            while (bytesReadTotal < length) {
-                val count = stream.read(buffer, bytesReadTotal, length - bytesReadTotal)
-                if (count == -1) break
-                bytesReadTotal += count
+    /**
+     * Streaming RequestBody with O(1) kernel seek via ParcelFileDescriptor/FileChannel.
+     * Uses a lightweight 64 KB buffer, eliminating 32 MB JVM heap allocations and OOM risk.
+     * isOneShot() = false allows OkHttp to retry cleanly upon 401 token refresh.
+     */
+    private fun createChunkRequestBody(
+        uri: Uri,
+        offset: Long,
+        length: Long
+    ): RequestBody = object : RequestBody() {
+        override fun contentType() = "application/octet-stream".toMediaType()
+        override fun contentLength(): Long = length
+        override fun isOneShot(): Boolean = false
+
+        override fun writeTo(sink: BufferedSink) {
+            val pfd = try {
+                contentResolver.openFileDescriptor(uri, "r")
+            } catch (_: Exception) {
+                null
             }
-            return if (bytesReadTotal == length) {
-                buffer
+
+            if (pfd != null) {
+                pfd.use { fd ->
+                    FileInputStream(fd.fileDescriptor).use { stream ->
+                        stream.channel.position(offset)
+                        val buffer = ByteArray(64 * 1024)
+                        var bytesRemaining = length
+                        while (bytesRemaining > 0) {
+                            val toRead = min(bytesRemaining, buffer.size.toLong()).toInt()
+                            val read = stream.read(buffer, 0, toRead)
+                            if (read == -1) break
+                            sink.write(buffer, 0, read)
+                            bytesRemaining -= read
+                        }
+                    }
+                }
             } else {
-                buffer.copyOf(bytesReadTotal)
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    skipFully(stream, offset)
+                    val buffer = ByteArray(64 * 1024)
+                    var bytesRemaining = length
+                    while (bytesRemaining > 0) {
+                        val toRead = min(bytesRemaining, buffer.size.toLong()).toInt()
+                        val read = stream.read(buffer, 0, toRead)
+                        if (read == -1) break
+                        sink.write(buffer, 0, read)
+                        bytesRemaining -= read
+                    }
+                } ?: throw java.io.IOException("Não foi possível abrir o arquivo da mídia local")
             }
-        } ?: throw IllegalStateException("Não foi possível abrir o arquivo da mídia local")
+        }
     }
 
     private fun skipFully(stream: InputStream, bytesToSkip: Long) {
@@ -219,13 +261,31 @@ class SyncUploadManager(
 
     fun computeSha256(uri: Uri): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        contentResolver.openInputStream(uri)?.use { stream ->
-            val buffer = ByteArray(1024 * 1024)
-            var count: Int
-            while (stream.read(buffer).also { count = it } != -1) {
-                digest.update(buffer, 0, count)
+        val pfd = try {
+            contentResolver.openFileDescriptor(uri, "r")
+        } catch (_: Exception) {
+            null
+        }
+
+        if (pfd != null) {
+            pfd.use { fd ->
+                FileInputStream(fd.fileDescriptor).use { stream ->
+                    val buffer = ByteArray(64 * 1024)
+                    var count: Int
+                    while (stream.read(buffer).also { count = it } != -1) {
+                        digest.update(buffer, 0, count)
+                    }
+                }
             }
-        } ?: return ""
+        } else {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                val buffer = ByteArray(64 * 1024)
+                var count: Int
+                while (stream.read(buffer).also { count = it } != -1) {
+                    digest.update(buffer, 0, count)
+                }
+            } ?: return ""
+        }
         val bytes = digest.digest()
         return bytes.joinToString("") { "%02x".format(it) }
     }

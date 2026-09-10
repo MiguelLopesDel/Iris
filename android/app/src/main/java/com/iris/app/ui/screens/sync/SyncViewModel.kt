@@ -134,10 +134,7 @@ class SyncViewModel(
 
     fun triggerManualSync(context: Context) {
         MediaSyncWorker.enqueueImmediate(context)
-        viewModelScope.launch {
-            repository.triggerSync()
-            loadQueue()
-        }
+        loadQueue()
     }
 
     fun setSyncWifiOnly(wifiOnly: Boolean) {

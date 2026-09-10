@@ -93,8 +93,29 @@ class IrisApiClient(
         response
     }
 
+    private val bareOkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+    }
+
+    @Volatile
+    private var lastRefreshFailedAt = 0L
+
+    private fun responseCount(response: Response): Int {
+        var count = 1
+        var prior = response.priorResponse
+        while (prior != null) {
+            count++
+            prior = prior.priorResponse
+        }
+        return count
+    }
+
     private val tokenAuthenticator = Authenticator { _: Route?, response: Response ->
         if (credentialsStore == null) return@Authenticator null
+        if (responseCount(response) >= 3) return@Authenticator null
 
         // Host security check: only refresh if the failing request is for the current server
         val currentBaseHttpUrl = baseUrl.toHttpUrlOrNull()
@@ -129,6 +150,11 @@ class IrisApiClient(
                     .build()
             }
 
+            // Fast-fail if refresh failed in the last 10 seconds to avoid cascading timeouts for 50 concurrent requests
+            if (System.currentTimeMillis() - lastRefreshFailedAt < 10_000L) {
+                return@Authenticator null
+            }
+
             // Perform synchronous refresh call
             val refreshUrl = "${baseUrl.removeSuffix("/")}/api/auth/devices/refresh"
             val formBody = FormBody.Builder()
@@ -142,18 +168,11 @@ class IrisApiClient(
                 .build()
 
             try {
-                // Use a bare OkHttpClient to avoid circular interceptor calls
-                val bareClient = OkHttpClient.Builder()
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
-                    .build()
-
-                val refreshResponse = bareClient.newCall(refreshRequest).execute()
+                val refreshResponse = bareOkHttpClient.newCall(refreshRequest).execute()
                 if (refreshResponse.isSuccessful) {
                     val responseBody = refreshResponse.body?.string() ?: ""
                     val jsonElement = json.parseToJsonElement(responseBody)
                     val newAccess = jsonElement.toString().let {
-                        // Extract without heavy logging
                         val parsed = json.decodeFromString<com.iris.app.data.model.DeviceRefreshResponse>(it)
                         credentialsStore.replaceTokensAtomically(
                             accessToken = parsed.accessToken,
@@ -162,6 +181,7 @@ class IrisApiClient(
                         )
                         parsed.accessToken
                     }
+                    lastRefreshFailedAt = 0L
                     return@Authenticator response.request.newBuilder()
                         .header("Authorization", "Bearer $newAccess")
                         .build()
@@ -170,11 +190,12 @@ class IrisApiClient(
                     credentialsStore.clearCredentials()
                     return@Authenticator null
                 } else {
-                    // Temporary 5xx or server glitch: do NOT wipe credentials
+                    lastRefreshFailedAt = System.currentTimeMillis()
                     return@Authenticator null
                 }
             } catch (e: Exception) {
-                // Network failure during refresh: do NOT wipe credentials
+                // Network failure during refresh: fast-fail other queued requests without wiping credentials
+                lastRefreshFailedAt = System.currentTimeMillis()
                 return@Authenticator null
             }
         }

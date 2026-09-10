@@ -125,6 +125,9 @@ class IrisApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader {
+        val activityManager = getSystemService(android.app.ActivityManager::class.java)
+        val isLowRam = activityManager?.isLowRamDevice == true
+
         return ImageLoader.Builder(this)
             .okHttpClient { apiClient.authenticatedOkHttpClient }
             .components {
@@ -132,17 +135,28 @@ class IrisApplication : Application(), ImageLoaderFactory {
             }
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
+                    .maxSizePercent(if (isLowRam) 0.15 else 0.20)
+                    .strongReferencesEnabled(true)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizePercent(0.05)
+                    .maxSizeBytes(250L * 1024 * 1024)
                     .build()
             }
+            .allowRgb565(isLowRam)
+            .respectCacheHeaders(false)
             .crossfade(true)
             .build()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            coil.Coil.imageLoader(this).memoryCache?.clear()
+        }
     }
 
     companion object {

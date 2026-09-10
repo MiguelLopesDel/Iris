@@ -148,7 +148,10 @@ fun CollectionsScreen(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                                items(uiState.collections) { col ->
+                                items(
+                                    items = uiState.collections,
+                                    key = { it.id }
+                                ) { col ->
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
                                         colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
@@ -205,7 +208,10 @@ fun CollectionsScreen(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                                items(uiState.concepts) { concept ->
+                                items(
+                                    items = uiState.concepts,
+                                    key = { it.id }
+                                ) { concept ->
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
                                         colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
@@ -348,7 +354,10 @@ fun CollectionMediaScreen(
                         .fillMaxSize()
                         .padding(paddingValues)
                 ) {
-                    items(uiState.members) { record ->
+                    items(
+                        items = uiState.members,
+                        key = { it.index }
+                    ) { record ->
                         MediaCard(
                             record = record,
                             onClick = { onMediaClick(record.index) }

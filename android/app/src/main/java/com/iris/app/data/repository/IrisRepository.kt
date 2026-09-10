@@ -18,6 +18,18 @@ import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.SyncUploadManager
 
+import kotlin.coroutines.cancellation.CancellationException
+
+inline fun <T, R> T.runCatchingCancellable(block: T.() -> R): Result<R> {
+    return try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        Result.failure(e)
+    }
+}
+
 class IrisRepository(
     val apiClient: IrisApiClient,
     val credentialsStore: DeviceCredentialsStore,
@@ -30,7 +42,7 @@ class IrisRepository(
         username: String,
         password: String,
         deviceName: String
-    ): Result<DeviceLoginResponse> = runCatching {
+    ): Result<DeviceLoginResponse> = runCatchingCancellable {
         val response = apiClient.apiService.deviceLogin(
             username = username,
             password = password,
@@ -56,18 +68,18 @@ class IrisRepository(
         return dbHelper.getAllJobs()
     }
 
-    suspend fun triggerSync(): Result<Int> = runCatching {
+    suspend fun triggerSync(): Result<Int> = runCatchingCancellable {
         val discovered = mediaScanner.scanAndEnqueueNewMedia()
         uploadManager.processQueue()
         changeFeedSync.syncChanges()
         discovered
     }
 
-    suspend fun checkServerHealth(): Result<com.iris.app.data.model.HealthResponse> = runCatching {
+    suspend fun checkServerHealth(): Result<com.iris.app.data.model.HealthResponse> = runCatchingCancellable {
         apiClient.apiService.getHealth()
     }
 
-    suspend fun getServerInfo(): Result<ServerInfo> = runCatching {
+    suspend fun getServerInfo(): Result<ServerInfo> = runCatchingCancellable {
         apiClient.apiService.getInfo()
     }
 
@@ -79,10 +91,12 @@ class IrisRepository(
         mediaType: String = "all",
         collectionIds: String = "",
         conceptIds: String = ""
-    ): Result<RecordsResponse> = runCatching {
+    ): Result<RecordsResponse> = runCatchingCancellable {
+        val safePage = maxOf(1, page)
+        val safePerPage = perPage.coerceIn(12, 500)
         apiClient.apiService.getRecords(
-            page = page,
-            perPage = perPage,
+            page = safePage,
+            perPage = safePerPage,
             sortBy = sortBy,
             sortAsc = sortAsc,
             mediaType = mediaType,
@@ -91,11 +105,11 @@ class IrisRepository(
         )
     }
 
-    suspend fun getRecordDetail(idx: Int): Result<MediaRecord> = runCatching {
+    suspend fun getRecordDetail(idx: Int): Result<MediaRecord> = runCatchingCancellable {
         apiClient.apiService.getRecordDetail(idx)
     }
 
-    suspend fun getRecordMetadata(idx: Int): Result<RecordMetadataResponse> = runCatching {
+    suspend fun getRecordMetadata(idx: Int): Result<RecordMetadataResponse> = runCatchingCancellable {
         apiClient.apiService.getRecordMetadata(idx)
     }
 
@@ -110,7 +124,7 @@ class IrisRepository(
         mediaType: String = "all",
         collectionIds: String = "",
         conceptIds: String = ""
-    ): Result<SearchResponse> = runCatching {
+    ): Result<SearchResponse> = runCatchingCancellable {
         apiClient.apiService.searchText(
             query = query,
             topK = topK,
@@ -131,7 +145,7 @@ class IrisRepository(
         mediaType: String = "all",
         collectionIds: String = "",
         conceptIds: String = ""
-    ): Result<SearchResponse> = runCatching {
+    ): Result<SearchResponse> = runCatchingCancellable {
         apiClient.apiService.searchFilename(
             query = query,
             topK = topK,
@@ -141,31 +155,31 @@ class IrisRepository(
         )
     }
 
-    suspend fun searchSimilar(idx: Int, topK: Int = 30): Result<SearchResponse> = runCatching {
+    suspend fun searchSimilar(idx: Int, topK: Int = 30): Result<SearchResponse> = runCatchingCancellable {
         apiClient.apiService.searchSimilar(idx = idx, topK = topK)
     }
 
-    suspend fun searchRandom(count: Int = 24): Result<SearchResponse> = runCatching {
+    suspend fun searchRandom(count: Int = 24): Result<SearchResponse> = runCatchingCancellable {
         apiClient.apiService.searchRandom(count = count)
     }
 
-    suspend fun getPersons(): Result<List<Person>> = runCatching {
+    suspend fun getPersons(): Result<List<Person>> = runCatchingCancellable {
         apiClient.apiService.getPersons().persons
     }
 
-    suspend fun getPersonMedia(personId: Int): Result<PersonMediaResponse> = runCatching {
+    suspend fun getPersonMedia(personId: Int): Result<PersonMediaResponse> = runCatchingCancellable {
         apiClient.apiService.getPersonMedia(personId)
     }
 
-    suspend fun getCollections(): Result<List<IrisCollection>> = runCatching {
+    suspend fun getCollections(): Result<List<IrisCollection>> = runCatchingCancellable {
         apiClient.apiService.getCollections().collections
     }
 
-    suspend fun getCollectionMembers(collectionId: Int): Result<List<MediaRecord>> = runCatching {
+    suspend fun getCollectionMembers(collectionId: Int): Result<List<MediaRecord>> = runCatchingCancellable {
         apiClient.apiService.getCollectionMembers(collectionId).members
     }
 
-    suspend fun getConcepts(): Result<List<IrisConcept>> = runCatching {
+    suspend fun getConcepts(): Result<List<IrisConcept>> = runCatchingCancellable {
         apiClient.apiService.getConcepts().concepts
     }
 }

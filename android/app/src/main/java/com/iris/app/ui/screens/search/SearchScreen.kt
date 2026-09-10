@@ -56,6 +56,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
@@ -214,50 +217,14 @@ fun SearchScreen(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = IrisDarkSurface)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Balanço de Busca:",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = IrisTextSoft
-                            )
-                            val balanceLabel = when {
-                                uiState.balance < 0.35f -> "Visual (Cores/Objetos)"
-                                uiState.balance > 0.65f -> "Conceitual (Significado)"
-                                else -> "Equilibrado (50/50)"
-                            }
-                            Text(
-                                text = balanceLabel,
-                                fontSize = 13.sp,
-                                color = IrisAccentLime,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-
-                        Slider(
-                            value = uiState.balance,
-                            onValueChange = { viewModel.setBalance(it) },
-                            onValueChangeFinished = { viewModel.performSearch() },
-                            valueRange = 0.0f..1.0f,
-                            colors = SliderDefaults.colors(
-                                thumbColor = IrisAccentLime,
-                                activeTrackColor = IrisAccentLime,
-                                inactiveTrackColor = IrisDarkSurfaceBright
-                            )
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("🖼️ Visual", fontSize = 11.sp, color = IrisTextMuted)
-                            Text("💡 Conceitual", fontSize = 11.sp, color = IrisTextMuted)
-                        }
-                    }
+                    SemanticBalanceControl(
+                        balance = uiState.balance,
+                        onBalanceChangeFinished = { newBalance ->
+                            viewModel.setBalance(newBalance)
+                            viewModel.performSearch()
+                        },
+                        modifier = Modifier.padding(14.dp)
+                    )
                 }
             }
 
@@ -374,6 +341,60 @@ fun SearchScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SemanticBalanceControl(
+    balance: Float,
+    onBalanceChangeFinished: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var localBalance by remember(balance) { mutableFloatStateOf(balance) }
+
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Balanço de Busca:",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = IrisTextSoft
+            )
+            val balanceLabel = when {
+                localBalance < 0.35f -> "Visual (Cores/Objetos)"
+                localBalance > 0.65f -> "Conceitual (Significado)"
+                else -> "Equilibrado (50/50)"
+            }
+            Text(
+                text = balanceLabel,
+                fontSize = 13.sp,
+                color = IrisAccentLime,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        Slider(
+            value = localBalance,
+            onValueChange = { localBalance = it },
+            onValueChangeFinished = { onBalanceChangeFinished(localBalance) },
+            valueRange = 0.0f..1.0f,
+            colors = SliderDefaults.colors(
+                thumbColor = IrisAccentLime,
+                activeTrackColor = IrisAccentLime,
+                inactiveTrackColor = IrisDarkSurfaceBright
+            )
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("🖼️ Visual", fontSize = 11.sp, color = IrisTextMuted)
+            Text("💡 Conceitual", fontSize = 11.sp, color = IrisTextMuted)
         }
     }
 }

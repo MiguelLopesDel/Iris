@@ -132,7 +132,10 @@ fun PersonsScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(uiState.persons) { person ->
+                        items(
+                            items = uiState.persons,
+                            key = { it.id }
+                        ) { person ->
                             val faceThumbUrl = person.coverFaceId?.let {
                                 apiClient.resolveFaceThumbnailUrl(it)
                             }
@@ -288,7 +291,10 @@ fun PersonMediaScreen(
                         .fillMaxSize()
                         .padding(paddingValues)
                 ) {
-                    items(uiState.media) { record ->
+                    items(
+                        items = uiState.media,
+                        key = { it.index }
+                    ) { record ->
                         MediaCard(
                             record = record,
                             onClick = { onMediaClick(record.index) }

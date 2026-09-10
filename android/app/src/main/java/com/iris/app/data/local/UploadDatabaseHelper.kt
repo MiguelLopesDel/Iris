@@ -7,6 +7,8 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.UploadJobState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
@@ -15,6 +17,30 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
     null,
     DATABASE_VERSION
 ) {
+
+    private val writeMutex = Mutex()
+
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        db.enableWriteAheadLogging()
+        try {
+            db.execSQL("PRAGMA busy_timeout = 5000")
+        } catch (_: Exception) {}
+    }
+
+    suspend fun <T> runInWriteTransaction(block: (SQLiteDatabase) -> T): T = withContext(Dispatchers.IO) {
+        writeMutex.withLock {
+            val db = writableDatabase
+            db.beginTransactionNonExclusive()
+            try {
+                val result = block(db)
+                db.setTransactionSuccessful()
+                result
+            } finally {
+                db.endTransaction()
+            }
+        }
+    }
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -138,8 +164,8 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    suspend fun getNextPendingJob(): LocalUploadJob? = withContext(Dispatchers.IO) {
-        readableDatabase.let { db ->
+    suspend fun claimNextPendingJob(): LocalUploadJob? = withContext(Dispatchers.IO) {
+        runInWriteTransaction { db ->
             val cursor = db.rawQuery(
                 """
                 SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at
@@ -150,13 +176,23 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 """.trimIndent(),
                 null
             )
-            cursor.use {
+            val job = cursor.use {
                 if (it.moveToFirst()) {
                     cursorToJob(it)
                 } else null
             }
+            if (job != null && job.state == UploadJobState.QUEUED) {
+                val values = ContentValues().apply {
+                    put("state", UploadJobState.UPLOADING.name)
+                    put("updated_at", System.currentTimeMillis())
+                }
+                db.update("upload_jobs", values, "id = ?", arrayOf(job.id.toString()))
+            }
+            job
         }
     }
+
+    suspend fun getNextPendingJob(): LocalUploadJob? = claimNextPendingJob()
 
     suspend fun getAllJobs(): List<LocalUploadJob> = withContext(Dispatchers.IO) {
         readableDatabase.let { db ->
