@@ -958,7 +958,7 @@ def process_images(
                     # `tags` (acima) já passou pela taxonomia; item["tags"] é o
                     # valor cru do Florence. Ler o cru aqui era o motivo de a
                     # descrição sair pior que a coluna de tags.
-                    full_description = f"Tags: {tags}. Visual: {item['visual']}"
+                    full_description = compose_description(tags, str(item["visual"]))
                     cursor.execute(
                         """
                         INSERT OR REPLACE INTO memes (
@@ -1498,6 +1498,22 @@ def describe_image(
 
 # Encoder de texto do CLIP: 77 tokens, incluindo os dois marcadores. O que
 # passa disso é descartado em silêncio — sem erro, sem aviso.
+def compose_description(tags: str, visual: str) -> str:
+    """Descrição legível a partir das partes que existirem.
+
+    Concatenar rótulos fixos produzia "Tags: . Visual: N/A" quando faltava
+    conteúdo — texto que não informa nada e ainda ia para a exibição.
+    """
+    partes = []
+    limpo_tags = (tags or "").strip()
+    limpo_visual = (visual or "").strip()
+    if limpo_tags and limpo_tags != "N/A":
+        partes.append(f"Tags: {limpo_tags}")
+    if limpo_visual and limpo_visual != "N/A":
+        partes.append(f"Visual: {limpo_visual}")
+    return ". ".join(partes)
+
+
 _TEXT_ENCODER_LIMIT = 77
 
 
