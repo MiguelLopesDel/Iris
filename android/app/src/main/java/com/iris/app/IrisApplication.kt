@@ -12,6 +12,8 @@ import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.ServerSettingsRepository
+import com.iris.app.data.catalog.MediaCatalog
+import com.iris.app.data.catalog.SqliteCatalogStore
 import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.MediaStoreScanner
@@ -54,6 +56,10 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
     lateinit var irisRepository: IrisRepository
         private set
 
+    /** On-disk mirror of the catalog, so the gallery paints before the network. */
+    lateinit var mediaCatalog: MediaCatalog
+        private set
+
     /** Opt-in, local-only timing summaries shown in Settings diagnostics. */
     val performanceMonitor = PerformanceMonitor()
 
@@ -71,6 +77,8 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
         settingsRepository = ServerSettingsRepository(this)
         credentialsStore = DeviceCredentialsStore(this)
         dbHelper = UploadDatabaseHelper(this)
+
+        val catalogStore = SqliteCatalogStore(this)
 
         apiClient = IrisApiClient(
             credentialsStore = credentialsStore,
@@ -101,6 +109,20 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
             mediaScanner = mediaStoreScanner,
             changeFeedSync = changeFeedSyncManager
         )
+
+        // A galeria lê daqui antes de qualquer rede; a reconciliação alimenta
+        // em lotes grossos, desacoplados do que está na tela.
+        mediaCatalog = MediaCatalog(catalogStore) { page, perPage, mediaType ->
+            val response = irisRepository.getRecords(
+                page = page, perPage = perPage, sortBy = "data", mediaType = mediaType
+            ).getOrThrow()
+            MediaCatalog.FetchedPage(
+                records = response.records,
+                page = response.page,
+                totalPages = response.totalPages,
+                total = response.total,
+            )
+        }
 
         // Observe server URL changes from DataStore
         applicationScope.launch {

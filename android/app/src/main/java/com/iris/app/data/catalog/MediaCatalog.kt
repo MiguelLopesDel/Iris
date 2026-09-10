@@ -49,6 +49,15 @@ class MediaCatalog(
     suspend fun cachedCount(mediaType: String = "all"): Int = store.count(mediaType)
 
     /**
+     * Mirrors records the app fetched for another reason — a gallery page the
+     * user scrolled to, say. Costs one transaction, and means ordinary browsing
+     * warms the mirror instead of reconciliation being the only thing that does.
+     */
+    suspend fun remember(records: List<MediaRecord>) {
+        store.upsertBatch(records)
+    }
+
+    /**
      * Pulls the catalog from the server into the mirror, newest first.
      *
      * Stops at [maxPages] so a first run on a large library yields something

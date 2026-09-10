@@ -166,7 +166,8 @@ fun IrisNavGraph(
                 val viewModel: GalleryViewModel = viewModel(
                     factory = GalleryViewModel.Factory(
                         application.irisRepository,
-                        application.performanceMonitor
+                        application.performanceMonitor,
+                        application.mediaCatalog
                     )
                 )
                 GalleryScreen(

@@ -3,6 +3,7 @@ package com.iris.app.ui.screens.gallery
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.data.catalog.MediaCatalog
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.repository.IrisRepository
@@ -32,7 +33,8 @@ data class GalleryUiState(
 
 class GalleryViewModel(
     private val repository: IrisRepository,
-    val performanceMonitor: PerformanceMonitor
+    val performanceMonitor: PerformanceMonitor,
+    private val catalog: MediaCatalog? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GalleryUiState())
@@ -42,7 +44,32 @@ class GalleryViewModel(
     private var firstPageLoadJob: Job? = null
 
     init {
+        showMirroredCatalog()
         checkServerAndLoad()
+    }
+
+    /**
+     * Paints whatever the local mirror already holds, before any network call.
+     *
+     * A cold start otherwise shows placeholder tiles until a health check, a
+     * library-info call and the first page have all completed in sequence — on
+     * a home server over a VPN that is seconds of empty grid. The network
+     * result replaces this as soon as it lands.
+     */
+    private fun showMirroredCatalog() {
+        val catalog = catalog ?: return
+        viewModelScope.launch {
+            val cached = runCatching {
+                catalog.cached(offset = 0, limit = MIRROR_FIRST_PAINT, mediaType = _uiState.value.mediaType)
+            }.getOrNull().orEmpty()
+            if (cached.isEmpty()) return@launch
+            val cachedTotal = runCatching { catalog.cachedCount(_uiState.value.mediaType) }.getOrDefault(0)
+            _uiState.update { current ->
+                // Never paint over a network result that already arrived.
+                if (current.records.isNotEmpty()) current
+                else current.copy(records = cached, totalRecords = cachedTotal)
+            }
+        }
     }
 
     fun checkServerAndLoad() {
@@ -152,6 +179,11 @@ class GalleryViewModel(
                 mediaType = _uiState.value.mediaType
             ).onSuccess { response ->
                 finishPage()
+                // One transaction per page, so ordinary scrolling warms the
+                // mirror for the next cold start.
+                catalog?.let { mirror ->
+                    launch { runCatching { mirror.remember(response.records) } }
+                }
                 _uiState.update { current ->
                     val combined = if (page == 1) response.records else current.records + response.records
                     current.copy(
@@ -192,13 +224,19 @@ class GalleryViewModel(
         firstContentFinish = null
     }
 
+    private companion object {
+        /** Enough to fill the first screens while the network catches up. */
+        const val MIRROR_FIRST_PAINT = 60
+    }
+
     class Factory(
         private val repository: IrisRepository,
-        private val performanceMonitor: PerformanceMonitor
+        private val performanceMonitor: PerformanceMonitor,
+        private val catalog: MediaCatalog? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return GalleryViewModel(repository, performanceMonitor) as T
+            return GalleryViewModel(repository, performanceMonitor, catalog) as T
         }
     }
 }
