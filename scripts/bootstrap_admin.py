@@ -16,6 +16,15 @@ from core.indexer_db import init_db
 from core.users_db import create_user, has_users
 
 
+def _default_legacy_db(data_dir: Path) -> Path:
+    """Match the legacy-catalog fallback used by the application server."""
+    iris_db = data_dir / "iris_v1.db"
+    meme_compass_db = data_dir / "meme_compass_full_v1.db"
+    if not iris_db.exists() and meme_compass_db.exists():
+        return meme_compass_db
+    return iris_db
+
+
 def _faiss_files(db_path: Path) -> list[Path]:
     prefix = db_path.with_suffix("")
     return [
@@ -27,7 +36,7 @@ def _faiss_files(db_path: Path) -> list[Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
-    parser.add_argument("--db", type=Path, default=Path("data/iris_v1.db"))
+    parser.add_argument("--db", type=Path)
     parser.add_argument("--media-root", type=Path, default=Path("media"))
     parser.add_argument("--username", required=True)
     parser.add_argument("--display-name", default="")
@@ -36,7 +45,7 @@ def main() -> int:
 
     data_dir = args.data_dir.resolve()
     users_db = data_dir / "users.db"
-    source_db = args.db.resolve()
+    source_db = (args.db or _default_legacy_db(data_dir)).resolve()
     source_media = args.media_root.resolve()
     if has_users(users_db):
         parser.error("data/users.db já possui contas; o bootstrap só roda uma vez")
