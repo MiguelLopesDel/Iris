@@ -101,6 +101,18 @@ interface IrisApiService {
         @Path("idx") idx: Int
     ): MediaRecord
 
+    @GET("api/records/timeline")
+    suspend fun getTimeline(
+        @Query("media_type") mediaType: String = "all"
+    ): com.iris.app.data.model.TimelineResponse
+
+    @FormUrlEncoded
+    @POST("api/records/{idx}/rename")
+    suspend fun renameRecord(
+        @Path("idx") idx: Int,
+        @Field("name") name: String
+    ): Map<String, String>
+
     @GET("api/records/{idx}/metadata")
     suspend fun getRecordMetadata(
         @Path("idx") idx: Int

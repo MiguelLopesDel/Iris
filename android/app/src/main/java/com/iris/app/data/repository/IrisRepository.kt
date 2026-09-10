@@ -109,6 +109,14 @@ class IrisRepository(
         apiClient.apiService.getRecordDetail(idx)
     }
 
+    suspend fun getTimeline(mediaType: String = "all"): Result<com.iris.app.data.model.TimelineResponse> =
+        runCatchingCancellable { apiClient.apiService.getTimeline(mediaType) }
+
+    suspend fun renameRecord(idx: Int, name: String): Result<Unit> = runCatchingCancellable {
+        apiClient.apiService.renameRecord(idx, name)
+        Unit
+    }
+
     suspend fun getRecordMetadata(idx: Int): Result<RecordMetadataResponse> = runCatchingCancellable {
         apiClient.apiService.getRecordMetadata(idx)
     }

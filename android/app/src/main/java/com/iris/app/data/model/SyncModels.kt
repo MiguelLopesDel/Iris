@@ -113,3 +113,17 @@ data class LocalUploadJob(
     val errorMessage: String? = null,
     val updatedAt: Long = System.currentTimeMillis()
 )
+
+/** Um mês do acervo e onde ele começa na listagem ordenada por data. */
+@Serializable
+data class TimelineBucket(
+    @SerialName("month") val month: String = "",
+    @SerialName("count") val count: Int = 0,
+    @SerialName("offset") val offset: Int = 0
+)
+
+@Serializable
+data class TimelineResponse(
+    @SerialName("total") val total: Int = 0,
+    @SerialName("buckets") val buckets: List<TimelineBucket> = emptyList()
+)

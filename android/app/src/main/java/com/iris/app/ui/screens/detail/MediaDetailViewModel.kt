@@ -20,7 +20,10 @@ data class MediaDetailUiState(
     val isLoading: Boolean = true,
     val isLoadingMetadata: Boolean = false,
     val isLoadingSimilars: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val isRenaming: Boolean = false,
+    /** Mensagem curta para a tela mostrar e descartar (rename, download). */
+    val notice: String? = null
 )
 
 class MediaDetailViewModel(
@@ -54,6 +57,36 @@ class MediaDetailViewModel(
                 }
             }
         }
+    }
+
+    fun rename(newName: String) {
+        val record = _uiState.value.record ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRenaming = true, notice = null) }
+            repository.renameRecord(record.index, newName)
+                .onSuccess {
+                    // O nome vem do servidor (extensão preservada, colisão
+                    // resolvida), então recarrega em vez de adivinhar.
+                    loadDetail()
+                    _uiState.update { it.copy(isRenaming = false, notice = "Renomeado") }
+                }
+                .onFailure { ex ->
+                    val motivo = when {
+                        ex.localizedMessage?.contains("409") == true -> "Já existe um arquivo com esse nome"
+                        ex.localizedMessage?.contains("400") == true -> "Nome inválido"
+                        else -> "Não foi possível renomear"
+                    }
+                    _uiState.update { it.copy(isRenaming = false, notice = motivo) }
+                }
+        }
+    }
+
+    fun showNotice(message: String) {
+        _uiState.update { it.copy(notice = message) }
+    }
+
+    fun clearNotice() {
+        _uiState.update { it.copy(notice = null) }
     }
 
     private fun loadMetadata() {

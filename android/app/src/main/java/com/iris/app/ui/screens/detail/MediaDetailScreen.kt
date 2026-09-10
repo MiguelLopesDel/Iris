@@ -2,98 +2,95 @@ package com.iris.app.ui.screens.detail
 
 import android.content.Intent
 import android.graphics.Color as AndroidColor
-import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.outlined.Photo
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SuggestionChip
-import androidx.compose.material3.SuggestionChipDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.iris.app.IrisApplication
+import com.iris.app.data.MediaDownloader
+import com.iris.app.data.model.MediaRecord
+import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import com.iris.app.ui.components.EmptyState
-import com.iris.app.ui.components.MediaCard
-import com.iris.app.ui.theme.IrisAccentInk
+import com.iris.app.ui.components.decodeThumbHash
 import com.iris.app.ui.theme.IrisAccentLime
 import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
-import com.iris.app.ui.theme.IrisTextMuted
-import com.iris.app.ui.theme.IrisTextSoft
-import com.iris.app.ui.theme.IrisViolet
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/**
+ * Full-bleed media viewer.
+ *
+ * The photo owns the whole screen and the controls stay out of the way until
+ * asked for: a tap toggles them, the way a photo app is expected to behave.
+ * What used to be here was the opposite — a 340dp box inside a scrolling page
+ * under a permanent title bar, so the image was never the subject.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaDetailScreen(
     viewModel: MediaDetailViewModel,
@@ -103,412 +100,392 @@ fun MediaDetailScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    val apiClient = (context.applicationContext as IrisApplication).apiClient
+    val application = context.applicationContext as IrisApplication
+    val apiClient = application.apiClient
+    val scope = rememberCoroutineScope()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = uiState.record?.cleanFilename ?: "Detalhes da Mídia",
-                        maxLines = 1,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Voltar"
-                        )
-                    }
-                },
-                actions = {
-                    uiState.record?.let { rec ->
-                        IconButton(onClick = {
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                val mediaUrl = apiClient.resolveMediaUrl(rec.resolvedPath ?: rec.caminho)
-                                val textContent = buildString {
-                                    appendLine(rec.cleanFilename)
-                                    if (!rec.descricaoIa.isNullOrBlank()) appendLine("\nDescrição IA: ${rec.descricaoIa}")
-                                    if (!rec.textoExtraido.isNullOrBlank()) appendLine("\nOCR: ${rec.textoExtraido}")
-                                    appendLine("\nLink: $mediaUrl")
-                                }
-                                putExtra(Intent.EXTRA_TEXT, textContent)
-                            }
-                            context.startActivity(Intent.createChooser(shareIntent, "Compartilhar Mídia"))
-                        }) {
-                            Icon(imageVector = Icons.Default.Share, contentDescription = "Compartilhar")
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
-            )
-        },
-        containerColor = IrisDarkBg
-    ) { paddingValues ->
+    // Opens immersive; the controls are one tap away.
+    var chromeVisible by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    uiState.notice?.let { notice ->
+        LaunchedEffect(notice) {
+            android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_SHORT).show()
+            viewModel.clearNotice()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
         when {
-            uiState.isLoading -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = IrisAccentLime)
-                }
+            uiState.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                CircularProgressIndicator(color = IrisAccentLime)
             }
 
-            uiState.error != null -> {
-                EmptyState(
-                    title = "Erro ao carregar",
-                    message = uiState.error ?: "",
-                    actionLabel = "Tentar novamente",
-                    onAction = { viewModel.loadDetail() },
-                    modifier = Modifier.padding(paddingValues)
-                )
-            }
+            uiState.error != null -> EmptyState(
+                title = "Erro ao carregar",
+                message = uiState.error ?: "",
+                actionLabel = "Tentar novamente",
+                onAction = { viewModel.loadDetail() }
+            )
 
             uiState.record != null -> {
                 val record = uiState.record!!
-                val fullMediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
-                var showDetails by remember(record.index) { mutableStateOf(false) }
+                MediaStage(
+                    record = record,
+                    apiClient = apiClient,
+                    onToggleChrome = { chromeVisible = !chromeVisible }
+                )
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
-                        .verticalScroll(rememberScrollState())
+                AnimatedVisibility(
+                    visible = chromeVisible,
+                    enter = fadeIn() + slideInVertically { -it },
+                    exit = fadeOut() + slideOutVertically { -it },
+                    modifier = Modifier.align(Alignment.TopCenter)
                 ) {
-                    // Media Stage: Image with Pinch-to-Zoom or Video Player with ExoPlayer
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(340.dp)
-                            .background(Color.Black),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (record.isVideo) {
-                            val thumbnailUrl = apiClient.resolveThumbnailUrl(record.thumbnailUrl)
-                            if (thumbnailUrl.isNotBlank()) {
-                                AsyncImage(
-                                    model = thumbnailUrl,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier.fillMaxSize()
+                    ViewerTopBar(title = record.cleanFilename, onBack = onBack)
+                }
+
+                AnimatedVisibility(
+                    visible = chromeVisible,
+                    enter = fadeIn() + slideInVertically { it },
+                    exit = fadeOut() + slideOutVertically { it },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                ) {
+                    ViewerActionBar(
+                        onDownload = {
+                            val url = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
+                            viewModel.showNotice("Baixando…")
+                            scope.launch {
+                                val result = MediaDownloader(context, apiClient)
+                                    .download(url, record.cleanFilename)
+                                viewModel.showNotice(
+                                    when (result) {
+                                        is MediaDownloader.Result.Saved ->
+                                            "Salvo em Downloads: ${result.displayName}"
+                                        is MediaDownloader.Result.Failed ->
+                                            "Falha ao baixar: ${result.reason}"
+                                    }
                                 )
                             }
-                            // ExoPlayer Video Player initialized synchronously so PlayerView has a non-null player on frame 1
-                            val lifecycleOwner = LocalLifecycleOwner.current
-                            val exoPlayer = remember(fullMediaUrl) {
-                                val dataSourceFactory = IrisMediaDataSourceFactory(apiClient.authenticatedOkHttpClient)
-                                val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                                    .setDataSourceFactory(dataSourceFactory)
-                                ExoPlayer.Builder(context)
-                                    .setMediaSourceFactory(mediaSourceFactory)
-                                    .build().apply {
-                                        setMediaItem(MediaItem.fromUri(fullMediaUrl))
-                                        prepare()
-                                        playWhenReady = true
-                                    }
-                            }
-
-                            DisposableEffect(exoPlayer, lifecycleOwner) {
-                                val observer = LifecycleEventObserver { _, event ->
-                                    when (event) {
-                                        Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
-                                            exoPlayer.pause()
-                                        }
-                                        else -> {}
-                                    }
-                                }
-                                lifecycleOwner.lifecycle.addObserver(observer)
-
-                                onDispose {
-                                    lifecycleOwner.lifecycle.removeObserver(observer)
-                                    exoPlayer.release()
-                                }
-                            }
-
-                            AndroidView(
-                                factory = { ctx ->
-                                    PlayerView(ctx).apply {
-                                        this.player = exoPlayer
-                                        useController = true
-                                        setShutterBackgroundColor(AndroidColor.TRANSPARENT)
-                                    }
-                                },
-                                update = { playerView ->
-                                    if (playerView.player != exoPlayer) {
-                                        playerView.player = exoPlayer
-                                    }
-                                },
-                                onRelease = { playerView ->
-                                    playerView.player = null
-                                },
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            // High-res Image with pinch-to-zoom
-                            var scale by remember { mutableFloatStateOf(1f) }
-                            var offset by remember { mutableStateOf(Offset.Zero) }
-                            val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
-                                scale = (scale * zoomChange).coerceIn(1f, 4f)
-                                offset += panChange
-                            }
-
-                            val thumbnailUrl = apiClient.resolveThumbnailUrl(record.thumbnailUrl)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        scaleX = scale
-                                        scaleY = scale
-                                        translationX = offset.x
-                                        translationY = offset.y
-                                    }
-                                    .transformable(state = transformableState)
-                            ) {
-                                if (thumbnailUrl.isNotBlank()) {
-                                    AsyncImage(
-                                        model = thumbnailUrl,
-                                        contentDescription = record.cleanFilename,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-                                AsyncImage(
-                                    model = ImageRequest.Builder(context)
-                                        .data(fullMediaUrl)
-                                        .crossfade(true)
-                                        .build(),
-                                    contentDescription = record.cleanFilename,
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        }
-                    }
-
-                    // Metadata details section
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        // Title & Format
-                        Text(
-                            text = record.cleanFilename,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (record.isVideo) "VÍDEO" else "IMAGEM",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = IrisAccentLime,
-                                modifier = Modifier
-                                    .background(IrisDarkSurfaceBright, RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                            if (record.fileSize != null && record.fileSize > 0) {
-                                val sizeMb = record.fileSize / (1024.0 * 1024.0)
-                                Text(
-                                    text = String.format("%.2f MB", sizeMb),
-                                    fontSize = 12.sp,
-                                    color = IrisTextSoft
-                                )
-                            }
-                        }
-
-                        // Persons chips (facial recognition)
-                        if (record.persons.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = "Pessoas identificadas",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = IrisTextSoft
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                record.persons.forEach { person ->
-                                    SuggestionChip(
-                                        onClick = { onPersonClick(person.id, person.name) },
-                                        label = { Text(person.name.ifBlank { "Pessoa #${person.id}" }) },
-                                        icon = {
-                                            Icon(
-                                                imageVector = Icons.Default.Person,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        },
-                                        colors = SuggestionChipDefaults.suggestionChipColors(
-                                            containerColor = IrisDarkSurfaceBright,
-                                            labelColor = IrisAccentLime,
-                                            iconContentColor = IrisAccentLime
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = if (showDetails) "Ocultar informações" else "Informações",
-                            color = IrisAccentLime,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showDetails = !showDetails }
-                                .padding(vertical = 8.dp)
-                        )
-
-                        if (showDetails) {
-                        // OCR Text
-                        if (!record.textoExtraido.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Card(
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(14.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Texto extraído (OCR)",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = IrisViolet
-                                        )
-                                        IconButton(
-                                            onClick = {
-                                                clipboardManager.setText(AnnotatedString(record.textoExtraido))
-                                                Toast.makeText(context, "Texto copiado!", Toast.LENGTH_SHORT).show()
-                                            },
-                                            modifier = Modifier.size(28.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.ContentCopy,
-                                                contentDescription = "Copiar",
-                                                tint = IrisTextSoft,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = record.textoExtraido,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            }
-                        }
-
-                        // AI Caption & Visual Description
-                        if (!record.descricaoIa.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Card(
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(14.dp)) {
-                                    Text(
-                                        text = "Descrição automática",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = IrisAccentLime
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = record.descricaoIa,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            }
-                        }
-
-                        // Tags
-                        if (record.tagsList.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Text(
-                                text = "Tags",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = IrisTextSoft
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                record.tagsList.forEach { tag ->
-                                    Box(
-                                        modifier = Modifier
-                                            .background(IrisDarkSurfaceBright, RoundedCornerShape(8.dp))
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(text = "#$tag", fontSize = 12.sp, color = IrisTextSoft)
-                                    }
-                                }
-                            }
-                        }
-
-                        // Similar media section
-                        if (uiState.similarRecords.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(24.dp))
-                            HorizontalDivider(color = IrisDarkSurfaceBright)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = "Parecidas",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                contentPadding = PaddingValues(end = 16.dp)
-                            ) {
-                                items(
-                                    items = uiState.similarRecords,
-                                    key = { it.index }
-                                ) { simRecord ->
-                                    MediaCard(
-                                        record = simRecord,
-                                        onClick = { onMediaClick(simRecord.index) },
-                                        modifier = Modifier.size(100.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        }
-                        Spacer(modifier = Modifier.height(32.dp))
-                    }
+                        },
+                        onDetails = { showDetails = true },
+                        onShare = { shareRecord(context, record, apiClient) },
+                        onRename = { renaming = true }
+                    )
                 }
             }
         }
     }
+
+    if (showDetails && uiState.record != null) {
+        ModalBottomSheet(
+            onDismissRequest = { showDetails = false },
+            sheetState = sheetState,
+            containerColor = IrisDarkBg
+        ) {
+            MediaDetailsSheet(
+                state = uiState,
+                onPersonClick = onPersonClick,
+                onMediaClick = { index ->
+                    showDetails = false
+                    onMediaClick(index)
+                }
+            )
+        }
+    }
+
+    if (renaming && uiState.record != null) {
+        RenameDialog(
+            currentName = uiState.record!!.cleanFilename,
+            isWorking = uiState.isRenaming,
+            onDismiss = { renaming = false },
+            onConfirm = { novo ->
+                renaming = false
+                viewModel.rename(novo)
+            }
+        )
+    }
+}
+
+/** The media itself, filling the screen. Tap toggles chrome; pinch zooms. */
+@Composable
+private fun MediaStage(
+    record: MediaRecord,
+    apiClient: com.iris.app.data.remote.IrisApiClient,
+    onToggleChrome: () -> Unit,
+) {
+    val context = LocalContext.current
+    val fullMediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(record.index) {
+                detectTapGestures(onTap = { onToggleChrome() })
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (record.isVideo) {
+            VideoStage(
+                mediaUrl = fullMediaUrl,
+                thumbnailUrl = apiClient.resolveThumbnailUrl(record.thumbnailUrl),
+                okHttpClient = apiClient.authenticatedOkHttpClient,
+            )
+        } else {
+            var scale by remember(record.index) { mutableFloatStateOf(1f) }
+            var offsetX by remember(record.index) { mutableFloatStateOf(0f) }
+            var offsetY by remember(record.index) { mutableFloatStateOf(0f) }
+            val transformState = rememberTransformableState { zoom, pan, _ ->
+                scale = (scale * zoom).coerceIn(1f, 5f)
+                // Panning only makes sense once the image is larger than the
+                // screen; otherwise it drifts away from centre for no reason.
+                if (scale > 1f) {
+                    offsetX += pan.x
+                    offsetY += pan.y
+                } else {
+                    offsetX = 0f
+                    offsetY = 0f
+                }
+            }
+
+            val placeholder = remember(record.thumbHash) { decodeThumbHash(record.thumbHash) }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offsetX
+                        translationY = offsetY
+                    }
+                    .transformable(transformState),
+                contentAlignment = Alignment.Center
+            ) {
+                if (placeholder != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = placeholder,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(fullMediaUrl).crossfade(true).build(),
+                    contentDescription = record.cleanFilename,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoStage(
+    mediaUrl: String,
+    thumbnailUrl: String,
+    okHttpClient: okhttp3.OkHttpClient,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    if (thumbnailUrl.isNotBlank()) {
+        AsyncImage(
+            model = thumbnailUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+
+    val exoPlayer = remember(mediaUrl) {
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(IrisMediaDataSourceFactory(okHttpClient))
+            )
+            .build()
+            .apply {
+                setMediaItem(MediaItem.fromUri(mediaUrl))
+                prepare()
+                playWhenReady = false
+            }
+    }
+
+    DisposableEffect(lifecycleOwner, exoPlayer) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> exoPlayer.pause()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            exoPlayer.release()
+        }
+    }
+
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                player = exoPlayer
+                useController = true
+                setShutterBackgroundColor(AndroidColor.TRANSPARENT)
+            }
+        },
+        modifier = Modifier.fillMaxSize()
+    )
+}
+
+@Composable
+private fun ViewerTopBar(title: String, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.55f))
+            .pointerInput(Unit) { detectTapGestures { } }
+            .statusBarsPadding()
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButtonWithLabel(Icons.AutoMirrored.Filled.ArrowBack, "Voltar", onBack)
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun ViewerActionBar(
+    onDownload: () -> Unit,
+    onDetails: () -> Unit,
+    onShare: () -> Unit,
+    onRename: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.55f))
+            // Sem isto, um toque no espaço entre dois botões atravessa a barra,
+            // chega na foto e fecha os controles — parece que o botão falhou.
+            .pointerInput(Unit) { detectTapGestures { } }
+            .navigationBarsPadding()
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ActionItem(Icons.Default.Download, "Baixar", onDownload)
+        ActionItem(Icons.Default.Share, "Compartilhar", onShare)
+        ActionItem(Icons.Default.DriveFileRenameOutline, "Renomear", onRename)
+        ActionItem(Icons.Default.Info, "Detalhes", onDetails)
+    }
+}
+
+@Composable
+private fun ActionItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .padding(horizontal = 6.dp)
+            .pointerInput(label) { detectTapGestures(onTap = { onClick() }) }
+    ) {
+        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(label, color = Color.White, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun IconButtonWithLabel(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .pointerInput(label) { detectTapGestures(onTap = { onClick() }) },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = label, tint = Color.White)
+    }
+}
+
+@Composable
+private fun RenameDialog(
+    currentName: String,
+    isWorking: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    // The server keeps the extension, so editing it here would be a lie.
+    var value by remember(currentName) {
+        mutableStateOf(currentName.substringBeforeLast('.', currentName))
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = IrisDarkBg,
+        title = { Text("Renomear", color = Color.White) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    label = { Text("Nome") }
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "A extensão é mantida pelo servidor.",
+                    fontSize = 12.sp,
+                    color = Color.White.copy(alpha = 0.6f)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(value.trim()) },
+                enabled = !isWorking && value.isNotBlank()
+            ) { Text("Renomear", color = IrisAccentLime) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar", color = Color.White) }
+        }
+    )
+}
+
+private fun shareRecord(
+    context: android.content.Context,
+    record: MediaRecord,
+    apiClient: com.iris.app.data.remote.IrisApiClient,
+) {
+    val mediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(
+            Intent.EXTRA_TEXT,
+            buildString {
+                appendLine(record.cleanFilename)
+                if (!record.descricaoIa.isNullOrBlank()) appendLine("\n${record.descricaoIa}")
+                appendLine("\n$mediaUrl")
+            }
+        )
+    }
+    context.startActivity(Intent.createChooser(intent, "Compartilhar"))
 }
