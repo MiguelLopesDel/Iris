@@ -164,6 +164,20 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
                 changeFeedSyncManager.syncChanges()
             }
         }
+
+        // Pull the recent catalog into the local mirror so the gallery opens
+        // from disk and keeps scrolling when the server is slow or unreachable.
+        // Bounded per launch: newest-first in coarse pages, so a few requests
+        // cover far more than a user scrolls in one sitting. Runs after the
+        // first frame and off the UI path, and browsing keeps warming the
+        // mirror on its own.
+        applicationScope.launch(Dispatchers.IO) {
+            isServerConfigurationReady.first { it }
+            delay(BACKGROUND_START_DELAY_MS)
+            if (credentialsStore.hasValidCredentials()) {
+                runCatching { mediaCatalog.reconcile(maxPages = CATALOG_RECONCILE_PAGES) }
+            }
+        }
     }
 
     override val workManagerConfiguration: Configuration
@@ -208,6 +222,15 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
 
     companion object {
         private const val BACKGROUND_START_DELAY_MS = 2_000L
+
+        /**
+         * Pages of 200 pulled into the mirror per launch. Ten covers 2.000 of
+         * the most recent items for ten requests — the same stretch cost 84
+         * requests at the gallery's page size. The rest of a large catalog
+         * still needs a persisted cursor to walk it fully; this deliberately
+         * covers the recent end rather than pretending to be a full sync.
+         */
+        private const val CATALOG_RECONCILE_PAGES = 10
 
         lateinit var instance: IrisApplication
             private set

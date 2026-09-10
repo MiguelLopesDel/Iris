@@ -115,7 +115,12 @@ fun GalleryScreen(
         }
     }
 
-    LaunchedEffect(shouldLoadMore) {
+    // Keyed on the loaded page as well as the trigger. A fling that overshoots
+    // the whole loaded range leaves shouldLoadMore stuck at true: the value
+    // never changes again, so an effect keyed only on it never re-runs and
+    // pagination stops for good until the user scrolls back up. Re-keying on
+    // the page means each landed page re-evaluates whether to fetch the next.
+    LaunchedEffect(shouldLoadMore, uiState.page, uiState.error) {
         if (shouldLoadMore) {
             viewModel.loadNextPage()
         }
@@ -123,8 +128,15 @@ fun GalleryScreen(
 
     // A filter replaces the dataset; keeping the old offset makes a successful
     // filter change look like it did nothing when the user was deep in the grid.
+    // Tracked against the previous value rather than keyed on the current one,
+    // because a LaunchedEffect also runs when the screen re-enters composition
+    // — which is what threw the user back to the top on returning from a photo.
+    var lastAppliedMediaType by rememberSaveable { mutableStateOf(uiState.mediaType) }
     LaunchedEffect(uiState.mediaType) {
-        gridState.scrollToItem(0)
+        if (uiState.mediaType != lastAppliedMediaType) {
+            lastAppliedMediaType = uiState.mediaType
+            gridState.scrollToItem(0)
+        }
     }
 
     LaunchedEffect(uiState.records.isNotEmpty()) {
@@ -309,6 +321,22 @@ fun GalleryScreen(
                                         GalleryPreviewSkeleton()
                                     }
                                 }
+
+                                // Outrunning the download used to look exactly
+                                // like reaching the end of the library: the grid
+                                // simply stopped, with nothing to say more was
+                                // coming. This states it, and says how much.
+                                if (uiState.records.size < uiState.totalRecords) {
+                                    item(
+                                        key = "loading-more",
+                                        span = { GridItemSpan(maxLineSpan) }
+                                    ) {
+                                        LoadingMoreFooter(
+                                            loaded = uiState.records.size,
+                                            total = uiState.totalRecords
+                                        )
+                                    }
+                                }
                             }
 
                             if (uiState.totalRecords > 40) {
@@ -351,6 +379,29 @@ private fun GalleryPreviewSkeleton() {
             .clip(RoundedCornerShape(12.dp))
             .background(IrisDarkSurface)
     )
+}
+
+@Composable
+private fun LoadingMoreFooter(loaded: Int, total: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 20.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(16.dp),
+            strokeWidth = 2.dp,
+            color = IrisAccentLime
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = "Carregando mais… $loaded de $total",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }
 
 @Composable
