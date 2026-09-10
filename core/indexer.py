@@ -29,6 +29,7 @@ from transformers import logging as transformers_logging
 
 from core import import_review
 from core.deleted_registry import load_deleted_content_hashes
+from core.embedding_models import load_encoder, max_text_tokens
 from core.indexer_db import (
     ensure_unique_destination,
     existing_hashes,
@@ -263,9 +264,7 @@ def load_models(config: IndexerConfig) -> LoadedModels:
             print("  -> Continuando sem legendas detalhadas.")
 
     print(f"  -> CLIP: {config.model_name}")
-    clip_model = SentenceTransformer(config.model_name, device=config.device)
-    if config.device == "cuda":
-        clip_model.half()
+    clip_model = load_encoder(config.model_name, device=config.device, half=True)
     taxonomy_rows = build_taxonomy_prompt_rows()
     taxonomy_embeddings = clip_model.encode(
         [row["prompt"] for row in taxonomy_rows],
@@ -1556,10 +1555,15 @@ def build_embedding_text(*, visual: str, ocr: str, tags: str, model: object) -> 
     consegue expulsar as outras: uma legenda longa não apaga o OCR, e um OCR
     longo não apaga a legenda.
     """
+    # As cotas eram fixas em 40/24/9, medida do teto de 77 tokens do CLIP. O
+    # SigLIP 2 declara 64, então cotas fixas passariam a estourar em silêncio —
+    # justo a falha que esta função existe para evitar. Agora elas acompanham o
+    # teto real do encoder, mantendo a mesma proporção.
+    teto = max_text_tokens(model)
     partes = [
-        (visual, 40),  # o que a imagem mostra — o sinal mais forte
-        (ocr, 24),     # texto dentro da imagem; decisivo em captura de tela
-        (tags, 9),     # rótulos de objeto, os mais dispensáveis
+        (visual, max(round(teto * 40 / 77), 1)),  # o que a imagem mostra — o sinal mais forte
+        (ocr, max(round(teto * 24 / 77), 1)),     # texto dentro da imagem; decisivo em captura de tela
+        (tags, max(round(teto * 9 / 77), 1)),     # rótulos de objeto, os mais dispensáveis
     ]
     montado: list[str] = []
     for texto, cota in partes:

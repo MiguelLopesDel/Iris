@@ -11,7 +11,7 @@ from core.search_types import IndexRecord, SearchOptions, SearchResult
 
 def create_backend(
     db_path: str | None = None,
-    model_name: str = "sentence-transformers/clip-ViT-L-14",
+    model_name: str | None = None,
     media_root: str | None = None,
     device: str | None = None,
     load_model: bool = True,
@@ -190,7 +190,7 @@ class SearchBackend(ABC):
     def get_face_thumbnail(self, face_id: int) -> bytes | None: pass
 
 class LocalBackend(SearchBackend):
-    def __init__(self, db_path=None, model_name="sentence-transformers/clip-ViT-L-14", media_root=None, device=None, load_model=True):
+    def __init__(self, db_path=None, model_name=None, media_root=None, device=None, load_model=True):
         self.engine = IrisEngine(db_path=db_path, model_name=model_name, media_root=media_root, device=device, load_model=load_model)
 
     @property

@@ -11,9 +11,11 @@ import numpy as np
 import torch
 from deep_translator import GoogleTranslator
 from PIL import Image
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import util
 
 from core.db_manager import DatabaseManager
+from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # re-export histórico
+from core.embedding_models import load_encoder, resolve_embedding_model
 from core.search_types import (
     STOP_WORDS,
     IndexRecord,
@@ -26,7 +28,6 @@ from core.vector_store import VectorStore
 
 logger = logging.getLogger("iris")
 
-DEFAULT_MODEL = "sentence-transformers/clip-ViT-L-14"
 # A smaller checkpoint for machines with few CPU cores and shared video memory.
 # The index and query encoder must always use the same checkpoint.
 LOW_RESOURCE_MODEL = "sentence-transformers/clip-ViT-B-32"
@@ -59,7 +60,7 @@ class IrisEngine:
     def __init__(
         self,
         db_path: str | os.PathLike[str] | None = None,
-        model_name: str = DEFAULT_MODEL,
+        model_name: str | None = None,
         media_root: str | os.PathLike[str] | None = None,
         weights_path: str | os.PathLike[str] = "data/best_weights.json",
         load_model: bool = True,
@@ -69,7 +70,7 @@ class IrisEngine:
         self.db = DatabaseManager(self.db_path)
         self.vector_store = VectorStore(self.db_path)
         
-        self.model_name = model_name
+        self.model_name = model_name or resolve_embedding_model()
         self.media_root = Path(media_root or ".").resolve()
         self.device = device or self._detect_device()
         self.weights = self._load_weights(Path(weights_path))
@@ -90,6 +91,7 @@ class IrisEngine:
 
         # Lazy cache for backward-compatible .dados property (only computed on demand)
         self._dados_cache: list[dict[str, Any]] | None = None
+        self._catalog_model_checked = False
 
     @staticmethod
     def _detect_device() -> str:
@@ -105,11 +107,8 @@ class IrisEngine:
             return "data/teste_playground.db"
         return "data/iris.db"
 
-    def _load_model(self) -> SentenceTransformer:
-        model = SentenceTransformer(self.model_name, device=self.device)
-        if self.device == "cuda":
-            model.half()
-        return model
+    def _load_model(self):
+        return load_encoder(self.model_name, device=self.device, half=True)
 
     def _load_weights(self, weights_path: Path) -> dict[str, float]:
         if not weights_path.exists():
@@ -808,11 +807,40 @@ class IrisEngine:
         return results
 
     def _validate_dimension(self, query_embedding: np.ndarray) -> None:
+        self._validate_catalog_model()
         expected = self.image_matrix.shape[1] if self.image_matrix is not None else None
         if expected and query_embedding.shape[1] != expected:
             raise ValueError(
                 f"Model dimension mismatch: query has {query_embedding.shape[1]}, "
                 f"index expects {expected}."
+            )
+
+    def _validate_catalog_model(self) -> None:
+        """Recusa consultar um catálogo indexado por outro modelo.
+
+        A checagem de dimensão sozinha não basta: ``siglip2-base-patch16-224``
+        também devolve 768 dimensões, iguais às do ``clip-ViT-L-14``. Os
+        espaços vetoriais não têm relação nenhuma entre si, então a busca
+        passaria e devolveria ranking aleatório — falha silenciosa, a pior de
+        todas. Comparar o nome pega o caso que a forma não pega.
+        """
+        if self._catalog_model_checked:
+            return
+        self._catalog_model_checked = True
+        try:
+            rows = self.db.get_connection().execute(
+                "SELECT DISTINCT model_name FROM memes "
+                "WHERE embedding IS NOT NULL AND model_name IS NOT NULL AND model_name != ''"
+            ).fetchall()
+        except Exception:
+            return  # catálogo antigo sem a coluna: nada a comparar
+        catalog_models = {row[0] for row in rows}
+        if catalog_models and self.model_name not in catalog_models:
+            raise ValueError(
+                f"O catálogo foi indexado com {', '.join(sorted(catalog_models))} e a "
+                f"busca está configurada para {self.model_name}. Os embeddings não são "
+                "comparáveis entre modelos: reindexe o acervo ou volte IRIS_MODEL ao "
+                "modelo original."
             )
 
     def _candidate_indices(self, query_embedding: np.ndarray, candidate_pool: int) -> list[int]:
