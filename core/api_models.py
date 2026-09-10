@@ -128,6 +128,22 @@ class ServerInfoOut(_Out):
     capabilities: CapabilitiesOut | None = None
 
 
+class TimelineBucketOut(_Out):
+    """Um mês do acervo, e onde ele começa na listagem ordenada por data."""
+
+    month: str
+    count: int
+    # Posição do primeiro item do mês na mesma ordenação que /api/records
+    # devolve com sort_by=data. É isto que deixa um scrubber saltar direto
+    # para "junho de 2024" sem ter baixado o que vem antes.
+    offset: int
+
+
+class TimelineOut(_Out):
+    total: int = 0
+    buckets: list[TimelineBucketOut] = []
+
+
 class RecordsPageOut(_Out):
     page: int
     per_page: int

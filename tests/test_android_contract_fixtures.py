@@ -63,6 +63,7 @@ ENDPOINTS: dict[str, str] = {
     "import_review.json": "/api/import/review",
     "import_suggestions.json": "/api/import/suggestions",
     "backup_config.json": "/api/backup/config",
+    "timeline.json": "/api/records/timeline",
 }
 
 # Campos que dependem da máquina onde o teste roda: caminho absoluto, mtime,

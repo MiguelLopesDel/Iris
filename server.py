@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -24,7 +25,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 import numpy as np
@@ -73,6 +74,7 @@ from core.api_models import (
     SearchResponseOut,
     ServerInfoOut,
     SourceSearchResponseOut,
+    TimelineOut,
     TrashOut,
     UploadSearchResponseOut,
 )
@@ -1969,6 +1971,51 @@ async def get_records(
         }
 
 
+# ── Timeline ─────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/records/timeline", response_model=TimelineOut)
+async def get_records_timeline(
+    media_type: str = Query("all"),
+    collection_ids: str = Query(""),
+    concept_ids: str = Query(""),
+):
+    """Quantos itens há por mês, e onde cada mês começa.
+
+    Um scrubber de galeria precisa saber a forma do acervo inteiro para
+    atravessar anos; sem isto ele só consegue percorrer o que já foi baixado.
+    Uma requisição responde por todo o catálogo, contra uma por página.
+    """
+    backend = _get_backend()
+    with trace("api.records.timeline"):
+        options = _options_from_params(
+            media_type=media_type,
+            collection_ids=collection_ids,
+            concept_ids=concept_ids,
+        )
+        # Mesma ordenação que a galeria usa, senão os offsets não correspondem.
+        records = _sorted_records(backend, "data", 0)
+        records = _filter_records(records, backend, options)
+
+        def _build() -> list[dict[str, Any]]:
+            buckets: list[dict[str, Any]] = []
+            current: str | None = None
+            for position, record in enumerate(records):
+                mtime = record.file_mtime or 0.0
+                month = (
+                    dt.datetime.fromtimestamp(mtime).strftime("%Y-%m")
+                    if mtime
+                    else "desconhecido"
+                )
+                if month != current:
+                    buckets.append({"month": month, "count": 0, "offset": position})
+                    current = month
+                buckets[-1]["count"] += 1
+            return buckets
+
+        return {"total": len(records), "buckets": await run_in_threadpool(_build)}
+
+
 # ── Single record detail ─────────────────────────────────────────────────────
 
 
@@ -2026,6 +2073,85 @@ async def get_record_metadata(idx: int):
         if path_exists:
             full = await run_in_threadpool(extract_full_metadata, path)
         return {"curated": curated, "full": full, "path_exists": path_exists}
+
+
+@app.post("/api/records/{idx}/rename", response_model=OkOut)
+async def rename_record(idx: int, name: str = Form(...)):
+    """Renomeia o arquivo em disco e as colunas que embutem o nome.
+
+    O caminho é resolvido por várias colunas (``storage_path``,
+    ``relative_path``, ``caminho``), então renomear só uma delas deixaria a
+    mídia inalcançável. A extensão original é preservada: o tipo da mídia é
+    derivado dela, e deixar o usuário removê-la transformaria um vídeo em algo
+    que a galeria não sabe abrir.
+    """
+    backend = _get_backend()
+    with trace("api.records.rename"):
+        record = backend.get_record(idx)
+        if record is None:
+            raise HTTPException(404, "Record not found")
+
+        requested = name.strip()
+        if not requested:
+            raise HTTPException(400, "Informe um nome")
+        if any(sep in requested for sep in ("/", "\\", "\0")) or requested in (".", ".."):
+            raise HTTPException(400, "O nome não pode conter caminho")
+
+        current = Path(record.resolved_path or "")
+        if not current.is_file():
+            raise HTTPException(409, "Arquivo original indisponível")
+
+        # A extensão manda no tipo da mídia; o usuário renomeia só o nome.
+        stem = Path(requested).stem or requested
+        target = current.with_name(stem + current.suffix)
+        if target == current:
+            return {"ok": True, "arquivo": current.name}
+        if target.exists():
+            raise HTTPException(409, "Já existe um arquivo com esse nome")
+
+        await run_in_threadpool(os.rename, current, target)
+
+        def _update_rows() -> None:
+            # Conexão do engine, compartilhada: usar e NÃO fechar. Fechá-la
+            # derruba o backend inteiro na próxima consulta.
+            conn = _backend_connection()
+            if True:
+                row = conn.execute(
+                    "SELECT arquivo, caminho, relative_path, storage_path FROM memes WHERE id = ?",
+                    (record.db_id,),
+                ).fetchone()
+                if row is None:
+                    return
+
+                def _swap(value: str | None) -> str | None:
+                    # Troca só o último segmento, preservando a pasta.
+                    if not value:
+                        return value
+                    return str(PurePosixPath(value).with_name(target.name))
+
+                conn.execute(
+                    "UPDATE memes SET arquivo = ?, caminho = ?, relative_path = ?, "
+                    "storage_path = ? WHERE id = ?",
+                    (
+                        target.name,
+                        str(target),
+                        _swap(row["relative_path"]),
+                        _swap(row["storage_path"]),
+                        record.db_id,
+                    ),
+                )
+                conn.commit()
+
+        try:
+            await run_in_threadpool(_update_rows)
+        except Exception:
+            # Banco e disco não podem divergir: desfaz o rename e propaga.
+            await run_in_threadpool(os.rename, target, current)
+            raise
+
+        _invalidate_view_caches()
+        await run_in_threadpool(_refresh_backend_metadata)
+        return {"ok": True, "arquivo": target.name}
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
