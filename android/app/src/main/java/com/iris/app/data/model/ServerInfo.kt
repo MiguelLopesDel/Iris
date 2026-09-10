@@ -13,3 +13,10 @@ data class ServerInfo(
     @SerialName("florence_model") val florenceModel: String = "",
     @SerialName("version") val version: String = "1.0.0"
 )
+
+@Serializable
+data class HealthResponse(
+    @SerialName("status") val status: String = "ok",
+    @SerialName("mode") val mode: String = "legacy"
+)
+

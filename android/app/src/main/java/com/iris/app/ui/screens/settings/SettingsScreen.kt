@@ -45,6 +45,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -186,15 +187,13 @@ fun SettingsScreen(
                 }
             }
 
-            // Connection test feedback
+            // Connection test feedback (/healthz probe)
             if (uiState.connectionTestResult != null) {
                 Spacer(modifier = Modifier.height(16.dp))
-                val isSuccess = uiState.isConnectionSuccessful == true
+                val isOnline = uiState.isServerOnline == true
                 Card(
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isSuccess) IrisDarkSurface else IrisDarkSurface
-                    ),
+                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -202,23 +201,93 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = if (isSuccess) Icons.Default.CheckCircle else Icons.Default.Error,
+                            imageVector = if (isOnline) Icons.Default.CheckCircle else Icons.Default.Error,
                             contentDescription = null,
-                            tint = if (isSuccess) IrisAccentLime else IrisDanger,
+                            tint = if (isOnline) IrisAccentLime else IrisDanger,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = if (isOnline) "Servidor Iris Conectado" else "Falha de Conexão",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isOnline) IrisAccentLime else IrisDanger
+                            )
+                            Text(
+                                text = uiState.connectionTestResult ?: "",
+                                fontSize = 12.sp,
+                                color = IrisTextSoft
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Account & Library Access Status Card
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Acesso à Biblioteca Privada",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    if (uiState.isDeviceLoggedIn) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(IrisAccentLime, CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Dispositivo autenticado como ${uiState.loggedInUsername}",
+                                fontSize = 13.sp,
+                                color = IrisAccentLime,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (uiState.deviceId.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "ID do Dispositivo: ${uiState.deviceId.take(16)}…",
+                                fontSize = 11.sp,
+                                color = IrisTextMuted
+                            )
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(Color(0xFFFFB300), CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Dispositivo não autenticado",
+                                fontSize = 13.sp,
+                                color = Color(0xFFFFB300),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = uiState.connectionTestResult ?: "",
-                            fontSize = 13.sp,
-                            color = if (isSuccess) IrisAccentLime else IrisDanger,
-                            fontWeight = FontWeight.Medium
+                            text = "O servidor está acessível, mas para visualizar e sincronizar sua biblioteca privada de memes, realize o login do dispositivo na aba 'Backup'.",
+                            fontSize = 12.sp,
+                            color = IrisTextSoft
                         )
                     }
                 }
             }
 
-            // Server diagnostics card
+            // Server diagnostics card (if available)
             if (uiState.serverInfo != null) {
                 val info = uiState.serverInfo!!
                 Spacer(modifier = Modifier.height(24.dp))
@@ -226,7 +295,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Informações do Servidor Iris",
+                    text = "Informações da Biblioteca",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -59,7 +60,8 @@ import com.iris.app.ui.theme.IrisDarkBg
 fun GalleryScreen(
     viewModel: GalleryViewModel,
     onMediaClick: (Int) -> Unit,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onLoginClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val gridState = rememberLazyGridState()
@@ -176,12 +178,26 @@ fun GalleryScreen(
                     }
 
                     uiState.error != null && uiState.records.isEmpty() -> {
-                        EmptyState(
-                            title = "Não foi possível conectar",
-                            message = uiState.error ?: "Verifique se o servidor Iris está em execução.",
-                            actionLabel = "Tentar novamente",
-                            onAction = { viewModel.checkServerAndLoad() }
-                        )
+                        if (uiState.error == "AUTH_REQUIRED") {
+                            EmptyState(
+                                icon = Icons.Default.Lock,
+                                title = "Login Necessário",
+                                message = "Servidor conectado! Para visualizar sua biblioteca privada de memes, autentique este dispositivo.",
+                                actionLabel = "Fazer Login",
+                                onAction = onLoginClick
+                            )
+                        } else {
+                            EmptyState(
+                                title = "Não foi possível conectar",
+                                message = if (uiState.error == "SERVER_OFFLINE") {
+                                    "Não foi possível alcançar o servidor Iris. Verifique se ele está rodando e a URL em Configurações."
+                                } else {
+                                    uiState.error ?: "Verifique se o servidor Iris está em execução."
+                                },
+                                actionLabel = "Tentar novamente",
+                                onAction = { viewModel.checkServerAndLoad() }
+                            )
+                        }
                     }
 
                     uiState.records.isEmpty() -> {

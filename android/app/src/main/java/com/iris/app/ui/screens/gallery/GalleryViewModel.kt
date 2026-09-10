@@ -17,6 +17,8 @@ data class GalleryUiState(
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val error: String? = null,
+    val isServerOnline: Boolean? = null,
+    val isDeviceLoggedIn: Boolean = false,
     val page: Int = 1,
     val totalPages: Int = 1,
     val totalRecords: Int = 0,
@@ -39,11 +41,50 @@ class GalleryViewModel(
     fun checkServerAndLoad() {
         viewModelScope.launch {
             _uiState.update { it.copy(isServerChecking = true) }
+            val isLoggedIn = repository.credentialsStore.hasValidCredentials()
+
+            // 1. Probe server with unauthenticated /healthz
+            val healthResult = repository.checkServerHealth()
+            if (healthResult.isFailure) {
+                _uiState.update {
+                    it.copy(
+                        isServerChecking = false,
+                        isServerOnline = false,
+                        isDeviceLoggedIn = isLoggedIn,
+                        serverInfo = null,
+                        error = "SERVER_OFFLINE"
+                    )
+                }
+                return@launch
+            }
+
+            // Server is reachable!
+            _uiState.update {
+                it.copy(
+                    isServerOnline = true,
+                    isDeviceLoggedIn = isLoggedIn
+                )
+            }
+
+            // 2. Check if logged in to access the private library
+            if (!isLoggedIn) {
+                _uiState.update {
+                    it.copy(
+                        isServerChecking = false,
+                        serverInfo = null,
+                        error = "AUTH_REQUIRED"
+                    )
+                }
+                return@launch
+            }
+
+            // 3. User is authenticated -> load library stats and records
             repository.getServerInfo().onSuccess { info ->
                 _uiState.update { it.copy(serverInfo = info, isServerChecking = false) }
             }.onFailure {
                 _uiState.update { it.copy(serverInfo = null, isServerChecking = false) }
             }
+
             loadPage(page = 1, isRefresh = false)
         }
     }
@@ -51,23 +92,22 @@ class GalleryViewModel(
     fun refresh() {
         viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true) }
-            repository.getServerInfo().onSuccess { info ->
-                _uiState.update { it.copy(serverInfo = info) }
-            }
-            loadPage(page = 1, isRefresh = true)
+            checkServerAndLoad()
         }
     }
 
     fun setMediaType(type: String) {
         if (_uiState.value.mediaType != type) {
             _uiState.update { it.copy(mediaType = type) }
-            loadPage(page = 1, isRefresh = false)
+            if (_uiState.value.isDeviceLoggedIn) {
+                loadPage(page = 1, isRefresh = false)
+            }
         }
     }
 
     fun loadNextPage() {
         val current = _uiState.value
-        if (current.isLoading || current.isRefreshing || current.page >= current.totalPages) return
+        if (current.isLoading || current.isRefreshing || current.page >= current.totalPages || !current.isDeviceLoggedIn) return
         loadPage(page = current.page + 1, isRefresh = false)
     }
 
@@ -99,11 +139,16 @@ class GalleryViewModel(
                     )
                 }
             }.onFailure { ex ->
+                val errorMsg = if (ex.message?.contains("401") == true) {
+                    "AUTH_REQUIRED"
+                } else {
+                    ex.localizedMessage ?: "Erro ao carregar mídias da biblioteca"
+                }
                 _uiState.update {
                     it.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        error = ex.localizedMessage ?: "Erro ao carregar mídias do servidor"
+                        error = errorMsg
                     )
                 }
             }

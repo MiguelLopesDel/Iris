@@ -16,8 +16,12 @@ import kotlinx.coroutines.launch
 data class SettingsUiState(
     val serverUrl: String = "",
     val isTestingConnection: Boolean = false,
+    val isServerOnline: Boolean? = null,
+    val serverMode: String? = null,
     val connectionTestResult: String? = null,
-    val isConnectionSuccessful: Boolean? = null,
+    val isDeviceLoggedIn: Boolean = false,
+    val loggedInUsername: String = "",
+    val deviceId: String = "",
     val serverInfo: ServerInfo? = null
 )
 
@@ -42,7 +46,7 @@ class SettingsViewModel(
             it.copy(
                 serverUrl = newUrl,
                 connectionTestResult = null,
-                isConnectionSuccessful = null
+                isServerOnline = null
             )
         }
     }
@@ -60,26 +64,48 @@ class SettingsViewModel(
 
     fun testConnection() {
         viewModelScope.launch {
+            val isLoggedIn = irisRepository.credentialsStore.hasValidCredentials()
+            val username = irisRepository.credentialsStore.getUsername()
+            val deviceId = irisRepository.credentialsStore.getDeviceId() ?: ""
+
             _uiState.update {
-                it.copy(isTestingConnection = true, connectionTestResult = null, isConnectionSuccessful = null)
+                it.copy(
+                    isTestingConnection = true,
+                    connectionTestResult = null,
+                    isServerOnline = null,
+                    isDeviceLoggedIn = isLoggedIn,
+                    loggedInUsername = username,
+                    deviceId = deviceId
+                )
             }
 
-            irisRepository.getServerInfo().onSuccess { info ->
+            // Test connection using the unauthenticated /healthz probe
+            val healthResult = irisRepository.checkServerHealth()
+            if (healthResult.isSuccess) {
+                val health = healthResult.getOrThrow()
+                var info: ServerInfo? = null
+                if (isLoggedIn) {
+                    irisRepository.getServerInfo().onSuccess { info = it }
+                }
+
                 _uiState.update {
                     it.copy(
                         isTestingConnection = false,
-                        isConnectionSuccessful = true,
+                        isServerOnline = true,
+                        serverMode = health.mode,
                         serverInfo = info,
-                        connectionTestResult = "Conexão estabelecida com sucesso! (${info.records} mídias)"
+                        connectionTestResult = "Servidor online e acessível (modo: ${health.mode})"
                     )
                 }
-            }.onFailure { ex ->
+            } else {
+                val err = healthResult.exceptionOrNull()?.localizedMessage ?: "Servidor inacessível"
                 _uiState.update {
                     it.copy(
                         isTestingConnection = false,
-                        isConnectionSuccessful = false,
+                        isServerOnline = false,
+                        serverMode = null,
                         serverInfo = null,
-                        connectionTestResult = "Falha ao conectar: ${ex.localizedMessage ?: "Servidor indisponível"}"
+                        connectionTestResult = "Servidor inacessível: $err"
                     )
                 }
             }

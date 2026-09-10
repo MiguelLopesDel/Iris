@@ -79,6 +79,9 @@ interface IrisApiService {
     ): ChangesResponse
 
     // ── General System & Media Endpoints ────────────────────────────────────
+    @GET("healthz")
+    suspend fun getHealth(): com.iris.app.data.model.HealthResponse
+
     @GET("api/info")
     suspend fun getInfo(): ServerInfo
 

@@ -139,6 +139,9 @@ class IrisApiClient(
         .authenticator(tokenAuthenticator)
         .build()
 
+    val authenticatedOkHttpClient: OkHttpClient
+        get() = okHttpClient
+
     @Volatile
     private var cachedService: IrisApiService? = null
 

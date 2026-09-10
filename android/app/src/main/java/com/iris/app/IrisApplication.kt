@@ -126,6 +126,7 @@ class IrisApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            .okHttpClient { apiClient.authenticatedOkHttpClient }
             .components {
                 add(VideoFrameDecoder.Factory())
             }

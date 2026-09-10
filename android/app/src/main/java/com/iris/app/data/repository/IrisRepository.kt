@@ -62,6 +62,10 @@ class IrisRepository(
         discovered
     }
 
+    suspend fun checkServerHealth(): Result<com.iris.app.data.model.HealthResponse> = runCatching {
+        apiClient.apiService.getHealth()
+    }
+
     suspend fun getServerInfo(): Result<ServerInfo> = runCatching {
         apiClient.apiService.getInfo()
     }

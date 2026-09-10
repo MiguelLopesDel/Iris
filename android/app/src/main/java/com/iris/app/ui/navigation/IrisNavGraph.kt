@@ -164,6 +164,9 @@ fun IrisNavGraph(
                     },
                     onSettingsClick = {
                         navController.navigate(NavRoute.Settings.route)
+                    },
+                    onLoginClick = {
+                        navController.navigate(NavRoute.Sync.route)
                     }
                 )
             }

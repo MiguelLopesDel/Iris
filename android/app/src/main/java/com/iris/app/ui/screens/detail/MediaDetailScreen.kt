@@ -72,6 +72,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -189,11 +191,16 @@ fun MediaDetailScreen(
                             var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
 
                             DisposableEffect(fullMediaUrl) {
-                                val player = ExoPlayer.Builder(context).build().apply {
-                                    setMediaItem(MediaItem.fromUri(fullMediaUrl))
-                                    prepare()
-                                    playWhenReady = true
-                                }
+                                val dataSourceFactory = IrisMediaDataSourceFactory(apiClient.authenticatedOkHttpClient)
+                                val mediaSourceFactory = DefaultMediaSourceFactory(context)
+                                    .setDataSourceFactory(dataSourceFactory)
+                                val player = ExoPlayer.Builder(context)
+                                    .setMediaSourceFactory(mediaSourceFactory)
+                                    .build().apply {
+                                        setMediaItem(MediaItem.fromUri(fullMediaUrl))
+                                        prepare()
+                                        playWhenReady = true
+                                    }
                                 exoPlayer = player
 
                                 onDispose {
