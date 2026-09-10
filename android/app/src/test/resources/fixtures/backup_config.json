@@ -1,0 +1,9 @@
+{
+  "backup_dir": "",
+  "backup_auto": true,
+  "backup_keep_last": 10,
+  "media_originals_root": "media",
+  "dir_ok": false,
+  "warnings": [],
+  "error": ""
+}

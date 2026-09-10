@@ -41,13 +41,28 @@ FIXTURE_DIR = Path(__file__).resolve().parent.parent / (
     "android/app/src/test/resources/fixtures"
 )
 
-# Cada arquivo é a resposta crua de uma rota que o cliente Android consome.
+# Cada arquivo é a resposta crua de uma rota. As primeiras são as que o cliente
+# Android decodifica; as demais existem para travar o formato das outras rotas
+# de leitura — é essa comparação que prova que declarar response_model no
+# FastAPI não descartou nenhum campo silenciosamente.
 ENDPOINTS: dict[str, str] = {
     "records.json": "/api/records?page=1&per_page=12",
     "persons.json": "/api/persons",
     "collections.json": "/api/collections",
     "concepts.json": "/api/concepts",
     "info.json": "/api/info",
+    "healthz.json": "/healthz",
+    "record_detail.json": "/api/records/0",
+    "record_metadata.json": "/api/records/0/metadata",
+    "collection_members.json": "/api/collections/1/members",
+    "person_media.json": "/api/persons/1/media",
+    "record_faces.json": "/api/records/0/faces",
+    "collections_filter.json": "/api/collections/filter?ids=1",
+    "concepts_filter.json": "/api/concepts/filter?ids=1",
+    "import_status.json": "/api/import/status",
+    "import_review.json": "/api/import/review",
+    "import_suggestions.json": "/api/import/suggestions",
+    "backup_config.json": "/api/backup/config",
 }
 
 # Campos que embutem caminho absoluto ou mtime do disco: variam a cada execução

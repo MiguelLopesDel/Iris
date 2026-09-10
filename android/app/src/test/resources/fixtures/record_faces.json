@@ -1,0 +1,18 @@
+{
+  "faces": [
+    {
+      "id": 1,
+      "person_id": 1,
+      "bbox": "[0,0,10,10]",
+      "det_score": 0.9,
+      "frame_time": null
+    },
+    {
+      "id": 2,
+      "person_id": 2,
+      "bbox": "[0,0,10,10]",
+      "det_score": 0.9,
+      "frame_time": null
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "curated": {
+    "captured_at": "",
+    "source_app": "",
+    "device": "",
+    "gps": null,
+    "location_label": ""
+  },
+  "full": {
+    "kind": "image",
+    "format": "PNG",
+    "mode": "RGB",
+    "width": 64,
+    "height": 64
+  },
+  "path_exists": true
+}

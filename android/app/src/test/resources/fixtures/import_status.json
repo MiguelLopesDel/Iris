@@ -1,0 +1,12 @@
+{
+  "id": null,
+  "status": "idle",
+  "done": 0,
+  "total": 0,
+  "imported": 0,
+  "quarantined": 0,
+  "current": "",
+  "message": "",
+  "started_at": null,
+  "finished_at": null
+}

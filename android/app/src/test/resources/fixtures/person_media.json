@@ -1,0 +1,42 @@
+{
+  "person_id": 1,
+  "person_name": "",
+  "total": 1,
+  "results": [
+    {
+      "index": 0,
+      "db_id": 1,
+      "arquivo": "meme.png",
+      "resolved_path": "<masked>",
+      "texto_extraido": "texto no meme",
+      "descricao_ia": "descrição automática",
+      "tags": "engraçado,gato",
+      "visual_json": "",
+      "objects": "",
+      "style": "",
+      "source_work": "",
+      "humor": "",
+      "context": "",
+      "content_hash": null,
+      "file_size": 1234,
+      "file_mtime": 1700000000.0,
+      "media_type": "image",
+      "thumbnail_url": "<masked>",
+      "thumb_hash": "yB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5a",
+      "score": 22.6274,
+      "score_details": {
+        "face_score": 22.62742042541504
+      },
+      "persons": [
+        {
+          "id": 2,
+          "name": "Fulano de Tal"
+        },
+        {
+          "id": 1,
+          "name": ""
+        }
+      ]
+    }
+  ]
+}
