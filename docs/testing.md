@@ -29,7 +29,7 @@ Em outro terminal, valide saúde, bloqueio de visitante e uma conta real:
 
 ```bash
 python scripts/verify_server.py \
-  --url https://nome-do-servidor.sua-tailnet.ts.net \
+  --url https://iris.sua-rede-privada.exemplo \
   --expect-private --username alice --password 'uma senha forte'
 ```
 
@@ -39,7 +39,7 @@ primeira conta; não o rode com foto privada que você não queira importar.
 
 ```bash
 python scripts/verify_server.py \
-  --url https://nome-do-servidor.sua-tailnet.ts.net \
+  --url https://iris.sua-rede-privada.exemplo \
   --expect-private --username alice --password 'uma senha forte' \
   --upload /tmp/iris-smoke-unico.jpg \
   --second-username bob --second-password 'outra senha forte'

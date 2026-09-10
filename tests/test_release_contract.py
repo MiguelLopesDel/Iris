@@ -41,4 +41,16 @@ def test_server_port_is_configurable_without_exposing_the_container():
     script = (ROOT / "scripts" / "server.sh").read_text()
     assert '"127.0.0.1:${IRIS_PORT:-8501}:8501"' in compose
     assert "port <1024-65535>" in script
-    assert "tailscale serve --bg http://127.0.0.1:" in script
+
+
+def test_remote_access_is_not_tied_to_one_vpn():
+    """O servidor publica em 127.0.0.1 e não deve exigir uma rede específica.
+
+    Tailscale pode aparecer como exemplo; o que não pode é ser apresentado como
+    a única forma, porque quem usa ZeroTier, WireGuard ou um proxy reverso tem
+    de conseguir seguir o guia.
+    """
+    guide = (ROOT / "docs" / "server-deployment.md").read_text().lower()
+    for alternativa in ("zerotier", "wireguard", "proxy reverso"):
+        assert alternativa in guide, f"o guia não menciona {alternativa}"
+    assert "única camada que publica" not in guide

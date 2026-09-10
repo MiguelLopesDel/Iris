@@ -37,9 +37,10 @@ Em NVIDIA, em outro terminal, acompanhe GPU/VRAM:
 nvidia-smi dmon -s pucm
 ```
 
-Para medir rede Tailscale antes do Iris, use `tailscale ping nome-do-servidor` do
-notebook/celular. Rode o teste a partir de um dispositivo real da tailnet, não apenas
-do próprio servidor: isso inclui Wi-Fi, VPN e upload disponíveis ao usuário.
+Meça a rede antes de culpar o Iris: com Tailscale, `tailscale ping nome-do-servidor`
+do notebook/celular; com outra malha ou VPN, o equivalente dela. Rode o teste a partir
+de um dispositivo real da rede, não do próprio servidor — assim o número inclui o
+Wi-Fi, a VPN e o upload que o usuário realmente tem.
 
 ## Carga reproduzível
 
@@ -93,7 +94,7 @@ Comece por galeria e aumente gradualmente a concorrência:
 ```bash
 for n in 1 2 4 8; do
   python scripts/load_test.py \
-    --url https://nome-do-servidor.sua-tailnet.ts.net \
+    --url https://iris.sua-rede-privada.exemplo \
     --expect-private --username alice --password 'uma senha forte' \
     --scenario browse --concurrency "$n" --requests 200 \
     --output "data/reports/load-browse-$n.json"
@@ -106,7 +107,7 @@ tem por padrão dois workers de busca (`IRIS_SEARCH_WORKERS=2`).
 ```bash
 for n in 1 2 4; do
   python scripts/load_test.py \
-    --url https://nome-do-servidor.sua-tailnet.ts.net \
+    --url https://iris.sua-rede-privada.exemplo \
     --expect-private --username alice --password 'uma senha forte' \
     --scenario search --query 'pessoa na praia' --concurrency "$n" --requests 60 \
     --output "data/reports/load-search-$n.json"

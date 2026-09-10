@@ -2,9 +2,9 @@
 """Measure Iris HTTP capacity without mutating a library.
 
 Examples:
-  python scripts/load_test.py --url https://iris.tailnet.ts.net --expect-private \
+  python scripts/load_test.py --url https://iris.sua-rede-privada.exemplo --expect-private \
     --username alice --password 'senha forte' --scenario browse --concurrency 4
-  python scripts/load_test.py --url https://iris.tailnet.ts.net --expect-private \
+  python scripts/load_test.py --url https://iris.sua-rede-privada.exemplo --expect-private \
     --username alice --password 'senha forte' --scenario search --concurrency 2
 """
 from __future__ import annotations

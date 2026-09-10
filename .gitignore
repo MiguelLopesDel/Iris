@@ -164,3 +164,9 @@ image.png
 
 # Mapa pessoal do projeto
 MAPA.md
+
+# Local scratch found by a privacy audit: untracked and unignored, so a stray
+# `git add -A` would publish them to a public repository.
+/*.png
+/CONTEXT.md
+/.ai-memory.toml

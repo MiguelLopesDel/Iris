@@ -108,14 +108,15 @@ biblioteca privada. Ao reiniciar, o Iris ativa login; somente essa conta adminis
 cria contas adicionais. Cada conta recebe seu próprio SQLite, índices FAISS, mídia,
 miniaturas e fila de importação.
 
-Para acesso remoto, mantenha o Iris em `127.0.0.1` e publique-o apenas na sua tailnet
-com Tailscale Serve:
+Para acesso remoto, mantenha o Iris em `127.0.0.1` e publique esse endereço com a
+camada privada que você preferir — Tailscale, ZeroTier, WireGuard, um proxy reverso
+com TLS. O servidor não depende de nenhuma delas. Com Tailscale, por exemplo:
 
 ```bash
 sudo tailscale serve --bg http://127.0.0.1:8501
 ```
 
-Não exponha a porta diretamente à Internet. O servidor processa originais para busca,
+Não exponha a porta diretamente à Internet sem TLS e rate limiting. O servidor processa originais para busca,
 pessoas e duplicatas; portanto, o operador do host pode tecnicamente ler os arquivos.
 Permissões de conta isolam usuários entre si, mas não substituem criptografia ponta a
 ponta contra quem controla o servidor.
@@ -130,7 +131,8 @@ consulte [docs/testing.md](docs/testing.md) e
 
 Para instalar como servidor privado multiusuário, siga o guia completo em
 [docs/server-deployment.md](docs/server-deployment.md). O Compose padrão publica
-somente em `127.0.0.1`; use Tailscale Serve para acesso remoto pela tailnet.
+somente em `127.0.0.1`; para alcançá-lo de outros aparelhos, ponha na frente a VPN,
+malha ou proxy reverso da sua escolha.
 
 ### CPU (no GPU required)
 

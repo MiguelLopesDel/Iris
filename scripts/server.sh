@@ -48,7 +48,9 @@ set_port() {
     docker compose up -d --build
     wait_for_health
     echo "Iris is now available locally at http://127.0.0.1:$port"
-    echo "For private Tailscale access, run:"
+    echo "To reach it from other devices, put a private layer in front of that"
+    echo "address — a mesh VPN, a tunnel, or a reverse proxy with TLS."
+    echo "With Tailscale, for example:"
     echo "  sudo tailscale serve --bg http://127.0.0.1:$port"
 }
 

@@ -1,13 +1,22 @@
 # Servidor privado Iris
 
 Este guia instala o Iris como biblioteca privada no seu próprio servidor. Ele não
-abre uma porta para a Internet: o Docker atende somente em `127.0.0.1` e o Tailscale
-Serve é a única camada que publica o serviço para dispositivos autorizados da tailnet.
+abre uma porta para a Internet: o Docker atende somente em `127.0.0.1`.
+
+O Iris não escolhe como você alcança esse endereço de outros aparelhos, e não
+depende de nenhuma rede em particular. Ele expõe HTTP em `127.0.0.1` e trata
+todo cliente igual; quem publica esse endereço é uma camada à sua escolha —
+Tailscale, ZeroTier, Nebula, um túnel WireGuard próprio, um proxy reverso com
+TLS, ou exposição direta se você souber o que está fazendo. Os exemplos abaixo
+usam Tailscale por ser o caminho mais curto para quem não quer administrar
+certificado, mas nada no servidor sabe disso.
 
 ## Pré-requisitos
 
 - Linux com Docker Engine e Docker Compose v2;
-- Tailscale instalado e conectado na mesma tailnet de notebook e celular;
+- uma forma de alcançar `127.0.0.1:8501` do host a partir dos seus aparelhos
+  (ver "Acesso remoto"); o guia usa Tailscale como exemplo, mas qualquer VPN,
+  malha ou proxy reverso serve;
 - disco local com espaço para mídia, banco, índices e cache dos modelos;
 - um backup externo. RAID não substitui backup.
 
@@ -57,25 +66,42 @@ Para trocar, use:
 ./scripts/server.sh port 8751
 ```
 
-O comando atualiza `.env`, reinicia o Iris, verifica a saúde e mostra o comando
-Tailscale correspondente. Escolha uma porta livre entre 1024 e 65535. Não configure
-essa porta pelo painel web: ela é uma decisão do host e um processo não pode trocar
-a própria porta com segurança.
+O comando atualiza `.env`, reinicia o Iris, verifica a saúde e mostra o endereço
+resultante. Escolha uma porta livre entre 1024 e 65535. Não configure essa porta
+pelo painel web: ela é uma decisão do host e um processo não pode trocar a própria
+porta com segurança.
 
-No host, depois de configurar HTTPS na tailnet quando o Tailscale solicitar, publique
-o endereço local escolhido pelo Tailscale Serve:
+### Publicando o endereço para os seus aparelhos
+
+O que o Iris exige é apenas isto: **algo tem que levar os seus aparelhos até
+`127.0.0.1:8501` do host, e esse algo é responsável pela identidade e pelo TLS.**
+O servidor não tem preferência. Três caminhos comuns:
+
+**Malha privada (Tailscale, ZeroTier, Nebula).** O mais curto, porque a rede já
+autentica o aparelho e cuida do certificado. Com Tailscale:
 
 ```bash
 sudo tailscale serve --bg http://127.0.0.1:8501
 tailscale serve status
 ```
 
-Abra o endereço `.ts.net` mostrado no notebook ou celular que esteja na mesma
-tailnet. Se você trocou para `8751`, substitua `8501` por `8751` no comando. Esse
-endereço `.ts.net` é o que deve ser usado pelos seus dispositivos; não use o IP
-Tailscale seguido de `:8501`, pois o Docker atende deliberadamente só no host local.
-Não use Tailscale Funnel e não mude o mapeamento Docker para `0.0.0.0`
-sem antes projetar exposição pública, TLS, rate limiting e recuperação de incidentes.
+Use o endereço `.ts.net` que ele mostrar. Não use o IP da malha seguido de
+`:8501`: o Docker atende deliberadamente só no host local. Em ZeroTier ou Nebula,
+onde não há equivalente do `serve`, ligue o Docker à interface da malha em vez de
+`127.0.0.1` — ali o alcance já está limitado a quem entrou na rede.
+
+**Túnel próprio (WireGuard, SSH).** Encaminhe uma porta local do aparelho para
+`127.0.0.1:8501` do servidor. Nada muda no Iris.
+
+**Proxy reverso com TLS (Caddy, nginx, Traefik).** Necessário se você for expor
+na Internet. Aí a autenticação de contas do Iris passa a ser a única barreira,
+então trate como serviço público: certificado válido, rate limiting, e um plano
+para quando aparecer tráfego indesejado. Não é o modo para o qual este guia foi
+escrito.
+
+Seja qual for o caminho, **não** troque o mapeamento do Docker para `0.0.0.0`
+sem antes decidir conscientemente por exposição pública, TLS e recuperação de
+incidentes — isso abre a porta para toda a rede local de uma vez.
 
 ## Atualização e recuperação
 
