@@ -24,7 +24,7 @@ from deep_translator import GoogleTranslator
 from PIL import Image
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoProcessor
+from transformers import AutoProcessor, Florence2ForConditionalGeneration
 from transformers import logging as transformers_logging
 
 from core import import_review
@@ -60,6 +60,32 @@ warnings.filterwarnings("ignore", category=UserWarning)
 transformers_logging.set_verbosity_error()
 
 SCHEMA_VERSION = 4
+
+# O repositório da microsoft depende de código remoto que não acompanhou o
+# transformers 5.x: carregá-lo hoje falha com "'Florence2LanguageConfig' object
+# has no attribute 'forced_bos_token_id'". O repositório da comunidade traz os
+# mesmos pesos por trás da classe nativa Florence2ForConditionalGeneration, o
+# que dispensa trust_remote_code — ou seja, deixa de executar código baixado do
+# repositório do modelo durante a indexação.
+DEFAULT_CAPTION_MODEL = "florence-community/Florence-2-large"
+_LEGACY_CAPTION_MODELS = {
+    "microsoft/Florence-2-large": DEFAULT_CAPTION_MODEL,
+    "microsoft/Florence-2-base": "florence-community/Florence-2-base",
+}
+
+
+def resolve_caption_model(nome: str) -> str:
+    """Aponta ids antigos para o repositório equivalente da comunidade.
+
+    Quem tem o id da microsoft salvo em script ou atalho receberia um
+    AttributeError obscuro em vez de uma explicação; melhor redirecionar e
+    dizer o motivo.
+    """
+    destino = _LEGACY_CAPTION_MODELS.get(nome)
+    if destino:
+        print(f"  -> {nome} não roda no transformers 5.x; usando {destino}")
+        return destino
+    return nome
 DEFAULT_LIBRARY_NAME = "default"
 DEFAULT_LIBRARY_ROOT = Path("data/library")
 
@@ -89,7 +115,7 @@ class IndexerConfig:
 @dataclass
 class LoadedModels:
     reader: easyocr.Reader
-    florence_model: AutoModelForCausalLM | None
+    florence_model: Florence2ForConditionalGeneration | None
     florence_processor: AutoProcessor | None
     clip_model: SentenceTransformer
     whisper_model: whisper.Whisper | None
@@ -129,8 +155,8 @@ def parse_arguments() -> IndexerConfig:
     )
     parser.add_argument(
         "--caption-model",
-        default="microsoft/Florence-2-large",
-        help="Modelo de legenda/VQA. Use 'none' para desativar.",
+        default=DEFAULT_CAPTION_MODEL,
+        help="Modelo de legenda. Use 'none' para desativar.",
     )
     parser.add_argument(
         "--whisper-model",
@@ -223,16 +249,14 @@ def load_models(config: IndexerConfig) -> LoadedModels:
     florence_model = None
     florence_processor = None
     if config.caption_model.lower() != "none":
-        print(f"  -> Caption/VQA: {config.caption_model}")
+        caption_model_id = resolve_caption_model(config.caption_model)
+        print(f"  -> Caption: {caption_model_id}")
         try:
-            florence_model = AutoModelForCausalLM.from_pretrained(
-                config.caption_model,
+            florence_model = Florence2ForConditionalGeneration.from_pretrained(
+                caption_model_id,
                 torch_dtype=dtype,
-                trust_remote_code=True,
             ).to(config.device)
-            florence_processor = AutoProcessor.from_pretrained(
-                config.caption_model, trust_remote_code=True
-            )
+            florence_processor = AutoProcessor.from_pretrained(caption_model_id)
             florence_model.eval()
         except Exception as exc:
             print(f"  ! Falha ao carregar caption model: {exc}")
@@ -1602,8 +1626,7 @@ def run_florence_task(
             config.device, models.dtype
         )
         generated_ids = models.florence_model.generate(
-            input_ids=inputs["input_ids"],
-            pixel_values=inputs["pixel_values"],
+            **inputs,
             max_new_tokens=512,
             num_beams=3,
             do_sample=False,
