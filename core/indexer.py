@@ -872,7 +872,12 @@ def process_images(
                 del batch_images, _clip_map
 
                 text_inputs = [
-                    f"Meme Category/Tags: {item['tags']}. Text: {item['ocr_en']}. Context: {item['visual']}"
+                    build_embedding_text(
+                        visual=str(item["visual"]),
+                        ocr=str(item["ocr_en"]),
+                        tags=str(item["tags"]),
+                        model=models.clip_model,
+                    )
                     for item in batch_metadata
                 ]
                 desc_embeddings = models.clip_model.encode(
@@ -950,7 +955,10 @@ def process_images(
                     tags = values_for_field(taxonomy_matches, "style", str(item["tags"]))
                     tags = values_for_field(taxonomy_matches, "source_work", tags)
                     tags = values_for_field(taxonomy_matches, "context", tags)
-                    full_description = f"Tags: {item['tags']}. Visual: {item['visual']}"
+                    # `tags` (acima) já passou pela taxonomia; item["tags"] é o
+                    # valor cru do Florence. Ler o cru aqui era o motivo de a
+                    # descrição sair pior que a coluna de tags.
+                    full_description = f"Tags: {tags}. Visual: {item['visual']}"
                     cursor.execute(
                         """
                         INSERT OR REPLACE INTO memes (
@@ -1477,14 +1485,92 @@ def describe_image(
         models=models,
         config=config,
     )
-    tags = run_florence_task(
-        image,
-        "<VQA>What is the category of this meme (reaction, comic, photo, art)? List 5 keywords separated by comma.",
-        task="<VQA>",
-        models=models,
-        config=config,
-    )
+    # <OD> devolve rótulos de objeto — que é o que uma tag deveria ser. O que
+    # havia aqui era "<VQA>...", e <VQA> não existe nos pesos liberados do
+    # Florence-2-large: o modelo ecoava o próprio prompt e o pós-processamento
+    # tratava a saída como grounding, produzindo tokens <loc_*>. A categoria
+    # ("reaction, comic, photo, art") que aquele prompt tentava obter já é
+    # resolvida pela taxonomia zero-shot em core/taxonomy.py, então pedi-la
+    # aqui era, além de quebrado, redundante.
+    tags = run_florence_task(image, "<OD>", models=models, config=config)
     return visual, tags
+
+
+# Encoder de texto do CLIP: 77 tokens, incluindo os dois marcadores. O que
+# passa disso é descartado em silêncio — sem erro, sem aviso.
+_TEXT_ENCODER_LIMIT = 77
+
+
+def build_embedding_text(*, visual: str, ocr: str, tags: str, model: object) -> str:
+    """Monta o texto indexado respeitando o limite do encoder.
+
+    O formato anterior era
+    ``"Meme Category/Tags: {tags}. Text: {ocr}. Context: {visual}"``. Duas
+    coisas davam errado nele: a legenda — a parte mais rica — ficava por último
+    e portanto era a primeira a ser cortada; e os rótulos ("Meme Category/Tags:")
+    gastavam tokens do orçamento sem acrescentar significado. Medido no acervo
+    real: mediana de 130 tokens contra um teto de 77, ou seja ~40% do texto
+    nunca chegava ao modelo.
+
+    Aqui cada parte recebe uma cota e é truncada dentro dela, então nenhuma
+    consegue expulsar as outras: uma legenda longa não apaga o OCR, e um OCR
+    longo não apaga a legenda.
+    """
+    partes = [
+        (visual, 40),  # o que a imagem mostra — o sinal mais forte
+        (ocr, 24),     # texto dentro da imagem; decisivo em captura de tela
+        (tags, 9),     # rótulos de objeto, os mais dispensáveis
+    ]
+    montado: list[str] = []
+    for texto, cota in partes:
+        limpo = (texto or "").strip()
+        if not limpo or limpo == "N/A":
+            continue
+        montado.append(_truncate_to_tokens(limpo, cota, model))
+    return ". ".join(p for p in montado if p)
+
+
+def _truncate_to_tokens(texto: str, limite: int, model: object) -> str:
+    """Corta em fronteira de palavra, sem exceder `limite` tokens do encoder."""
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is None:
+        # Sem tokenizador acessível, aproxima: ~4 caracteres por token.
+        return texto[: limite * 4]
+    palavras = texto.split()
+    if not palavras:
+        return ""
+    baixo, alto = 0, len(palavras)
+    while baixo < alto:
+        meio = (baixo + alto + 1) // 2
+        candidato = " ".join(palavras[:meio])
+        if len(tokenizer(candidato)["input_ids"]) <= limite:
+            baixo = meio
+        else:
+            alto = meio - 1
+    return " ".join(palavras[:baixo])
+
+
+def _readable_florence_output(parsed: object) -> str:
+    """Reduz a saída do Florence a texto exibível, ou "" se não houver.
+
+    Tarefas de legenda devolvem string; <OD> devolve
+    {"labels": [...], "bboxes": [...]}. Só os rótulos interessam como tag — as
+    caixas não significam nada para busca e foram exatamente o que poluiu o
+    catálogo quando vazaram como texto.
+    """
+    if isinstance(parsed, dict):
+        labels = parsed.get("labels") or []
+        vistos: list[str] = []
+        for label in labels:
+            limpo = str(label).strip()
+            if limpo and limpo not in vistos:
+                vistos.append(limpo)
+        return ", ".join(vistos[:8])
+    if isinstance(parsed, str):
+        limpo = parsed.strip()
+        # Uma saída ainda cheia de tokens especiais não é conteúdo.
+        return "" if "<loc_" in limpo or limpo.startswith("<") else limpo
+    return ""
 
 
 def run_florence_task(
@@ -1512,9 +1598,14 @@ def run_florence_task(
         parsed = models.florence_processor.post_process_generation(
             generated_text, task=task_name, image_size=(image.width, image.height)
         )
-        return parsed.get(task_name, generated_text)
+        # Nunca devolver generated_text: ele foi decodificado com
+        # skip_special_tokens=False, então o fallback gravava tokens especiais e
+        # o eco do prompt no banco como se fossem conteúdo. Um texto vazio é
+        # honesto; um texto sujo contamina busca e exibição em silêncio.
+        return _readable_florence_output(parsed.get(task_name))
     except Exception as exc:
-        return f"Erro em {task_name}: {exc}"
+        print(f"  ! Florence falhou em {task_name}: {exc}")
+        return ""
 
 
 def create_faiss_indices(db_path: Path, model_name: str | None = None) -> None:
