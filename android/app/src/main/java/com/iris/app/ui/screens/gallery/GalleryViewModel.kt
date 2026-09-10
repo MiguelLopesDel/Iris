@@ -6,10 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.performance.Metric
+import com.iris.app.performance.PerformanceMonitor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 data class GalleryUiState(
@@ -28,18 +31,26 @@ data class GalleryUiState(
 )
 
 class GalleryViewModel(
-    private val repository: IrisRepository
+    private val repository: IrisRepository,
+    val performanceMonitor: PerformanceMonitor
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GalleryUiState())
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
+    private var firstContentFinish: (() -> Unit)? = null
+    private var initialLoadJob: Job? = null
+    private var firstPageLoadJob: Job? = null
 
     init {
         checkServerAndLoad()
     }
 
     fun checkServerAndLoad() {
-        viewModelScope.launch {
+        if (_uiState.value.records.isEmpty()) {
+            firstContentFinish = performanceMonitor.begin(Metric.GalleryFirstContent)
+        }
+        initialLoadJob?.cancel()
+        initialLoadJob = viewModelScope.launch {
             _uiState.update { it.copy(isServerChecking = true) }
             val isLoggedIn = repository.credentialsStore.hasValidCredentials()
 
@@ -62,7 +73,11 @@ class GalleryViewModel(
             _uiState.update {
                 it.copy(
                     isServerOnline = true,
-                    isDeviceLoggedIn = isLoggedIn
+                    isDeviceLoggedIn = isLoggedIn,
+                    // Health is the connection decision. Library information is
+                    // optional decoration and must never keep the gallery in a
+                    // permanent "connecting" state.
+                    isServerChecking = false
                 )
             }
 
@@ -79,10 +94,12 @@ class GalleryViewModel(
             }
 
             // 3. User is authenticated -> load library stats and records
-            repository.getServerInfo().onSuccess { info ->
-                _uiState.update { it.copy(serverInfo = info, isServerChecking = false) }
-            }.onFailure {
-                _uiState.update { it.copy(serverInfo = null, isServerChecking = false) }
+            viewModelScope.launch {
+                repository.getServerInfo().onSuccess { info ->
+                    _uiState.update { it.copy(serverInfo = info) }
+                }.onFailure {
+                    _uiState.update { it.copy(serverInfo = null) }
+                }
             }
 
             loadPage(page = 1, isRefresh = false)
@@ -90,10 +107,8 @@ class GalleryViewModel(
     }
 
     fun refresh() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true) }
-            checkServerAndLoad()
-        }
+        _uiState.update { it.copy(isRefreshing = true) }
+        checkServerAndLoad()
     }
 
     fun setMediaType(type: String) {
@@ -112,7 +127,11 @@ class GalleryViewModel(
     }
 
     private fun loadPage(page: Int, isRefresh: Boolean) {
-        viewModelScope.launch {
+        val finishPage = performanceMonitor.begin(
+            if (page == 1) Metric.GalleryFirstPage else Metric.GalleryPage
+        )
+        if (page == 1) firstPageLoadJob?.cancel()
+        val job = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isLoading = !isRefresh,
@@ -123,9 +142,16 @@ class GalleryViewModel(
 
             repository.getRecords(
                 page = page,
-                perPage = 30,
+                // A home server has noticeable request latency. One useful batch
+                // plus look-ahead avoids making the user wait at every short scroll.
+                perPage = 24,
+                // Newest-first by capture date, like Google Photos — the gallery
+                // groups pages into date headers and that only stays coherent if
+                // pages arrive in date order.
+                sortBy = "data",
                 mediaType = _uiState.value.mediaType
             ).onSuccess { response ->
+                finishPage()
                 _uiState.update { current ->
                     val combined = if (page == 1) response.records else current.records + response.records
                     current.copy(
@@ -157,12 +183,22 @@ class GalleryViewModel(
                 }
             }
         }
+        if (page == 1) firstPageLoadJob = job
     }
 
-    class Factory(private val repository: IrisRepository) : ViewModelProvider.Factory {
+    /** Called only after Compose has received a frame with real gallery content. */
+    fun onFirstContentDrawn() {
+        firstContentFinish?.invoke()
+        firstContentFinish = null
+    }
+
+    class Factory(
+        private val repository: IrisRepository,
+        private val performanceMonitor: PerformanceMonitor
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return GalleryViewModel(repository) as T
+            return GalleryViewModel(repository, performanceMonitor) as T
         }
     }
 }

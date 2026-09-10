@@ -1,12 +1,15 @@
 package com.iris.app.ui.screens.gallery
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -41,19 +44,34 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iris.app.data.model.MediaRecord
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.MediaCard
 import com.iris.app.ui.components.ServerStatusBadge
 import com.iris.app.ui.theme.IrisAccentInk
 import com.iris.app.ui.theme.IrisAccentLime
 import com.iris.app.ui.theme.IrisDarkBg
+import com.iris.app.ui.theme.IrisDarkSurface
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,19 +83,34 @@ fun GalleryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val gridState = rememberLazyGridState()
+    var columnCount by rememberSaveable { mutableIntStateOf(3) }
 
     // Infinite scroll trigger when reaching near the end
     val shouldLoadMore by remember {
         derivedStateOf {
             val totalItems = gridState.layoutInfo.totalItemsCount
             val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems > 0 && lastVisibleIndex >= totalItems - 6
+            // Start loading around two visual rows before the end. The old
+            // three-item threshold exposed server latency on every scroll.
+            totalItems > 0 && lastVisibleIndex >= totalItems - 12
         }
     }
 
     LaunchedEffect(shouldLoadMore) {
         if (shouldLoadMore) {
             viewModel.loadNextPage()
+        }
+    }
+
+    // A filter replaces the dataset; keeping the old offset makes a successful
+    // filter change look like it did nothing when the user was deep in the grid.
+    LaunchedEffect(uiState.mediaType) {
+        gridState.scrollToItem(0)
+    }
+
+    LaunchedEffect(uiState.records.isNotEmpty()) {
+        if (uiState.records.isNotEmpty()) {
+            withFrameNanos { viewModel.onFirstContentDrawn() }
         }
     }
 
@@ -172,12 +205,7 @@ fun GalleryScreen(
             ) {
                 when {
                     (uiState.isLoading || uiState.isServerChecking) && uiState.records.isEmpty() -> {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = IrisAccentLime)
-                        }
+                        GalleryLoadingGrid()
                     }
 
                     uiState.error != null && uiState.records.isEmpty() -> {
@@ -214,43 +242,189 @@ fun GalleryScreen(
                     }
 
                     else -> {
+                        val sections = remember(uiState.records) { groupByDate(uiState.records) }
                         LazyVerticalGrid(
-                            columns = GridCells.Adaptive(110.dp),
+                            // Fixed column count driven by pinch-to-zoom (Google
+                            // Photos style) instead of Adaptive — the span needs to
+                            // be known up front to size date-header rows correctly.
+                            columns = GridCells.Fixed(columnCount),
                             state = gridState,
                             contentPadding = PaddingValues(8.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            items(
-                                items = uiState.records,
-                                key = { record -> record.index }
-                            ) { record ->
-                                MediaCard(
-                                    record = record,
-                                    onClick = { onMediaClick(record.index) }
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pinchToZoomColumns(
+                                    columnCount = columnCount,
+                                    onColumnCountChange = { columnCount = it }
                                 )
+                        ) {
+                            sections.forEach { section ->
+                                item(
+                                    key = "header-${section.label}",
+                                    span = { GridItemSpan(maxLineSpan) }
+                                ) {
+                                    DateSectionHeader(section.label)
+                                }
+                                items(
+                                    items = section.records,
+                                    key = { record -> record.index }
+                                ) { record ->
+                                    MediaCard(
+                                        record = record,
+                                        performanceMonitor = viewModel.performanceMonitor,
+                                        onClick = { onMediaClick(record.index) }
+                                    )
+                                }
                             }
 
                             if (uiState.isLoading && uiState.records.isNotEmpty()) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(28.dp),
-                                            color = IrisAccentLime
-                                        )
-                                    }
+                                items(12) {
+                                    GalleryPreviewSkeleton()
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GalleryLoadingGrid() {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(150.dp),
+        contentPadding = PaddingValues(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        items(18) { GalleryPreviewSkeleton() }
+    }
+}
+
+@Composable
+private fun GalleryPreviewSkeleton() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(12.dp))
+            .background(IrisDarkSurface)
+    )
+}
+
+@Composable
+private fun DateSectionHeader(label: String) {
+    Text(
+        text = label,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onBackground,
+        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+    )
+}
+
+private data class DateSection(val label: String, val records: List<MediaRecord>)
+
+private val dateSectionZone: ZoneId = ZoneId.systemDefault()
+private val dateSectionSameYearFormatter =
+    DateTimeFormatter.ofPattern("d 'de' MMMM", Locale("pt", "BR"))
+private val dateSectionOtherYearFormatter =
+    DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", Locale("pt", "BR"))
+
+/**
+ * Buckets records into Google-Photos-style date sections. Relies on records
+ * already arriving newest-first (server sort_by=data) — this only groups
+ * consecutive same-day items, it does not re-sort them.
+ */
+private fun groupByDate(records: List<MediaRecord>): List<DateSection> {
+    if (records.isEmpty()) return emptyList()
+    val today = LocalDate.now(dateSectionZone)
+    val yesterday = today.minusDays(1)
+
+    fun labelFor(record: MediaRecord): String {
+        val mtime = record.fileMtime ?: return "Data desconhecida"
+        val day = Instant.ofEpochSecond(mtime.toLong()).atZone(dateSectionZone).toLocalDate()
+        return when (day) {
+            today -> "Hoje"
+            yesterday -> "Ontem"
+            else -> if (day.year == today.year) {
+                day.format(dateSectionSameYearFormatter)
+            } else {
+                day.format(dateSectionOtherYearFormatter)
+            }
+        }
+    }
+
+    val sections = mutableListOf<DateSection>()
+    var currentLabel: String? = null
+    var currentBucket = mutableListOf<MediaRecord>()
+    for (record in records) {
+        val label = labelFor(record)
+        if (label != currentLabel) {
+            if (currentBucket.isNotEmpty()) {
+                sections += DateSection(currentLabel!!, currentBucket)
+            }
+            currentLabel = label
+            currentBucket = mutableListOf()
+        }
+        currentBucket += record
+    }
+    if (currentBucket.isNotEmpty()) {
+        sections += DateSection(currentLabel!!, currentBucket)
+    }
+    return sections
+}
+
+/**
+ * Two-finger pinch changes the grid's column count (fewer columns = bigger
+ * previews), the same gesture Google Photos uses. Only reacts once 2+
+ * pointers are down and consumes events solely in that case, so a normal
+ * one-finger drag keeps scrolling the grid untouched.
+ */
+private fun Modifier.pinchToZoomColumns(
+    columnCount: Int,
+    onColumnCountChange: (Int) -> Unit,
+    minColumns: Int = 2,
+    maxColumns: Int = 6
+): Modifier = composed {
+    // The gesture coroutine below is launched once (key = Unit) and lives across
+    // recompositions; rememberUpdatedState lets it see the latest column count
+    // and callback instead of the stale values captured at launch time — without
+    // this, restarting the pointerInput on every column change would drop
+    // fingers still on screen and turn a smooth pinch into single stepped taps.
+    val latestColumnCount by rememberUpdatedState(columnCount)
+    val latestOnColumnCountChange by rememberUpdatedState(onColumnCountChange)
+    pointerInput(Unit) {
+        val zoomOutThreshold = 1.25f
+        val zoomInThreshold = 0.8f
+        awaitEachGesture {
+            var zoomAccumulator = 1f
+            var pinching = false
+            do {
+                val event = awaitPointerEvent()
+                val activePointers = event.changes.count { it.pressed }
+                if (activePointers >= 2) {
+                    pinching = true
+                    zoomAccumulator *= event.calculateZoom()
+                    event.changes.forEach { it.consume() }
+                    if (zoomAccumulator > zoomOutThreshold) {
+                        val next = (latestColumnCount - 1).coerceAtLeast(minColumns)
+                        if (next != latestColumnCount) latestOnColumnCountChange(next)
+                        zoomAccumulator = 1f
+                    } else if (zoomAccumulator < zoomInThreshold) {
+                        val next = (latestColumnCount + 1).coerceAtMost(maxColumns)
+                        if (next != latestColumnCount) latestOnColumnCountChange(next)
+                        zoomAccumulator = 1f
+                    }
+                } else if (pinching) {
+                    // A pinch that drops back to one finger shouldn't hand off
+                    // into a drag-scroll using the pinch's leftover finger.
+                    event.changes.forEach { it.consume() }
+                }
+            } while (event.changes.any { it.pressed })
         }
     }
 }
