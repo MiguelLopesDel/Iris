@@ -1,0 +1,16 @@
+{
+  "collections": [
+    {
+      "id": 1,
+      "name": "Abril 2026",
+      "description": "",
+      "count": 1
+    },
+    {
+      "id": 2,
+      "name": "Memórias de férias",
+      "description": "",
+      "count": 0
+    }
+  ]
+}

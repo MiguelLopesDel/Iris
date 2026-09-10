@@ -1,0 +1,27 @@
+{
+  "total_records": 2,
+  "db_path": "<masked>",
+  "media_root": "media",
+  "model_name": "sentence-transformers/clip-ViT-L-14",
+  "load_model": true,
+  "multiuser": false,
+  "current_user": null,
+  "has_concepts": true,
+  "has_faces": true,
+  "missing_count": null,
+  "extension_counts": {
+    ".png": 1,
+    ".mp4": 1
+  },
+  "databases": [],
+  "capabilities": {
+    "semantic_search": true,
+    "image_search": true,
+    "face_search": true,
+    "host_administration": true,
+    "folder_import": true,
+    "host_backup": true,
+    "open_host_folder": true,
+    "webchat_enrichment": true
+  }
+}

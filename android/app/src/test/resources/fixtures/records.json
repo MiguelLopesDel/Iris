@@ -1,0 +1,62 @@
+{
+  "page": 1,
+  "per_page": 12,
+  "total": 2,
+  "total_pages": 1,
+  "missing_count": 1,
+  "records": [
+    {
+      "index": 1,
+      "db_id": 2,
+      "arquivo": "clipe.mp4",
+      "resolved_path": "<masked>",
+      "texto_extraido": "",
+      "descricao_ia": "",
+      "tags": "",
+      "visual_json": "",
+      "objects": "",
+      "style": "",
+      "source_work": "",
+      "humor": "",
+      "context": "",
+      "content_hash": null,
+      "file_size": 999,
+      "file_mtime": 1700000100.0,
+      "media_type": "video",
+      "thumbnail_url": "",
+      "thumb_hash": "",
+      "persons": []
+    },
+    {
+      "index": 0,
+      "db_id": 1,
+      "arquivo": "meme.png",
+      "resolved_path": "<masked>",
+      "texto_extraido": "texto no meme",
+      "descricao_ia": "descrição automática",
+      "tags": "engraçado,gato",
+      "visual_json": "",
+      "objects": "",
+      "style": "",
+      "source_work": "",
+      "humor": "",
+      "context": "",
+      "content_hash": null,
+      "file_size": 1234,
+      "file_mtime": 1700000000.0,
+      "media_type": "image",
+      "thumbnail_url": "<masked>",
+      "thumb_hash": "yB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5a",
+      "persons": [
+        {
+          "id": 2,
+          "name": "Fulano de Tal"
+        },
+        {
+          "id": 1,
+          "name": ""
+        }
+      ]
+    }
+  ]
+}

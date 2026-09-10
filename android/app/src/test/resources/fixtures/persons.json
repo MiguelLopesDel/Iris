@@ -1,0 +1,18 @@
+{
+  "persons": [
+    {
+      "id": 1,
+      "name": null,
+      "cover_face_id": null,
+      "media_count": 1,
+      "face_count": 1
+    },
+    {
+      "id": 2,
+      "name": "Fulano de Tal",
+      "cover_face_id": null,
+      "media_count": 1,
+      "face_count": 1
+    }
+  ]
+}
