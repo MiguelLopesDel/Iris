@@ -624,6 +624,9 @@ def _record_to_json(r: IndexRecord) -> dict[str, Any]:
         "file_mtime": r.file_mtime,
         "media_type": "video" if ext in VIDEO_EXTENSIONS else "image",
         "thumbnail_url": _thumbnail_url(r),
+        # Inline placeholder so a client can paint the cell before the
+        # thumbnail request finishes. See core/thumb_hash.py.
+        "thumb_hash": r.thumb_hash,
     }
 
 

@@ -168,6 +168,7 @@ _MEMES_COLUMNS: list[tuple[str, str]] = [
     ("audio_embedding", "BLOB DEFAULT NULL"),
     ("perceptual_hash", "TEXT DEFAULT NULL"),
     ("metadata_json", "TEXT DEFAULT ''"),
+    ("thumb_hash", "TEXT DEFAULT ''"),
 ]
 _MEMES_FK = "FOREIGN KEY (library_id) REFERENCES media_libraries(id) ON DELETE SET NULL"
 

@@ -539,6 +539,14 @@ class TestPersonAssignment:
         for record in r.json()["records"]:
             assert "persons" in record
 
+    def test_records_include_thumb_hash_key(self, client):
+        # The gallery paints this before the thumbnail request finishes, so the
+        # key must always be present — clients must not have to probe for it.
+        r = client.get("/api/records?page=1&per_page=12")
+        assert r.status_code == 200
+        for record in r.json()["records"]:
+            assert "thumb_hash" in record
+
 
 class TestTrashValidation:
     def test_trash_needs_db_ids(self, client):

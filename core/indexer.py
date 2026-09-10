@@ -50,6 +50,7 @@ from core.taxonomy import (
     merge_taxonomy_into_profile,
     values_for_field,
 )
+from core.thumb_hash import encode_thumb_hash
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")   # suppress mmco/unref ffmpeg noise
@@ -768,6 +769,10 @@ def process_images(
                         if _perceptual_hash is None and not _is_video_file and not _is_audio:
                             _perceptual_hash = _compute_phash(image)
 
+                        # Inline gallery placeholder — computed here because the
+                        # decoded image is already in hand.
+                        _thumb_hash = encode_thumb_hash(image)
+
                         if _precomp is None:
                             # Image, audio, or video with no useful frames → normal batch
                             batch_images.append(image)
@@ -801,6 +806,7 @@ def process_images(
                                 "audio_fingerprint": _audio_fp,
                                 "audio_embedding": _audio_emb,
                                 "perceptual_hash": _perceptual_hash,
+                                "thumb_hash": _thumb_hash,
                                 "candidate_thumb": candidate_thumb,
                                 "metadata_json": _metadata_json,
                                 "face_image": image,
@@ -954,9 +960,10 @@ def process_images(
                             ocr_normalized, visual_json, objects, style, source_work,
                             humor, context, error_message, model_name,
                             embedding_dim, schema_version, embedding, desc_embedding,
-                            audio_fingerprint, audio_embedding, perceptual_hash, metadata_json
+                            audio_fingerprint, audio_embedding, perceptual_hash, metadata_json,
+                            thumb_hash
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             item["relative_path"],
@@ -989,6 +996,7 @@ def process_images(
                             item["audio_embedding"].tobytes() if item.get("audio_embedding") is not None else None,
                             item.get("perceptual_hash"),
                             item.get("metadata_json", ""),
+                            item.get("thumb_hash", ""),
                         ),
                     )
                     known_hashes.add(str(item["content_hash"]))

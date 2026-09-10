@@ -150,6 +150,7 @@ class IrisEngine:
                 "audio_fingerprint",
                 "audio_embedding",
                 "perceptual_hash",
+                "thumb_hash",
             ]:
                 if optional in columns:
                     select_columns.append(optional)
@@ -204,6 +205,7 @@ class IrisEngine:
                     audio_fingerprint=row["audio_fingerprint"] if "audio_fingerprint" in row.keys() and row["audio_fingerprint"] else "",
                     audio_embedding=np.frombuffer(row["audio_embedding"], dtype=np.float32).copy() if "audio_embedding" in row.keys() and row["audio_embedding"] else None,
                     perceptual_hash=row["perceptual_hash"] if "perceptual_hash" in row.keys() and row["perceptual_hash"] else "",
+                    thumb_hash=row["thumb_hash"] if "thumb_hash" in row.keys() and row["thumb_hash"] else "",
                 )
             )
         return records
