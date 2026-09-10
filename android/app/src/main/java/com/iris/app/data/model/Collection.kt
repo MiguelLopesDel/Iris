@@ -6,7 +6,9 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class IrisCollection(
     @SerialName("id") val id: Int,
-    @SerialName("name") val name: String,
+    // Defaults so a null name degrades to an unnamed entry instead of failing
+    // the whole response — see the note in Person.
+    @SerialName("name") val name: String = "",
     @SerialName("count") val count: Int = 0
 )
 
@@ -26,7 +28,7 @@ data class CollectionMembersResponse(
 @Serializable
 data class IrisConcept(
     @SerialName("id") val id: Int,
-    @SerialName("name") val name: String,
+    @SerialName("name") val name: String = "",
     @SerialName("description") val description: String? = null,
     @SerialName("reference_count") val referenceCount: Int = 0,
     @SerialName("match_count") val matchCount: Int = 0

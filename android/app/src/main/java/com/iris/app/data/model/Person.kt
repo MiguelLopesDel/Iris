@@ -6,7 +6,10 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class Person(
     @SerialName("id") val id: Int,
-    @SerialName("name") val name: String,
+    // An unnamed person comes back as null. Without a default there is nothing
+    // for coerceInputValues to fall back to, and one unnamed person fails the
+    // decode of the entire persons response.
+    @SerialName("name") val name: String = "",
     @SerialName("cover_face_id") val coverFaceId: Int? = null,
     @SerialName("media_count") val mediaCount: Int = 0
 )

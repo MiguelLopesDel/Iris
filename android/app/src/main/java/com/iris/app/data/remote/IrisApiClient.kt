@@ -30,11 +30,7 @@ class IrisApiClient(
     var baseUrl: String = normalizeBaseUrl(initialBaseUrl)
         private set
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        coerceInputValues = true
-    }
+    private val json = RESPONSE_JSON
 
     private val tokenRefreshLock = Any()
 
@@ -313,6 +309,18 @@ class IrisApiClient(
     }
 
     companion object {
+        /**
+         * How every server response is decoded. Exposed so tests assert against
+         * the real configuration instead of a copy that can drift from it —
+         * `coerceInputValues` in particular is what lets a null from the server
+         * fall back to a model's default rather than failing the whole response.
+         */
+        val RESPONSE_JSON = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            coerceInputValues = true
+        }
+
         fun normalizeBaseUrl(url: String): String {
             var trimmed = url.trim()
             if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {

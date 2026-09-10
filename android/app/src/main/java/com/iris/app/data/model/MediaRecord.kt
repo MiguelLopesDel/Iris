@@ -52,7 +52,7 @@ data class MediaRecord(
 @Serializable
 data class MediaConceptRef(
     @SerialName("id") val id: Int,
-    @SerialName("name") val name: String,
+    @SerialName("name") val name: String = "",
     @SerialName("category") val category: String = "",
     @SerialName("confirmed") val confirmed: Boolean = false
 )
