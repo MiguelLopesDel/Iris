@@ -1,5 +1,6 @@
 package com.iris.app.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -60,6 +61,7 @@ fun MediaCard(
         performanceMonitor?.begin(if (record.isVideo) Metric.PreviewVideo else Metric.PreviewImage)
     }
     var previewState by remember(record.index) { mutableStateOf(PreviewState.Loading) }
+    val placeholder = remember(record.thumbHash) { decodeThumbHash(record.thumbHash) }
 
     Box(
         modifier = modifier
@@ -91,7 +93,18 @@ fun MediaCard(
             when (previewState) {
                 PreviewState.Ready -> Unit
                 PreviewState.Error -> PreviewError(isVideo = record.isVideo)
-                PreviewState.Loading -> PreviewPlaceholder(isVideo = record.isVideo)
+                PreviewState.Loading -> if (placeholder != null) {
+                    // Upscaled from a 6x6 grid, so the default bilinear filter
+                    // renders it as a soft colour field rather than blocks.
+                    Image(
+                        bitmap = placeholder,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    PreviewPlaceholder(isVideo = record.isVideo)
+                }
             }
 
             // Video badge

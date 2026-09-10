@@ -31,6 +31,8 @@ data class MediaRecord(
     @SerialName("file_mtime") val fileMtime: Double? = null,
     @SerialName("media_type") val mediaType: String = "image",
     @SerialName("thumbnail_url") val thumbnailUrl: String? = null,
+    // Inline preview painted while the thumbnail request is still in flight.
+    @SerialName("thumb_hash") val thumbHash: String? = null,
     @SerialName("persons") val persons: List<MediaPersonRef> = emptyList(),
     @SerialName("score") val score: Float? = null,
     @SerialName("collections") val collections: List<IrisCollection> = emptyList(),
