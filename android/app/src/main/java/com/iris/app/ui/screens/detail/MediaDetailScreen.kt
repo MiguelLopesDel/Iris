@@ -1,6 +1,7 @@
 package com.iris.app.ui.screens.detail
 
 import android.content.Intent
+import android.graphics.Color as AndroidColor
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -174,6 +175,7 @@ fun MediaDetailScreen(
             uiState.record != null -> {
                 val record = uiState.record!!
                 val fullMediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
+                var showDetails by remember(record.index) { mutableStateOf(false) }
 
                 Column(
                     modifier = Modifier
@@ -190,6 +192,15 @@ fun MediaDetailScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         if (record.isVideo) {
+                            val thumbnailUrl = apiClient.resolveThumbnailUrl(record.thumbnailUrl)
+                            if (thumbnailUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = thumbnailUrl,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                             // ExoPlayer Video Player initialized synchronously so PlayerView has a non-null player on frame 1
                             val lifecycleOwner = LocalLifecycleOwner.current
                             val exoPlayer = remember(fullMediaUrl) {
@@ -227,6 +238,7 @@ fun MediaDetailScreen(
                                     PlayerView(ctx).apply {
                                         this.player = exoPlayer
                                         useController = true
+                                        setShutterBackgroundColor(AndroidColor.TRANSPARENT)
                                     }
                                 },
                                 update = { playerView ->
@@ -248,13 +260,8 @@ fun MediaDetailScreen(
                                 offset += panChange
                             }
 
-                            AsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(fullMediaUrl)
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = record.cleanFilename,
-                                contentScale = ContentScale.Fit,
+                            val thumbnailUrl = apiClient.resolveThumbnailUrl(record.thumbnailUrl)
+                            Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
@@ -264,7 +271,25 @@ fun MediaDetailScreen(
                                         translationY = offset.y
                                     }
                                     .transformable(state = transformableState)
-                            )
+                            ) {
+                                if (thumbnailUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = thumbnailUrl,
+                                        contentDescription = record.cleanFilename,
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                AsyncImage(
+                                    model = ImageRequest.Builder(context)
+                                        .data(fullMediaUrl)
+                                        .crossfade(true)
+                                        .build(),
+                                    contentDescription = record.cleanFilename,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                     }
 
@@ -304,11 +329,6 @@ fun MediaDetailScreen(
                                     color = IrisTextSoft
                                 )
                             }
-                            Text(
-                                text = "Índice #${record.index}",
-                                fontSize = 12.sp,
-                                color = IrisTextMuted
-                            )
                         }
 
                         // Persons chips (facial recognition)
@@ -346,6 +366,19 @@ fun MediaDetailScreen(
                             }
                         }
 
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = if (showDetails) "Ocultar informações" else "Informações",
+                            color = IrisAccentLime,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showDetails = !showDetails }
+                                .padding(vertical = 8.dp)
+                        )
+
+                        if (showDetails) {
                         // OCR Text
                         if (!record.textoExtraido.isNullOrBlank()) {
                             Spacer(modifier = Modifier.height(16.dp))
@@ -401,7 +434,7 @@ fun MediaDetailScreen(
                             ) {
                                 Column(modifier = Modifier.padding(14.dp)) {
                                     Text(
-                                        text = "Descrição da IA (Florence-2 / VLM)",
+                                        text = "Descrição automática",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = IrisAccentLime
@@ -448,7 +481,7 @@ fun MediaDetailScreen(
                             HorizontalDivider(color = IrisDarkSurfaceBright)
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Mídias Similares (Embeddings CLIP)",
+                                text = "Parecidas",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -471,6 +504,7 @@ fun MediaDetailScreen(
                             }
                         }
 
+                        }
                         Spacer(modifier = Modifier.height(32.dp))
                     }
                 }

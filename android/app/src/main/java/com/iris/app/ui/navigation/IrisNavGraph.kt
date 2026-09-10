@@ -17,7 +17,10 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -55,6 +58,7 @@ import com.iris.app.ui.theme.IrisDarkBg
 import com.iris.app.ui.theme.IrisDarkSurface
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
+import com.iris.app.performance.Metric
 
 data class BottomNavItem(
     val route: String,
@@ -70,6 +74,7 @@ fun IrisNavGraph(
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+    val navigationFinishes = remember { mutableMapOf<String, () -> Unit>() }
 
     val bottomNavItems = listOf(
         BottomNavItem(
@@ -85,24 +90,25 @@ fun IrisNavGraph(
             unselectedIcon = Icons.Outlined.Search
         ),
         BottomNavItem(
-            route = NavRoute.Persons.route,
-            label = "Pessoas",
-            selectedIcon = Icons.Filled.Face,
-            unselectedIcon = Icons.Outlined.Face
-        ),
-        BottomNavItem(
             route = NavRoute.Collections.route,
-            label = "Coleções",
+            label = "Álbuns",
             selectedIcon = Icons.Filled.Folder,
             unselectedIcon = Icons.Outlined.Folder
         ),
         BottomNavItem(
             route = NavRoute.Sync.route,
-            label = "Backup",
+            label = "Sincronizar",
             selectedIcon = Icons.Filled.CloudUpload,
             unselectedIcon = Icons.Outlined.CloudUpload
         )
     )
+
+    LaunchedEffect(currentDestination?.route) {
+        val route = currentDestination?.route ?: return@LaunchedEffect
+        withFrameNanos {
+            navigationFinishes.remove(route)?.invoke()
+        }
+    }
 
     // Hide bottom navigation bar on detail screens or settings
     val showBottomBar = bottomNavItems.any { it.route == currentDestination?.route }
@@ -119,6 +125,9 @@ fun IrisNavGraph(
                         NavigationBarItem(
                             selected = selected,
                             onClick = {
+                                navigationFinishes[item.route] = application.performanceMonitor.begin(
+                                    item.navigationMetric()
+                                )
                                 navController.navigate(item.route) {
                                     popUpTo(navController.graph.findStartDestination().id) {
                                         saveState = true
@@ -155,7 +164,10 @@ fun IrisNavGraph(
         ) {
             composable(NavRoute.Gallery.route) {
                 val viewModel: GalleryViewModel = viewModel(
-                    factory = GalleryViewModel.Factory(application.irisRepository)
+                    factory = GalleryViewModel.Factory(
+                        application.irisRepository,
+                        application.performanceMonitor
+                    )
                 )
                 GalleryScreen(
                     viewModel = viewModel,
@@ -228,7 +240,8 @@ fun IrisNavGraph(
                     viewModel = viewModel,
                     onCollectionClick = { colId, colName ->
                         navController.navigate(NavRoute.CollectionMedia.createRoute(colId, colName))
-                    }
+                    },
+                    onPeopleClick = { navController.navigate(NavRoute.Persons.route) }
                 )
             }
 
@@ -298,9 +311,18 @@ fun IrisNavGraph(
                 )
                 SettingsScreen(
                     viewModel = viewModel,
+                    performanceMonitor = application.performanceMonitor,
                     onBack = { navController.popBackStack() }
                 )
             }
         }
     }
+}
+
+private fun BottomNavItem.navigationMetric(): Metric = when (route) {
+    NavRoute.Gallery.route -> Metric.NavigationGallery
+    NavRoute.Search.route -> Metric.NavigationSearch
+    NavRoute.Collections.route -> Metric.NavigationAlbums
+    NavRoute.Sync.route -> Metric.NavigationSync
+    else -> Metric.NavigationGallery
 }

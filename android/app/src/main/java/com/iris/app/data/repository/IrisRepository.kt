@@ -176,7 +176,8 @@ class IrisRepository(
     }
 
     suspend fun getCollectionMembers(collectionId: Int): Result<List<MediaRecord>> = runCatchingCancellable {
-        apiClient.apiService.getCollectionMembers(collectionId).members
+        val response = apiClient.apiService.getCollectionMembers(collectionId)
+        response.records.ifEmpty { response.members }
     }
 
     suspend fun getConcepts(): Result<List<IrisConcept>> = runCatchingCancellable {

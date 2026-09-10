@@ -1,6 +1,8 @@
 package com.iris.app.data.remote
 
 import com.iris.app.data.local.DeviceAuthStore
+import com.iris.app.performance.IrisPerformanceEventListener
+import com.iris.app.performance.PerformanceMonitor
 import kotlinx.serialization.json.Json
 import okhttp3.Authenticator
 import okhttp3.FormBody
@@ -21,7 +23,8 @@ import java.util.concurrent.TimeUnit
 
 class IrisApiClient(
     initialBaseUrl: String = "http://10.0.2.2:8000/",
-    private val credentialsStore: DeviceAuthStore? = null
+    private val credentialsStore: DeviceAuthStore? = null,
+    private val performanceMonitor: PerformanceMonitor? = null
 ) {
     @Volatile
     var baseUrl: String = normalizeBaseUrl(initialBaseUrl)
@@ -43,6 +46,27 @@ class IrisApiClient(
         val sanitizedUrl = request.url.newBuilder().query(null).build().toString()
         val response = chain.proceed(request)
         response
+    }
+
+    /**
+     * Browsing must fail promptly when a VPN path stalls. Uploads keep the
+     * longer client timeout because they can legitimately transfer large files.
+     */
+    private val browsingTimeoutInterceptor = Interceptor { chain ->
+        val request = chain.request()
+        val isBrowseRequest = request.method == "GET" && (
+            request.url.encodedPath.endsWith("/healthz") ||
+                request.url.encodedPath.contains("/api/info") ||
+                request.url.encodedPath.contains("/api/records")
+            )
+        if (isBrowseRequest) {
+            chain
+                .withConnectTimeout(8, TimeUnit.SECONDS)
+                .withReadTimeout(15, TimeUnit.SECONDS)
+                .proceed(request)
+        } else {
+            chain.proceed(request)
+        }
     }
 
     private val authInterceptor = Interceptor { chain ->
@@ -79,9 +103,13 @@ class IrisApiClient(
         }
         val response = chain.proceed(newRequest)
 
-        // If backend returns a redirect to /login or /setup (302/303), transform to 401 JSON
-        // so Authenticator and Retrofit can handle it without attempting to parse HTML as JSON.
-        if ((response.code == 302 || response.code == 303) && response.header("Location")?.contains("/login") == true) {
+        // A reverse proxy or an Iris setup/login guard can redirect an API call to
+        // HTML. Convert that response into JSON-shaped 401 instead of letting
+        // Retrofit report an opaque "Unexpected JSON token" parse error.
+        val redirectLocation = response.header("Location")
+        if ((response.code == 302 || response.code == 303 || response.code == 307 || response.code == 308) &&
+            (redirectLocation?.contains("/login") == true || redirectLocation?.contains("/setup") == true)
+        ) {
             val jsonMediaType = "application/json".toMediaType()
             return@Interceptor response.newBuilder()
                 .code(401)
@@ -97,6 +125,7 @@ class IrisApiClient(
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            .applyPerformanceMonitor()
             .build()
     }
 
@@ -208,8 +237,10 @@ class IrisApiClient(
         .followRedirects(false)
         .followSslRedirects(false)
         .addInterceptor(authInterceptor)
+        .addInterceptor(browsingTimeoutInterceptor)
         .addInterceptor(safeLoggingInterceptor)
         .authenticator(tokenAuthenticator)
+        .applyPerformanceMonitor()
         .build()
 
     val authenticatedOkHttpClient: OkHttpClient
@@ -253,6 +284,10 @@ class IrisApiClient(
             .addConverterFactory(json.asConverterFactory(contentType))
             .build()
             .create(IrisApiService::class.java)
+    }
+
+    private fun OkHttpClient.Builder.applyPerformanceMonitor(): OkHttpClient.Builder = apply {
+        performanceMonitor?.let { eventListenerFactory(IrisPerformanceEventListener.factory(it)) }
     }
 
     fun resolveMediaUrl(path: String?): String {

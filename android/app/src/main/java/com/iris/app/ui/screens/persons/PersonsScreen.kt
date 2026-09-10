@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.iris.app.IrisApplication
 import com.iris.app.ui.components.EmptyState
@@ -73,7 +74,7 @@ fun PersonsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Pessoas e Rostos",
+                        text = "Pessoas",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -162,14 +163,29 @@ fun PersonsScreen(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (faceThumbUrl != null) {
-                                            AsyncImage(
+                                            SubcomposeAsyncImage(
                                                 model = ImageRequest.Builder(context)
                                                     .data(faceThumbUrl)
-                                                    .crossfade(true)
+                                                    .crossfade(false)
                                                     .build(),
                                                 contentDescription = person.name,
                                                 contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
+                                                modifier = Modifier.fillMaxSize(),
+                                                loading = {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(20.dp),
+                                                        strokeWidth = 2.dp,
+                                                        color = IrisAccentLime
+                                                    )
+                                                },
+                                                error = {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Person,
+                                                        contentDescription = null,
+                                                        tint = IrisTextSoft,
+                                                        modifier = Modifier.size(36.dp)
+                                                    )
+                                                }
                                             )
                                         } else {
                                             Icon(

@@ -17,7 +17,9 @@ data class CollectionsResponse(
 
 @Serializable
 data class CollectionMembersResponse(
-    @SerialName("collection_id") val collectionId: Int,
+    // The server's public endpoint returns `records` and `db_ids`.  Keep
+    // `members` as a compatibility fallback for older Iris servers.
+    @SerialName("records") val records: List<MediaRecord> = emptyList(),
     @SerialName("members") val members: List<MediaRecord> = emptyList()
 )
 

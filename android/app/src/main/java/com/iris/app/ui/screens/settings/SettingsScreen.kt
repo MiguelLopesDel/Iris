@@ -57,14 +57,17 @@ import com.iris.app.ui.theme.IrisDarkSurface
 import com.iris.app.ui.theme.IrisDarkSurfaceBright
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
+import com.iris.app.performance.PerformanceMonitor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
+    performanceMonitor: PerformanceMonitor,
     onBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val performanceReport by performanceMonitor.report.collectAsState()
 
     Scaffold(
         topBar = {
@@ -322,6 +325,62 @@ fun SettingsScreen(
                             label = "Índice FAISS",
                             value = if (info.faissIndexExists) "Ativo e carregado" else "Não inicializado"
                         )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            HorizontalDivider(color = IrisDarkSurfaceBright)
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Diagnóstico de desempenho",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Mede somente tempos agregados neste aparelho. Não registra fotos, URLs, contas ou senhas.",
+                fontSize = 12.sp,
+                color = IrisTextSoft
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    if (performanceReport.enabled) performanceMonitor.stop() else performanceMonitor.start()
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (performanceReport.enabled) IrisDarkSurfaceBright else IrisAccentLime,
+                    contentColor = if (performanceReport.enabled) IrisTextSoft else IrisAccentInk
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (performanceReport.enabled) "Parar diagnóstico" else "Iniciar diagnóstico")
+            }
+            if (performanceReport.metrics.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Mediana / P90 / máximo", fontSize = 12.sp, color = IrisTextMuted)
+                        performanceReport.metrics.sortedBy { it.name }.forEach { metric ->
+                            InfoRow(
+                                label = metric.name,
+                                value = "%d / %d / %d ms (%d)".format(
+                                    metric.medianMs.toInt(),
+                                    metric.p90Ms.toInt(),
+                                    metric.maxMs.toInt(),
+                                    metric.count
+                                )
+                            )
+                        }
                     }
                 }
             }

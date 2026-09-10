@@ -1,6 +1,7 @@
 package com.iris.app
 
 import android.app.Application
+import androidx.work.Configuration
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
@@ -15,16 +16,19 @@ import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.SyncUploadManager
+import com.iris.app.performance.PerformanceMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
-class IrisApplication : Application(), ImageLoaderFactory {
+class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provider {
 
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     lateinit var settingsRepository: ServerSettingsRepository
         private set
@@ -50,6 +54,16 @@ class IrisApplication : Application(), ImageLoaderFactory {
     lateinit var irisRepository: IrisRepository
         private set
 
+    /** Opt-in, local-only timing summaries shown in Settings diagnostics. */
+    val performanceMonitor = PerformanceMonitor()
+
+    /**
+     * The saved server address must be applied before any screen or background
+     * sync can make a request. Otherwise a cold start briefly uses the emulator
+     * default address and incorrectly reports the user's server as offline.
+     */
+    val isServerConfigurationReady = MutableStateFlow(false)
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -59,7 +73,8 @@ class IrisApplication : Application(), ImageLoaderFactory {
         dbHelper = UploadDatabaseHelper(this)
 
         apiClient = IrisApiClient(
-            credentialsStore = credentialsStore
+            credentialsStore = credentialsStore,
+            performanceMonitor = performanceMonitor
         )
 
         syncUploadManager = SyncUploadManager(
@@ -91,14 +106,17 @@ class IrisApplication : Application(), ImageLoaderFactory {
         applicationScope.launch {
             val initialUrl = settingsRepository.serverUrl.first()
             apiClient.updateBaseUrl(initialUrl)
+            isServerConfigurationReady.value = true
 
             settingsRepository.serverUrl.collect { url ->
                 apiClient.updateBaseUrl(url)
             }
         }
 
-        // Schedule periodic WorkManager sync respecting user preferences
+        // WorkManager initialization is expensive on some phones. Let the first
+        // gallery frame render before scheduling background work.
         applicationScope.launch {
+            delay(BACKGROUND_START_DELAY_MS)
             combine(
                 settingsRepository.syncWifiOnly,
                 settingsRepository.syncChargingOnly,
@@ -118,11 +136,16 @@ class IrisApplication : Application(), ImageLoaderFactory {
 
         // Poll change feed on app open (contract section 38)
         applicationScope.launch(Dispatchers.IO) {
+            isServerConfigurationReady.first { it }
+            delay(BACKGROUND_START_DELAY_MS)
             if (credentialsStore.hasValidCredentials()) {
                 changeFeedSyncManager.syncChanges()
             }
         }
     }
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
 
     override fun newImageLoader(): ImageLoader {
         val activityManager = getSystemService(android.app.ActivityManager::class.java)
@@ -147,7 +170,9 @@ class IrisApplication : Application(), ImageLoaderFactory {
             }
             .allowRgb565(isLowRam)
             .respectCacheHeaders(false)
-            .crossfade(true)
+            // A simultaneous crossfade for every first-screen thumbnail causes
+            // visible frame loss on mid-range phones.
+            .crossfade(false)
             .build()
     }
 
@@ -160,6 +185,8 @@ class IrisApplication : Application(), ImageLoaderFactory {
     }
 
     companion object {
+        private const val BACKGROUND_START_DELAY_MS = 2_000L
+
         lateinit var instance: IrisApplication
             private set
     }

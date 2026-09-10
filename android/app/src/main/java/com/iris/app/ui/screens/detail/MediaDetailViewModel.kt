@@ -43,8 +43,14 @@ class MediaDetailViewModel(
                 loadMetadata()
                 loadSimilars()
             }.onFailure { ex ->
+                val rawMessage = ex.localizedMessage.orEmpty()
+                val userMessage = if (rawMessage.contains("Unexpected JSON token", ignoreCase = true)) {
+                    "O servidor enviou um formato de detalhes incompatível. Atualize o Iris e tente novamente."
+                } else {
+                    rawMessage.ifBlank { "Erro ao carregar mídia" }
+                }
                 _uiState.update {
-                    it.copy(isLoading = false, error = ex.localizedMessage ?: "Erro ao carregar mídia")
+                    it.copy(isLoading = false, error = userMessage)
                 }
             }
         }

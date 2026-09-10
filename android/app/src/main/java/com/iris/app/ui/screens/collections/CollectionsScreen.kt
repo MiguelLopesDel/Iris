@@ -65,7 +65,8 @@ import com.iris.app.ui.theme.IrisViolet
 @Composable
 fun CollectionsScreen(
     viewModel: CollectionsViewModel,
-    onCollectionClick: (Int, String) -> Unit
+    onCollectionClick: (Int, String) -> Unit,
+    onPeopleClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -74,7 +75,7 @@ fun CollectionsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Coleções e Conceitos",
+                        text = "Álbuns",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -108,12 +109,12 @@ fun CollectionsScreen(
                 Tab(
                     selected = uiState.selectedTab == 0,
                     onClick = { viewModel.setTab(0) },
-                    text = { Text("Coleções (${uiState.collections.size})", fontWeight = FontWeight.SemiBold) }
+                    text = { Text("Álbuns (${uiState.collections.size})", fontWeight = FontWeight.SemiBold) }
                 )
                 Tab(
-                    selected = uiState.selectedTab == 1,
-                    onClick = { viewModel.setTab(1) },
-                    text = { Text("Conceitos (${uiState.concepts.size})", fontWeight = FontWeight.SemiBold) }
+                    selected = false,
+                    onClick = onPeopleClick,
+                    text = { Text("Pessoas", fontWeight = FontWeight.SemiBold) }
                 )
             }
 
@@ -137,8 +138,8 @@ fun CollectionsScreen(
                         if (uiState.collections.isEmpty()) {
                             EmptyState(
                                 icon = Icons.Outlined.FolderSpecial,
-                                title = "Nenhuma coleção",
-                                message = "Nenhuma coleção criada no servidor Iris.",
+                                title = "Nenhum álbum",
+                                message = "Crie um álbum no Iris para reunir fotos e vídeos.",
                                 actionLabel = "Atualizar",
                                 onAction = { viewModel.loadData(isRefresh = true) }
                             )

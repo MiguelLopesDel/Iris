@@ -50,16 +50,12 @@ class CollectionsViewModel(
             _uiState.update { it.copy(isLoading = !isRefresh, isRefreshing = isRefresh, error = null) }
 
             val collectionsResult = repository.getCollections()
-            val conceptsResult = repository.getConcepts()
-
             val collections = collectionsResult.getOrDefault(emptyList())
-            val concepts = conceptsResult.getOrDefault(emptyList())
 
-            if (collectionsResult.isSuccess || conceptsResult.isSuccess) {
+            if (collectionsResult.isSuccess) {
                 _uiState.update {
                     it.copy(
                         collections = collections,
-                        concepts = concepts,
                         isLoading = false,
                         isRefreshing = false,
                         error = null
@@ -70,7 +66,7 @@ class CollectionsViewModel(
                     it.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        error = "Erro ao carregar coleções do servidor"
+                        error = "Erro ao carregar álbuns do servidor"
                     )
                 }
             }

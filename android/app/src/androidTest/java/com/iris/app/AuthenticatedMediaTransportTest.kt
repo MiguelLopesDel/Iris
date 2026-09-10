@@ -6,6 +6,7 @@ import android.graphics.Color
 import androidx.media3.datasource.DataSpec
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import coil.request.ImageRequest
 import coil.request.SuccessResult
@@ -34,12 +35,15 @@ class AuthenticatedMediaTransportTest {
         server = MockWebServer()
         server.start()
         app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as IrisApplication
+        val serverUrl = server.url("/").toString()
+        app.apiClient.updateBaseUrl(serverUrl)
         app.credentialsStore.saveSession(
             deviceId = "instrumentation-device",
             accessToken = "video-token",
             refreshToken = "refresh-token",
             expiresInSeconds = 3600,
-            username = "instrumentation"
+            username = "instrumentation",
+            serverOrigin = IrisApiClient.getOrigin(serverUrl)
         )
     }
 
