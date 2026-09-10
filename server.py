@@ -650,8 +650,12 @@ def _attach_persons(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return dicts
 
 
-def _results_to_json(results: list[SearchResult]) -> list[dict[str, Any]]:
-    return _attach_persons([_result_to_json(r) for r in results])
+async def _results_to_json(results: list[SearchResult]) -> list[dict[str, Any]]:
+    # Same reasoning as get_records: _result_to_json can decode/resize a source
+    # file on a thumbnail-cache miss, which must not run on the event loop.
+    return await run_in_threadpool(
+        lambda: _attach_persons([_result_to_json(r) for r in results])
+    )
 
 
 def _empty_record(r: SearchResult) -> IndexRecord:
@@ -1915,7 +1919,14 @@ async def get_records(
                 1 for r in page_records
                 if not r.resolved_path or not os.path.exists(r.resolved_path)
             ),
-            "records": _attach_persons([_record_to_json(r) for r in page_records]),
+            # Thumbnail-cache misses decode/resize the source file (PIL, or cv2
+            # frame extraction for video) inside _record_to_json. Left inline,
+            # that CPU-bound work runs straight on the event loop and stalls
+            # every other in-flight request — including every other thumbnail
+            # already cached — until it finishes.
+            "records": await run_in_threadpool(
+                lambda: _attach_persons([_record_to_json(r) for r in page_records])
+            ),
         }
 
 
@@ -1929,7 +1940,7 @@ async def get_record_detail(idx: int):
         r = backend.get_record(idx)
         if r is None:
             raise HTTPException(404, "Record not found")
-        d = _record_to_json(r)
+        d = await run_in_threadpool(_record_to_json, r)
         _attach_persons([d])
         # Add extra detail fields
         d["caminho"] = r.caminho
@@ -2039,7 +2050,7 @@ async def search_text(
         return {
             "query": q,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2074,7 +2085,7 @@ async def search_filename(
         return {
             "query": q,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2107,14 +2118,14 @@ async def search_image(
         response = {
             "filename": file.filename,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
         if group_results:
             groups = _group_search_results(results, max(-1.0, min(group_threshold, 1.0)))
             if not show_singletons:
                 groups = [group for group in groups if len(group) > 1]
             response["groups"] = [
-                _results_to_json(group)
+                await _results_to_json(group)
                 for group in groups
             ]
         return response
@@ -2139,7 +2150,7 @@ async def search_face(
         return {
             "filename": file.filename,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2156,7 +2167,7 @@ async def search_face_by_record(idx: int, top_k: int = Query(50)):
         return {
             "source_index": idx,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2171,7 +2182,7 @@ async def search_face_by_face(face_id: int, top_k: int = Query(50)):
         return {
             "source_face": face_id,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2196,7 +2207,7 @@ async def search_similar(
         return {
             "source_index": idx,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2207,7 +2218,7 @@ async def search_random(n: int = Query(20, ge=1, le=100)):
         results = backend.random_results(n)
         return {
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2252,12 +2263,17 @@ async def get_collection_members(col_id: int):
     backend = _get_backend()
     with trace("api.collections.members"):
         db_ids = backend.get_collection_members(col_id)
-        records = []
-        for db_id in db_ids:
-            for r in backend.get_all_records():
-                if r.db_id == db_id:
-                    records.append(_record_to_json(r))
-                    break
+
+        def _build() -> list[dict[str, Any]]:
+            records = []
+            for db_id in db_ids:
+                for r in backend.get_all_records():
+                    if r.db_id == db_id:
+                        records.append(_record_to_json(r))
+                        break
+            return records
+
+        records = await run_in_threadpool(_build)
         return {"db_ids": db_ids, "records": records}
 
 
@@ -2525,7 +2541,7 @@ async def person_media(person_id: int):
             "person_id": person_id,
             "person_name": (person or {}).get("name") or "",
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
