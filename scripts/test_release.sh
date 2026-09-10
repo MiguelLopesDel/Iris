@@ -17,7 +17,9 @@ release_dir="$(mktemp -d "${TMPDIR:-/tmp}/iris-release.XXXXXX")"
 project_name="iris-release-$(date +%s)-$$"
 port="${IRIS_RELEASE_TEST_PORT:-18501}"
 base_url="http://127.0.0.1:${port}"
-password="release-test-password-123"
+# Generated per run: the container is disposable and torn down by the trap
+# above, so there is nothing to remember and nothing to keep in git.
+password="${IRIS_RELEASE_TEST_PASSWORD:-$(od -An -tx1 -N16 /dev/urandom | tr -d " \n")}"
 
 cleanup() {
     docker compose --project-name "$project_name" --project-directory "$release_dir" down --volumes --remove-orphans >/dev/null 2>&1 || true

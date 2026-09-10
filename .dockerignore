@@ -27,3 +27,7 @@ env/
 *.mkv
 *.webm
 *.tar.gz
+
+# The Android client is not part of the server image. Without this, every app
+# commit invalidates the COPY layer and forces a pointless rebuild on the server.
+android/

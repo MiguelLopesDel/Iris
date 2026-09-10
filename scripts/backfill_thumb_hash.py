@@ -7,9 +7,10 @@ Idempotente: processa apenas linhas com ``thumb_hash`` vazio, então pode ser
 interrompido e retomado à vontade.
 
 Uso:
+    python scripts/backfill_thumb_hash.py                     # descobre os bancos sozinho
     python scripts/backfill_thumb_hash.py --db data/iris_v1.db
-    python scripts/backfill_thumb_hash.py --db data/iris_v1.db --limit 500
-    python scripts/backfill_thumb_hash.py --db data/iris_v1.db --redo   # refaz todos
+    python scripts/backfill_thumb_hash.py --limit 500
+    python scripts/backfill_thumb_hash.py --redo              # refaz todos
 """
 from __future__ import annotations
 
@@ -30,6 +31,29 @@ from core.thumb_hash import GRID_SIDE, encode_thumb_hash  # noqa: E402
 # Committing every row would make a 17k-record catalog 17k transactions. The
 # work per row is small, so the write amplification would dominate the run.
 _COMMIT_EVERY = 200
+
+
+def discover_databases(data_dir: Path) -> list[Path]:
+    """Os catálogos que o servidor serve, sem precisar que o usuário os aponte.
+
+    Numa instalação multiusuário cada conta tem o seu ``data/users/<id>/iris.db``
+    e não existe "o banco" — por isso o padrão é processar todos. Cobre também o
+    layout single-user antigo, em ``data/*.db``.
+    """
+    found: list[Path] = []
+    users_dir = data_dir / "users"
+    if users_dir.is_dir():
+        found.extend(sorted(users_dir.glob("*/iris.db")))
+    if not found:
+        found.extend(
+            sorted(
+                path
+                for path in data_dir.glob("*.db")
+                # users.db guarda contas, não catálogo de mídia.
+                if path.name != "users.db"
+            )
+        )
+    return found
 
 
 def _load_image(path_str: str | None) -> Image.Image | None:
@@ -57,7 +81,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Backfill do placeholder inline (thumb_hash) para mídias já indexadas."
     )
-    parser.add_argument("--db", "-b", required=True, help="Banco SQLite alvo.")
+    parser.add_argument(
+        "--db",
+        "-b",
+        default=None,
+        help="Banco SQLite alvo. Omitido, descobre os catálogos sob data/.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        default="data",
+        help="Raiz onde procurar os catálogos quando --db é omitido.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Processa no máximo N mídias.")
     parser.add_argument(
         "--redo",
@@ -66,7 +100,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    db_path = Path(args.db)
+    if args.db:
+        databases = [Path(args.db)]
+    else:
+        databases = discover_databases(Path(args.data_dir))
+        if not databases:
+            raise SystemExit(
+                f"Nenhum catálogo encontrado sob {args.data_dir}/. "
+                "Aponte um com --db."
+            )
+        print(f"Catálogos encontrados: {', '.join(str(d) for d in databases)}\n")
+
+    for position, db_path in enumerate(databases, start=1):
+        if len(databases) > 1:
+            print(f"[{position}/{len(databases)}] {db_path}")
+        backfill_one(db_path, limit=args.limit, redo=args.redo)
+
+
+def backfill_one(db_path: Path, *, limit: int | None, redo: bool) -> None:
     if not db_path.exists():
         raise SystemExit(f"Banco não encontrado: {db_path}")
 
@@ -81,12 +132,12 @@ def main() -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        if args.redo:
+        if redo:
             pending = [r for r in engine.records if r.db_id]
         else:
             pending = [r for r in engine.records if r.db_id and not r.thumb_hash]
-        if args.limit:
-            pending = pending[: args.limit]
+        if limit:
+            pending = pending[:limit]
 
         print(f"Mídias no catálogo: {len(engine.records)} · a processar: {len(pending)}")
 

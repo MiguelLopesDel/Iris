@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -20,8 +21,35 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = PROJECT_ROOT / ".iris-dev"
 MARKER = ".iris-dev-sandbox"
-ADMIN_PASSWORD = "iris-dev-admin"
-MEMBER_PASSWORD = "iris-dev-member"
+CREDENTIALS_FILE = "credentials.txt"
+
+
+def sandbox_passwords(root: Path) -> tuple[str, str]:
+    """Resolve the sandbox account passwords without hardcoding any.
+
+    Order: environment, then whatever a previous run generated, then fresh
+    random values. They are persisted inside the sandbox (which is gitignored)
+    so re-running still prints usable credentials, and `reset` discards them
+    along with everything else.
+    """
+    stored: dict[str, str] = {}
+    path = root / CREDENTIALS_FILE
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                stored[key.strip()] = value.strip()
+
+    admin = os.environ.get("IRIS_DEV_ADMIN_PASSWORD") or stored.get("admin") or secrets.token_urlsafe(12)
+    member = os.environ.get("IRIS_DEV_MEMBER_PASSWORD") or stored.get("familia") or secrets.token_urlsafe(12)
+
+    root.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"admin={admin}\nfamilia={member}\n", encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return admin, member
 
 
 def sandbox_root(value: str | None) -> Path:
@@ -50,9 +78,10 @@ def seed_sandbox(root: Path) -> None:
     from core.users_db import create_user
 
     data_dir = root / "data"
+    admin_password, member_password = sandbox_passwords(root)
     accounts = (
-        ("admin", ADMIN_PASSWORD, "Admin local", True, (61, 99, 184)),
-        ("familia", MEMBER_PASSWORD, "Família local", False, (31, 132, 77)),
+        ("admin", admin_password, "Admin local", True, (61, 99, 184)),
+        ("familia", member_password, "Família local", False, (31, 132, 77)),
     )
     for username, password, display_name, is_admin, color in accounts:
         user = create_user(
@@ -72,8 +101,9 @@ def seed_sandbox(root: Path) -> None:
                 (image_path.name, str(image_path), b"\\0" * 16, image_path.stat().st_size),
             )
     print(f"Sandbox created at {root}")
-    print(f"  admin / {ADMIN_PASSWORD}   (administrator)")
-    print(f"  familia / {MEMBER_PASSWORD} (regular user)")
+    print(f"  admin / {admin_password}   (administrator)")
+    print(f"  familia / {member_password} (regular user)")
+    print(f"  (also saved to {root / CREDENTIALS_FILE})")
 
 
 def start(root: Path, *, with_model: bool, host: str, port: int) -> int:

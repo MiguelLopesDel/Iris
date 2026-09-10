@@ -65,17 +65,41 @@ ENDPOINTS: dict[str, str] = {
     "backup_config.json": "/api/backup/config",
 }
 
-# Campos que embutem caminho absoluto ou mtime do disco: variam a cada execução
-# e não fazem parte do contrato. Mascarados para a comparação golden ser estável.
-_VOLATILE_KEYS = {"resolved_path", "caminho", "thumbnail_url", "db_path"}
+# Campos que dependem da máquina onde o teste roda: caminho absoluto, mtime,
+# conteúdo do disco local. Não fazem parte do contrato, variam a cada execução,
+# e — mais importante — mascará-los impede que a fixture leve para um repositório
+# público o home do desenvolvedor, a lista dos seus bancos locais ou uma mensagem
+# de erro do sistema de arquivos dele. Já aconteceu: sem mascarar `backup_dir` a
+# fixture capturou "/home/<usuário>/Iris_Backup" e o erro de permissão junto.
+_VOLATILE_KEYS = {
+    "resolved_path",
+    "caminho",
+    "thumbnail_url",
+    "db_path",
+    "media_root",
+    "backup_dir",
+    "media_originals_root",
+    "error",
+}
+
+# Listas cujo conteúdo é uma varredura do disco local.
+_VOLATILE_LISTS = {"databases", "warnings"}
 
 
 def _mask_volatile(value):
     if isinstance(value, dict):
-        return {
-            k: ("<masked>" if k in _VOLATILE_KEYS and v else _mask_volatile(v))
-            for k, v in value.items()
-        }
+        masked = {}
+        for k, v in value.items():
+            # Incondicional de propósito: mascarar só quando há valor deixaria
+            # a fixture diferente entre uma máquina com dados locais e uma sem,
+            # e o teste golden falharia dependendo de onde roda.
+            if k in _VOLATILE_LISTS:
+                masked[k] = []
+            elif k in _VOLATILE_KEYS:
+                masked[k] = "<masked>"
+            else:
+                masked[k] = _mask_volatile(v)
+        return masked
     if isinstance(value, list):
         return [_mask_volatile(v) for v in value]
     return value
@@ -225,3 +249,15 @@ def test_seeded_catalog_actually_exercises_the_edge_cases(contract_client):
         "Nenhuma mídia sem placeholder — o cliente precisa aguentar catálogo "
         "ainda não backfillado."
     )
+
+
+def test_fixtures_never_leak_local_paths():
+    """Uma fixture vai para um repositório público — não pode levar o disco junto."""
+    suspeitos = ("/home/", "/Users/", "/root/", "C:\\\\")
+    for arquivo in sorted(FIXTURE_DIR.glob("*.json")):
+        conteudo = arquivo.read_text(encoding="utf-8")
+        for trecho in suspeitos:
+            assert trecho not in conteudo, (
+                f"{arquivo.name} contém um caminho local ({trecho!r}). "
+                "Acrescente o campo a _VOLATILE_KEYS/_VOLATILE_LISTS e regenere."
+            )

@@ -13,20 +13,36 @@ MEDIA_SUFFIXES = {
     ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac",
 }
 PRIVATE_PATH = re.compile(
-    r"(^|/)(data|media|uploads|import_uploads|sync_uploads|thumbnails)/|^\.env$|"
+    # Anchored at the repo root on purpose: these are server runtime folders.
+    # Matching the segment anywhere flagged every Android source file, whose
+    # Java package path contains .../com/iris/app/data/...
+    r"^(data|media|uploads|import_uploads|sync_uploads|thumbnails)/|^\.env$|"
     r"(^|/)([^/]+\.(db|sqlite|faiss|index|pem|key|p12|pfx))$",
     re.IGNORECASE,
 )
-SECRET_PATTERNS = [
+# High-confidence: an actual credential shape. Always checked, everywhere.
+STRONG_SECRET_PATTERNS = [
     re.compile(r"-----BEGIN (?:RSA|EC|OPENSSH|DSA) PRIVATE KEY-----"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
-    re.compile(
-        r"(?i)(?:api[_-]?key|secret(?:[_-]?key)?|password|access[_-]?token|refresh[_-]?token)"
-        r"\s*[:=]\s*[\"'][^\"'\s]{12,}"
-    ),
 ]
+
+# Heuristic: a credential-ish name assigned a long literal. Catches real
+# mistakes, but also ordinary code, so its matches are filtered below.
+KEYWORD_ASSIGNMENT = re.compile(
+    r"(?i)(?:api[_-]?key|secret(?:[_-]?key)?|password|access[_-]?token|refresh[_-]?token)"
+    r"\s*[:=]\s*[\"']([^\"'\s]{12,})"
+)
+
+# A value that is nothing but lowercase snake_case is a key name, not a
+# credential — e.g. KEY_ACCESS_TOKEN = "enc_access_token" in the Android
+# SharedPreferences store.
+IDENTIFIER_VALUE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# Test code declares fake credentials by design. The strong patterns above
+# still apply there; only the keyword heuristic is relaxed.
+TEST_PATH = re.compile(r"(^|/)(tests?|androidTest)/")
 
 
 def git(*args: str) -> str:
@@ -39,7 +55,11 @@ def pushed_commits(lines: Iterable[str]) -> list[str]:
         parts = line.strip().split()
         if len(parts) != 4:
             continue
-        local_sha, local_ref, remote_sha, _remote_ref = parts
+        # git sends: <local ref> <local sha> <remote ref> <remote sha>.
+        # Reading these in the wrong order made every push inspect the empty
+        # range <ref>..<ref> — the check silently passed everything — and made
+        # a branch deletion crash on rev-list <ref>..(delete).
+        local_ref, local_sha, _remote_ref, remote_sha = parts
         if local_sha == ZERO_SHA or local_ref == "(delete)":
             continue
         revision = local_sha if remote_sha == ZERO_SHA else f"{remote_sha}..{local_sha}"
@@ -63,12 +83,16 @@ def inspect_blob(commit: str, path: str) -> list[str]:
         ).decode("utf-8", errors="replace")
     except subprocess.CalledProcessError:
         return []
-    findings = []
-    for pattern in SECRET_PATTERNS:
+    for pattern in STRONG_SECRET_PATTERNS:
         if pattern.search(content):
-            findings.append(f"possible secret in {path}")
-            break
-    return findings
+            return [f"possible secret in {path}"]
+    if TEST_PATH.search(path):
+        return []
+    for match in KEYWORD_ASSIGNMENT.finditer(content):
+        value = match.group(1)
+        if not IDENTIFIER_VALUE.match(value):
+            return [f"possible secret in {path}"]
+    return []
 
 
 def main() -> int:

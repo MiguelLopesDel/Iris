@@ -1,7 +1,7 @@
 {
   "total_records": 2,
   "db_path": "<masked>",
-  "media_root": "media",
+  "media_root": "<masked>",
   "model_name": "sentence-transformers/clip-ViT-L-14",
   "load_model": true,
   "multiuser": false,
