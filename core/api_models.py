@@ -256,7 +256,99 @@ class BackupConfigOut(_Out):
     error: str = ""
 
 
-class OkOut(_Out):
-    """Retorno das rotas de mutação: ``ok`` mais o que a operação reportar."""
+class FilesystemOut(_Out):
+    path: str
+    parent: str
+    directories: list[Any] = []
 
-    ok: bool = True
+
+class ImportStartedOut(_Out):
+    ok: bool
+    job_id: str
+
+
+class CollectionFromSuggestionOut(_Out):
+    collection_id: int | None = None
+    name: str = ""
+    added: int = 0
+
+
+class CollectionMembersAddedOut(_Out):
+    added: int = 0
+
+
+class BackupSnapshotsOut(_Out):
+    configured: bool = False
+    # Ausente quando não há destino configurado — sem default para o FastAPI
+    # não inventar um diretório vazio numa resposta que não o continha.
+    backup_dir: str | None = None
+    snapshots: list[Any] = []
+
+
+class UploadSearchResponseOut(SearchResponseOut):
+    """Busca a partir de arquivo enviado: identificada pelo nome do upload."""
+
+    filename: str | None = None
+    groups: list[list[SearchResultOut]] | None = None
+
+
+class ConceptMatchesOut(_Out):
+    matches: list[SearchResultOut] = []
+
+
+class ConceptReferencesOut(_Out):
+    references: list[Any] = []
+
+
+class ConceptAssociationsOut(_Out):
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+    records: list[RecordOut] = []
+
+
+class ConceptCreatedOut(_Out):
+    id: int
+
+
+class ConceptWithReferencesOut(_Out):
+    id: int
+    references: int = 0
+
+
+class EnrichmentJobStartedOut(_Out):
+    job_id: str
+    total: int = 0
+    cached: int = 0
+    force: bool = False
+    research: bool = False
+
+
+class EnrichmentSuggestionsOut(_Out):
+    suggestions: list[Any] = []
+
+
+class DuplicatesOut(_Out):
+    threshold: float
+    max_neighbors: int
+    min_group_size: int
+    total_groups: int
+    groups: list[Any] = []
+
+
+class TrashOut(_Out):
+    moved: int = 0
+    failed: int = 0
+
+
+class OkOut(_Out):
+    """Retorno das rotas de mutação: ``ok`` mais o que a operação reportar.
+
+    ``ok`` é obrigatório de propósito. Com um default, uma rota que tivesse um
+    caminho retornando dict sem ``ok`` ganharia ``"ok": true`` injetado em
+    silêncio — afirmando sucesso onde o código não afirmou nada. Sem default, o
+    FastAPI levanta ResponseValidationError e o teste acusa.
+    """
+
+    ok: bool

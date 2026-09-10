@@ -42,14 +42,28 @@ from core import app_config, import_review
 from core import backup as backup_mod
 from core.api_models import (
     BackupConfigOut,
+    BackupSnapshotsOut,
+    CollectionFromSuggestionOut,
+    CollectionMembersAddedOut,
     CollectionMembersOut,
     CollectionsOut,
+    ConceptAssociationsOut,
+    ConceptCreatedOut,
+    ConceptMatchesOut,
+    ConceptReferencesOut,
     ConceptsOut,
+    ConceptWithReferencesOut,
     DbIdsOut,
+    DuplicatesOut,
+    EnrichmentJobStartedOut,
+    EnrichmentSuggestionsOut,
+    FilesystemOut,
     HealthOut,
     ImportReviewOut,
+    ImportStartedOut,
     ImportStatusOut,
     ImportSuggestionsOut,
+    OkOut,
     PersonMediaOut,
     PersonsOut,
     RecordDetailOut,
@@ -59,6 +73,8 @@ from core.api_models import (
     SearchResponseOut,
     ServerInfoOut,
     SourceSearchResponseOut,
+    TrashOut,
+    UploadSearchResponseOut,
 )
 from core.auth import load_or_create_secret
 from core.backend import SearchBackend, create_backend
@@ -1201,7 +1217,7 @@ async def get_info(check_missing: int = Query(0)):
         }
 
 
-@app.post("/api/settings")
+@app.post("/api/settings", response_model=OkOut)
 async def update_settings(
     db_path: str = Form(...),
     media_root: str = Form(...),
@@ -1227,7 +1243,7 @@ async def update_settings(
     return {"ok": True, "total_records": backend.get_total_records()}
 
 
-@app.post("/api/reload")
+@app.post("/api/reload", response_model=OkOut)
 async def reload_backend():
     _require_admin()
     if _multiuser_enabled():
@@ -1240,7 +1256,7 @@ async def reload_backend():
     return {"ok": True, "total_records": backend.get_total_records()}
 
 
-@app.get("/api/filesystem")
+@app.get("/api/filesystem", response_model=FilesystemOut)
 async def browse_filesystem(path: str = Query("")):
     _require_admin()
     current = Path(path).expanduser() if path.strip() else Path.home()
@@ -1265,7 +1281,7 @@ async def browse_filesystem(path: str = Query("")):
     }
 
 
-@app.post("/api/open-folder")
+@app.post("/api/open-folder", response_model=OkOut)
 async def open_folder(path: str = Form(...)):
     _require_admin()
     target = Path(path).expanduser()
@@ -1319,7 +1335,7 @@ async def import_status():
     return dict(_import_job)
 
 
-@app.post("/api/import")
+@app.post("/api/import", response_model=ImportStartedOut)
 async def start_import(
     folder: str = Form(""),
     files: Annotated[list[UploadFile] | None, File()] = None,
@@ -1481,7 +1497,7 @@ async def import_suggestions(job_id: str = Query("")):
     return {"job_id": (job or {}).get("id", ""), "suggestions": suggestions}
 
 
-@app.post("/api/collections/from-suggestion")
+@app.post("/api/collections/from-suggestion", response_model=CollectionFromSuggestionOut)
 async def create_collection_from_suggestion(
     name: str = Form(...),
     db_ids: str = Form(...),
@@ -1531,7 +1547,7 @@ async def import_review_full(item_id: int):
     return Response(content=blob, media_type="image/jpeg")
 
 
-@app.post("/api/import/review/resolve")
+@app.post("/api/import/review/resolve", response_model=OkOut)
 async def import_review_resolve(
     ids: str = Form(""),
     detection: str = Form(""),
@@ -1730,7 +1746,7 @@ async def backup_get_config():
     }
 
 
-@app.post("/api/backup/config")
+@app.post("/api/backup/config", response_model=OkOut)
 async def backup_set_config(
     backup_dir: str = Form(""),
     backup_auto: bool = Form(True),
@@ -1754,7 +1770,7 @@ async def backup_set_config(
     return {"ok": True, **saved, "warnings": warnings}
 
 
-@app.get("/api/backup/snapshots")
+@app.get("/api/backup/snapshots", response_model=BackupSnapshotsOut)
 async def backup_list_snapshots():
     cfg = app_config.load()
     if not cfg["backup_dir"]:
@@ -1763,7 +1779,7 @@ async def backup_list_snapshots():
     return {"configured": True, "backup_dir": cfg["backup_dir"], "snapshots": snaps}
 
 
-@app.post("/api/backup/snapshot")
+@app.post("/api/backup/snapshot", response_model=OkOut)
 async def backup_snapshot_now(reason: str = Form("manual")):
     cfg = app_config.load()
     if not cfg["backup_dir"]:
@@ -1775,7 +1791,7 @@ async def backup_snapshot_now(reason: str = Form("manual")):
     return {"ok": True, "snapshot": info}
 
 
-@app.post("/api/backup/restore")
+@app.post("/api/backup/restore", response_model=OkOut)
 async def backup_restore(
     snapshot_id: str = Form(...),
     mode: str = Form("overlay"),
@@ -1819,7 +1835,7 @@ def backup_download_snapshot(snapshot_id: str):
     return FileResponse(snap, media_type="application/gzip", filename=snapshot_id)
 
 
-@app.post("/api/backup/media/reconcile")
+@app.post("/api/backup/media/reconcile", response_model=OkOut)
 async def backup_media_reconcile():
     cfg = app_config.load()
     res = await run_in_threadpool(
@@ -1828,7 +1844,7 @@ async def backup_media_reconcile():
     return {"ok": True, **res}
 
 
-@app.post("/api/backup/media/export")
+@app.post("/api/backup/media/export", response_model=OkOut)
 async def backup_media_export():
     cfg = app_config.load()
     if not cfg["backup_dir"]:
@@ -2112,7 +2128,7 @@ async def search_filename(
         }
 
 
-@app.post("/api/search/image")
+@app.post("/api/search/image", response_model=UploadSearchResponseOut)
 async def search_image(
     file: Annotated[UploadFile, File()],
     top_k: int = Form(50),
@@ -2154,7 +2170,7 @@ async def search_image(
         return response
 
 
-@app.post("/api/search/face")
+@app.post("/api/search/face", response_model=UploadSearchResponseOut)
 async def search_face(
     file: Annotated[UploadFile, File()],
     top_k: int = Form(50),
@@ -2255,7 +2271,7 @@ async def list_collections():
         return {"collections": backend.list_collections()}
 
 
-@app.post("/api/collections")
+@app.post("/api/collections", response_model=OkOut)
 async def create_collection(name: str = Form(...)):
     backend = _get_backend()
     with trace("api.collections.create"):
@@ -2265,7 +2281,7 @@ async def create_collection(name: str = Form(...)):
         return {"ok": True, "collection_id": collection_id}
 
 
-@app.post("/api/collections/{col_id}/rename")
+@app.post("/api/collections/{col_id}/rename", response_model=OkOut)
 async def rename_collection(col_id: int, name: str = Form(...)):
     backend = _get_backend()
     with trace("api.collections.rename"):
@@ -2273,7 +2289,7 @@ async def rename_collection(col_id: int, name: str = Form(...)):
         return {"ok": True}
 
 
-@app.post("/api/collections/{col_id}/delete")
+@app.post("/api/collections/{col_id}/delete", response_model=OkOut)
 async def delete_collection(col_id: int):
     backend = _get_backend()
     with trace("api.collections.delete"):
@@ -2300,7 +2316,7 @@ async def get_collection_members(col_id: int):
         return {"db_ids": db_ids, "records": records}
 
 
-@app.post("/api/collections/{col_id}/members")
+@app.post("/api/collections/{col_id}/members", response_model=CollectionMembersAddedOut)
 async def add_collection_members(col_id: int, db_ids: str = Form(...)):
     backend = _get_backend()
     with trace("api.collections.add_members"):
@@ -2309,7 +2325,7 @@ async def add_collection_members(col_id: int, db_ids: str = Form(...)):
         return {"added": n}
 
 
-@app.post("/api/collections/{col_id}/members/remove")
+@app.post("/api/collections/{col_id}/members/remove", response_model=OkOut)
 async def remove_collection_members(col_id: int, db_ids: str = Form(...)):
     backend = _get_backend()
     with trace("api.collections.remove_members"):
@@ -2350,7 +2366,7 @@ async def get_concept_filter(ids: str = Query("")):
         return {"db_ids": sorted(backend.get_concept_db_ids(parsed))}
 
 
-@app.get("/api/concepts/{concept_id}/matches")
+@app.get("/api/concepts/{concept_id}/matches", response_model=ConceptMatchesOut)
 async def find_concept_matches(
     concept_id: int,
     top_k: int = Query(80),
@@ -2373,7 +2389,7 @@ async def find_concept_matches(
         return {"matches": records}
 
 
-@app.get("/api/concepts/{concept_id}/references")
+@app.get("/api/concepts/{concept_id}/references", response_model=ConceptReferencesOut)
 async def get_concept_references(concept_id: int):
     backend = _get_backend()
     with trace("api.concepts.references"):
@@ -2385,7 +2401,7 @@ async def get_concept_references(concept_id: int):
         }
 
 
-@app.get("/api/concepts/{concept_id}/associations")
+@app.get("/api/concepts/{concept_id}/associations", response_model=ConceptAssociationsOut)
 async def get_concept_associations(
     concept_id: int,
     page: int = Query(1, ge=1),
@@ -2410,7 +2426,7 @@ async def get_concept_associations(
     }
 
 
-@app.post("/api/concepts")
+@app.post("/api/concepts", response_model=ConceptCreatedOut)
 async def create_concept(
     name: str = Form(...),
     category: str = Form("outro"),
@@ -2427,7 +2443,7 @@ async def create_concept(
         return {"id": cid}
 
 
-@app.post("/api/concepts/with-references")
+@app.post("/api/concepts/with-references", response_model=ConceptWithReferencesOut)
 async def create_concept_with_references(
     files: Annotated[list[UploadFile], File()],
     name: str = Form(...),
@@ -2455,7 +2471,7 @@ async def create_concept_with_references(
     return {"id": concept_id, "references": len(files)}
 
 
-@app.post("/api/concepts/{concept_id}/update")
+@app.post("/api/concepts/{concept_id}/update", response_model=OkOut)
 async def update_concept(
     concept_id: int,
     name: str | None = Form(None),
@@ -2481,7 +2497,7 @@ async def update_concept(
         return {"ok": True}
 
 
-@app.post("/api/concepts/{concept_id}/delete")
+@app.post("/api/concepts/{concept_id}/delete", response_model=OkOut)
 async def delete_concept(concept_id: int):
     backend = _get_backend()
     with trace("api.concepts.delete"):
@@ -2489,7 +2505,7 @@ async def delete_concept(concept_id: int):
         return {"ok": True}
 
 
-@app.post("/api/concepts/{concept_id}/references")
+@app.post("/api/concepts/{concept_id}/references", response_model=OkOut)
 async def add_concept_reference(
     concept_id: int,
     file: Annotated[UploadFile, File()],
@@ -2500,7 +2516,7 @@ async def add_concept_reference(
         return {"ok": True}
 
 
-@app.post("/api/concepts/{concept_id}/references/batch")
+@app.post("/api/concepts/{concept_id}/references/batch", response_model=OkOut)
 async def add_concept_references(
     concept_id: int,
     files: Annotated[list[UploadFile], File()],
@@ -2513,7 +2529,7 @@ async def add_concept_references(
     return {"ok": True, "added": added}
 
 
-@app.post("/api/concepts/{concept_id}/references/{ref_id}/delete")
+@app.post("/api/concepts/{concept_id}/references/{ref_id}/delete", response_model=OkOut)
 async def delete_concept_reference(concept_id: int, ref_id: int):
     backend = _get_backend()
     with trace("api.concepts.delete_reference"):
@@ -2521,7 +2537,7 @@ async def delete_concept_reference(concept_id: int, ref_id: int):
         return {"ok": True}
 
 
-@app.post("/api/concepts/{concept_id}/confirm")
+@app.post("/api/concepts/{concept_id}/confirm", response_model=OkOut)
 async def confirm_concept_media(concept_id: int, db_ids: str = Form(...)):
     backend = _get_backend()
     with trace("api.concepts.confirm"):
@@ -2530,7 +2546,7 @@ async def confirm_concept_media(concept_id: int, db_ids: str = Form(...)):
         return {"ok": True}
 
 
-@app.post("/api/concepts/{concept_id}/reject")
+@app.post("/api/concepts/{concept_id}/reject", response_model=OkOut)
 async def reject_concept_media(concept_id: int, db_ids: str = Form(...)):
     backend = _get_backend()
     with trace("api.concepts.reject"):
@@ -2568,7 +2584,7 @@ async def person_media(person_id: int):
         }
 
 
-@app.post("/api/persons/{person_id}/rename")
+@app.post("/api/persons/{person_id}/rename", response_model=OkOut)
 async def rename_person(person_id: int, name: str = Form("")):
     backend = _get_backend()
     with trace("api.persons.rename"):
@@ -2576,7 +2592,7 @@ async def rename_person(person_id: int, name: str = Form("")):
         return {"ok": True}
 
 
-@app.post("/api/persons/merge")
+@app.post("/api/persons/merge", response_model=OkOut)
 async def merge_persons(source_id: int = Form(...), target_id: int = Form(...)):
     backend = _get_backend()
     with trace("api.persons.merge"):
@@ -2584,7 +2600,7 @@ async def merge_persons(source_id: int = Form(...), target_id: int = Form(...)):
         return {"ok": True}
 
 
-@app.post("/api/persons/{person_id}/delete")
+@app.post("/api/persons/{person_id}/delete", response_model=OkOut)
 async def delete_person(person_id: int):
     backend = _get_backend()
     with trace("api.persons.delete"):
@@ -2592,7 +2608,7 @@ async def delete_person(person_id: int):
         return {"ok": True}
 
 
-@app.post("/api/persons")
+@app.post("/api/persons", response_model=OkOut)
 async def create_person(name: str = Form("")):
     backend = _get_backend()
     with trace("api.persons.create"):
@@ -2602,7 +2618,7 @@ async def create_person(name: str = Form("")):
         return {"ok": True, "person_id": person_id}
 
 
-@app.post("/api/faces/{face_id}/person")
+@app.post("/api/faces/{face_id}/person", response_model=OkOut)
 async def assign_face_person(
     face_id: int,
     person_id: int | None = Form(None),
@@ -2622,7 +2638,7 @@ async def assign_face_person(
         return {"ok": True, "person_id": person_id}
 
 
-@app.post("/api/persons/cluster")
+@app.post("/api/persons/cluster", response_model=OkOut)
 async def cluster_persons(recluster: bool = Form(False)):
     backend = _get_backend()
     with trace("api.persons.cluster"):
@@ -2718,7 +2734,7 @@ def _run_web_enrichment_job(
         )
 
 
-@app.post("/api/enrichment/jobs")
+@app.post("/api/enrichment/jobs", response_model=EnrichmentJobStartedOut)
 async def create_enrichment_job(
     db_ids: str = Form(...),
     force: str = Form(""),
@@ -2774,7 +2790,7 @@ async def create_enrichment_job(
     }
 
 
-@app.get("/api/enrichment/jobs/{job_id}")
+@app.get("/api/enrichment/jobs/{job_id}", response_model=dict[str, Any])
 async def get_enrichment_job(job_id: str):
     job = get_job(_backend_connection(), job_id)
     if not job:
@@ -2782,12 +2798,12 @@ async def get_enrichment_job(job_id: str):
     return job
 
 
-@app.get("/api/enrichment/suggestions")
+@app.get("/api/enrichment/suggestions", response_model=EnrichmentSuggestionsOut)
 async def get_enrichment_suggestions(status: str = Query("pending")):
     return {"suggestions": list_suggestions(_backend_connection(), status=status)}
 
 
-@app.post("/api/enrichment/suggestions/{suggestion_id}/apply")
+@app.post("/api/enrichment/suggestions/{suggestion_id}/apply", response_model=dict[str, Any])
 async def apply_enrichment_suggestion(
     suggestion_id: int,
     fields: str = Form(""),
@@ -2801,7 +2817,7 @@ async def apply_enrichment_suggestion(
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.post("/api/enrichment/suggestions/{suggestion_id}/reject")
+@app.post("/api/enrichment/suggestions/{suggestion_id}/reject", response_model=OkOut)
 async def reject_enrichment_suggestion(suggestion_id: int):
     reject_suggestion(_backend_connection(), suggestion_id)
     return {"ok": True}
@@ -2810,7 +2826,7 @@ async def reject_enrichment_suggestion(suggestion_id: int):
 # ── Duplicates ────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/duplicates")
+@app.get("/api/duplicates", response_model=DuplicatesOut)
 async def get_duplicates(
     threshold: float = Query(0.985, ge=0.0, le=1.0),
     max_neighbors: int = Query(12, ge=2, le=50),
@@ -2854,7 +2870,7 @@ async def get_duplicates(
 # ── Trash ─────────────────────────────────────────────────────────────────────
 
 
-@app.post("/api/trash")
+@app.post("/api/trash", response_model=TrashOut)
 async def trash_records(db_ids: str = Form(...)):
     backend = _get_backend()
     await run_in_threadpool(maybe_auto_snapshot, "pre-trash")
