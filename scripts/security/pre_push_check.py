@@ -40,6 +40,11 @@ KEYWORD_ASSIGNMENT = re.compile(
 # SharedPreferences store.
 IDENTIFIER_VALUE = re.compile(r"^[a-z][a-z0-9_]*$")
 
+# A value read from the environment or substituted at runtime is the shape a
+# fixed credential is supposed to be replaced *with*. Flagging it would punish
+# the fix: password="${IRIS_RELEASE_TEST_PASSWORD:-...}" is correct code.
+INTERPOLATED_VALUE = re.compile(r"^[$%]|^\{\{|\$\{|\$\(")
+
 # Test code declares fake credentials by design. The strong patterns above
 # still apply there; only the keyword heuristic is relaxed.
 TEST_PATH = re.compile(r"(^|/)(tests?|androidTest)/")
@@ -90,8 +95,9 @@ def inspect_blob(commit: str, path: str) -> list[str]:
         return []
     for match in KEYWORD_ASSIGNMENT.finditer(content):
         value = match.group(1)
-        if not IDENTIFIER_VALUE.match(value):
-            return [f"possible secret in {path}"]
+        if IDENTIFIER_VALUE.match(value) or INTERPOLATED_VALUE.search(value):
+            continue
+        return [f"possible secret in {path}"]
     return []
 
 
