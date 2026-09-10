@@ -40,6 +40,26 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core import app_config, import_review
 from core import backup as backup_mod
+from core.api_models import (
+    BackupConfigOut,
+    CollectionMembersOut,
+    CollectionsOut,
+    ConceptsOut,
+    DbIdsOut,
+    HealthOut,
+    ImportReviewOut,
+    ImportStatusOut,
+    ImportSuggestionsOut,
+    PersonMediaOut,
+    PersonsOut,
+    RecordDetailOut,
+    RecordFacesOut,
+    RecordMetadataOut,
+    RecordsPageOut,
+    SearchResponseOut,
+    ServerInfoOut,
+    SourceSearchResponseOut,
+)
 from core.auth import load_or_create_secret
 from core.backend import SearchBackend, create_backend
 from core.backend_registry import BackendRegistry
@@ -1097,7 +1117,7 @@ async def serve_setup():
     )
 
 
-@app.get("/healthz")
+@app.get("/healthz", response_model=HealthOut)
 async def healthz():
     """Unauthenticated liveness/readiness probe; never reveals library details."""
     return {
@@ -1132,7 +1152,7 @@ def _missing_count(backend: SearchBackend, total: int) -> int:
     return count
 
 
-@app.get("/api/info")
+@app.get("/api/info", response_model=ServerInfoOut)
 async def get_info(check_missing: int = Query(0)):
     backend = _get_backend()
     with trace("api.info"):
@@ -1266,7 +1286,7 @@ async def open_folder(path: str = Form(...)):
     return {"ok": True, "path": str(target)}
 
 
-@app.get("/api/import/status")
+@app.get("/api/import/status", response_model=ImportStatusOut)
 async def import_status():
     if _multiuser_enabled():
         try:
@@ -1403,7 +1423,7 @@ async def start_import(
 # ── Import review (deduplication quarantine) ────────────────────────────────────
 
 
-@app.get("/api/import/review")
+@app.get("/api/import/review", response_model=ImportReviewOut)
 async def import_review_list(
     detection: str = Query(""),
     limit: int = Query(200),
@@ -1449,7 +1469,7 @@ async def import_review_list(
     return {"categories": categories, "total": sum(counts.values()), "items": enriched}
 
 
-@app.get("/api/import/suggestions")
+@app.get("/api/import/suggestions", response_model=ImportSuggestionsOut)
 async def import_suggestions(job_id: str = Query("")):
     """Collection suggestions from the metadata of the most-recent import (or job_id)."""
     from core import import_suggestions as suggest_mod
@@ -1695,7 +1715,7 @@ def maybe_auto_snapshot(reason: str) -> dict | None:
         return None
 
 
-@app.get("/api/backup/config")
+@app.get("/api/backup/config", response_model=BackupConfigOut)
 async def backup_get_config():
     cfg = app_config.load()
     val = (
@@ -1882,7 +1902,7 @@ def _filter_records(
     return records
 
 
-@app.get("/api/records")
+@app.get("/api/records", response_model=RecordsPageOut)
 async def get_records(
     page: int = Query(1, ge=1),
     per_page: int = Query(24, ge=12, le=500),
@@ -1936,7 +1956,7 @@ async def get_records(
 # ── Single record detail ─────────────────────────────────────────────────────
 
 
-@app.get("/api/records/{idx}")
+@app.get("/api/records/{idx}", response_model=RecordDetailOut)
 async def get_record_detail(idx: int):
     backend = _get_backend()
     with trace("api.record_detail"):
@@ -1964,7 +1984,7 @@ async def get_record_detail(idx: int):
         return d
 
 
-@app.get("/api/records/{idx}/metadata")
+@app.get("/api/records/{idx}/metadata", response_model=RecordMetadataOut)
 async def get_record_metadata(idx: int):
     """Curated (stored) + full (read on demand from the original file) metadata."""
     backend = _get_backend()
@@ -2027,7 +2047,7 @@ def _record_to_search_result(record: IndexRecord, score: float, kind: str) -> Se
     )
 
 
-@app.get("/api/search")
+@app.get("/api/search", response_model=SearchResponseOut)
 async def search_text(
     q: str = Query(...),
     top_k: int = Query(50),
@@ -2057,7 +2077,7 @@ async def search_text(
         }
 
 
-@app.get("/api/search/filename")
+@app.get("/api/search/filename", response_model=SearchResponseOut)
 async def search_filename(
     q: str = Query(...),
     top_k: int = Query(50, ge=1, le=500),
@@ -2157,7 +2177,7 @@ async def search_face(
         }
 
 
-@app.get("/api/search/face/by-record/{idx}")
+@app.get("/api/search/face/by-record/{idx}", response_model=SourceSearchResponseOut)
 async def search_face_by_record(idx: int, top_k: int = Query(50)):
     _require_search_model()
     backend = _get_backend()
@@ -2174,7 +2194,7 @@ async def search_face_by_record(idx: int, top_k: int = Query(50)):
         }
 
 
-@app.get("/api/search/face/by-face/{face_id}")
+@app.get("/api/search/face/by-face/{face_id}", response_model=SourceSearchResponseOut)
 async def search_face_by_face(face_id: int, top_k: int = Query(50)):
     _require_search_model()
     backend = _get_backend()
@@ -2189,7 +2209,7 @@ async def search_face_by_face(face_id: int, top_k: int = Query(50)):
         }
 
 
-@app.get("/api/search/similar/{idx}")
+@app.get("/api/search/similar/{idx}", response_model=SourceSearchResponseOut)
 async def search_similar(
     idx: int,
     top_k: int = Query(50),
@@ -2214,7 +2234,7 @@ async def search_similar(
         }
 
 
-@app.get("/api/search/random")
+@app.get("/api/search/random", response_model=SearchResponseOut)
 async def search_random(n: int = Query(20, ge=1, le=100)):
     backend = _get_backend()
     with trace("api.search.random"):
@@ -2228,7 +2248,7 @@ async def search_random(n: int = Query(20, ge=1, le=100)):
 # ── Collections ───────────────────────────────────────────────────────────────
 
 
-@app.get("/api/collections")
+@app.get("/api/collections", response_model=CollectionsOut)
 async def list_collections():
     backend = _get_backend()
     with trace("api.collections.list"):
@@ -2261,7 +2281,7 @@ async def delete_collection(col_id: int):
         return {"ok": True}
 
 
-@app.get("/api/collections/{col_id}/members")
+@app.get("/api/collections/{col_id}/members", response_model=CollectionMembersOut)
 async def get_collection_members(col_id: int):
     backend = _get_backend()
     with trace("api.collections.members"):
@@ -2298,7 +2318,7 @@ async def remove_collection_members(col_id: int, db_ids: str = Form(...)):
         return {"ok": True}
 
 
-@app.get("/api/collections/filter")
+@app.get("/api/collections/filter", response_model=DbIdsOut)
 async def get_collection_filter(ids: str = Query("")):
     backend = _get_backend()
     with trace("api.collections.filter"):
@@ -2311,7 +2331,7 @@ async def get_collection_filter(ids: str = Query("")):
 # ── Concepts ──────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/concepts")
+@app.get("/api/concepts", response_model=ConceptsOut)
 async def list_concepts():
     backend = _get_backend()
     with trace("api.concepts.list"):
@@ -2320,7 +2340,7 @@ async def list_concepts():
         return {"concepts": backend.list_concepts()}
 
 
-@app.get("/api/concepts/filter")
+@app.get("/api/concepts/filter", response_model=DbIdsOut)
 async def get_concept_filter(ids: str = Query("")):
     backend = _get_backend()
     with trace("api.concepts.filter"):
@@ -2522,7 +2542,7 @@ async def reject_concept_media(concept_id: int, db_ids: str = Form(...)):
 # ── Pessoas (rostos) ──────────────────────────────────────────────────────────
 
 
-@app.get("/api/persons")
+@app.get("/api/persons", response_model=PersonsOut)
 async def list_persons():
     backend = _get_backend()
     with trace("api.persons.list"):
@@ -2531,7 +2551,7 @@ async def list_persons():
         return {"persons": backend.list_persons()}
 
 
-@app.get("/api/persons/{person_id}/media")
+@app.get("/api/persons/{person_id}/media", response_model=PersonMediaOut)
 async def person_media(person_id: int):
     backend = _get_backend()
     with trace("api.persons.media"):
@@ -2612,7 +2632,7 @@ async def cluster_persons(recluster: bool = Form(False)):
         return {"ok": True, **stats}
 
 
-@app.get("/api/records/{idx}/faces")
+@app.get("/api/records/{idx}/faces", response_model=RecordFacesOut)
 async def record_faces(idx: int):
     backend = _get_backend()
     with trace("api.records.faces"):

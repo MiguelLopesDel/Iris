@@ -23,20 +23,22 @@
       "media_type": "image",
       "thumbnail_url": "<masked>",
       "thumb_hash": "yB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5ayB5a",
-      "score": 22.6274,
-      "score_details": {
-        "face_score": 22.62742042541504
-      },
       "persons": [
         {
           "id": 2,
-          "name": "Fulano de Tal"
+          "name": "Fulano de Tal",
+          "face_id": null
         },
         {
           "id": 1,
-          "name": ""
+          "name": "",
+          "face_id": null
         }
-      ]
+      ],
+      "score": 22.6274,
+      "score_details": {
+        "face_score": 22.62742042541504
+      }
     }
   ]
 }
