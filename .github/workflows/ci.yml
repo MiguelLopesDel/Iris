@@ -25,3 +25,11 @@ jobs:
         run: python -m pytest -q
       - name: Audit dependencies
         run: python -m pip_audit -r requirements.txt
+
+  release-smoke:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and boot a clean private server
+        run: ./scripts/test_release.sh

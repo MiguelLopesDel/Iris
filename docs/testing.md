@@ -50,7 +50,21 @@ upload/indexação falha, se a miniatura não pode ser lida, ou se Bob vê o arq
 enviado por Alice. Ele nunca registra senhas, cookies, parâmetros de busca ou corpos
 de requisição.
 
-## 3. Logs e diagnóstico
+## 3. Instalação limpa em Docker
+
+Antes de publicar uma versão ou depois de alterar dependências, Dockerfiles,
+autenticação ou o bootstrap, rode:
+
+```bash
+./scripts/test_release.sh
+```
+
+Ele usa uma cópia temporária do commit atual e uma porta local separada. Não lê,
+altera ou remove a biblioteca real: constrói a imagem CPU, verifica que visitantes
+não acessam a API privada, cria uma primeira conta descartável e valida login. Docker
+e curl são necessários; o teste costuma demorar alguns minutos na primeira execução.
+
+## 4. Logs e diagnóstico
 
 No Docker, use `IRIS_LOG_FORMAT=json` (padrão no Compose). Cada linha de requisição
 tem método, caminho sem query string, status, duração, ID da conta quando autenticada
@@ -65,7 +79,8 @@ apenas enquanto investiga um problema e volte para `INFO` depois. Defina
 
 ## Pipeline automático
 
-O workflow em `.github/workflows/ci.yml` executa compilação, Ruff, a suíte rápida e
-uma auditoria de dependências em cada push e pull request. Ele não usa uma biblioteca
-real, não baixa modelos de IA e não envia mídia a serviços externos. Os testes de
-modelo/catálogo real permanecem uma decisão explícita do administrador.
+O workflow em `.github/workflows/ci.yml` executa compilação, Ruff, a suíte rápida,
+uma auditoria de dependências e o teste de instalação Docker em cada push e pull
+request. O smoke test usa apenas uma biblioteca temporária vazia, não baixa modelos
+de IA e não envia mídia a serviços externos. Os testes de modelo/catálogo real
+permanecem uma decisão explícita do administrador.
