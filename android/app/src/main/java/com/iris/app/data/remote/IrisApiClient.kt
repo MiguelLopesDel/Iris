@@ -5,6 +5,7 @@ import com.iris.app.performance.IrisPerformanceEventListener
 import com.iris.app.performance.PerformanceMonitor
 import kotlinx.serialization.json.Json
 import okhttp3.Authenticator
+import okhttp3.Dispatcher
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
@@ -236,6 +237,13 @@ class IrisApiClient(
         .addInterceptor(browsingTimeoutInterceptor)
         .addInterceptor(safeLoggingInterceptor)
         .authenticator(tokenAuthenticator)
+        // Coil reuses this same client for every gallery thumbnail (see
+        // IrisApplication.newImageLoader), so OkHttp's default of 5 concurrent
+        // requests per host was shared between thumbnail downloads and the
+        // paginated /api/records calls — a fast scroll saturated it with
+        // thumbnails and left page-fetch requests queued behind them. This is
+        // a private single-user home server, not a rate-limited public API.
+        .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
         .applyPerformanceMonitor()
         .build()
 
