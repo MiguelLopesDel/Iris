@@ -1,0 +1,35 @@
+name: Iris CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -r requirements.txt ruff pip-audit
+      - name: Compile
+        run: python -m compileall -q core routers scripts tests server.py
+      - name: Lint
+        run: python -m ruff check core routers scripts tests server.py
+      - name: Test
+        run: python -m pytest -q
+      - name: Audit dependencies
+        run: python -m pip_audit -r requirements.txt
+
+  release-smoke:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and boot a clean private server
+        run: ./scripts/test_release.sh

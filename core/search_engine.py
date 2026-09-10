@@ -27,6 +27,9 @@ from core.vector_store import VectorStore
 logger = logging.getLogger("iris")
 
 DEFAULT_MODEL = "sentence-transformers/clip-ViT-L-14"
+# A smaller checkpoint for machines with few CPU cores and shared video memory.
+# The index and query encoder must always use the same checkpoint.
+LOW_RESOURCE_MODEL = "sentence-transformers/clip-ViT-B-32"
 DEFAULT_WEIGHTS = {"balance": 0.5, "text_bonus": 2.0, "lexical_weight": 0.25}
 
 VIDEO_EXTENSIONS = frozenset({".mp4", ".webm", ".mkv", ".mov", ".ogg"})
@@ -147,6 +150,7 @@ class IrisEngine:
                 "audio_fingerprint",
                 "audio_embedding",
                 "perceptual_hash",
+                "thumb_hash",
             ]:
                 if optional in columns:
                     select_columns.append(optional)
@@ -201,6 +205,7 @@ class IrisEngine:
                     audio_fingerprint=row["audio_fingerprint"] if "audio_fingerprint" in row.keys() and row["audio_fingerprint"] else "",
                     audio_embedding=np.frombuffer(row["audio_embedding"], dtype=np.float32).copy() if "audio_embedding" in row.keys() and row["audio_embedding"] else None,
                     perceptual_hash=row["perceptual_hash"] if "perceptual_hash" in row.keys() and row["perceptual_hash"] else "",
+                    thumb_hash=row["thumb_hash"] if "thumb_hash" in row.keys() and row["thumb_hash"] else "",
                 )
             )
         return records
@@ -825,18 +830,32 @@ class IrisEngine:
         negative_terms: list[str],
     ) -> tuple[dict[int, float], dict[int, dict[str, float | str]]]:
         candidate_image_matrix = self.image_matrix[candidate_indices]
-        query_tensor = torch.from_numpy(query_embedding).to(self.device)
-        image_tensor = torch.from_numpy(candidate_image_matrix).to(self.device).to(
-            query_tensor.dtype
-        )
-        image_scores = util.cos_sim(query_tensor, image_tensor)[0].detach().cpu().numpy()
+        if self.device == "cpu":
+            # FAISS already runs on CPU. Avoiding Torch allocations here keeps
+            # ranking responsive on low-end APUs.
+            query_norm = np.linalg.norm(query_embedding[0])
+            image_scores = (candidate_image_matrix @ query_embedding[0]) / np.maximum(
+                np.linalg.norm(candidate_image_matrix, axis=1) * query_norm, 1e-12
+            )
+            desc_scores: np.ndarray | None = None
+            if self.desc_matrix is not None:
+                candidate_desc_matrix = self.desc_matrix[candidate_indices]
+                desc_scores = (candidate_desc_matrix @ query_embedding[0]) / np.maximum(
+                    np.linalg.norm(candidate_desc_matrix, axis=1) * query_norm, 1e-12
+                )
+        else:
+            query_tensor = torch.from_numpy(query_embedding).to(self.device)
+            image_tensor = torch.from_numpy(candidate_image_matrix).to(self.device).to(
+                query_tensor.dtype
+            )
+            image_scores = util.cos_sim(query_tensor, image_tensor)[0].detach().cpu().numpy()
 
-        desc_scores: np.ndarray | None = None
-        if self.desc_matrix is not None:
-            desc_tensor = torch.from_numpy(self.desc_matrix[candidate_indices]).to(
-                self.device
-            ).to(query_tensor.dtype)
-            desc_scores = util.cos_sim(query_tensor, desc_tensor)[0].detach().cpu().numpy()
+            desc_scores = None
+            if self.desc_matrix is not None:
+                desc_tensor = torch.from_numpy(self.desc_matrix[candidate_indices]).to(
+                    self.device
+                ).to(query_tensor.dtype)
+                desc_scores = util.cos_sim(query_tensor, desc_tensor)[0].detach().cpu().numpy()
 
         scores: dict[int, float] = {}
         details: dict[int, dict[str, float | str]] = {}

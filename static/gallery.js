@@ -2,8 +2,8 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=39';
-import { openDetail } from './detail.js?v=2';
+import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=40';
+import { openDetail } from './detail.js?v=3';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -335,12 +335,14 @@ async function runGalleryTextSearch(query) {
   const grid = document.getElementById('gallery-grid');
   grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Buscando...</p>';
   try {
+    const semanticSearch = window.__irisCapabilities?.semantic_search !== false;
     const mode = document.getElementById('search-mode')?.value || 'hybrid';
-    const data = mode === 'filename'
+    const data = mode === 'filename' || !semanticSearch
       ? await searchFilename(query, gallerySearchOptions())
       : await searchText(query, gallerySearchOptions());
     document.getElementById('gallery-page-info').textContent = `${data.total} resultados`;
-    setGalleryContext(`Busca: <strong>${escapeHtml(query)}</strong> · ${data.total} resultado(s)`);
+    const kind = semanticSearch ? 'Busca' : 'Nome do arquivo';
+    setGalleryContext(`${kind}: <strong>${escapeHtml(query)}</strong> · ${data.total} resultado(s)`);
     renderGrid(data.results);
   } catch (error) {
     grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(error.message)}</p>`;

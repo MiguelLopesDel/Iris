@@ -43,13 +43,14 @@ from core.media_inventory import (
     read_manifest,
 )
 from core.media_metadata import extract_metadata
-from core.search_engine import DEFAULT_MODEL, normalize_text
+from core.search_engine import DEFAULT_MODEL, LOW_RESOURCE_MODEL, normalize_text
 from core.taxonomy import (
     build_taxonomy_prompt_rows,
     classify_embedding,
     merge_taxonomy_into_profile,
     values_for_field,
 )
+from core.thumb_hash import encode_thumb_hash
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")   # suppress mmco/unref ffmpeg noise
@@ -109,6 +110,10 @@ def parse_arguments() -> IndexerConfig:
     parser.add_argument("--model", "-m", default=DEFAULT_MODEL, help="Modelo CLIP.")
     parser.add_argument("--batch-size", "-bs", type=int, default=8, help="Tamanho do lote.")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
+    parser.add_argument(
+        "--low-resource", action="store_true",
+        help="Perfil CPU/iGPU fraca: modelo menor, lote 1 e sem recursos extras.",
+    )
     parser.add_argument("--recursive", action="store_true", help="Indexa subpastas.")
     parser.add_argument("--limit", type=int, default=None, help="Limita a quantidade de arquivos.")
     parser.add_argument(
@@ -167,6 +172,14 @@ def parse_arguments() -> IndexerConfig:
     db_path = Path(args.db)
     if not db_path.is_absolute():
         db_path = Path("data") / db_path
+
+    if args.low_resource:
+        args.model = LOW_RESOURCE_MODEL
+        args.batch_size = 1
+        args.device = "cpu"
+        args.caption_model = "none"
+        args.whisper_model = "none"
+        args.no_faces = True
 
     return IndexerConfig(
         media_dir=Path(args.dir),
@@ -483,6 +496,18 @@ def process_images(
         raise ImportSourceUnavailable(str(config.media_dir))
 
     conn = init_db(config.db_path)
+    existing_models = {
+        row[0] for row in conn.execute(
+            "SELECT DISTINCT model_name FROM memes "
+            "WHERE embedding IS NOT NULL AND model_name IS NOT NULL AND model_name != ''"
+        )
+    }
+    if existing_models and existing_models != {config.model_name}:
+        conn.close()
+        raise ValueError(
+            "O catalogo ja usa outro modelo CLIP ("
+            f"{', '.join(sorted(existing_models))}). Use o mesmo modelo ou reindexe."
+        )
     processed = already_processed(conn)
     known_hashes = existing_hashes(conn)
     _deleted_hashes = load_deleted_content_hashes(conn)
@@ -744,6 +769,10 @@ def process_images(
                         if _perceptual_hash is None and not _is_video_file and not _is_audio:
                             _perceptual_hash = _compute_phash(image)
 
+                        # Inline gallery placeholder — computed here because the
+                        # decoded image is already in hand.
+                        _thumb_hash = encode_thumb_hash(image)
+
                         if _precomp is None:
                             # Image, audio, or video with no useful frames → normal batch
                             batch_images.append(image)
@@ -777,6 +806,7 @@ def process_images(
                                 "audio_fingerprint": _audio_fp,
                                 "audio_embedding": _audio_emb,
                                 "perceptual_hash": _perceptual_hash,
+                                "thumb_hash": _thumb_hash,
                                 "candidate_thumb": candidate_thumb,
                                 "metadata_json": _metadata_json,
                                 "face_image": image,
@@ -930,9 +960,10 @@ def process_images(
                             ocr_normalized, visual_json, objects, style, source_work,
                             humor, context, error_message, model_name,
                             embedding_dim, schema_version, embedding, desc_embedding,
-                            audio_fingerprint, audio_embedding, perceptual_hash, metadata_json
+                            audio_fingerprint, audio_embedding, perceptual_hash, metadata_json,
+                            thumb_hash
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             item["relative_path"],
@@ -965,6 +996,7 @@ def process_images(
                             item["audio_embedding"].tobytes() if item.get("audio_embedding") is not None else None,
                             item.get("perceptual_hash"),
                             item.get("metadata_json", ""),
+                            item.get("thumb_hash", ""),
                         ),
                     )
                     known_hashes.add(str(item["content_hash"]))

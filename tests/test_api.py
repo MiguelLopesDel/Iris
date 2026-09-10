@@ -95,6 +95,7 @@ class TestInfoEndpoint:
         assert "total_records" in r.json()
         assert "missing_count" in r.json()
         assert "extension_counts" in r.json()
+        assert isinstance(r.json()["capabilities"]["semantic_search"], bool)
 
     def test_missing_count_is_optin(self, client):
         # Default: no O(N) stat scan → missing_count is null (not computed).
@@ -175,6 +176,12 @@ class TestGzip:
         import server
 
         assert any(m.cls is GZipMiddleware for m in server.app.user_middleware)
+
+    def test_healthz_is_public_and_does_not_expose_library_details(self, client):
+        response = client.get("/healthz")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        assert "db_path" not in response.json()
 
 
 class TestSystemEndpoints:
@@ -531,6 +538,14 @@ class TestPersonAssignment:
         assert r.status_code == 200
         for record in r.json()["records"]:
             assert "persons" in record
+
+    def test_records_include_thumb_hash_key(self, client):
+        # The gallery paints this before the thumbnail request finishes, so the
+        # key must always be present — clients must not have to probe for it.
+        r = client.get("/api/records?page=1&per_page=12")
+        assert r.status_code == 200
+        for record in r.json()["records"]:
+            assert "thumb_hash" in record
 
 
 class TestTrashValidation:

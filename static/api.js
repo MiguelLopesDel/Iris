@@ -9,6 +9,7 @@ async function apiGet(path, params = {}) {
     if (v !== '' && v !== undefined && v !== null) url.searchParams.set(k, v);
   }
   const res = await fetch(url);
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -19,6 +20,7 @@ async function apiPost(path, body) {
     if (v !== undefined && v !== null) fd.append(k, v);
   }
   const res = await fetch(path, { method: 'POST', body: fd });
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -29,6 +31,14 @@ async function apiDelete(path, body = {}) {
     if (v !== undefined && v !== null) fd.append(k, v);
   }
   const res = await fetch(path, { method: 'DELETE', body: fd });
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function apiFilePost(path, formData) {
+  const res = await fetch(path, { method: 'POST', body: formData });
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -43,16 +53,16 @@ export async function updateSettings(data) {
   return apiPost('/api/settings', data);
 }
 
-export async function reloadBackend() {
-  return apiPost('/api/reload', {});
-}
-
 export async function browseFilesystem(path = '') {
   return apiGet('/api/filesystem', { path });
 }
 
 export async function openFolder(path) {
   return apiPost('/api/open-folder', { path });
+}
+
+export async function createUser(data) {
+  return apiPost('/api/auth/users', data);
 }
 
 // ── Records ───────────────────────────────────────────────────────────────
@@ -80,9 +90,7 @@ export async function searchImage(file, options = {}) {
   for (const [k, v] of Object.entries(options)) {
     if (v !== '' && v !== undefined && v !== null) fd.append(k, v);
   }
-  const res = await fetch('/api/search/image', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  return apiFilePost('/api/search/image', fd);
 }
 
 export async function searchSimilar(idx, options = {}) {
@@ -95,9 +103,7 @@ export async function searchFace(file, options = {}) {
   for (const [k, v] of Object.entries(options)) {
     if (v !== '' && v !== undefined && v !== null) fd.append(k, v);
   }
-  const res = await fetch('/api/search/face', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
-  return res.json();
+  return apiFilePost('/api/search/face', fd);
 }
 
 export async function searchFaceByRecord(idx, options = {}) {
@@ -142,18 +148,10 @@ export async function removeCollectionMembers(id, dbIds) {
   return apiPost(`/api/collections/${id}/members/remove`, { db_ids: dbIds.join(',') });
 }
 
-export async function getCollectionFilter(ids) {
-  return apiGet('/api/collections/filter', { ids: ids.join(',') });
-}
-
 // ── Concepts ──────────────────────────────────────────────────────────────
 
 export async function listConcepts() {
   return apiGet('/api/concepts');
-}
-
-export async function createConcept(data) {
-  return apiPost('/api/concepts', data);
 }
 
 export async function createConceptWithReferences(data, files) {
@@ -181,14 +179,6 @@ export async function getConceptReferences(id) {
   return apiGet(`/api/concepts/${id}/references`);
 }
 
-export async function addConceptReference(conceptId, file) {
-  const fd = new FormData();
-  fd.append('file', file);
-  const res = await fetch(`/api/concepts/${conceptId}/references`, { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
-}
-
 export async function addConceptReferences(conceptId, files) {
   const fd = new FormData();
   Array.from(files).forEach(file => fd.append('files', file));
@@ -199,10 +189,6 @@ export async function addConceptReferences(conceptId, files) {
 
 export async function deleteConceptReference(conceptId, refId) {
   return apiPost(`/api/concepts/${conceptId}/references/${refId}/delete`);
-}
-
-export async function getConceptFilter(ids) {
-  return apiGet('/api/concepts/filter', { ids: ids.join(',') });
 }
 
 export async function getConceptAssociations(id, page = 1, perPage = 30) {
@@ -241,10 +227,6 @@ export async function deletePerson(id) {
 
 export async function clusterFaces(recluster = false) {
   return apiPost('/api/persons/cluster', { recluster: recluster ? 'true' : 'false' });
-}
-
-export async function createPerson(name) {
-  return apiPost('/api/persons', { name });
 }
 
 export async function assignFacePerson(faceId, { personId = null, name = '' } = {}) {
@@ -361,7 +343,6 @@ export async function createEnrichmentJob(dbIds, force = false, config = {}, res
     research: research ? '1' : '',
     llm_backend: config.backend || '',
     llm_model: config.model || '',
-    webchat_cdp: config.cdp || '',
     webchat_temporary: config.temporary ? '1' : '0',
   });
 }

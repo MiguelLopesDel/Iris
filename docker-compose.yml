@@ -3,15 +3,37 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        IRIS_UID: ${IRIS_UID:-1000}
+        IRIS_GID: ${IRIS_GID:-1000}
     ports:
-      - "8501:8501"
+      - "127.0.0.1:${IRIS_PORT:-8501}:8501"
     volumes:
       - ./data:/app/data
       - ./media:/app/media
-      - huggingface_cache:/root/.cache/huggingface
-      - whisper_cache:/root/.cache/whisper
+      - huggingface_cache:/home/iris/.cache/huggingface
+      - whisper_cache:/home/iris/.cache/whisper
     environment:
-      - PYTHONPATH=/app
+      PYTHONPATH: /app
+      IRIS_MULTIUSER: ${IRIS_MULTIUSER:-auto}
+      IRIS_SERVER_MODE: ${IRIS_SERVER_MODE:-private}
+      IRIS_SESSION_HTTPS_ONLY: ${IRIS_SESSION_HTTPS_ONLY:-true}
+      IRIS_ENGINE_CACHE_SIZE: ${IRIS_ENGINE_CACHE_SIZE:-1}
+      IRIS_SEARCH_WORKERS: ${IRIS_SEARCH_WORKERS:-2}
+      IRIS_LOAD_MODEL: ${IRIS_LOAD_MODEL:-1}
+      IRIS_MODEL: ${IRIS_MODEL:-sentence-transformers/clip-ViT-L-14}
+      IRIS_SECRET_KEY: ${IRIS_SECRET_KEY:-}
+      IRIS_LOG_LEVEL: ${IRIS_LOG_LEVEL:-INFO}
+      IRIS_LOG_FORMAT: ${IRIS_LOG_FORMAT:-json}
+      IRIS_LOG_ACCESS: ${IRIS_LOG_ACCESS:-1}
+      IRIS_LOG_FILE: ${IRIS_LOG_FILE:-}
+      IRIS_MAX_UPLOAD_BYTES: ${IRIS_MAX_UPLOAD_BYTES:-34359738368}
+      IRIS_MAX_UPLOAD_FILES: ${IRIS_MAX_UPLOAD_FILES:-10000}
+      IRIS_ACCOUNT_QUOTA_BYTES: ${IRIS_ACCOUNT_QUOTA_BYTES:-10995116277760}
+      IRIS_MAX_IMAGE_PIXELS: ${IRIS_MAX_IMAGE_PIXELS:-500000000}
+      IRIS_MAX_REQUEST_BYTES: ${IRIS_MAX_REQUEST_BYTES:-68719476736}
+      IRIS_MAX_SEARCH_TOP_K: ${IRIS_MAX_SEARCH_TOP_K:-1000}
+      IRIS_MAX_SEARCH_CANDIDATES: ${IRIS_MAX_SEARCH_CANDIDATES:-20000}
     restart: unless-stopped
 
 volumes:

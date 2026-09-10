@@ -13,7 +13,7 @@ import {
   getRecordMetadata,
   listPersons,
   mediaUrl,
-} from './api.js?v=39';
+} from './api.js?v=40';
 import { toast } from './ui.js?v=1';
 import { pickPersonModal } from './persons.js?v=5';
 
@@ -80,6 +80,10 @@ function teardownVideo() {
 
 function hasFile(r) {
   return r && r.resolved_path && r.resolved_path !== 'None';
+}
+
+function canOpenHostFolder() {
+  return window.__irisCapabilities?.open_host_folder !== false;
 }
 
 function renderStage(r) {
@@ -188,7 +192,8 @@ function renderAside(r, token) {
     </header>
     <div class="detail-actions">
       <button class="btn btn-subtle" data-detail-action="similar">Buscar similares</button>
-      ${hasFile(r) ? `<button class="btn btn-subtle" data-open-folder="${escapeHtml(r.resolved_path)}">Abrir pasta</button>
+      ${hasFile(r) && canOpenHostFolder() ? `<button class="btn btn-subtle" data-open-folder="${escapeHtml(r.resolved_path)}">Abrir pasta</button>` : ''}
+      ${hasFile(r) ? `
       <a class="btn btn-subtle" href="${escapeHtml(mediaUrl(r.resolved_path))}" target="_blank" rel="noopener">Abrir arquivo</a>` : ''}
     </div>
     ${section('Pessoas', '<div class="detail-faces" id="detail-faces">…</div>')}
@@ -196,8 +201,8 @@ function renderAside(r, token) {
     ${section('Descrição da IA', r.descricao_ia ? `<pre class="detail-pre">${escapeHtml(r.descricao_ia)}</pre>` : '', { open: false })}
     ${r.tags ? section('Tags', `<p class="detail-text">${escapeHtml(r.tags)}</p>`) : ''}
     ${classif ? section('Classificação', `<div class="detail-classif">${classif}</div>`) : ''}
-    ${section('Coleções', '<div class="detail-chips" id="detail-cols">Carregando…</div>')}
-    ${section('Conceitos', '<div class="detail-chips" id="detail-concs">Carregando…</div>')}
+    ${section('Álbuns', '<div class="detail-chips" id="detail-cols">Carregando…</div>')}
+    ${section('Ensinados ao Iris', '<div class="detail-chips" id="detail-concs">Carregando…</div>')}
     <section class="detail-section" id="detail-metadata-section">
       <h4>Metadados</h4>
       <button class="btn btn-subtle" data-detail-action="metadata">Exibir metadados</button>
@@ -240,7 +245,7 @@ async function loadToggles(r, token) {
       async (id, add) => {
         const url = add ? `/api/collections/${id}/members` : `/api/collections/${id}/members/remove`;
         await fetch(url, { method: 'POST', body: new URLSearchParams({ db_ids: String(r.db_id) }) });
-        toast(add ? 'Adicionado à coleção' : 'Removido da coleção', 'success');
+        toast(add ? 'Adicionado ao álbum' : 'Removido do álbum', 'success');
       },
     );
     renderToggleChips(
@@ -248,7 +253,7 @@ async function loadToggles(r, token) {
       async (id, add) => {
         const url = add ? `/api/concepts/${id}/confirm` : `/api/concepts/${id}/reject`;
         await fetch(url, { method: 'POST', body: new URLSearchParams({ db_ids: String(r.db_id) }) });
-        toast(add ? 'Confirmado no conceito' : 'Rejeitado do conceito', 'success');
+        toast(add ? 'Reconhecimento confirmado' : 'Reconhecimento descartado', 'success');
       },
     );
   } catch (err) {

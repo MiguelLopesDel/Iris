@@ -8,6 +8,7 @@ import {
   createEnrichmentJob,
   escapeHtml,
   fetchInfo,
+  fetchRecords,
   getEnrichmentJob,
   listEnrichmentSuggestions,
   listCollections,
@@ -15,12 +16,12 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=39';
+} from './api.js?v=40';
 import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=37';
-import { initCollections } from './collections.js?v=30';
-import { initConcepts } from './concepts.js?v=31';
-import { initDuplicates } from './duplicates.js?v=30';
-import { initSystem } from './system.js?v=33';
+import { initCollections } from './collections.js?v=31';
+import { initConcepts } from './concepts.js?v=32';
+import { initDuplicates } from './duplicates.js?v=31';
+import { initSystem } from './system.js?v=35';
 import { initPersons } from './persons.js?v=5';
 import { initImportReview } from './import-review.js?v=6';
 import { confirmModal, toast } from './ui.js?v=1';
@@ -87,24 +88,41 @@ document.addEventListener('click', async function(event) {
 // ── Tab routing ──────────────────────────────────────────────────────────
 
 function switchTab(name) {
-  // Fall back to the gallery for unknown/removed tabs (e.g. a stale "#search"
-  // hash from before the Busca tab was folded in) so we never blank the view.
-  if (!document.getElementById('tab-' + name)) name = 'gallery';
+  var paneName = name === 'search' ? 'gallery' : name;
+  if (!document.getElementById('tab-' + paneName)) {
+    name = 'home';
+    paneName = 'home';
+  }
   var viewMeta = {
+    home: {
+      kicker: 'Iris',
+      title: 'Início',
+      description: 'Encontre, organize e cuide da sua biblioteca.'
+    },
     gallery: {
       kicker: 'Biblioteca',
-      title: 'Galeria',
-      description: 'Navegue por toda a sua coleção visual.'
+      title: 'Fotos',
+      description: 'Navegue por todas as suas fotos e vídeos.'
+    },
+    search: {
+      kicker: 'Encontrar',
+      title: 'Buscar',
+      description: 'Descreva, envie uma imagem ou encontre uma pessoa.'
+    },
+    organize: {
+      kicker: 'Biblioteca',
+      title: 'Organizar',
+      description: 'Álbuns, pessoas e cuidados com seus arquivos.'
     },
     collections: {
       kicker: 'Organização',
-      title: 'Coleções',
-      description: 'Agrupe e mantenha seus conjuntos importantes por perto.'
+      title: 'Álbuns',
+      description: 'Agrupe e mantenha suas fotos e vídeos importantes por perto.'
     },
     concepts: {
-      kicker: 'Semântica',
-      title: 'Conceitos',
-      description: 'Ensine entidades e contextos recorrentes ao Iris.'
+      kicker: 'Aprendizado',
+      title: 'Ensinados ao Iris',
+      description: 'Ensine personagens, objetos, lugares e ideias usando exemplos.'
     },
     persons: {
       kicker: 'Rostos',
@@ -125,15 +143,15 @@ function switchTab(name) {
   // Per-tab sidebar hint (the search filters only affect the gallery, so they
   // are hidden elsewhere and replaced by a short context block).
   var sidebarHints = {
-    collections: 'Para adicionar mídias em lote, selecione cards na Galeria e use a ação <strong>Coleção</strong>.',
-    concepts: 'Conceitos aprendem com exemplos. Crie um e confirme/rejeite sugestões para refinar.',
+    collections: 'Para adicionar itens em lote, selecione fotos e use a ação <strong>Álbum</strong>.',
+    concepts: 'O Iris aprende com imagens de exemplo. Confirme ou rejeite sugestões para melhorar o reconhecimento.',
     persons: 'Rostos são agrupados por similaridade. Nomeie pessoas para vê-las nos cards da Galeria.',
     duplicates: 'Ajuste a similaridade e analise a biblioteca. Deleções vão para a lixeira do sistema.',
     system: 'Configuração do catálogo, importação, indexação e backups.'
   };
-  var meta = viewMeta[name] || viewMeta.gallery;
+  var meta = viewMeta[name] || viewMeta.home;
   document.querySelectorAll('[data-scope="gallery"]').forEach(function(el) {
-    el.hidden = name !== 'gallery';
+    el.hidden = name !== 'gallery' && name !== 'search';
   });
   var tabContext = document.getElementById('sidebar-tab-context');
   if (tabContext) {
@@ -144,13 +162,14 @@ function switchTab(name) {
       tabContext.hidden = true;
     }
   }
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  var btn = document.querySelector('[data-tab="' + name + '"]');
-  if (btn) btn.classList.add('active');
+  document.querySelectorAll('[data-primary-tab]').forEach(function(button) {
+    button.classList.toggle('active', button.dataset.primaryTab === name);
+  });
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  var pane = document.getElementById('tab-' + name);
+  var pane = document.getElementById('tab-' + paneName);
   if (pane) pane.classList.add('active');
-  if (name === 'gallery') initGallery();
+  if (name === 'home') loadHomeRecent();
+  if (name === 'gallery' || name === 'search') initGallery();
   if (name === 'collections') initCollections();
   if (name === 'concepts') initConcepts();
   if (name === 'persons') initPersons();
@@ -159,9 +178,43 @@ function switchTab(name) {
   document.getElementById('view-kicker').textContent = meta.kicker;
   document.getElementById('view-title').textContent = meta.title;
   document.getElementById('view-description').textContent = meta.description;
+  document.body.dataset.view = name;
+  document.getElementById('sidebar-toggle').hidden = name !== 'gallery' && name !== 'search';
   document.body.classList.remove('sidebar-open');
   document.getElementById('sidebar-toggle').setAttribute('aria-expanded', 'false');
   window.location.hash = name;
+}
+
+var homeLoaded = false;
+
+async function loadHomeRecent() {
+  if (homeLoaded) return;
+  var container = document.getElementById('home-recent');
+  if (!container) return;
+  try {
+    var data = await fetchRecords(1, 12, 'importacao', 0);
+    var records = (data.records || []).slice(0, 6);
+    container.innerHTML = records.length ? records.map(function(record) {
+      var thumb = record.thumbnail_url
+        ? '<img src="' + escapeHtml(record.thumbnail_url) + '" alt="" loading="lazy">'
+        : '<div class="home-recent-placeholder">Imagem</div>';
+      return '<button class="home-recent-card" type="button" data-go-tab="gallery">'
+        + thumb + '<span>' + escapeHtml(record.arquivo || 'Sem nome') + '</span></button>';
+    }).join('') : '<p class="filter-empty">Adicione fotos e vídeos para começar.</p>';
+    homeLoaded = true;
+  } catch (error) {
+    container.innerHTML = '<p class="filter-empty">Não foi possível carregar os itens recentes.</p>';
+  }
+}
+
+function openSearch(query) {
+  switchTab('search');
+  var input = document.getElementById('gallery-search');
+  if (query) {
+    input.value = query;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  input.focus();
 }
 
 // ── Custom events ─────────────────────────────────────────────────────────
@@ -202,6 +255,7 @@ window.addEventListener('iris:face-record', function(e) {
 async function buildSidebar() {
   try {
     var info = await fetchInfo();
+    applyCapabilities(info.capabilities || {});
     document.getElementById('status-badge').innerHTML =
       '<i></i>' + info.total_records + ' itens';
 
@@ -212,7 +266,7 @@ async function buildSidebar() {
         return '<label class="filter-checkbox"><input type="checkbox" value="' + c.id + '" class="collection-filter"> ' + escapeHtml(c.name) + ' (' + (c.count || 0) + ')</label>';
       }).join('');
     } else {
-      colList.innerHTML = '<span class="filter-empty">Nenhuma colecao criada</span>';
+      colList.innerHTML = '<span class="filter-empty">Nenhum álbum criado</span>';
     }
 
     var concData = await listConcepts();
@@ -222,7 +276,7 @@ async function buildSidebar() {
         return '<label class="filter-checkbox"><input type="checkbox" value="' + c.id + '" class="concept-filter"> ' + escapeHtml(c.name) + ' (' + (c.assoc_count || 0) + ')</label>';
       }).join('');
     } else {
-      concList.innerHTML = '<span class="filter-empty">Nenhum conceito criado</span>';
+      concList.innerHTML = '<span class="filter-empty">Nada ensinado ao Iris</span>';
     }
 
     document.querySelectorAll('.collection-filter, .concept-filter, #filtro-media-type').forEach(function(el) {
@@ -230,6 +284,45 @@ async function buildSidebar() {
     });
   } catch (err) {
     document.getElementById('status-badge').innerHTML = '<i></i>offline';
+  }
+}
+
+function applyCapabilities(capabilities) {
+  window.__irisCapabilities = capabilities;
+  var semanticSearch = capabilities.semantic_search !== false;
+  var imageSearch = capabilities.image_search !== false;
+  var faceSearch = capabilities.face_search !== false;
+
+  document.querySelectorAll('[data-requires-semantic]').forEach(function(element) {
+    element.hidden = !semanticSearch;
+    element.disabled = !semanticSearch;
+  });
+  document.querySelectorAll('[data-requires-image]').forEach(function(element) {
+    element.hidden = !imageSearch;
+  });
+  document.querySelectorAll('[data-requires-face]').forEach(function(element) {
+    element.hidden = !faceSearch;
+  });
+  var searchInput = document.getElementById('gallery-search');
+  if (searchInput) {
+    searchInput.placeholder = semanticSearch
+      ? 'Descreva uma ideia, cole texto ou contexto…'
+      : 'Buscar pelo nome do arquivo…';
+  }
+  var searchMode = document.getElementById('search-mode');
+  if (!semanticSearch && searchMode) searchMode.value = 'filename';
+
+  var webchatOption = document.querySelector('[data-webchat-option]');
+  if (webchatOption) {
+    var webchatAvailable = capabilities.webchat_enrichment !== false;
+    webchatOption.hidden = !webchatAvailable;
+    webchatOption.disabled = !webchatAvailable;
+    var backend = document.getElementById('we-backend');
+    if (!webchatAvailable && backend && backend.value === 'webchat') {
+      backend.value = '';
+      localStorage.setItem('irisEnrichBackend', JSON.stringify(getEnrichBackendConfig()));
+      syncEnrichBackendFields();
+    }
   }
 }
 
@@ -295,7 +388,7 @@ function renderCollectionChoices() {
   var list = document.getElementById('collection-modal-list');
   var collections = collectionModalState.collections;
   if (!collections.length) {
-    list.innerHTML = '<p class="filter-empty">Nenhuma coleção ainda. Crie uma abaixo.</p>';
+    list.innerHTML = '<p class="filter-empty">Nenhum álbum ainda. Crie um abaixo.</p>';
     return;
   }
   list.innerHTML = collections.map(function(collection) {
@@ -312,14 +405,14 @@ async function openCollectionModal() {
   collectionModal.hidden = false;
   collectionModal.setAttribute('aria-hidden', 'false');
   document.getElementById('collection-modal-count').textContent = selectedCount;
-  document.getElementById('collection-modal-list').innerHTML = '<p class="filter-empty">Carregando coleções...</p>';
+  document.getElementById('collection-modal-list').innerHTML = '<p class="filter-empty">Carregando álbuns...</p>';
   setCollectionModalStatus('Resolvendo itens selecionados...');
   try {
     collectionModalState.dbIds = await resolveSelectedDbIds();
     if (!collectionModalState.dbIds.length) {
       throw new Error('Nenhum item selecionado possui ID no banco.');
     }
-    setCollectionModalStatus('Escolha uma coleção ou crie uma nova.');
+    setCollectionModalStatus('Escolha um álbum ou crie um novo.');
     var data = await listCollections();
     collectionModalState.collections = data.collections || [];
     renderCollectionChoices();
@@ -337,7 +430,7 @@ async function addSelectionToCollection(collectionId, collectionName) {
   try {
     var result = await addCollectionMembers(collectionId, collectionModalState.dbIds);
     var added = typeof result.added === 'number' ? result.added : collectionModalState.dbIds.length;
-    toast(added + ' item(ns) adicionados a ' + collectionName, 'success');
+    toast(added + ' item(ns) adicionados ao álbum ' + collectionName, 'success');
     window.__irisSelection.clear();
     window.dispatchEvent(new CustomEvent('iris:selection-changed'));
     closeCollectionModal();
@@ -370,12 +463,12 @@ document.getElementById('collection-modal-create-form').addEventListener('submit
   var input = document.getElementById('collection-modal-name');
   var name = input.value.trim();
   if (!name) {
-    setCollectionModalStatus('Informe um nome para a coleção.', 'error');
+    setCollectionModalStatus('Informe um nome para o álbum.', 'error');
     input.focus();
     return;
   }
   collectionModalState.busy = true;
-  setCollectionModalStatus('Criando coleção...');
+  setCollectionModalStatus('Criando álbum...');
   try {
     var created = await createCollection(name);
     var collectionId = created.collection_id;
@@ -387,7 +480,7 @@ document.getElementById('collection-modal-create-form').addEventListener('submit
       });
       collectionId = match ? match.id : null;
     }
-    if (!collectionId) throw new Error('Coleção criada, mas não consegui identificar o ID.');
+    if (!collectionId) throw new Error('Álbum criado, mas não consegui identificar o ID.');
     collectionModalState.busy = false;
     await addSelectionToCollection(collectionId, name);
   } catch (err) {
@@ -435,7 +528,6 @@ function getEnrichBackendConfig() {
   return {
     backend: (document.getElementById('we-backend') || {}).value || '',
     model: (document.getElementById('we-model') || {}).value || '',
-    cdp: (document.getElementById('we-cdp') || {}).value || '',
     temporary: temp ? temp.checked : true,
   };
 }
@@ -447,14 +539,13 @@ function syncEnrichBackendFields() {
     if (el) el.hidden = !on;
   };
   show('we-model-wrap', backend === 'openai' || backend === 'gemini');
-  show('we-cdp-wrap', backend === 'webchat');
   show('we-temporary-wrap', backend === 'webchat');
 }
 
 function restoreEnrichBackendConfig() {
   try {
     var saved = JSON.parse(localStorage.getItem('irisEnrichBackend') || '{}');
-    ['backend', 'model', 'cdp'].forEach(function(k) {
+    ['backend', 'model'].forEach(function(k) {
       var el = document.getElementById('we-' + k);
       if (el && saved[k] != null) el.value = saved[k];
     });
@@ -464,7 +555,7 @@ function restoreEnrichBackendConfig() {
   syncEnrichBackendFields();
 }
 
-['we-backend', 'we-model', 'we-cdp', 'we-temporary'].forEach(function(id) {
+['we-backend', 'we-model', 'we-temporary'].forEach(function(id) {
   var el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('change', function() {
@@ -698,21 +789,19 @@ document.addEventListener('click', async function(event) {
   }
 });
 
-// ── Search mode & parameter controls ────────────────────────────────────
+// ── Search controls ─────────────────────────────────────────────────────
 
-document.getElementById('search-mode').addEventListener('change', function() {
-  var custom = document.getElementById('search-custom-params');
-  custom.style.display = this.value === 'custom' ? 'block' : 'none';
-});
+var searchScopes = {
+  precise: { threshold: 0.30, topK: 30, help: 'Prioriza poucos resultados com forte correspondência.' },
+  balanced: { threshold: 0.15, topK: 50, help: 'Equilibra qualidade e variedade dos resultados.' },
+  broad: { threshold: -0.05, topK: 100, help: 'Inclui resultados aproximados para você explorar.' },
+};
 
-['search-balance','search-textbonus','search-lexical','search-threshold','search-topk'].forEach(function(id) {
-  var el = document.getElementById(id);
-  if (!el) return;
-  el.addEventListener('input', function() {
-    var spanId = id.replace('search-', '') + '-val';
-    var span = document.getElementById(spanId);
-    if (span) span.textContent = parseFloat(this.value).toFixed(2);
-  });
+document.getElementById('search-scope').addEventListener('change', function() {
+  var preset = searchScopes[this.value] || searchScopes.balanced;
+  document.getElementById('search-threshold').value = preset.threshold;
+  document.getElementById('search-topk').value = preset.topK;
+  document.getElementById('search-scope-help').textContent = preset.help;
 });
 
 document.getElementById('btn-surprise').addEventListener('click', function() {
@@ -807,12 +896,37 @@ window.__showStats = async function() {
 // ── Init ─────────────────────────────────────────────────────────────────
 
 (function init() {
-  document.querySelectorAll('.tab-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() { switchTab(btn.dataset.tab); });
+  var accountButton = document.getElementById('account-button');
+  fetch('/api/auth/me').then(function(response) {
+    if (!response.ok) return null;
+    return response.json();
+  }).then(function(user) {
+    if (!user || !accountButton) return;
+    accountButton.hidden = false;
+    accountButton.textContent = user.display_name || user.username;
+    accountButton.title = 'Sair da conta';
+    accountButton.addEventListener('click', function() {
+      fetch('/api/auth/logout', { method: 'POST' }).finally(function() { window.location.assign('/login'); });
+    });
+  }).catch(function() {});
+  document.querySelectorAll('[data-primary-tab]').forEach(function(btn) {
+    btn.addEventListener('click', function() { switchTab(btn.dataset.primaryTab); });
+  });
+  document.addEventListener('click', function(event) {
+    var destination = event.target.closest('[data-go-tab]');
+    if (destination) switchTab(destination.dataset.goTab);
+  });
+  document.getElementById('home-search-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+    openSearch(document.getElementById('home-search-input').value.trim());
+  });
+  document.getElementById('home-image-search').addEventListener('click', function() {
+    switchTab('search');
+    document.getElementById('gallery-image-search').click();
   });
   window.addEventListener('hashchange', function() {
-    switchTab(window.location.hash.slice(1) || 'gallery');
+    switchTab(window.location.hash.slice(1) || 'home');
   });
   buildSidebar();
-  switchTab(window.location.hash.slice(1) || 'gallery');
+  switchTab(window.location.hash.slice(1) || 'home');
 })();

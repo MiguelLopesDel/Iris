@@ -15,13 +15,34 @@ import {
   rejectConceptMedia,
   updateConcept,
   mediaUrl,
-} from './api.js?v=39';
+} from './api.js?v=40';
 import { confirmModal, toast } from './ui.js?v=1';
 
 var wizardStep = 0;
 var wizardData = {};
 var conceptsById = new Map();
 var associationPages = new Map();
+var recognitionLevels = [
+  { value: 0.75, label: 'Cuidadoso', help: 'Traz menos sugestões e reduz falsos reconhecimentos.' },
+  { value: 0.65, label: 'Equilibrado', help: 'Equilibra precisão e quantidade de sugestões.' },
+  { value: 0.55, label: 'Abrangente', help: 'Traz mais possibilidades para você revisar.' },
+];
+
+function recognitionLevelOptions(threshold) {
+  var closest = recognitionLevels.reduce(function(best, level) {
+    return Math.abs(level.value - threshold) < Math.abs(best.value - threshold) ? level : best;
+  }, recognitionLevels[1]);
+  return recognitionLevels.map(function(level) {
+    return '<option value="' + level.value + '"' + (level === closest ? ' selected' : '') + '>'
+      + level.label + '</option>';
+  }).join('');
+}
+
+function recognitionLevelLabel(threshold) {
+  return recognitionLevels.reduce(function(best, level) {
+    return Math.abs(level.value - threshold) < Math.abs(best.value - threshold) ? level : best;
+  }, recognitionLevels[1]).label;
+}
 
 export function initConcepts() {
   loadConcepts();
@@ -53,8 +74,9 @@ function renderWizard() {
 }
 
 function renderWizardStep1(wiz) {
-  wiz.innerHTML = '<h4>Passo 1: Nome e Categoria</h4>'
-    + '<input type="text" id="wiz-name" placeholder="Nome do conceito" value="' + escapeHtml(wizardData.name) + '" style="width:100%;margin-bottom:8px;">'
+  wiz.innerHTML = '<h4>Passo 1: O que o Iris deve reconhecer?</h4>'
+    + '<input type="text" id="wiz-name" placeholder="Nome, por exemplo: Frieren" value="' + escapeHtml(wizardData.name) + '" style="width:100%;margin-bottom:8px;">'
+    + '<label for="wiz-category">Tipo</label>'
     + '<select id="wiz-category" style="width:100%;margin-bottom:8px;">'
     + ['pessoa','lugar','objeto','personagem','obra','arquetipo','animal','outro'].map(function(c) { return '<option value="' + c + '"' + (wizardData.category === c ? ' selected' : '') + '>' + c + '</option>'; }).join('')
     + '</select>'
@@ -65,7 +87,7 @@ function renderWizardStep1(wiz) {
 window.__wizNext = function() {
   wizardData.name = document.getElementById('wiz-name').value.trim();
   wizardData.category = document.getElementById('wiz-category').value;
-  if (!wizardData.name) { toast('Informe um nome para o conceito.', 'error'); return; }
+  if (!wizardData.name) { toast('Informe o que o Iris deve reconhecer.', 'error'); return; }
   wizardStep = 2;
   renderWizard();
 };
@@ -79,12 +101,11 @@ function renderWizardStep2(wiz) {
         + escapeHtml((wizardData.answers || [])[index] || '') + '">';
     }).join('')
     + '<label>Termos extras de busca:</label><input type="text" id="wiz-terms" value="' + escapeHtml(wizardData.search_terms) + '" placeholder="apelidos, obra, abreviações">'
-    + '<label>Score minimo auto-match:</label><input type="range" id="wiz-threshold" min="0.4" max="0.95" step="0.05" value="' + wizardData.auto_threshold + '" style="width:100%;"> <span id="wiz-threshold-val">' + wizardData.auto_threshold.toFixed(2) + '</span>'
+    + '<label for="wiz-threshold">Precisão do reconhecimento</label>'
+    + '<select id="wiz-threshold">' + recognitionLevelOptions(wizardData.auto_threshold) + '</select>'
     + '<div style="margin-top:8px;">'
     + '<button class="btn" onclick="window.__wizBack()">Voltar</button> '
     + '<button class="btn btn-primary" onclick="window.__wizContextNext()">Continuar</button></div>';
-  var slider = document.getElementById('wiz-threshold');
-  if (slider) slider.oninput = function() { document.getElementById('wiz-threshold-val').textContent = this.value; };
 }
 
 function wizardQuestions(category) {
@@ -112,7 +133,7 @@ window.__wizContextNext = function() {
 
 function renderWizardStep3(wiz) {
   wiz.innerHTML = '<h4>Passo 3 de 4: Imagens de referência</h4>'
-    + '<p style="font-size:11px;color:var(--text-muted);">Escolha imagens claras e variadas. Elas serão processadas ao criar o conceito.</p>'
+    + '<p style="font-size:11px;color:var(--text-muted);">Escolha imagens claras e variadas. Elas ensinam ao Iris o que procurar.</p>'
     + '<input type="file" id="wiz-refs" accept="image/*" multiple style="margin-bottom:8px;">'
     + '<div id="wiz-refs-preview" style="display:flex;gap:4px;flex-wrap:wrap;"></div>'
     + '<div style="margin-top:8px;">'
@@ -152,10 +173,10 @@ function renderWizardStep4(wiz) {
     + '<div class="system-status"><strong>' + escapeHtml(wizardData.name) + '</strong> · '
     + escapeHtml(wizardData.category) + '<br>'
     + escapeHtml(wizardData.description || 'Sem descrição') + '<br>'
-    + wizardData.refs.length + ' imagem(ns) de referência · threshold '
-    + wizardData.auto_threshold.toFixed(2) + '</div>'
+    + wizardData.refs.length + ' imagem(ns) de exemplo · modo '
+    + recognitionLevelLabel(wizardData.auto_threshold) + '</div>'
     + '<button class="btn" onclick="window.__wizBack()">Voltar</button> '
-    + '<button class="btn btn-primary" id="wiz-create-final" onclick="window.__wizCreate()">Criar conceito</button>';
+    + '<button class="btn btn-primary" id="wiz-create-final" onclick="window.__wizCreate()">Ensinar ao Iris</button>';
 }
 
 window.__wizCreate = async function() {
@@ -186,7 +207,7 @@ async function loadConcepts() {
     var data = await listConcepts();
     conceptsById = new Map(data.concepts.map(function(concept) { return [concept.id, concept]; }));
     if (!data.concepts.length) {
-      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">✦</span><p>Nenhum conceito ainda.</p><small>Crie um com “+ Novo conceito” e adicione imagens de referência.</small></div>';
+      container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">✦</span><p>Você ainda não ensinou nada ao Iris.</p><small>Use “Ensinar algo ao Iris” e adicione imagens de exemplo.</small></div>';
       return;
     }
     container.innerHTML = data.concepts.map(function(c) {
@@ -196,12 +217,12 @@ async function loadConcepts() {
       var safeThresh = c.auto_threshold != null ? c.auto_threshold : 0.65;
       return '<div class="detail-panel" style="margin-bottom:8px;" id="conc-panel-' + c.id + '">'
         + '<strong>' + escapeHtml(c.name) + '</strong> <span style="color:var(--text-muted);">(' + escapeHtml(c.category) + ')</span>'
-        + ' — ' + (c.assoc_count || 0) + ' assoc, ' + (c.ref_count || 0) + ' refs'
+        + ' — ' + (c.assoc_count || 0) + ' item(ns) reconhecido(s), ' + (c.ref_count || 0) + ' exemplo(s)'
         + '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">'
         + '<button class="btn" onclick="window.__editConcept(' + c.id + ',' + safeName + ',' + safeDesc + ',' + safeTerms + ',' + safeThresh + ')">Editar</button>'
-        + '<button class="btn" onclick="window.__autoMatch(' + c.id + ')">Auto-match</button>'
-        + '<button class="btn" onclick="window.__viewAssoc(' + c.id + ')">Associacoes</button>'
-        + '<button class="btn" onclick="window.__viewRefs(' + c.id + ')">Referencias</button>'
+        + '<button class="btn" onclick="window.__autoMatch(' + c.id + ')">Encontrar nas minhas fotos</button>'
+        + '<button class="btn" onclick="window.__viewAssoc(' + c.id + ')">Itens reconhecidos</button>'
+        + '<button class="btn" onclick="window.__viewRefs(' + c.id + ')">Imagens de exemplo</button>'
         + '<button class="btn btn-danger" onclick="window.__delConcept(' + c.id + ')">Deletar</button>'
         + '</div>'
         + '<div id="conc-extras-' + c.id + '" style="margin-top:8px;"></div>'
@@ -220,13 +241,11 @@ window.__editConcept = function(id, name, desc, terms, threshold) {
     + '<input type="text" id="edit-name-' + id + '" value="' + escapeHtml(name) + '" style="width:100%;margin-bottom:4px;" placeholder="Nome">'
     + '<textarea id="edit-desc-' + id + '" rows="2" style="width:100%;margin-bottom:4px;" placeholder="Descricao">' + escapeHtml(desc) + '</textarea>'
     + '<input type="text" id="edit-terms-' + id + '" value="' + escapeHtml(terms) + '" style="width:100%;margin-bottom:4px;" placeholder="Termos de busca">'
-    + '<label>Threshold: <input type="range" id="edit-thresh-' + id + '" min="0.4" max="0.95" step="0.05" value="' + threshold + '"> <span id="edit-thresh-val-' + id + '">' + threshold + '</span></label>'
+    + '<label>Precisão do reconhecimento<select id="edit-thresh-' + id + '">'
+    + recognitionLevelOptions(threshold) + '</select></label>'
     + '<div style="margin-top:4px;">'
     + '<button class="btn" onclick="window.__saveConcept(' + id + ')" style="background:var(--accent);color:#fff;">Salvar</button> '
     + '<button class="btn" onclick="document.getElementById(\'conc-extras-' + id + '\').innerHTML=\'\'">Cancelar</button></div></div>';
-  document.getElementById('edit-thresh-' + id).oninput = function() {
-    document.getElementById('edit-thresh-val-' + id).textContent = this.value;
-  };
 };
 
 window.__saveConcept = async function(id) {
@@ -242,30 +261,31 @@ window.__saveConcept = async function(id) {
   } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };
 
-// ── Auto-match ──────────────────────────────────────────────────────────────
+// ── Recognition suggestions ────────────────────────────────────────────────
 
 window.__autoMatch = async function(conceptId) {
   var el = document.getElementById('conc-extras-' + conceptId);
   var concept = conceptsById.get(conceptId) || {};
   var threshold = concept.auto_threshold != null ? concept.auto_threshold : 0.65;
   el.innerHTML = '<div class="form-grid compact-form">'
-    + '<label>Quantidade máxima<input type="number" id="match-topk-' + conceptId + '" min="10" max="300" value="80"></label>'
-    + '<label>Score mínimo<input type="number" id="match-threshold-' + conceptId + '" min="0.4" max="0.95" step="0.01" value="' + threshold + '"></label>'
-    + '</div><button class="btn btn-primary" onclick="window.__runAutoMatch(' + conceptId + ')">Buscar candidatos</button>';
+    + '<input type="hidden" id="match-topk-' + conceptId + '" value="80">'
+    + '<label>Precisão<select id="match-threshold-' + conceptId + '">'
+    + recognitionLevelOptions(threshold) + '</select></label>'
+    + '</div><button class="btn btn-primary" onclick="window.__runAutoMatch(' + conceptId + ')">Encontrar sugestões</button>';
 };
 
 window.__runAutoMatch = async function(conceptId) {
   var el = document.getElementById('conc-extras-' + conceptId);
   var topK = parseInt(document.getElementById('match-topk-' + conceptId).value) || 80;
   var threshold = parseFloat(document.getElementById('match-threshold-' + conceptId).value);
-  el.innerHTML = '<p style="color:var(--text-muted);">Buscando matches...</p>';
+  el.innerHTML = '<p style="color:var(--text-muted);">Procurando nas suas fotos...</p>';
   try {
     var data = await findConceptMatches(conceptId, topK, threshold);
     if (!data.matches.length) {
-      el.innerHTML = '<p style="color:var(--text-muted);">Nenhum match encontrado.</p>';
+      el.innerHTML = '<p style="color:var(--text-muted);">Nenhuma correspondência encontrada.</p>';
       return;
     }
-    var html = '<p style="font-size:11px;margin-bottom:4px;">' + data.matches.length + ' candidato(s)</p>'
+    var html = '<p style="font-size:11px;margin-bottom:4px;">' + data.matches.length + ' sugestão(ões) para revisar</p>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;">';
     data.matches.forEach(function(m) {
       var lightboxAttrs = m.media_type === 'image'
@@ -273,13 +293,12 @@ window.__runAutoMatch = async function(conceptId) {
         : '';
       var thumb = m.thumbnail_url ? '<img src="' + escapeHtml(m.thumbnail_url) + '" loading="lazy"' + lightboxAttrs + ' style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;">' : '<div style="aspect-ratio:1;background:var(--bg-card);border-radius:4px;">🖼️</div>';
       html += '<div style="font-size:10px;text-align:center;">' + thumb
-        + '<div>' + (m.score != null ? m.score.toFixed(3) : '?') + '</div>'
         + '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml((m.arquivo || '').slice(0, 20)) + '</div>'
         + '<label style="font-size:9px;"><input type="checkbox" class="match-confirm" data-dbid="' + m.db_id + '" checked> Confirmar</label>'
         + '</div>';
     });
     html += '</div>'
-      + '<button class="btn" style="margin-top:6px;background:var(--accent);color:#fff;" onclick="window.__applyMatches(' + conceptId + ')">Aplicar selecao</button>';
+      + '<button class="btn" style="margin-top:6px;background:var(--accent);color:#fff;" onclick="window.__applyMatches(' + conceptId + ')">Confirmar seleção</button>';
     el.innerHTML = html;
   } catch(err) { el.innerHTML = '<p style="color:var(--accent);">Erro: ' + err.message + '</p>'; }
 };
@@ -295,7 +314,7 @@ window.__applyMatches = async function(conceptId) {
   try {
     if (confirmIds.length) await confirmConceptMedia(conceptId, confirmIds);
     if (rejectIds.length) await rejectConceptMedia(conceptId, rejectIds);
-    toast('Aplicado: ' + confirmIds.length + ' confirmado(s), ' + rejectIds.length + ' rejeitado(s)', 'success');
+    toast(confirmIds.length + ' confirmado(s), ' + rejectIds.length + ' descartado(s)', 'success');
     document.getElementById('conc-extras-' + conceptId).innerHTML = '';
     loadConcepts();
   } catch(err) { toast('Erro: ' + err.message, 'error'); }
@@ -311,10 +330,10 @@ window.__viewAssoc = async function(conceptId, page) {
   try {
     var data = await getConceptAssociations(conceptId, page, 30);
     if (!data.records.length) {
-      el.innerHTML = '<p style="color:var(--text-muted);">Nenhuma associacao.</p>';
+      el.innerHTML = '<p style="color:var(--text-muted);">Nenhum item reconhecido.</p>';
       return;
     }
-    var html = '<p style="font-size:11px;">' + data.total + ' associado(s) · página ' + data.page + '/' + data.total_pages + '</p>'
+    var html = '<p style="font-size:11px;">' + data.total + ' item(ns) reconhecido(s) · página ' + data.page + '/' + data.total_pages + '</p>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;">';
     data.records.forEach(function(m) {
       var lightboxAttrs = m.media_type === 'image'
@@ -350,11 +369,11 @@ window.__removeAssoc = async function(conceptId) {
 
 window.__viewRefs = async function(conceptId) {
   var el = document.getElementById('conc-extras-' + conceptId);
-  el.innerHTML = '<p style="color:var(--text-muted);">Carregando referencias...</p>';
+  el.innerHTML = '<p style="color:var(--text-muted);">Carregando imagens de exemplo...</p>';
   try {
     var data = await getConceptReferences(conceptId);
     var refs = data.references || [];
-    var html = '<p style="font-size:11px;">' + refs.length + ' referencia(s)</p>';
+    var html = '<p style="font-size:11px;">' + refs.length + ' imagem(ns) de exemplo</p>';
     if (refs.length) {
       html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
       refs.forEach(function(ref) {
@@ -391,12 +410,12 @@ window.__delRef = async function(conceptId, refId) {
 
 window.__delConcept = async function(id) {
   var ok = await confirmModal('As mídias associadas continuam na biblioteca.', {
-    kicker: 'Conceitos', title: 'Deletar este conceito?', confirmLabel: 'Deletar', danger: true,
+    kicker: 'Ensinados ao Iris', title: 'Esquecer este reconhecimento?', confirmLabel: 'Esquecer', danger: true,
   });
   if (!ok) return;
   try {
     await deleteConcept(id);
-    toast('Conceito deletado', 'success');
+    toast('Reconhecimento removido', 'success');
     loadConcepts();
   } catch(err) { toast('Erro: ' + err.message, 'error'); }
 };

@@ -1,77 +1,91 @@
-#!/bin/bash
-# test_release.sh - Simula uma nova instalação em um ambiente limpo
+#!/usr/bin/env bash
+# Validate a clean private-server installation using the exact Docker Compose path.
+#
+# This builds from `git archive HEAD` in a temporary directory: no local data,
+# media, .env, caches, or untracked files can affect the result. It exercises OS
+# packages, Python dependencies, FastAPI startup, sessions, and account bootstrap.
+set -euo pipefail
 
-# 1. Configuração do Diretório Temporário
-PROJECT_NAME="Iris_Release_Test"
-# Mudamos para um diretório local para evitar estourar o /tmp (RAM)
-TEMP_DIR="./build_test_release"
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$project_root"
 
-echo "=========================================="
-echo "🧪 INICIANDO TESTE DE RELEASE (AMBIENTE ISOLADO)"
-echo "=========================================="
-echo "Diretório de Teste: $TEMP_DIR"
+command -v docker >/dev/null 2>&1 || { echo "Docker is required." >&2; exit 2; }
+docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required." >&2; exit 2; }
+command -v curl >/dev/null 2>&1 || { echo "curl is required." >&2; exit 2; }
 
-# 2. Limpeza prévia
-if [ -d "$TEMP_DIR" ]; then
-    echo "Limpando teste anterior..."
-    rm -rf "$TEMP_DIR"
-fi
-mkdir -p "$TEMP_DIR"
+release_dir="$(mktemp -d "${TMPDIR:-/tmp}/iris-release.XXXXXX")"
+project_name="iris-release-$(date +%s)-$$"
+port="${IRIS_RELEASE_TEST_PORT:-18501}"
+base_url="http://127.0.0.1:${port}"
+password="release-test-password-123"
 
-# 3. Cópia dos Arquivos (Simulando 'git clone')
-# Copiamos APENAS o código fonte e configs essenciais
-# Ignoramos venv, cache, builds antigos e db locais
-echo "Copiando arquivos do projeto..."
+cleanup() {
+    docker compose --project-name "$project_name" --project-directory "$release_dir" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    rm -rf "$release_dir"
+}
+trap cleanup EXIT
 
-# Copia pastas de código
-cp -r core "$TEMP_DIR/"
-cp -r scripts "$TEMP_DIR/"
-cp -r static "$TEMP_DIR/"
-cp -r templates "$TEMP_DIR/"
+git diff --quiet || { echo "Commit or stash tracked changes before testing." >&2; exit 2; }
 
-# Copia arquivos da raiz
-cp requirements.txt "$TEMP_DIR/"
-cp pyproject.toml "$TEMP_DIR/"
-cp README.md "$TEMP_DIR/"
-cp .gitignore "$TEMP_DIR/"
-cp server.py "$TEMP_DIR/"
+echo "Creating clean source archive..."
+git archive HEAD | tar -x -C "$release_dir"
 
-# Cria uma pasta vazia de imagens só para o teste não quebrar se for rodado
-mkdir -p "$TEMP_DIR/minhas_imagens"
+printf '%s\n' \
+    "IRIS_UID=$(id -u)" \
+    "IRIS_GID=$(id -g)" \
+    "IRIS_PORT=$port" \
+    "IRIS_LOAD_MODEL=0" \
+    "IRIS_SERVER_MODE=private" \
+    "IRIS_MULTIUSER=auto" \
+    "IRIS_SESSION_HTTPS_ONLY=false" >"$release_dir/.env"
+mkdir -p "$release_dir/data" "$release_dir/media"
+chmod 700 "$release_dir/data" "$release_dir/media"
 
-# 4. Executa a Instalação no Ambiente Isolado
-echo ">>> Executando install.sh no ambiente isolado..."
-cd "$TEMP_DIR" || exit
+compose=(docker compose --project-name "$project_name" --project-directory "$release_dir")
 
-# Torna executável caso tenha perdido permissão na cópia
-chmod +x scripts/install.sh
-chmod +x scripts/run_app.sh
+echo "Building clean CPU image..."
+"${compose[@]}" build iris
+echo "Starting private server..."
+"${compose[@]}" up -d iris
 
-# Roda a instalação
-if ./scripts/install.sh; then
-    echo "✅ Instalação (pip install) concluída com sucesso no ambiente isolado."
-else
-    echo "❌ FALHA CRÍTICA: O script install.sh falhou."
+for attempt in $(seq 1 45); do
+    health="$(curl --silent --show-error "$base_url/healthz" || true)"
+    if printf '%s' "$health" | grep -q '"status":"setup_required"'; then break; fi
+    sleep 2
+done
+if ! printf '%s' "$health" | grep -q '"status":"setup_required"'; then
+    "${compose[@]}" logs --tail=120 iris >&2
+    echo "Clean private server did not reach setup_required." >&2
     exit 1
 fi
 
-# 5. Teste de Execução (Dry Run)
-# Ativa o venv criado no temp dir
-source venv/bin/activate
-
-echo ">>> Verificando se os módulos principais importam corretamente..."
-# Tenta importar as libs mais pesadas para ver se quebra
-python -c "import torch; import cv2; import easyocr; import fastapi; import uvicorn; import sentence_transformers; import server; print('Módulos carregados com sucesso!')"
-
-if [ $? -eq 0 ]; then
-    echo "✅ Teste de Importação: SUCESSO. O ambiente está funcional."
-    echo ""
-    echo "🎉 O PROJETO ESTÁ PRONTO PARA O GIT!"
-    echo "Pode commitar com segurança."
-else
-    echo "❌ FALHA CRÍTICA: O ambiente instalou, mas o Python não conseguiu carregar as bibliotecas."
+status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$base_url/api/info")"
+if [ "$status" != "401" ]; then
+    echo "Anonymous /api/info should return 401, got $status." >&2
     exit 1
 fi
 
-# Limpeza opcional (comentada para debug)
-# rm -rf "$TEMP_DIR"
+echo "Creating first account..."
+printf '%s\n%s\n' "$password" "$password" |
+    "${compose[@]}" run --rm -T iris python scripts/bootstrap_admin.py \
+        --username release-admin --display-name "Release Admin"
+
+"${compose[@]}" up -d --force-recreate iris
+for attempt in $(seq 1 45); do
+    health="$(curl --silent --show-error "$base_url/healthz" || true)"
+    if printf '%s' "$health" | grep -q '"status":"ok"'; then break; fi
+    sleep 2
+done
+if ! printf '%s' "$health" | grep -q '"status":"ok"'; then
+    "${compose[@]}" logs --tail=120 iris >&2
+    echo "Server did not become ready after bootstrap." >&2
+    exit 1
+fi
+
+python3 "$release_dir/scripts/verify_server.py" \
+    --url "$base_url" \
+    --username release-admin \
+    --password "$password" \
+    --expect-private
+
+echo "PASS: clean Docker installation, startup, authentication, and bootstrap verified."

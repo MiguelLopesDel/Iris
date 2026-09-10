@@ -5,6 +5,8 @@ Serves the SPA shell and a REST JSON API consumed by vanilla JavaScript modules.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -18,29 +20,37 @@ import tempfile
 import threading
 import time
 import uuid
+import warnings
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.sessions import SessionMiddleware
 
 # Ensure core/ is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core import app_config, import_review
 from core import backup as backup_mod
+from core.auth import load_or_create_secret
 from core.backend import SearchBackend, create_backend
+from core.backend_registry import BackendRegistry
+from core.device_tokens import read_access_token
 from core.file_ops import move_to_trash
 from core.media_metadata import extract_full_metadata, extract_metadata
+from core.observability import configure_logging, request_path
 from core.perf import dump, trace
-from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
+from core.users_db import IrisUser, get_device, get_user_by_id, has_users
 from core.web_enrichment import (
     EnrichmentSuggestion,
     WebEnrichmentService,
@@ -57,11 +67,15 @@ from core.web_enrichment import (
     reject_suggestion,
     update_job,
 )
+from routers.auth import router as auth_router
+from routers.sync import router as sync_router
 
 # ── Constants ─────────────────────────────────────────────────────────────────
+configure_logging()
 logger = logging.getLogger("iris")
 
-_THUMB_DIR = Path("data/thumbnails")
+_DATA_DIR = Path(os.environ.get("IRIS_DATA_DIR", "data"))
+_THUMB_DIR = _DATA_DIR / "thumbnails"
 
 
 def _default_db_path() -> str:
@@ -73,8 +87,8 @@ def _default_db_path() -> str:
     env = os.environ.get("IRIS_DB")
     if env:
         return env
-    iris = "data/iris_v1.db"
-    legacy = "data/meme_compass_full_v1.db"
+    iris = str(_DATA_DIR / "iris_v1.db")
+    legacy = str(_DATA_DIR / "meme_compass_full_v1.db")
     if not os.path.exists(iris) and os.path.exists(legacy):
         return legacy
     return iris
@@ -83,7 +97,55 @@ def _default_db_path() -> str:
 _DEFAULT_DB = _default_db_path()
 _MEDIA_ROOT = os.environ.get("IRIS_MEDIA_ROOT", "media")
 _LOAD_MODEL = os.environ.get("IRIS_LOAD_MODEL", "1").lower() not in {"0", "false", "no"}
-_DATA_DIR = Path("data")
+_USERS_DB = _DATA_DIR / "users.db"
+
+
+def _require_search_model() -> None:
+    """Return a clear API error when semantic features were intentionally disabled."""
+    if not _LOAD_MODEL:
+        raise HTTPException(409, "Semantic search is disabled because IRIS_LOAD_MODEL=0")
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
+
+
+# Defaults deliberately fit a household's high-resolution photo/video imports,
+# while still stopping a single request from exhausting the host by accident.
+_MAX_UPLOAD_BYTES = _positive_env_int("IRIS_MAX_UPLOAD_BYTES", 32 * 1024**3)
+_MAX_UPLOAD_FILES = _positive_env_int("IRIS_MAX_UPLOAD_FILES", 10_000)
+_ACCOUNT_QUOTA_BYTES = _positive_env_int("IRIS_ACCOUNT_QUOTA_BYTES", 10 * 1024**4)
+_MAX_IMAGE_PIXELS = _positive_env_int("IRIS_MAX_IMAGE_PIXELS", 500_000_000)
+_MAX_REQUEST_BYTES = _positive_env_int("IRIS_MAX_REQUEST_BYTES", 64 * 1024**3)
+_MAX_SEARCH_TOP_K = _positive_env_int("IRIS_MAX_SEARCH_TOP_K", 1_000)
+_MAX_SEARCH_CANDIDATES = _positive_env_int("IRIS_MAX_SEARCH_CANDIDATES", 20_000)
+
+# Request-local state is deliberately separate from the legacy globals below. A
+# library backend must never be selected by a process-wide mutable variable when
+# multiple authenticated requests are executing concurrently.
+_request_backend: contextvars.ContextVar[SearchBackend | None] = contextvars.ContextVar(
+    "iris_request_backend", default=None
+)
+_request_user: contextvars.ContextVar[IrisUser | None] = contextvars.ContextVar(
+    "iris_request_user", default=None
+)
+
+
+def _search_worker_count() -> int:
+    """Keep CPU search responsive without oversubscribing small machines."""
+    try:
+        configured = int(os.environ.get("IRIS_SEARCH_WORKERS", "2"))
+    except ValueError:
+        configured = 2
+    return max(1, min(configured, os.cpu_count() or 1))
+
+
+_search_executor = ThreadPoolExecutor(
+    max_workers=_search_worker_count(), thread_name_prefix="iris-search"
+)
 
 # ── Backend singleton ─────────────────────────────────────────────────────────
 _backend: SearchBackend | None = None
@@ -118,7 +180,7 @@ _forced_worker_running = False
 # expensive part of /api/records — sorting the whole library — is cached per
 # (sort_by, sort_asc). Filters (media type / collection / concept) stay live on
 # each request so membership changes are never served stale. Cleared on reload.
-_sorted_records_cache: dict[tuple[str, int], list[IndexRecord]] = {}
+_sorted_records_cache: dict[tuple[str, str, int], list[IndexRecord]] = {}
 # /api/info missing-file scan is O(N) syscalls; cache by (db_path, total_records).
 _missing_count_cache: dict[tuple[str, int], int] = {}
 
@@ -130,13 +192,107 @@ def _invalidate_view_caches() -> None:
 
 def _import_db() -> sqlite3.Connection:
     """Short-lived connection to the active DB for import_jobs / import_review ops."""
+    engine = getattr(_get_backend(), "engine", None)
+    db_path = getattr(engine, "db_path", None)
+    if db_path:
+        return sqlite3.connect(str(db_path))
     return sqlite3.connect(str(_active_config["db_path"]))
 
 
 def _get_backend() -> SearchBackend:
+    request_backend = _request_backend.get()
+    if request_backend is not None:
+        return request_backend
     if _backend is None:
         raise HTTPException(503, "Backend not initialised yet")
     return _backend
+
+
+def _current_user() -> IrisUser | None:
+    return _request_user.get()
+
+
+def _multiuser_enabled() -> bool:
+    return bool(getattr(app.state, "multiuser_enabled", False)) if "app" in globals() else False
+
+
+def _setup_required() -> bool:
+    return bool(getattr(app.state, "setup_required", False)) if "app" in globals() else False
+
+
+def _thumbnail_dir() -> Path:
+    user = _current_user()
+    if user is None:
+        return _THUMB_DIR
+    return user.db_path.parent / "thumbnails"
+
+
+def _library_usage_bytes(root: Path) -> int:
+    try:
+        return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
+    except OSError:
+        return 0
+
+
+async def _write_upload_limited(upload: UploadFile, destination: Path, remaining_bytes: int) -> int:
+    """Persist one upload with a per-file and per-library budget."""
+    written = 0
+    try:
+        with destination.open("wb") as output:
+            while chunk := await upload.read(1024 * 1024):
+                written += len(chunk)
+                if written > _MAX_UPLOAD_BYTES or written > remaining_bytes:
+                    raise HTTPException(413, "Upload excede o limite configurado da biblioteca")
+                output.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return written
+
+
+def _enforce_uploaded_file_size(upload: UploadFile) -> None:
+    position = upload.file.tell()
+    upload.file.seek(0, os.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(position)
+    if size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Arquivo excede o limite configurado")
+
+
+def _open_uploaded_image(upload: UploadFile):
+    """Decode an image only after bounding decompression work and dimensions."""
+    from PIL import Image
+
+    try:
+        _enforce_uploaded_file_size(upload)
+        upload.file.seek(0)
+        Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image = Image.open(upload.file)
+            if image.width * image.height > _MAX_IMAGE_PIXELS:
+                raise HTTPException(413, "Imagem excede o limite de pixels configurado")
+            return image.convert("RGB")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, f"Não foi possível abrir a imagem: {exc}") from exc
+
+
+def _require_admin() -> IrisUser | None:
+    """Require an Iris administrator only after multi-user mode is bootstrapped."""
+    if not _multiuser_enabled():
+        return None
+    user = _current_user()
+    if user is None or not user.is_admin:
+        raise HTTPException(403, "Apenas administradores podem executar esta ação")
+    return user
+
+
+async def _run_search(callable_: Any, *args: Any) -> Any:
+    """Run blocking model/FAISS work away from FastAPI's event-loop thread."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_search_executor, callable_, *args)
 
 
 def _reload_backend(config: dict[str, Any] | None = None) -> SearchBackend:
@@ -236,13 +392,17 @@ async def lifespan(app: FastAPI):
             print(f"[iris] Limpou {killed} navegador(es) orfao(s) de execucao anterior")
     except Exception:
         pass
-    if _backend is None:
+    if app.state.multiuser_enabled:
+        print("[iris] Ready — private libraries enabled")
+    elif _backend is None:
         print(f"[iris] Loading backend — DB: {_active_config['db_path']}")
         backend = _reload_backend()
+        print(f"[iris] Ready — {backend.get_total_records()} records")
     else:
         backend = _backend
-    print(f"[iris] Ready — {backend.get_total_records()} records")
-    _resume_unfinished_imports()
+        print(f"[iris] Ready — {backend.get_total_records()} records")
+    if not app.state.multiuser_enabled:
+        _resume_unfinished_imports()
     yield
     dump()
     try:
@@ -251,16 +411,153 @@ async def lifespan(app: FastAPI):
         close_browser_session()
     except Exception:
         pass
+    _search_executor.shutdown(wait=False, cancel_futures=True)
     print("[iris] Shutdown complete")
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(lifespan=lifespan, title="Iris")
+app.state.data_dir = _DATA_DIR
+app.state.users_db_path = _USERS_DB
+app.state.auth_secret = load_or_create_secret(_DATA_DIR / "secret_key")
+app.state.account_quota_bytes = _ACCOUNT_QUOTA_BYTES
+app.state.load_model = _LOAD_MODEL
+_server_mode = os.environ.get("IRIS_SERVER_MODE", "legacy").lower()
+_private_server_requested = _server_mode in {"private", "multiuser"}
+_has_users = has_users(_USERS_DB)
+app.state.multiuser_enabled = _private_server_requested or (
+    os.environ.get("IRIS_MULTIUSER", "auto").lower() not in {"0", "false", "no"}
+    and _has_users
+)
+app.state.setup_required = app.state.multiuser_enabled and not _has_users
+if app.state.multiuser_enabled:
+    try:
+        engine_cache_size = int(os.environ.get("IRIS_ENGINE_CACHE_SIZE", "1"))
+    except ValueError:
+        engine_cache_size = 1
+    app.state.backend_registry = BackendRegistry(
+        _USERS_DB, cache_size=engine_cache_size, load_model=_LOAD_MODEL
+    )
+
+
+@app.middleware("http")
+async def authenticate_library_request(request: Request, call_next):
+    """Bind every protected request to exactly one private-library backend."""
+    if not request.app.state.multiuser_enabled:
+        return await call_next(request)
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > _MAX_REQUEST_BYTES:
+        return Response(status_code=413, content='{"detail":"Requisição excede o limite configurado"}', media_type="application/json")
+    path = request.url.path
+    public = (
+        path in {"/login", "/setup", "/healthz", "/favicon.ico", "/api/auth/login", "/api/auth/devices/login", "/api/auth/devices/refresh"}
+        or path.startswith("/static/")
+    )
+    if public:
+        return await call_next(request)
+    if _setup_required():
+        if path.startswith("/api/"):
+            return Response(status_code=503, content='{"detail":"Configuração inicial necessária"}', media_type="application/json")
+        return RedirectResponse("/setup", status_code=303)
+    session = request.session
+    user_id = session.get("user_id")
+    session_version = session.get("session_version")
+    device_id = None
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        payload = read_access_token(request.app.state.auth_secret, authorization[7:].strip())
+        if payload:
+            user_id = payload.get("user_id")
+            session_version = payload.get("session_version")
+            device_id = payload.get("device_id")
+            device = get_device(request.app.state.users_db_path, str(device_id)) if device_id else None
+            if device is None or device.revoked_at or device.user_id != user_id or device.token_version != payload.get("token_version"):
+                user_id = None
+    user = get_user_by_id(request.app.state.users_db_path, int(user_id)) if isinstance(user_id, int) else None
+    if user is None or user.session_version != session_version:
+        session.clear()
+        if path.startswith("/api/"):
+            return Response(status_code=401, content='{"detail":"Autenticação necessária"}', media_type="application/json")
+        return RedirectResponse("/login", status_code=303)
+    # These legacy endpoints operate on host-global paths/configuration. They
+    # must not be reachable from a private-library deployment until they are
+    # redesigned around an account-owned destination.
+    if path.startswith("/api/backup/") or path in {"/api/settings", "/api/filesystem", "/api/open-folder"}:
+        return Response(status_code=404, content='{"detail":"Indisponível em bibliotecas privadas"}', media_type="application/json")
+    try:
+        backend = request.app.state.backend_registry.get(user.id)
+    except KeyError:
+        session.clear()
+        return Response(status_code=401, content='{"detail":"Sessão inválida"}', media_type="application/json")
+    request.state.iris_user = user
+    request.state.iris_device_id = device_id
+    request.state.backend = backend
+    backend_token = _request_backend.set(backend)
+    user_token = _request_user.set(user)
+    try:
+        return await call_next(request)
+    finally:
+        _request_user.reset(user_token)
+        _request_backend.reset(backend_token)
+
+
+@app.middleware("http")
+async def log_request(request: Request, call_next):
+    """Emit one safe, correlated line for every HTTP request.
+
+    Request content, query parameters, cookies and authorization headers are
+    intentionally omitted: they may contain a password, a search for private
+    media, or a session token.
+    """
+    request_id = uuid.uuid4().hex[:16]
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "http_request_failed",
+            extra={
+                "event": "http_request_failed",
+                "request_id": request_id,
+                "method": request.method,
+                "path": request_path(request.url.path),
+            },
+        )
+        raise
+    duration_ms = round((time.perf_counter() - started) * 1000, 1)
+    response.headers["X-Request-ID"] = request_id
+    access_enabled = os.environ.get("IRIS_LOG_ACCESS", "1").lower() not in {"0", "false", "no"}
+    if access_enabled or response.status_code >= 400:
+        user = getattr(request.state, "iris_user", None)
+        logger.info(
+            "http_request_completed",
+            extra={
+                "event": "http_request_completed",
+                "request_id": request_id,
+                "method": request.method,
+                "path": request_path(request.url.path),
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "user_id": user.id if user is not None else None,
+            },
+        )
+    return response
 
 # Compress JSON/HTML responses (records pages can be sizeable). Skips small bodies
 # and is a no-op for already-compressed media/thumbnails (own content types).
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+if app.state.multiuser_enabled:
+    # Must be outermost so the authentication middleware can read request.session.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=app.state.auth_secret,
+        session_cookie="iris_session",
+        max_age=60 * 60 * 24 * 14,
+        same_site="lax",
+        https_only=os.environ.get("IRIS_SESSION_HTTPS_ONLY", str(_private_server_requested)).lower()
+        in {"1", "true", "yes", "on"},
+    )
 
 # Static assets
 static_dir = Path(__file__).parent / "static"
@@ -268,6 +565,8 @@ template_dir = Path(__file__).parent / "templates"
 static_dir.mkdir(parents=True, exist_ok=True)
 template_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+app.include_router(auth_router)
+app.include_router(sync_router)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -290,13 +589,13 @@ def _options_from_params(
         return frozenset(int(x) for x in raw.split(",") if x.strip().isdigit())
 
     return SearchOptions(
-        top_k=top_k,
-        threshold=threshold,
+        top_k=max(1, min(int(top_k), _MAX_SEARCH_TOP_K)),
+        threshold=max(-1.0, min(float(threshold), 1.0)),
         balance=balance,
         text_bonus=text_bonus,
         lexical_weight=lexical_weight,
         translate=translate,
-        candidate_pool=candidate_pool,
+        candidate_pool=max(1, min(int(candidate_pool), _MAX_SEARCH_CANDIDATES)),
         media_type=media_type,
         collection_ids=_parse_ints(collection_ids),
         concept_ids=_parse_ints(concept_ids),
@@ -325,6 +624,9 @@ def _record_to_json(r: IndexRecord) -> dict[str, Any]:
         "file_mtime": r.file_mtime,
         "media_type": "video" if ext in VIDEO_EXTENSIONS else "image",
         "thumbnail_url": _thumbnail_url(r),
+        # Inline placeholder so a client can paint the cell before the
+        # thumbnail request finishes. See core/thumb_hash.py.
+        "thumb_hash": r.thumb_hash,
     }
 
 
@@ -351,8 +653,12 @@ def _attach_persons(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return dicts
 
 
-def _results_to_json(results: list[SearchResult]) -> list[dict[str, Any]]:
-    return _attach_persons([_result_to_json(r) for r in results])
+async def _results_to_json(results: list[SearchResult]) -> list[dict[str, Any]]:
+    # Same reasoning as get_records: _result_to_json can decode/resize a source
+    # file on a thumbnail-cache miss, which must not run on the event loop.
+    return await run_in_threadpool(
+        lambda: _attach_persons([_result_to_json(r) for r in results])
+    )
 
 
 def _empty_record(r: SearchResult) -> IndexRecord:
@@ -410,10 +716,13 @@ def _compute_thumbnail_url(fp: str) -> str:
         key = hashlib.md5(
             f"{fp}:{stat.st_mtime}:{stat.st_size}".encode()
         ).hexdigest()
-        thumb = _THUMB_DIR / f"{key}.jpg"
+        thumb_dir = _thumbnail_dir()
+        thumb = thumb_dir / f"{key}.jpg"
 
         if not thumb.exists():
-            _THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            thumb_dir.mkdir(parents=True, exist_ok=True)
+            if _multiuser_enabled():
+                os.chmod(thumb_dir, 0o700)
             ext = os.path.splitext(fp)[1].lower()
             if ext in VIDEO_EXTENSIONS:
                 _generate_video_thumbnail(fp, thumb)
@@ -566,14 +875,9 @@ def _store_concept_reference(
     concept_id: int,
     upload: UploadFile,
 ) -> None:
-    from PIL import Image
-
     from core.concepts import make_thumbnail
 
-    try:
-        image = Image.open(upload.file).convert("RGB")
-    except Exception as exc:
-        raise HTTPException(400, f"Não foi possível abrir {upload.filename}: {exc}") from exc
+    image = _open_uploaded_image(upload)
     thumbnail = make_thumbnail(image)
     embedding = np.asarray(backend.encode_image(image), dtype=np.float32).reshape(-1).tobytes()
     backend.add_reference(concept_id, embedding, thumbnail, upload.filename or "")
@@ -618,7 +922,8 @@ def _run_import_job(
         )
         with _import_db() as conn:
             import_review.update_job(conn, job_id, status="running", message="Carregando modelos…")
-        db_path = Path(str(_active_config["db_path"]))
+        engine = getattr(_get_backend(), "engine", None)
+        db_path = Path(str(getattr(engine, "db_path", _active_config["db_path"])))
         total_imported = 0
         total_quarantined = 0
         for source in sources:
@@ -637,6 +942,7 @@ def _run_import_job(
                 library_name=str(settings["library_name"]),
                 library_root=Path(str(settings["library_root"])),
                 copy_to_library=bool(settings["copy_to_library"]),
+                extract_faces=not bool(settings.get("low_resource", False)),
             )
             result = process_images(
                 config,
@@ -648,7 +954,12 @@ def _run_import_job(
             total_imported += int(result.get("imported", 0))
             total_quarantined += int(result.get("quarantined", 0))
         create_faiss_indices(db_path, str(settings["model_name"]))
-        _reload_backend()
+        if _multiuser_enabled():
+            user = _current_user()
+            if user is not None:
+                app.state.backend_registry.invalidate(user.id)
+        else:
+            _reload_backend({"model_name": str(settings["model_name"])})
         done_msg = (
             f"Importação concluída: {total_imported} nova(s), "
             f"{total_quarantined} em revisão."
@@ -759,6 +1070,42 @@ def _resume_unfinished_imports() -> None:
 # ── Page routes ───────────────────────────────────────────────────────────────
 
 
+@app.get("/login", response_class=HTMLResponse)
+async def serve_login():
+    if _setup_required():
+        return RedirectResponse("/setup", status_code=303)
+    if not _multiuser_enabled():
+        return RedirectResponse("/", status_code=303)
+    return HTMLResponse(
+        (static_dir / "login.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def serve_setup():
+    if not _setup_required():
+        return RedirectResponse("/", status_code=303)
+    return HTMLResponse(
+        "<main><h1>Iris precisa da primeira conta</h1>"
+        "<p>Crie a primeira conta no servidor. Em uma instalação vazia, o comando cria uma biblioteca privada vazia; "
+        "em uma instalação antiga, ele migra automaticamente o catálogo e a mídia existentes.</p>"
+        "<pre>docker compose run --rm iris python scripts/bootstrap_admin.py --username administrador</pre>"
+        "</main>",
+        status_code=503,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/healthz")
+async def healthz():
+    """Unauthenticated liveness/readiness probe; never reveals library details."""
+    return {
+        "status": "setup_required" if _setup_required() else "ok",
+        "mode": "multiuser" if _multiuser_enabled() else "legacy",
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     return HTMLResponse(
@@ -772,7 +1119,8 @@ async def serve_index():
 
 def _missing_count(backend: SearchBackend, total: int) -> int:
     """Count records whose file is gone. O(N) syscalls — cached per (db, total)."""
-    key = (str(_active_config["db_path"]), total)
+    engine = getattr(backend, "engine", None)
+    key = (str(getattr(engine, "db_path", _active_config["db_path"])), total)
     cached = _missing_count_cache.get(key)
     if cached is not None:
         return cached
@@ -802,17 +1150,34 @@ async def get_info(check_missing: int = Query(0)):
             missing_count = 0 if not records else await run_in_threadpool(
                 _missing_count, backend, total
             )
+        user = _current_user()
+        private_library = _multiuser_enabled()
         return {
             "total_records": total,
-            "db_path": str(_active_config["db_path"]),
-            "media_root": str(_active_config["media_root"]),
-            "model_name": str(_active_config["model_name"]),
+            "db_path": "" if user else str(_active_config["db_path"]),
+            "media_root": "" if user else str(_active_config["media_root"]),
+            "model_name": user.model_name if user else str(_active_config["model_name"]),
             "load_model": bool(_active_config["load_model"]),
+            "multiuser": _multiuser_enabled(),
+            "current_user": (
+                {"username": user.username, "display_name": user.display_name, "is_admin": user.is_admin}
+                if user else None
+            ),
             "has_concepts": backend.has_concept_tables(),
             "has_faces": backend.has_face_tables(),
             "missing_count": missing_count,
             "extension_counts": extension_counts,
-            "databases": _available_databases(),
+            "databases": [] if user else _available_databases(),
+            "capabilities": {
+                "semantic_search": _LOAD_MODEL,
+                "image_search": _LOAD_MODEL,
+                "face_search": _LOAD_MODEL and backend.has_face_tables(),
+                "host_administration": not private_library,
+                "folder_import": not private_library,
+                "host_backup": not private_library,
+                "open_host_folder": not private_library,
+                "webchat_enrichment": not private_library,
+            },
         }
 
 
@@ -822,6 +1187,9 @@ async def update_settings(
     media_root: str = Form(...),
     model_name: str = Form(DEFAULT_MODEL),
 ):
+    _require_admin()
+    if _multiuser_enabled():
+        raise HTTPException(409, "As bibliotecas privadas não podem trocar de caminho pela interface")
     candidate_db = Path(db_path)
     if not candidate_db.is_absolute() and candidate_db.parts[:1] != (_DATA_DIR.name,):
         candidate_db = _DATA_DIR / candidate_db
@@ -841,12 +1209,20 @@ async def update_settings(
 
 @app.post("/api/reload")
 async def reload_backend():
+    _require_admin()
+    if _multiuser_enabled():
+        user = _current_user()
+        assert user is not None
+        app.state.backend_registry.invalidate(user.id)
+        backend = await run_in_threadpool(app.state.backend_registry.get, user.id)
+        return {"ok": True, "total_records": backend.get_total_records()}
     backend = await run_in_threadpool(_reload_backend)
     return {"ok": True, "total_records": backend.get_total_records()}
 
 
 @app.get("/api/filesystem")
 async def browse_filesystem(path: str = Query("")):
+    _require_admin()
     current = Path(path).expanduser() if path.strip() else Path.home()
     try:
         current = current.resolve()
@@ -871,6 +1247,7 @@ async def browse_filesystem(path: str = Query("")):
 
 @app.post("/api/open-folder")
 async def open_folder(path: str = Form(...)):
+    _require_admin()
     target = Path(path).expanduser()
     try:
         target = target.resolve()
@@ -891,6 +1268,19 @@ async def open_folder(path: str = Form(...)):
 
 @app.get("/api/import/status")
 async def import_status():
+    if _multiuser_enabled():
+        try:
+            with _import_db() as conn:
+                job = import_review.latest_job(conn)
+            if job:
+                return {
+                    "id": job["id"], "status": job["status"], "done": job["done"],
+                    "total": job["total"], "imported": job["imported"],
+                    "quarantined": job["quarantined"], "current": "", "message": job["message"],
+                }
+        except Exception:
+            pass
+        return {"id": None, "status": "idle", "done": 0, "total": 0, "imported": 0, "quarantined": 0, "current": "", "message": ""}
     if _import_job.get("id"):
         return dict(_import_job)
     # No in-memory job (e.g. fresh process): hydrate from the persisted job row.
@@ -921,8 +1311,20 @@ async def start_import(
     device: str = Form("auto"),
     caption_model: str = Form("microsoft/Florence-2-large"),
     whisper_model: str = Form("tiny"),
+    low_resource: bool = Form(False),
 ):
-    if _import_job["status"] in {"queued", "running"}:
+    # Development/load-lab mode deliberately avoids a hidden model download or
+    # heavyweight indexer process after accepting a multipart request. FastAPI
+    # has already parsed the body at this point, so request-size/network limits
+    # can still be exercised without unexpectedly consuming CPU/RAM in a fast
+    # local sandbox.
+    if not _LOAD_MODEL:
+        raise HTTPException(409, "Indexing is disabled because IRIS_LOAD_MODEL=0")
+    if _multiuser_enabled():
+        with _import_db() as conn:
+            if any(job["status"] in {"queued", "running"} for job in import_review.unfinished_jobs(conn)):
+                raise HTTPException(409, "Já existe uma importação em andamento nesta biblioteca")
+    elif _import_job["status"] in {"queued", "running"}:
         raise HTTPException(409, "Já existe uma importação em andamento")
     if batch_size < 1 or batch_size > 64:
         raise HTTPException(400, "Batch size deve ficar entre 1 e 64")
@@ -930,6 +1332,8 @@ async def start_import(
         raise HTTPException(400, "Dispositivo inválido")
 
     sources: list[Path] = []
+    if _multiuser_enabled() and folder.strip():
+        raise HTTPException(403, "Importe arquivos pelo envio; pastas do servidor são restritas")
     if folder.strip():
         source = Path(folder).expanduser().resolve()
         if not source.exists() or not source.is_dir():
@@ -938,15 +1342,23 @@ async def start_import(
 
     cleanup: Path | None = None
     if files:
-        upload_root = _DATA_DIR / "import_uploads"
+        if len(files) > _MAX_UPLOAD_FILES:
+            raise HTTPException(413, "Quantidade de arquivos excede o limite configurado")
+        user = _current_user()
+        upload_root = (user.db_path.parent / "import_uploads") if user else (_DATA_DIR / "import_uploads")
         upload_root.mkdir(parents=True, exist_ok=True)
         cleanup = Path(tempfile.mkdtemp(prefix="iris-", dir=upload_root))
-        for upload in files:
-            filename = Path(upload.filename or "upload").name
-            destination = cleanup / filename
-            with destination.open("wb") as output:
-                while chunk := await upload.read(1024 * 1024):
-                    output.write(chunk)
+        used_bytes = _library_usage_bytes(user.media_root) if user else 0
+        remaining_bytes = max(0, _ACCOUNT_QUOTA_BYTES - used_bytes)
+        try:
+            for upload in files:
+                filename = Path(upload.filename or "upload").name
+                destination = cleanup / filename
+                written = await _write_upload_limited(upload, destination, remaining_bytes)
+                remaining_bytes -= written
+        except Exception:
+            shutil.rmtree(cleanup, ignore_errors=True)
+            raise
         sources.append(cleanup)
 
     if not sources:
@@ -956,16 +1368,19 @@ async def start_import(
     await run_in_threadpool(maybe_auto_snapshot, "pre-import")
 
     job_id = uuid.uuid4().hex
+    user = _current_user()
+    model_name = LOW_RESOURCE_MODEL if low_resource else (user.model_name if user else str(_active_config["model_name"]))
     settings = {
         "recursive": recursive,
-        "library_name": library_name.strip() or "default",
-        "library_root": library_root.strip() or "data/library",
-        "copy_to_library": copy_to_library,
-        "batch_size": batch_size,
-        "device": device,
-        "caption_model": caption_model.strip() or "none",
-        "whisper_model": whisper_model.strip() or "none",
-        "model_name": str(_active_config["model_name"]),
+        "library_name": "media" if user else (library_name.strip() or "default"),
+        "library_root": str(user.media_root.parent) if user else (library_root.strip() or "data/library"),
+        "copy_to_library": True if user else copy_to_library,
+        "batch_size": 1 if low_resource else batch_size,
+        "device": "cpu" if low_resource else device,
+        "caption_model": "none" if low_resource else caption_model.strip() or "none",
+        "whisper_model": "none" if low_resource else whisper_model.strip() or "none",
+        "model_name": model_name,
+        "low_resource": low_resource,
     }
     _import_job.update(
         id=job_id, status="queued", done=0, total=0, imported=0, quarantined=0,
@@ -975,9 +1390,10 @@ async def start_import(
         import_review.create_job(
             conn, job_id, json.dumps([str(s) for s in sources]), json.dumps(settings)
         )
+    context = contextvars.copy_context()
     threading.Thread(
-        target=_run_import_job,
-        args=(job_id, sources, settings, cleanup),
+        target=context.run,
+        args=(_run_import_job, job_id, sources, settings, cleanup),
         daemon=True,
         name=f"iris-import-{job_id[:8]}",
     ).start()
@@ -1103,6 +1519,10 @@ async def import_review_resolve(
 ):
     if action not in {"ignore", "trash", "import"}:
         raise HTTPException(400, "Ação inválida")
+    if _multiuser_enabled() and action == "import":
+        # The legacy coalesced queue is process-global. Do not let it cross a
+        # library boundary; a per-library queue will replace it in a follow-up.
+        raise HTTPException(409, "Importar itens em revisão ainda não está disponível em bibliotecas privadas")
     with _import_db() as conn:
         id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
         if detection and not id_list:
@@ -1424,7 +1844,9 @@ def _sorted_records(backend: SearchBackend, sort_by: str, sort_asc: int) -> list
     ±1 page); memoising it makes subsequent pages of the same view ~O(page). Safe
     because records are immutable between backend reloads (which clear the cache).
     """
-    key = (sort_by, int(bool(sort_asc)))
+    engine = getattr(backend, "engine", None)
+    db_key = str(getattr(engine, "db_path", id(backend)))
+    key = (db_key, sort_by, int(bool(sort_asc)))
     cached = _sorted_records_cache.get(key)
     if cached is not None:
         return cached
@@ -1500,7 +1922,14 @@ async def get_records(
                 1 for r in page_records
                 if not r.resolved_path or not os.path.exists(r.resolved_path)
             ),
-            "records": _attach_persons([_record_to_json(r) for r in page_records]),
+            # Thumbnail-cache misses decode/resize the source file (PIL, or cv2
+            # frame extraction for video) inside _record_to_json. Left inline,
+            # that CPU-bound work runs straight on the event loop and stalls
+            # every other in-flight request — including every other thumbnail
+            # already cached — until it finishes.
+            "records": await run_in_threadpool(
+                lambda: _attach_persons([_record_to_json(r) for r in page_records])
+            ),
         }
 
 
@@ -1514,7 +1943,7 @@ async def get_record_detail(idx: int):
         r = backend.get_record(idx)
         if r is None:
             raise HTTPException(404, "Record not found")
-        d = _record_to_json(r)
+        d = await run_in_threadpool(_record_to_json, r)
         _attach_persons([d])
         # Add extra detail fields
         d["caminho"] = r.caminho
@@ -1611,6 +2040,7 @@ async def search_text(
     collection_ids: str = Query(""),
     concept_ids: str = Query(""),
 ):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.text"):
         options = _options_from_params(
@@ -1619,11 +2049,11 @@ async def search_text(
             translate=translate, media_type=media_type,
             collection_ids=collection_ids, concept_ids=concept_ids,
         )
-        results = backend.search_text(q.strip(), options)
+        results = await _run_search(backend.search_text, q.strip(), options)
         return {
             "query": q,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -1644,7 +2074,7 @@ async def search_filename(
             collection_ids=collection_ids,
             concept_ids=concept_ids,
         )
-        records = _filter_records(backend.get_all_records(), backend, options)
+        records = await _run_search(_filter_records, backend.get_all_records(), backend, options)
         scored = [
             (score, record)
             for record in records
@@ -1653,12 +2083,12 @@ async def search_filename(
         scored.sort(key=lambda item: (-item[0], item[1].arquivo.lower(), item[1].db_id))
         results = [
             _record_to_search_result(record, score, "filename")
-            for score, record in scored[:top_k]
+            for score, record in scored[:options.top_k]
         ]
         return {
             "query": q,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -1677,31 +2107,28 @@ async def search_image(
     group_threshold: float = Form(0.90),
     show_singletons: bool = Form(True),
 ):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.image"):
-        from PIL import Image
-        try:
-            img = Image.open(file.file).convert("RGB")
-        except Exception as exc:
-            raise HTTPException(400, f"Could not open image file: {exc}") from exc
+        img = await run_in_threadpool(_open_uploaded_image, file)
         options = _options_from_params(
             top_k=top_k, threshold=threshold, balance=balance,
             text_bonus=text_bonus, lexical_weight=lexical_weight,
             media_type=media_type, collection_ids=collection_ids,
             concept_ids=concept_ids,
         )
-        results = backend.search_image(img, options)
+        results = await _run_search(backend.search_image, img, options)
         response = {
             "filename": file.filename,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
         if group_results:
-            groups = _group_search_results(results, group_threshold)
+            groups = _group_search_results(results, max(-1.0, min(group_threshold, 1.0)))
             if not show_singletons:
                 groups = [group for group in groups if len(group) > 1]
             response["groups"] = [
-                _results_to_json(group)
+                await _results_to_json(group)
                 for group in groups
             ]
         return response
@@ -1712,52 +2139,53 @@ async def search_face(
     file: Annotated[UploadFile, File()],
     top_k: int = Form(50),
 ):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.face"):
-        from PIL import Image
-        try:
-            img = Image.open(file.file).convert("RGB")
-        except Exception as exc:
-            raise HTTPException(400, f"Could not open image file: {exc}") from exc
+        img = await run_in_threadpool(_open_uploaded_image, file)
         if not backend.has_face_tables():
             raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
-        results = await run_in_threadpool(backend.search_face, img, top_k)
+        results = await run_in_threadpool(
+            backend.search_face, img, max(1, min(top_k, _MAX_SEARCH_TOP_K))
+        )
         if results is None:
             raise HTTPException(422, "Nenhum rosto detectado na imagem enviada.")
         return {
             "filename": file.filename,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
 @app.get("/api/search/face/by-record/{idx}")
 async def search_face_by_record(idx: int, top_k: int = Query(50)):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.face.by_record"):
         if not backend.has_face_tables():
             raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
-        results = backend.search_face_by_record(idx, top_k)
+        results = backend.search_face_by_record(idx, max(1, min(top_k, _MAX_SEARCH_TOP_K)))
         if results is None:
             raise HTTPException(422, "Nenhum rosto detectado nesta mídia.")
         return {
             "source_index": idx,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
 @app.get("/api/search/face/by-face/{face_id}")
 async def search_face_by_face(face_id: int, top_k: int = Query(50)):
+    _require_search_model()
     backend = _get_backend()
     with trace("api.search.face.by_face"):
         if not backend.has_face_tables():
             raise HTTPException(409, "Reconhecimento facial indisponível neste catálogo.")
-        results = backend.search_face_by_face(face_id, top_k)
+        results = backend.search_face_by_face(face_id, max(1, min(top_k, _MAX_SEARCH_TOP_K)))
         return {
             "source_face": face_id,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -1778,11 +2206,11 @@ async def search_similar(
             text_bonus=text_bonus, lexical_weight=lexical_weight,
             media_type=media_type,
         )
-        results = backend.search_similar(idx, options)
+        results = await _run_search(backend.search_similar, idx, options)
         return {
             "source_index": idx,
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -1793,7 +2221,7 @@ async def search_random(n: int = Query(20, ge=1, le=100)):
         results = backend.random_results(n)
         return {
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -1838,12 +2266,17 @@ async def get_collection_members(col_id: int):
     backend = _get_backend()
     with trace("api.collections.members"):
         db_ids = backend.get_collection_members(col_id)
-        records = []
-        for db_id in db_ids:
-            for r in backend.get_all_records():
-                if r.db_id == db_id:
-                    records.append(_record_to_json(r))
-                    break
+
+        def _build() -> list[dict[str, Any]]:
+            records = []
+            for db_id in db_ids:
+                for r in backend.get_all_records():
+                    if r.db_id == db_id:
+                        records.append(_record_to_json(r))
+                        break
+            return records
+
+        records = await run_in_threadpool(_build)
         return {"db_ids": db_ids, "records": records}
 
 
@@ -1905,7 +2338,11 @@ async def find_concept_matches(
 ):
     backend = _get_backend()
     with trace("api.concepts.matches"):
-        matches = backend.find_concept_matches(concept_id, top_k, min_score)
+        matches = backend.find_concept_matches(
+            concept_id,
+            max(1, min(top_k, _MAX_SEARCH_TOP_K)),
+            max(-1.0, min(min_score, 1.0)),
+        )
         records = []
         for idx, score in matches:
             r = backend.get_record(idx)
@@ -2107,7 +2544,7 @@ async def person_media(person_id: int):
             "person_id": person_id,
             "person_name": (person or {}).get("name") or "",
             "total": len(results),
-            "results": _results_to_json(results),
+            "results": await _results_to_json(results),
         }
 
 
@@ -2268,7 +2705,6 @@ async def create_enrichment_job(
     llm_backend: str = Form(""),
     llm_model: str = Form(""),
     webchat_target: str = Form(""),
-    webchat_cdp: str = Form(""),
     webchat_temporary: str = Form(""),
     research: str = Form(""),
 ):
@@ -2283,11 +2719,13 @@ async def create_enrichment_job(
             "backend": llm_backend.strip(),
             "model": llm_model.strip(),
             "target": webchat_target.strip(),
-            "cdp": webchat_cdp.strip(),
             "temporary": webchat_temporary.strip(),
         }.items()
         if v
     }
+    effective_llm_backend = llm_backend.strip() or os.environ.get("IRIS_LLM_BACKEND", "")
+    if _multiuser_enabled() and effective_llm_backend.lower() in {"webchat", "web", "browser"}:
+        raise HTTPException(403, "Web-chat é desativado em bibliotecas privadas")
     force_flag = force.strip().lower() in {"1", "true", "yes", "on"}
     research_flag = research.strip().lower() in {"1", "true", "yes", "on"}
     service = _create_web_enrichment_service(overrides)
@@ -2300,9 +2738,10 @@ async def create_enrichment_job(
             raise HTTPException(400, "Configuração ausente: " + ", ".join(missing))
     cached = 0 if force_flag else count_cached_ids(conn, ids)
     job_id = create_job(conn, ids)
+    context = contextvars.copy_context()
     thread = threading.Thread(
-        target=_run_web_enrichment_job,
-        args=(job_id, ids, force_flag, overrides, research_flag),
+        target=context.run,
+        args=(_run_web_enrichment_job, job_id, ids, force_flag, overrides, research_flag),
         daemon=True,
     )
     thread.start()
@@ -2416,16 +2855,17 @@ async def trash_records(db_ids: str = Form(...)):
 
 @app.get("/thumbs/{filename}")
 async def serve_thumbnail(filename: str):
-    # Prevent path traversal: resolve and verify stays within _THUMB_DIR
-    thumb_path = (_THUMB_DIR / filename).resolve()
-    if not thumb_path.is_relative_to(_THUMB_DIR.resolve()):
+    # Prevent path traversal and keep cached previews inside the caller's library.
+    thumb_dir = _thumbnail_dir()
+    thumb_path = (thumb_dir / filename).resolve()
+    if not thumb_path.is_relative_to(thumb_dir.resolve()):
         raise HTTPException(404, "Thumbnail not found")
     if not thumb_path.exists():
         raise HTTPException(404, "Thumbnail not found")
     return FileResponse(
         thumb_path,
         media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 

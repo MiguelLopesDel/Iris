@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
-  <link rel="stylesheet" href="/static/style.css?v=39">
+  <script src="/static/theme.js?v=1"></script>
+  <link rel="stylesheet" href="/static/style.css?v=41">
 </head>
 <body>
 
@@ -47,63 +48,47 @@
     <section class="filter-group" id="collections-group" data-scope="gallery">
       <div class="filter-heading">
         <span class="filter-step">02</span>
-        <label class="filter-label">Coleções</label>
+        <label class="filter-label">Álbuns</label>
       </div>
       <div id="collections-list" class="filter-list">
-        <span class="filter-empty">Nenhuma coleção carregada</span>
+        <span class="filter-empty">Nenhum álbum criado</span>
       </div>
     </section>
 
     <section class="filter-group" id="concepts-group" data-scope="gallery">
       <div class="filter-heading">
         <span class="filter-step">03</span>
-        <label class="filter-label">Conceitos</label>
+        <label class="filter-label">Ensinados ao Iris</label>
       </div>
       <div id="concepts-list" class="filter-list">
-        <span class="filter-empty">Nenhum conceito carregado</span>
+        <span class="filter-empty">Nenhum reconhecimento ensinado</span>
       </div>
     </section>
 
     <section class="filter-group" data-scope="gallery">
       <div class="filter-heading">
         <span class="filter-step">04</span>
-        <label class="filter-label" for="search-mode">Estratégia de busca</label>
+        <label class="filter-label" for="search-mode">Como procurar</label>
       </div>
       <select id="search-mode">
-        <option value="hybrid">Híbrida</option>
-        <option value="text">Foco no texto</option>
+        <option value="hybrid" data-requires-semantic>Tudo que o Iris entende</option>
+        <option value="text" data-requires-semantic>Texto e descrições</option>
         <option value="filename">Nome do arquivo</option>
-        <option value="visual">Foco visual</option>
-        <option value="custom">Personalizada</option>
+        <option value="visual" data-requires-semantic>Aparência da imagem</option>
       </select>
-      <div id="search-custom-params" class="custom-params" style="display:none;">
-        <label>Visual vs. conceitual <output id="balance-val">0.50</output></label>
-        <input type="range" id="search-balance" min="0" max="1" step="0.05" value="0.5">
-        <label>Texto exato <output id="textbonus-val">2.00</output></label>
-        <input type="range" id="search-textbonus" min="0" max="4" step="0.1" value="2.0">
-        <label>Peso lexical <output id="lexical-val">0.25</output></label>
-        <input type="range" id="search-lexical" min="0" max="1" step="0.05" value="0.25">
-      </div>
     </section>
 
     <section class="filter-group filter-group-compact" data-scope="gallery">
-      <div class="range-row">
-        <label class="filter-label" for="search-threshold">Similaridade</label>
-        <output id="threshold-val">0.15</output>
-      </div>
-      <input type="range" id="search-threshold" min="-1" max="1" step="0.05" value="0.15">
-
-      <div class="range-row">
-        <label class="filter-label" for="search-topk">Resultados</label>
-        <output id="topk-val">50</output>
-      </div>
-      <input type="range" id="search-topk" min="1" max="200" step="1" value="50">
-
-      <label class="switch-row">
-        <input type="checkbox" id="search-translate" checked>
-        <span class="switch-control"></span>
-        <span>Traduzir busca para inglês</span>
-      </label>
+      <label class="filter-label" for="search-scope">Abrangência</label>
+      <select id="search-scope">
+        <option value="precise">Mais precisa</option>
+        <option value="balanced" selected>Equilibrada</option>
+        <option value="broad">Mais abrangente</option>
+      </select>
+      <p id="search-scope-help" class="filter-help">Equilibra qualidade e variedade dos resultados.</p>
+      <input type="hidden" id="search-threshold" value="0.15">
+      <input type="hidden" id="search-topk" value="50">
+      <input type="checkbox" id="search-translate" checked hidden>
     </section>
 
     <section class="filter-group sidebar-actions" data-scope="gallery">
@@ -127,7 +112,7 @@
       </div>
       <div class="selection-actions">
         <button id="btn-enrich-selected" class="btn btn-subtle">Web</button>
-        <button id="btn-collection-selected" class="btn btn-subtle">Coleção</button>
+        <button id="btn-collection-selected" class="btn btn-subtle">Álbum</button>
         <button id="btn-trash-selected" class="btn btn-danger">Lixeira</button>
       </div>
     </div>
@@ -143,47 +128,80 @@
         <span></span><span></span><span></span>
       </button>
       <div>
-        <span id="view-kicker" class="eyebrow">Biblioteca</span>
-        <h2 id="view-title">Galeria</h2>
-        <p id="view-description">Navegue por toda a sua coleção visual.</p>
+        <span id="view-kicker" class="eyebrow">Iris</span>
+        <h2 id="view-title">Início</h2>
+        <p id="view-description">Encontre, organize e cuide da sua biblioteca.</p>
       </div>
     </div>
 
     <nav id="tabs" aria-label="Navegação principal">
-      <button class="tab-btn active" data-tab="gallery"><span class="tab-icon">▦</span><span>Galeria</span></button>
-      <button class="tab-btn" data-tab="collections"><span class="tab-icon">◇</span><span>Coleções</span></button>
-      <button class="tab-btn" data-tab="concepts"><span class="tab-icon">✦</span><span>Conceitos</span></button>
-      <button class="tab-btn" data-tab="persons"><span class="tab-icon">☻</span><span>Pessoas</span></button>
-      <span class="tab-divider" aria-hidden="true"></span>
-      <button class="tab-btn tab-btn-ops" data-tab="duplicates"><span class="tab-icon">≋</span><span>Duplicatas</span></button>
-      <button class="tab-btn tab-btn-ops" data-tab="system"><span class="tab-icon">⚙</span><span>Sistema</span></button>
+      <button class="tab-btn active" data-primary-tab="home"><span class="tab-icon">⌂</span><span>Início</span></button>
+      <button class="tab-btn" data-primary-tab="gallery"><span class="tab-icon">▦</span><span>Fotos</span></button>
+      <button class="tab-btn" data-primary-tab="search"><span class="tab-icon">⌕</span><span>Buscar</span></button>
+      <button class="tab-btn" data-primary-tab="organize"><span class="tab-icon">◇</span><span>Organizar</span></button>
     </nav>
+    <button class="icon-btn settings-shortcut" type="button" data-go-tab="system" aria-label="Abrir configurações" title="Configurações">⚙</button>
+    <button class="icon-btn theme-toggle" type="button" data-theme-toggle aria-label="Alternar tema"></button>
+    <button id="account-button" class="btn btn-subtle account-button" type="button" hidden></button>
   </header>
 
   <div id="tab-content">
+    <!-- Home: simple, task-oriented entry point. -->
+    <section id="tab-home" class="tab-pane active home-pane">
+      <div class="home-welcome">
+        <span class="eyebrow">INÍCIO</span>
+        <h1>Suas fotos, fáceis de encontrar.</h1>
+        <p>Descreva uma lembrança, uma cena ou algo escrito na imagem.</p>
+      </div>
+      <form id="home-search-form" class="home-search">
+        <span aria-hidden="true">⌕</span>
+        <input id="home-search-input" type="search" placeholder="Ex.: viagem à praia com Ana" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Buscar</button>
+        <button id="home-image-search" class="btn btn-subtle" type="button" data-requires-image>Usar imagem</button>
+      </form>
+      <section class="home-section">
+        <div class="home-section-title">
+          <div><span class="eyebrow">FOTOS</span><h3>Adicionadas recentemente</h3></div>
+          <button class="btn btn-subtle" type="button" data-go-tab="gallery">Ver todas</button>
+        </div>
+        <div id="home-recent" class="home-recent-grid"><p class="filter-empty">Carregando biblioteca…</p></div>
+      </section>
+      <section class="home-section">
+        <div class="home-section-title"><div><h3>Organize e cuide da biblioteca</h3><p>As ferramentas avançadas aparecem somente quando você precisar.</p></div></div>
+        <div class="home-task-grid">
+          <button class="home-task featured" type="button" data-go-tab="system"><i>＋</i><span><b>Adicionar fotos e vídeos</b><small>Importe uma pasta ou envie arquivos.</small></span><em>→</em></button>
+          <button class="home-task" type="button" data-go-tab="collections"><i>◇</i><span><b>Álbuns</b><small>Separe viagens, projetos e momentos.</small></span><em>→</em></button>
+          <button class="home-task" type="button" data-go-tab="persons"><i>☺</i><span><b>Pessoas</b><small>Encontre fotos por quem aparece nelas.</small></span><em>→</em></button>
+          <button class="home-task" type="button" data-go-tab="duplicates"><i>✓</i><span><b>Revisar e liberar espaço</b><small>Encontre duplicatas com segurança.</small></span><em>→</em></button>
+        </div>
+      </section>
+    </section>
+
     <!-- Gallery tab -->
-    <section id="tab-gallery" class="tab-pane active">
+    <section id="tab-gallery" class="tab-pane">
       <div class="gallery-search-hero">
         <div class="search-input-wrap">
           <span aria-hidden="true">⌕</span>
           <input type="text" id="gallery-search" placeholder="Descreva uma ideia, cole texto ou contexto…" autocomplete="off">
         </div>
-        <label class="btn btn-primary" for="gallery-image-search">Usar imagem</label>
+        <label class="btn btn-primary" for="gallery-image-search" data-requires-image>Usar imagem</label>
         <input type="file" id="gallery-image-search" accept="image/*" hidden>
-        <label class="btn btn-subtle" for="gallery-face-search" title="Encontrar mídias com a pessoa da foto">Buscar pessoa</label>
+        <label class="btn btn-subtle" for="gallery-face-search" title="Encontrar mídias com a pessoa da foto" data-requires-face>Buscar pessoa</label>
         <input type="file" id="gallery-face-search" accept="image/*" hidden>
         <button id="gallery-random" class="btn btn-subtle" type="button">Aleatório</button>
         <button id="gallery-clear-search" class="btn btn-subtle" hidden>Limpar busca</button>
-        <button id="gallery-search-advanced" class="btn btn-subtle" type="button" aria-expanded="false">Agrupar ▾</button>
-        <div id="gallery-group-controls" class="image-group-controls" hidden>
+        <button id="gallery-search-advanced" class="btn btn-subtle" type="button" aria-expanded="false" data-requires-image>Agrupar ▾</button>
+        <div id="gallery-group-controls" class="image-group-controls" hidden data-requires-image>
           <label class="switch-row">
             <input type="checkbox" id="image-group-enabled" checked>
             <span class="switch-control"></span>
             <span>Agrupar resultados visualmente parecidos (busca por imagem)</span>
           </label>
-          <label>Limiar <output id="image-group-threshold-val">0.90</output>
-            <input type="range" id="image-group-threshold" min="0.75" max="0.99" step="0.01" value="0.90">
-          </label>
+          <details class="advanced-disclosure"><summary>Ajuste avançado</summary>
+            <label>Grau mínimo <output id="image-group-threshold-val">0.90</output>
+              <input type="range" id="image-group-threshold" min="0.75" max="0.99" step="0.01" value="0.90">
+            </label>
+          </details>
           <label class="switch-row">
             <input type="checkbox" id="image-group-singletons">
             <span class="switch-control"></span>
@@ -260,9 +278,26 @@
           <div>
             <span class="eyebrow">Curadoria manual</span>
           </div>
-          <button id="btn-new-collection" class="btn btn-primary">+ Nova coleção</button>
+          <button id="btn-new-collection" class="btn btn-primary">+ Novo álbum</button>
         </div>
         <div id="collections-tab-list" class="entity-list"></div>
+      </div>
+    </section>
+
+    <!-- Friendly hub for features that are not everyday navigation. -->
+    <section id="tab-organize" class="tab-pane organize-pane">
+      <div class="organize-intro">
+        <span class="eyebrow">ORGANIZAR</span>
+        <h1>Tudo no lugar, sem complicação.</h1>
+        <p>Escolha o que você quer organizar ou revisar.</p>
+      </div>
+      <div class="organize-grid">
+        <button class="organize-card" type="button" data-go-tab="collections"><i>◇</i><span><b>Álbuns</b><small>Agrupe fotos e vídeos importantes.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="persons"><i>☺</i><span><b>Pessoas</b><small>Nomeie e encontre pessoas reconhecidas.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="duplicates"><i>✓</i><span><b>Revisar duplicatas</b><small>Libere espaço sem apagar o arquivo errado.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="concepts"><i>✦</i><span><b>Ensinar o Iris</b><small>Mostre exemplos de personagens, objetos e ideias.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="system"><i>＋</i><span><b>Adicionar mídia</b><small>Importe e acompanhe a indexação.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="system"><i>⚙</i><span><b>Configurações e backup</b><small>Desempenho, armazenamento e proteção.</small></span><em>→</em></button>
       </div>
     </section>
 
@@ -273,7 +308,7 @@
           <div>
             <span class="eyebrow">Inteligência semântica</span>
           </div>
-          <button id="btn-new-concept" class="btn btn-primary">+ Novo conceito</button>
+          <button id="btn-new-concept" class="btn btn-primary">Ensinar algo ao Iris</button>
         </div>
         <div id="concept-wizard" class="wizard-panel" style="display:none;"></div>
         <div id="concepts-tab-list" class="entity-list"></div>
@@ -306,16 +341,15 @@
           </div>
         </div>
         <div class="control-surface duplicates-controls">
-          <label class="duplicate-similarity-control">
-            <span>Similaridade <output id="dup-threshold-val">0.985</output></span>
-            <input type="range" id="dup-threshold" min="0.8" max="1.0" step="0.005" value="0.985">
+          <label class="duplicate-similarity-control">O que comparar
+            <select id="dup-level">
+              <option value="exact">Quase idênticos</option>
+              <option value="close" selected>Muito parecidos</option>
+              <option value="explore">Explorar parecidos</option>
+            </select>
+            <small id="dup-level-help">Bom para cópias redimensionadas ou recomprimidas.</small>
           </label>
-          <label>Vizinhos
-            <input type="number" id="dup-neighbors" value="12" min="2" max="50">
-          </label>
-          <label>Grupo mínimo
-            <input type="number" id="dup-min-group" value="2" min="2" max="500">
-          </label>
+          <input type="hidden" id="dup-threshold" value="0.985">
           <label>Ordenação
             <select id="dup-sort">
               <option value="similarity">Similaridade</option>
@@ -330,6 +364,12 @@
             </select>
           </label>
           <button id="btn-find-duplicates" class="btn btn-primary">Analisar biblioteca</button>
+          <details class="advanced-disclosure duplicate-advanced"><summary>Ajustes avançados</summary>
+            <div class="form-grid">
+              <label>Vizinhos<input type="number" id="dup-neighbors" value="12" min="2" max="50"></label>
+              <label>Grupo mínimo<input type="number" id="dup-min-group" value="2" min="2" max="500"></label>
+            </div>
+          </details>
         </div>
         <div id="duplicates-results"></div>
       </div>
@@ -343,8 +383,21 @@
         </div>
       </div>
 
+      <section id="account-management" class="detail-panel system-card" hidden>
+        <span class="eyebrow">CONTAS</span>
+        <h4>Criar conta</h4>
+        <p class="system-hint">Cada pessoa recebe uma biblioteca privada e separada.</p>
+        <div class="system-form-grid">
+          <label>Nome de usuário<input id="account-username" type="text" autocomplete="off" placeholder="maria"></label>
+          <label>Nome exibido<input id="account-display-name" type="text" autocomplete="name" placeholder="Maria"></label>
+          <label>Senha temporária<input id="account-password" type="password" autocomplete="new-password" placeholder="mínimo 12 caracteres"></label>
+        </div>
+        <button id="account-create" class="btn btn-primary" type="button">Criar conta</button>
+        <span id="account-status" class="system-status"></span>
+      </section>
+
       <div class="system-grid">
-        <section class="detail-panel system-card">
+        <section class="detail-panel system-card" data-host-only>
           <span class="eyebrow">Configuração ativa</span>
           <h4>Banco e modelos</h4>
           <label>Banco de dados
@@ -363,7 +416,8 @@
         <section class="detail-panel system-card system-card-wide">
           <span class="eyebrow">Entrada de mídia</span>
           <h4>Importar e indexar</h4>
-          <div class="folder-browser">
+          <p id="private-library-health" class="system-status" hidden></p>
+          <div class="folder-browser" data-host-import>
             <label>Pasta
               <input type="text" id="import-folder" placeholder="/caminho/da/pasta">
             </label>
@@ -376,7 +430,7 @@
           <label>Ou envie arquivos
             <input type="file" id="import-files" accept="image/*,video/*,audio/*,.svg" multiple>
           </label>
-          <div class="form-grid">
+          <div class="form-grid" data-host-import>
             <label>Biblioteca<input type="text" id="import-library" value="default"></label>
             <label>Raiz gerenciada<input type="text" id="import-library-root" value="data/library"></label>
             <label>Batch size<input type="number" id="import-batch" value="8" min="1" max="64"></label>
@@ -391,7 +445,8 @@
             <label>Caption model<input type="text" id="import-caption" value="microsoft/Florence-2-large"></label>
             <label>Whisper model<input type="text" id="import-whisper" value="tiny"></label>
           </div>
-          <div class="inline-switches">
+          <div class="inline-switches" data-host-import>
+            <label class="switch-row"><input type="checkbox" id="import-low-resource"><span class="switch-control"></span><span>Modo PC fraco (CPU, modelo menor; desativa recursos extras)</span></label>
             <label class="switch-row"><input type="checkbox" id="import-use-folder"><span class="switch-control"></span><span>Importar a pasta exibida acima</span></label>
             <label class="switch-row"><input type="checkbox" id="import-recursive" checked><span class="switch-control"></span><span>Incluir subpastas</span></label>
             <label class="switch-row"><input type="checkbox" id="import-copy" checked><span class="switch-control"></span><span>Copiar para biblioteca gerenciada</span></label>
@@ -407,7 +462,7 @@
           <div id="import-review" class="import-review"></div>
         </section>
 
-        <section class="detail-panel system-card system-card-wide">
+        <section class="detail-panel system-card system-card-wide" data-host-only>
           <span class="eyebrow">Portabilidade</span>
           <h4>Backup do catálogo (snapshots)</h4>
           <p class="backup-hint">Salva só o catálogo (banco + embeddings) num destino externo, fora da cota. FAISS é reconstruído na restauração; a mídia é tratada à parte.</p>
@@ -445,6 +500,13 @@
   </div>
 </main>
 
+<nav id="mobile-navigation" aria-label="Navegação principal móvel">
+  <button class="active" data-primary-tab="home"><span>⌂</span>Início</button>
+  <button data-primary-tab="gallery"><span>▦</span>Fotos</button>
+  <button data-primary-tab="search"><span>⌕</span>Buscar</button>
+  <button data-primary-tab="organize"><span>◇</span>Organizar</button>
+</nav>
+
 <!-- Floating selection panel -->
 <div id="floating-panel" style="display:none;">
   <div id="floating-thumbs"></div>
@@ -472,14 +534,11 @@
         <option value="">Heurística (sem IA)</option>
         <option value="openai">API ChatGPT (OpenAI)</option>
         <option value="gemini">API Gemini</option>
-        <option value="webchat">Web-chat: ChatGPT (meu navegador)</option>
+        <option value="webchat" data-webchat-option>Web-chat: ChatGPT (meu navegador)</option>
       </select>
     </label>
     <label id="we-model-wrap" hidden>Modelo:
       <input id="we-model" type="text" placeholder="gpt-4o-mini / gemini-2.0-flash" />
-    </label>
-    <label id="we-cdp-wrap" hidden>Chrome (CDP):
-      <input id="we-cdp" type="text" placeholder="(vazio = perfil dedicado do Iris)" />
     </label>
     <label id="we-temporary-wrap" hidden>
       <input id="we-temporary" type="checkbox" checked /> Conversa temporária
@@ -504,7 +563,7 @@
   <div class="collection-modal-card">
     <header>
       <div>
-        <span class="eyebrow">Coleções</span>
+        <span class="eyebrow">Álbuns</span>
         <h3>Adicionar seleção</h3>
         <p><span id="collection-modal-count">0</span> item(ns) selecionado(s)</p>
       </div>
@@ -512,14 +571,14 @@
     </header>
     <div id="collection-modal-status" class="collection-modal-status"></div>
     <section class="collection-modal-section">
-      <h4>Escolher existente</h4>
+      <h4>Escolher álbum</h4>
       <div id="collection-modal-list" class="collection-modal-list"></div>
     </section>
     <section class="collection-modal-section collection-modal-create">
       <h4>Criar agora</h4>
       <form id="collection-modal-create-form">
-        <input id="collection-modal-name" type="text" placeholder="Nome da nova coleção" autocomplete="off">
-        <button class="btn btn-primary" type="submit">Criar e adicionar</button>
+        <input id="collection-modal-name" type="text" placeholder="Nome do novo álbum" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Criar álbum e adicionar</button>
       </form>
     </section>
   </div>
@@ -538,7 +597,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=56"></script>
+<script type="module" src="/static/app.js?v=59"></script>
 
 </body>
 </html>

@@ -17,6 +17,7 @@ dependencies = [
     "opencv-python-headless>=4.8",
     "pillow>=10",
     "python-multipart>=0.0.9",
+    "pwdlib[argon2]>=0.2,<1",
     "sentence-transformers>=3",
     "Send2Trash>=1.8",
     "timm>=1",

@@ -1176,10 +1176,9 @@ class WebChatBackend:
     capture it. Free and uses the user's account; fragile by nature (depends on
     chatgpt.com's DOM and a one-time login), so it needs live calibration.
 
-    Connection (decided with the user): a **dedicated persistent profile** is the
-    default -- the user logs into ChatGPT once and it is reused. ``cdp_url`` can
-    instead attach to the user's own running Chrome. The DOM interaction is
-    isolated in ``_send_deeplink`` and can be swapped via ``completer`` for tests.
+    A **dedicated persistent profile** is always used. Attaching to an arbitrary
+    Chrome debugging endpoint would turn a user-controlled URL into an internal
+    network/control-plane capability, so CDP attachment is intentionally disabled.
     """
 
     name = "webchat"
@@ -1193,7 +1192,6 @@ class WebChatBackend:
         self,
         *,
         target: str = "chatgpt",
-        cdp_url: str = "",
         headless: bool | None = None,
         profile_dir: str = "",
         channel: str | None = None,
@@ -1202,7 +1200,6 @@ class WebChatBackend:
         completer: Callable[[str], str] | None = None,
     ):
         self.target = (target or "chatgpt").strip().lower()
-        self.cdp_url = cdp_url or os.environ.get("IRIS_WEBCHAT_CDP", "")
         # Web chat must run headed (login + far less bot-flagging).
         env_headless = os.environ.get("IRIS_WEBCHAT_HEADLESS", "0").strip().lower()
         self.headless = headless if headless is not None else env_headless not in {"0", "false", "no"}
@@ -1246,9 +1243,8 @@ class WebChatBackend:
         return self._send_deeplink(url)
 
     def _send_deeplink(self, url: str) -> str:
-        # Reuse the persistent shared browser (same window/profile as Lens) when
-        # enabled and not attaching to the user's own Chrome via CDP.
-        if not self.cdp_url and shared_session_enabled():
+        # Reuse the persistent dedicated browser session when enabled.
+        if shared_session_enabled():
             return get_browser_session().submit(
                 lambda ctx: self._send_on_context(ctx, url)
             )
@@ -1329,10 +1325,6 @@ class WebChatBackend:
         page.wait_for_timeout(1500)
 
     def _connect(self, pw: Any) -> tuple[Any, bool]:
-        if self.cdp_url:
-            browser = pw.chromium.connect_over_cdp(self.cdp_url)
-            context = browser.contexts[0] if browser.contexts else browser.new_context()
-            return context, False  # never close the user's own Chrome
         os.makedirs(self.profile_dir, exist_ok=True)
         # Prefer the real Chrome channel (passes Cloudflare); fall back to the
         # bundled Chromium if Chrome is not installed.
@@ -1446,7 +1438,6 @@ def build_distiller(overrides: dict[str, str] | None = None) -> HeuristicDistill
         temporary = None if temp_raw == "" else temp_raw not in {"0", "false", "no"}
         backend = WebChatBackend(
             target=cfg("target", "IRIS_WEBCHAT_TARGET") or "chatgpt",
-            cdp_url=cfg("cdp", "IRIS_WEBCHAT_CDP"),
             temporary=temporary,
         )
     else:

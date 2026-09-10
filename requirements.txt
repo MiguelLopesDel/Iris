@@ -1,7 +1,8 @@
---extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.7.1+cu126
-torchvision==0.22.1+cu126
-torchaudio==2.7.1+cu126
+# CPU wheels are the default: search works without NVIDIA CUDA, including AMD APUs.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.1+cpu
+torchvision==0.22.1+cpu
+torchaudio==2.7.1+cpu
 transformers==4.44.2
 sentence-transformers==5.4.1
 easyocr==1.7.2
@@ -18,12 +19,16 @@ einops==0.8.2
 psutil==7.1.3
 fastapi>=0.115,<1
 python-multipart>=0.0.9
+pwdlib[argon2]>=0.2,<1
 uvicorn>=0.30,<1
+itsdangerous>=2.2,<3
 deep-translator==1.11.4
 Send2Trash==1.8.3
 pyacoustid==1.3.0
 insightface==0.7.3
-onnxruntime-gpu==1.20.1
+# CPU is the default deployment. InsightFace imports the generic runtime; the
+# GPU runtime belongs only in an explicit NVIDIA deployment profile.
+onnxruntime==1.20.1
 cairosvg>=2.7.0
 reverse_geocoder>=1.5.1
 pytest==9.0.2

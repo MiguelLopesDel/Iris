@@ -51,6 +51,7 @@ class IndexRecord:
     audio_fingerprint: str = ""
     audio_embedding: np.ndarray | None = None
     perceptual_hash: str = ""
+    thumb_hash: str = ""
 
 
 @dataclass(frozen=True)

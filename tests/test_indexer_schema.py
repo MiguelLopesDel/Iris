@@ -28,7 +28,7 @@ INSERT_COLUMNS = {
     "content_hash", "ocr_normalized", "visual_json", "objects", "style", "source_work",
     "humor", "context", "error_message", "model_name", "embedding_dim", "schema_version",
     "embedding", "desc_embedding", "audio_fingerprint", "audio_embedding", "perceptual_hash",
-    "metadata_json",
+    "metadata_json", "thumb_hash",
 }
 
 
