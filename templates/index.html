@@ -89,7 +89,14 @@
       <p id="search-scope-help" class="filter-help">Equilibra qualidade e variedade dos resultados.</p>
       <input type="hidden" id="search-threshold" value="0.15">
       <input type="hidden" id="search-topk" value="50">
-      <input type="checkbox" id="search-translate" checked hidden>
+      <label class="filter-check" for="search-translate" data-advanced-control>
+        <input type="checkbox" id="search-translate" checked>
+        Traduzir a busca para inglês
+      </label>
+      <p class="filter-help" data-advanced-control>
+        Melhora resultados em português, mas envia o texto digitado a um
+        tradutor externo. Suas mídias não saem daqui; a consulta sai.
+      </p>
     </section>
 
     <section class="filter-group sidebar-actions" data-scope="gallery">

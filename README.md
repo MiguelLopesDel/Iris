@@ -1,6 +1,8 @@
 # Iris
 
-**Local multimodal AI media intelligence.** Index, search, and organize your entire media collection with AI — all running on your own machine, with no data leaving your device.
+**Local multimodal AI media intelligence.** Index, search, and organize your entire media collection with AI — the models run on your own machine and your media never leaves it.
+
+> One exception, stated plainly: semantic search translates your query to English > before encoding it, because the embedding model is English-trained, and that > translation call goes to an external service. Your files stay put; the words you > type in the search box do not. Set `IRIS_TRANSLATE_QUERIES=0` to keep everything > local, at the cost of weaker results for non-English queries.
 
 🌐 **[Project page → miguellopesdel.github.io/Iris](https://miguellopesdel.github.io/Iris/)**
 

@@ -37,6 +37,24 @@ IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"})
 AUDIO_EXTENSIONS = frozenset({".mp3"})
 
 
+def queries_may_leave_the_machine() -> bool:
+    """Se a consulta pode ser enviada ao tradutor externo.
+
+    O modelo de busca (``clip-ViT-L-14``) foi treinado em inglês, então buscar
+    em português sem traduzir degrada bastante o resultado. O preço é que o
+    texto digitado sai da máquina rumo ao Google Translate — a mídia não sai, a
+    consulta sim. Quem prefere privacidade a qualidade de busca desliga com
+    ``IRIS_TRANSLATE_QUERIES=0``; antes disso não havia como, porque o
+    interruptor na interface era ``checked hidden``.
+    """
+    return os.environ.get("IRIS_TRANSLATE_QUERIES", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 class IrisEngine:
     def __init__(
         self,
@@ -640,7 +658,7 @@ class IrisEngine:
         if self.model is None:
             raise RuntimeError("Search model is not loaded.")
         search_text = query
-        if translate and query:
+        if translate and query and queries_may_leave_the_machine():
             try:
                 translated = GoogleTranslator(source="pt", target="en").translate(query)
                 if translated:
