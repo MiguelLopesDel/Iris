@@ -33,8 +33,8 @@ data class MediaRecord(
     @SerialName("thumbnail_url") val thumbnailUrl: String? = null,
     @SerialName("persons") val persons: List<MediaPersonRef> = emptyList(),
     @SerialName("score") val score: Float? = null,
-    @SerialName("collections") val collections: List<String> = emptyList(),
-    @SerialName("concepts") val concepts: List<String> = emptyList()
+    @SerialName("collections") val collections: List<IrisCollection> = emptyList(),
+    @SerialName("concepts") val concepts: List<MediaConceptRef> = emptyList()
 ) {
     val isVideo: Boolean
         get() = mediaType.equals("video", ignoreCase = true)
@@ -47,6 +47,15 @@ data class MediaRecord(
     val tagsList: List<String>
         get() = tags?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
 }
+
+/** Compact concept membership returned by a media-detail response. */
+@Serializable
+data class MediaConceptRef(
+    @SerialName("id") val id: Int,
+    @SerialName("name") val name: String,
+    @SerialName("category") val category: String = "",
+    @SerialName("confirmed") val confirmed: Boolean = false
+)
 
 @Serializable
 data class RecordsResponse(
