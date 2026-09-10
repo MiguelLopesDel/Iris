@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from core.users_db import get_user_by_username
-from scripts.bootstrap_admin import _default_legacy_db
+from scripts.bootstrap_admin import _default_legacy_db, _move_media_contents
 
 
 def test_bootstrap_admin_creates_an_empty_private_library(tmp_path: Path):
@@ -62,3 +62,20 @@ def test_bootstrap_cli_migrates_supported_legacy_catalog_by_default(tmp_path: Pa
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "moveria" in result.stdout
+
+
+def test_media_migration_keeps_legacy_mount_root_and_moves_its_contents(tmp_path: Path):
+    source = tmp_path / "media"
+    source.mkdir()
+    (source / "photo.jpg").write_bytes(b"photo")
+    nested = source / "album"
+    nested.mkdir()
+    (nested / "video.mp4").write_bytes(b"video")
+    destination = tmp_path / "data" / "users" / "1" / "media"
+
+    _move_media_contents(source, destination)
+
+    assert source.is_dir()
+    assert list(source.iterdir()) == []
+    assert (destination / "photo.jpg").read_bytes() == b"photo"
+    assert (destination / "album" / "video.mp4").read_bytes() == b"video"

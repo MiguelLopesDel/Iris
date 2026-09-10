@@ -33,6 +33,23 @@ def _faiss_files(db_path: Path) -> list[Path]:
     ]
 
 
+def _move_media_contents(source_root: Path, destination_root: Path) -> None:
+    """Move children without attempting to remove a Docker bind-mount root.
+
+    ``/app/media`` is commonly a bind mount while private libraries live under
+    the separate ``/app/data`` bind mount. Moving the root directory makes
+    ``shutil.move`` copy the library and then fail while trying to remove the
+    mount point. Moving children permits the normal copy-and-delete fallback
+    across filesystems and leaves an empty legacy mount behind.
+    """
+    destination_root.mkdir(parents=True, exist_ok=True)
+    for source in source_root.iterdir():
+        destination = destination_root / source.name
+        if destination.exists():
+            raise FileExistsError(f"destino de mídia já existe: {destination}")
+        shutil.move(str(source), str(destination))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
@@ -75,14 +92,11 @@ def main() -> int:
         return 0
     assets = [source_db, *_faiss_files(source_db)]
     try:
-        # create_user creates this private directory; remove the known-empty
-        # placeholder before moving the existing library into its final name.
-        user.media_root.rmdir()
         for source in assets:
             if source.exists():
                 target = user.db_path if source == source_db else destination_root / source.name.replace(source_db.stem, user.db_path.stem, 1)
                 shutil.move(str(source), str(target))
-        shutil.move(str(source_media), str(user.media_root))
+        _move_media_contents(source_media, user.media_root)
         old_thumbnails = data_dir / "thumbnails"
         if old_thumbnails.exists():
             shutil.move(str(old_thumbnails), str(destination_root / "thumbnails"))
