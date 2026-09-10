@@ -35,10 +35,8 @@
           "face_id": null
         }
       ],
-      "score": 22.6274,
-      "score_details": {
-        "face_score": 22.62742042541504
-      }
+      "score": 0.0,
+      "score_details": {}
     }
   ]
 }

@@ -86,6 +86,15 @@ _VOLATILE_KEYS = {
 # Listas cujo conteúdo é uma varredura do disco local.
 _VOLATILE_LISTS = {"databases", "warnings"}
 
+# Números calculados a partir de embeddings. Os últimos bits dependem da CPU e
+# da versão de BLAS, então comparar o valor faz a fixture falhar entre máquinas
+# — foi o que quebrou a CI. Zerados, mas mantidos como número: o cliente Kotlin
+# decodifica estes arquivos e mudar o tipo quebraria a leitura.
+_VOLATILE_NUMBERS = {"score"}
+
+# Dicionários de diagnóstico, com os mesmos floats instáveis dentro.
+_VOLATILE_DICTS = {"score_details"}
+
 
 def _mask_volatile(value):
     if isinstance(value, dict):
@@ -96,6 +105,10 @@ def _mask_volatile(value):
             # e o teste golden falharia dependendo de onde roda.
             if k in _VOLATILE_LISTS:
                 masked[k] = []
+            elif k in _VOLATILE_DICTS:
+                masked[k] = {}
+            elif k in _VOLATILE_NUMBERS:
+                masked[k] = 0.0
             elif k in _VOLATILE_KEYS:
                 masked[k] = "<masked>"
             else:
@@ -262,3 +275,32 @@ def test_fixtures_never_leak_local_paths():
                 f"{arquivo.name} contém um caminho local ({trecho!r}). "
                 "Acrescente o campo a _VOLATILE_KEYS/_VOLATILE_LISTS e regenere."
             )
+
+
+def test_fixtures_hold_no_computed_floats():
+    """Pega a classe de campo que já quebrou a CI duas vezes.
+
+    Um float com muitas casas decimais quase sempre veio de um cálculo — uma
+    similaridade, uma distância — e os últimos bits dependem da CPU e da versão
+    de BLAS da máquina. Comparar isso entre o seu computador e o runner falha
+    sem que ninguém tenha mudado o servidor. Se este teste acusar, o campo
+    provavelmente pertence a _VOLATILE_NUMBERS.
+    """
+    def suspeitos(valor, caminho=""):
+        if isinstance(valor, dict):
+            for k, v in valor.items():
+                yield from suspeitos(v, f"{caminho}.{k}" if caminho else k)
+        elif isinstance(valor, list):
+            for i, v in enumerate(valor):
+                yield from suspeitos(v, f"{caminho}[{i}]")
+        elif isinstance(valor, float):
+            casas = len(repr(valor).partition(".")[2].rstrip("0"))
+            if casas > 6:
+                yield f"{caminho} = {valor!r}"
+
+    for arquivo in sorted(FIXTURE_DIR.glob("*.json")):
+        achados = list(suspeitos(json.loads(arquivo.read_text(encoding="utf-8"))))
+        assert not achados, (
+            f"{arquivo.name} guarda valor calculado, que difere entre máquinas: "
+            + ", ".join(achados)
+        )
