@@ -34,3 +34,11 @@ def test_release_test_exercises_clean_compose_startup_and_authentication():
     assert "/healthz" in script
     assert "bootstrap_admin.py" in script
     assert "verify_server.py" in script
+
+
+def test_server_port_is_configurable_without_exposing_the_container():
+    compose = (ROOT / "docker-compose.yml").read_text()
+    script = (ROOT / "scripts" / "server.sh").read_text()
+    assert '"127.0.0.1:${IRIS_PORT:-8501}:8501"' in compose
+    assert "port <1024-65535>" in script
+    assert "tailscale serve --bg http://127.0.0.1:" in script

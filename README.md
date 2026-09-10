@@ -112,7 +112,7 @@ Para acesso remoto, mantenha o Iris em `127.0.0.1` e publique-o apenas na sua ta
 com Tailscale Serve:
 
 ```bash
-tailscale serve 8501
+sudo tailscale serve --bg http://127.0.0.1:8501
 ```
 
 Não exponha a porta diretamente à Internet. O servidor processa originais para busca,

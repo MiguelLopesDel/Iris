@@ -21,10 +21,43 @@ prepare_env() {
     chmod 700 data media
 }
 
+configured_port() {
+    if [ -f .env ]; then
+        local configured
+        configured="$(sed -n 's/^IRIS_PORT=//p' .env | tail -n 1)"
+        if [ -n "$configured" ]; then
+            printf '%s' "$configured"
+            return
+        fi
+    fi
+    printf '%s' "8501"
+}
+
+set_port() {
+    local port="$1"
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+        echo "Port must be an integer between 1024 and 65535." >&2
+        exit 2
+    fi
+    prepare_env
+    if grep -q '^IRIS_PORT=' .env; then
+        sed -i "s/^IRIS_PORT=.*/IRIS_PORT=$port/" .env
+    else
+        printf '\nIRIS_PORT=%s\n' "$port" >> .env
+    fi
+    docker compose up -d --build
+    wait_for_health
+    echo "Iris is now available locally at http://127.0.0.1:$port"
+    echo "For private Tailscale access, run:"
+    echo "  sudo tailscale serve --bg http://127.0.0.1:$port"
+}
+
 wait_for_health() {
     local attempt
+    local port
+    port="$(configured_port)"
     for attempt in $(seq 1 30); do
-        if curl --fail --silent --show-error http://127.0.0.1:"${IRIS_PORT:-8501}"/healthz >/dev/null; then
+        if curl --fail --silent --show-error "http://127.0.0.1:$port/healthz" >/dev/null; then
             return 0
         fi
         sleep 2
@@ -53,7 +86,7 @@ case "${1:-}" in
     status)
         require_compose
         docker compose ps
-        curl --fail --silent http://127.0.0.1:"${IRIS_PORT:-8501}"/healthz; echo
+        curl --fail --silent "http://127.0.0.1:$(configured_port)/healthz"; echo
         ;;
     logs)
         require_compose
@@ -67,8 +100,13 @@ case "${1:-}" in
         wait_for_health
         echo "Update completed. Run ./scripts/server.sh status to confirm."
         ;;
+    port)
+        require_compose
+        [ "$#" -eq 2 ] || { echo "Usage: $0 port <1024-65535>" >&2; exit 2; }
+        set_port "$2"
+        ;;
     *)
-        echo "Usage: $0 {install|create-admin|status|logs|update}" >&2
+        echo "Usage: $0 {install|create-admin|status|logs|update|port <1024-65535>}" >&2
         exit 2
         ;;
 esac

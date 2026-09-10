@@ -49,15 +49,32 @@ ativa a tela de login. A conta administradora cria as demais pelo painel **Siste
 
 ## Acesso remoto privado
 
-No host, depois de configurar HTTPS na tailnet quando o Tailscale solicitar:
+O Iris usa a porta `8501` por padrão, mas ela é configurável no servidor. A porta
+continua privada em `127.0.0.1`; isso não abre acesso pela rede local ou Internet.
+Para trocar, use:
 
 ```bash
-tailscale serve 8501
+./scripts/server.sh port 8751
+```
+
+O comando atualiza `.env`, reinicia o Iris, verifica a saúde e mostra o comando
+Tailscale correspondente. Escolha uma porta livre entre 1024 e 65535. Não configure
+essa porta pelo painel web: ela é uma decisão do host e um processo não pode trocar
+a própria porta com segurança.
+
+No host, depois de configurar HTTPS na tailnet quando o Tailscale solicitar, publique
+o endereço local escolhido pelo Tailscale Serve:
+
+```bash
+sudo tailscale serve --bg http://127.0.0.1:8501
 tailscale serve status
 ```
 
 Abra o endereço `.ts.net` mostrado no notebook ou celular que esteja na mesma
-tailnet. Não use Tailscale Funnel e não mude o mapeamento Docker para `0.0.0.0`
+tailnet. Se você trocou para `8751`, substitua `8501` por `8751` no comando. Esse
+endereço `.ts.net` é o que deve ser usado pelos seus dispositivos; não use o IP
+Tailscale seguido de `:8501`, pois o Docker atende deliberadamente só no host local.
+Não use Tailscale Funnel e não mude o mapeamento Docker para `0.0.0.0`
 sem antes projetar exposição pública, TLS, rate limiting e recuperação de incidentes.
 
 ## Atualização e recuperação
