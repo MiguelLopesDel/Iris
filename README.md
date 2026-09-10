@@ -193,6 +193,25 @@ profile: CPU, batch 1, smaller CLIP, and no caption/transcription/face models.
 Use it for a new catalog (or reindex an old one): different CLIP models cannot be
 mixed in a database.
 
+### SigLIP 2 (optional, requires a full reindex)
+
+`IRIS_MODEL` also accepts a SigLIP 2 checkpoint, e.g.
+`google/siglip2-base-patch16-224` or `google/siglip2-so400m-patch14-384`. It is a
+stronger retrieval model than `clip-ViT-L-14` and it is multilingual, but the two
+embedding spaces are unrelated: **an existing catalog must be reindexed**, and the
+taxonomy thresholds in `core/taxonomy.py` were calibrated for the CLIP similarity
+distribution, so they need recalibrating too. Point `IRIS_MODEL` at SigLIP without
+reindexing and search refuses to run rather than returning a meaningless ranking —
+`siglip2-base` happens to have the same 768 dimensions as CLIP, so the shape check
+alone would not catch the mistake.
+
+Note for anyone extending this: SigLIP is loaded through `core/embedding_models.py`,
+not through `sentence-transformers`. `sentence-transformers` pads a batch to its
+longest sequence, while SigLIP's text tower was trained with a fixed 64-token
+padding and is not invariant to it — the same query encoded alongside a longer
+sentence comes out as a different vector (measured cosine 0.76). That silently
+makes an index depend on the order the files were processed in.
+
 ---
 
 ## Concept recognition
