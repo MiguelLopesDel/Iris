@@ -5,6 +5,9 @@ import com.iris.app.data.remote.IrisApiService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+
 class ChangeFeedSyncManager(
     private val dbHelper: UploadDatabaseHelper,
     private val apiServiceProvider: () -> IrisApiService
@@ -29,9 +32,12 @@ class ChangeFeedSyncManager(
             // Apply changes locally
             for (change in response.changes) {
                 totalChanges++
+                if (change.entityType.isNotEmpty() && change.entityType != "media") {
+                    continue
+                }
                 val uploadId = change.entityId
-                val payloadState = change.payload?.get("state")?.toString()?.replace("\"", "")
-                val errorSummary = change.payload?.get("error")?.toString()?.replace("\"", "")
+                val payloadState = change.payload?.get("state")?.jsonPrimitive?.contentOrNull
+                val errorSummary = change.payload?.get("error")?.jsonPrimitive?.contentOrNull
                 when (payloadState) {
                     "processing" -> dbHelper.updateJobStateByUploadId(uploadId, com.iris.app.data.model.UploadJobState.PROCESSING)
                     "ready" -> dbHelper.updateJobStateByUploadId(uploadId, com.iris.app.data.model.UploadJobState.READY)

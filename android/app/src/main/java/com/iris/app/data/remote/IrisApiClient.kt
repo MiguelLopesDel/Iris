@@ -1,9 +1,10 @@
 package com.iris.app.data.remote
 
-import com.iris.app.data.local.DeviceCredentialsStore
+import com.iris.app.data.local.DeviceAuthStore
 import kotlinx.serialization.json.Json
 import okhttp3.Authenticator
 import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -20,7 +21,7 @@ import java.util.concurrent.TimeUnit
 
 class IrisApiClient(
     initialBaseUrl: String = "http://10.0.2.2:8000/",
-    private val credentialsStore: DeviceCredentialsStore? = null
+    private val credentialsStore: DeviceAuthStore? = null
 ) {
     @Volatile
     var baseUrl: String = normalizeBaseUrl(initialBaseUrl)
@@ -46,14 +47,29 @@ class IrisApiClient(
 
     private val authInterceptor = Interceptor { chain ->
         val original = chain.request()
-        val path = original.url.encodedPath
+        val requestUrl = original.url
+        val path = requestUrl.encodedPath
 
         // Do not add Bearer token to login or refresh endpoints
         if (path.contains("/auth/devices/login") || path.contains("/auth/devices/refresh")) {
             return@Interceptor chain.proceed(original)
         }
 
-        val token = credentialsStore?.getAccessToken()
+        // Host security check: NEVER leak Bearer token to a different host or port
+        val currentBaseHttpUrl = baseUrl.toHttpUrlOrNull()
+        val isTargetingCurrentServer = currentBaseHttpUrl != null &&
+            requestUrl.host == currentBaseHttpUrl.host &&
+            requestUrl.port == currentBaseHttpUrl.port
+
+        val storedOrigin = credentialsStore?.getServerOrigin()
+        val isOriginValid = storedOrigin.isNullOrBlank() || storedOrigin == getOrigin(baseUrl)
+
+        val token = if (isTargetingCurrentServer && isOriginValid) {
+            credentialsStore?.getAccessToken()
+        } else {
+            null
+        }
+
         val newRequest = if (!token.isNullOrBlank()) {
             original.newBuilder()
                 .header("Authorization", "Bearer $token")
@@ -79,6 +95,20 @@ class IrisApiClient(
 
     private val tokenAuthenticator = Authenticator { _: Route?, response: Response ->
         if (credentialsStore == null) return@Authenticator null
+
+        // Host security check: only refresh if the failing request is for the current server
+        val currentBaseHttpUrl = baseUrl.toHttpUrlOrNull()
+        if (currentBaseHttpUrl == null ||
+            response.request.url.host != currentBaseHttpUrl.host ||
+            response.request.url.port != currentBaseHttpUrl.port
+        ) {
+            return@Authenticator null
+        }
+
+        val storedOrigin = credentialsStore.getServerOrigin()
+        if (!storedOrigin.isNullOrBlank() && storedOrigin != getOrigin(baseUrl)) {
+            return@Authenticator null
+        }
 
         // Prevent infinite loops if refresh itself fails
         if (response.request.url.encodedPath.contains("/auth/devices/refresh")) {
@@ -180,6 +210,14 @@ class IrisApiClient(
         val normalized = normalizeBaseUrl(newUrl)
         if (normalized != baseUrl) {
             synchronized(this) {
+                val oldOrigin = getOrigin(baseUrl)
+                val newOrigin = getOrigin(normalized)
+                if (oldOrigin.isNotBlank() && newOrigin.isNotBlank() && oldOrigin != newOrigin) {
+                    val storedOrigin = credentialsStore?.getServerOrigin()
+                    if (!storedOrigin.isNullOrBlank() && storedOrigin != newOrigin) {
+                        credentialsStore.clearCredentials()
+                    }
+                }
                 baseUrl = normalized
                 cachedService = null
             }
@@ -228,6 +266,11 @@ class IrisApiClient(
                 trimmed = "$trimmed/"
             }
             return trimmed
+        }
+
+        fun getOrigin(url: String): String {
+            val httpUrl = url.toHttpUrlOrNull() ?: return ""
+            return "${httpUrl.scheme}://${httpUrl.host}:${httpUrl.port}"
         }
     }
 }

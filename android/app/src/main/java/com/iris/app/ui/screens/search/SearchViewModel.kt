@@ -50,6 +50,8 @@ class SearchViewModel(
                 delay(400) // Debounce typing
                 performSearch()
             }
+        } else if (newQuery.trim().isEmpty()) {
+            _uiState.update { it.copy(results = emptyList(), total = 0, hasSearched = false, error = null) }
         }
     }
 

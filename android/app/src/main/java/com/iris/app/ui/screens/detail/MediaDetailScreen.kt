@@ -65,11 +65,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -187,24 +190,35 @@ fun MediaDetailScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         if (record.isVideo) {
-                            // ExoPlayer Video Player
-                            var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
-
-                            DisposableEffect(fullMediaUrl) {
+                            // ExoPlayer Video Player initialized synchronously so PlayerView has a non-null player on frame 1
+                            val lifecycleOwner = LocalLifecycleOwner.current
+                            val exoPlayer = remember(fullMediaUrl) {
                                 val dataSourceFactory = IrisMediaDataSourceFactory(apiClient.authenticatedOkHttpClient)
                                 val mediaSourceFactory = DefaultMediaSourceFactory(context)
                                     .setDataSourceFactory(dataSourceFactory)
-                                val player = ExoPlayer.Builder(context)
+                                ExoPlayer.Builder(context)
                                     .setMediaSourceFactory(mediaSourceFactory)
                                     .build().apply {
                                         setMediaItem(MediaItem.fromUri(fullMediaUrl))
                                         prepare()
                                         playWhenReady = true
                                     }
-                                exoPlayer = player
+                            }
+
+                            DisposableEffect(exoPlayer, lifecycleOwner) {
+                                val observer = LifecycleEventObserver { _, event ->
+                                    when (event) {
+                                        Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                                            exoPlayer.pause()
+                                        }
+                                        else -> {}
+                                    }
+                                }
+                                lifecycleOwner.lifecycle.addObserver(observer)
 
                                 onDispose {
-                                    player.release()
+                                    lifecycleOwner.lifecycle.removeObserver(observer)
+                                    exoPlayer.release()
                                 }
                             }
 
@@ -214,6 +228,14 @@ fun MediaDetailScreen(
                                         this.player = exoPlayer
                                         useController = true
                                     }
+                                },
+                                update = { playerView ->
+                                    if (playerView.player != exoPlayer) {
+                                        playerView.player = exoPlayer
+                                    }
+                                },
+                                onRelease = { playerView ->
+                                    playerView.player = null
                                 },
                                 modifier = Modifier.fillMaxSize()
                             )

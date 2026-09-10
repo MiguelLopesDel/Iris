@@ -171,7 +171,7 @@ fun GalleryScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 when {
-                    uiState.isLoading && uiState.records.isEmpty() -> {
+                    (uiState.isLoading || uiState.isServerChecking) && uiState.records.isEmpty() -> {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center

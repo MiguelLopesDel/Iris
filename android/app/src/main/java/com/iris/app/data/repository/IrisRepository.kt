@@ -42,7 +42,8 @@ class IrisRepository(
             accessToken = response.accessToken,
             refreshToken = response.refreshToken,
             expiresInSeconds = response.expiresIn,
-            username = username
+            username = username,
+            serverOrigin = IrisApiClient.getOrigin(apiClient.baseUrl)
         )
         response
     }

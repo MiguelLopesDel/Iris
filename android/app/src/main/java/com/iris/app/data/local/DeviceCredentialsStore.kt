@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class DeviceCredentialsStore(context: Context) {
+class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
 
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -30,7 +30,8 @@ class DeviceCredentialsStore(context: Context) {
         accessToken: String,
         refreshToken: String,
         expiresInSeconds: Long,
-        username: String = ""
+        username: String = "",
+        serverOrigin: String = ""
     ) {
         val expiryTimestamp = System.currentTimeMillis() + (expiresInSeconds * 1000L)
         sharedPreferences.edit()
@@ -39,11 +40,12 @@ class DeviceCredentialsStore(context: Context) {
             .putString(KEY_REFRESH_TOKEN, refreshToken)
             .putLong(KEY_EXPIRY_TIMESTAMP, expiryTimestamp)
             .putString(KEY_USERNAME, username)
+            .putString(KEY_SERVER_ORIGIN, serverOrigin)
             .apply()
         _isLoggedIn.value = true
     }
 
-    fun replaceTokensAtomically(accessToken: String, refreshToken: String, expiresInSeconds: Long) {
+    override fun replaceTokensAtomically(accessToken: String, refreshToken: String, expiresInSeconds: Long) {
         val expiryTimestamp = System.currentTimeMillis() + (expiresInSeconds * 1000L)
         sharedPreferences.edit()
             .putString(KEY_ACCESS_TOKEN, accessToken)
@@ -52,15 +54,17 @@ class DeviceCredentialsStore(context: Context) {
             .apply()
     }
 
-    fun getAccessToken(): String? = sharedPreferences.getString(KEY_ACCESS_TOKEN, null)
+    override fun getAccessToken(): String? = sharedPreferences.getString(KEY_ACCESS_TOKEN, null)
 
-    fun getRefreshToken(): String? = sharedPreferences.getString(KEY_REFRESH_TOKEN, null)
+    override fun getRefreshToken(): String? = sharedPreferences.getString(KEY_REFRESH_TOKEN, null)
 
-    fun getDeviceId(): String? = sharedPreferences.getString(KEY_DEVICE_ID, null)
+    override fun getDeviceId(): String? = sharedPreferences.getString(KEY_DEVICE_ID, null)
+
+    override fun getServerOrigin(): String? = sharedPreferences.getString(KEY_SERVER_ORIGIN, null)
 
     fun getUsername(): String = sharedPreferences.getString(KEY_USERNAME, "") ?: ""
 
-    fun isAccessTokenExpired(): Boolean {
+    override fun isAccessTokenExpired(): Boolean {
         val expiry = sharedPreferences.getLong(KEY_EXPIRY_TIMESTAMP, 0L)
         // Consider expired 30 seconds ahead of actual deadline
         return System.currentTimeMillis() >= (expiry - 30_000L)
@@ -72,13 +76,14 @@ class DeviceCredentialsStore(context: Context) {
         return !token.isNullOrBlank() && !deviceId.isNullOrBlank()
     }
 
-    fun clearCredentials() {
+    override fun clearCredentials() {
         sharedPreferences.edit()
             .remove(KEY_DEVICE_ID)
             .remove(KEY_ACCESS_TOKEN)
             .remove(KEY_REFRESH_TOKEN)
             .remove(KEY_EXPIRY_TIMESTAMP)
             .remove(KEY_USERNAME)
+            .remove(KEY_SERVER_ORIGIN)
             .apply()
         _isLoggedIn.value = false
     }
@@ -89,5 +94,6 @@ class DeviceCredentialsStore(context: Context) {
         private const val KEY_REFRESH_TOKEN = "enc_refresh_token"
         private const val KEY_EXPIRY_TIMESTAMP = "enc_expiry_timestamp"
         private const val KEY_USERNAME = "enc_username"
+        private const val KEY_SERVER_ORIGIN = "enc_server_origin"
     }
 }

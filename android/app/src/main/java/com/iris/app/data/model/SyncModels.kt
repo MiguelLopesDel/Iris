@@ -75,7 +75,9 @@ data class SyncChange(
     @SerialName("entity_type") val entityType: String = "",
     @SerialName("entity_id") val entityId: String = "",
     @SerialName("operation") val operation: String = "",
+    @SerialName("revision") val revision: Int = 1,
     @SerialName("version") val version: Int = 1,
+    @SerialName("created_at") val createdAt: String = "",
     @SerialName("payload") val payload: JsonObject? = null
 )
 

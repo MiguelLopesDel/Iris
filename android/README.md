@@ -74,5 +74,39 @@ O arquivo APK gerado estará em:
 
 ### Executar Testes Unitários
 ```bash
-./gradlew test
+./scripts/test.sh fast
 ```
+
+## Loop de teste rápido
+
+Use estes comandos durante o desenvolvimento:
+
+```bash
+# Testes JVM: URL, autenticação e contratos de rede. Não exige Android.
+./scripts/test.sh fast
+
+# Testes rápidos mais compilação do APK debug.
+./scripts/test.sh build
+
+# Testes instrumentados de mídia no emulador Android já iniciado.
+./scripts/test.sh device
+```
+
+O modo `device` seleciona explicitamente um AVD (`emulator-*`) e nunca instala nada
+em um celular físico, mesmo que ele esteja conectado por USB. Os testes criam
+credenciais temporárias, por isso use um AVD descartável.
+Os testes de mídia verificam que previews e vídeos privados recebem o token Bearer;
+assim uma falha 401 é detectada antes de instalar o APK manualmente.
+
+Para preparar o AVD descartável pela primeira vez, com as variáveis do Android SDK
+configuradas, rode:
+
+```bash
+./scripts/create-emulator.sh
+${ANDROID_SDK_ROOT}/emulator/emulator -avd Iris-Test-API35
+./scripts/test.sh device
+```
+
+O pipeline do GitHub executa `fast` e compila tanto o APK quanto os testes
+instrumentados em toda alteração do diretório `android/`. A execução de interface
+fica localmente no emulador para manter o pipeline rápido e previsível.

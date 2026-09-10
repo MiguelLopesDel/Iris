@@ -76,6 +76,16 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    suspend fun isUriEnqueued(localUri: String): Boolean = withContext(Dispatchers.IO) {
+        readableDatabase.let { db ->
+            val cursor = db.rawQuery(
+                "SELECT 1 FROM upload_jobs WHERE local_uri = ? LIMIT 1",
+                arrayOf(localUri)
+            )
+            cursor.use { it.moveToFirst() }
+        }
+    }
+
     suspend fun updateUploadStarted(id: Long, uploadId: String, offset: Long, chunkSize: Int) = withContext(Dispatchers.IO) {
         writableDatabase.let { db ->
             val values = ContentValues().apply {

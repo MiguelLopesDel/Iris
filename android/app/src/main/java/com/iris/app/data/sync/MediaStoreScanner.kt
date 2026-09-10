@@ -32,7 +32,8 @@ class MediaStoreScanner(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.DATE_ADDED
+            MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.DATE_TAKEN
         )
         val selection = "${MediaStore.MediaColumns.SIZE} > 0"
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
@@ -49,14 +50,21 @@ class MediaStoreScanner(
                 val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                 val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-                val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+                val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+                val dateTakenColumn = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
                     val name = cursor.getString(nameColumn) ?: "media_$id"
                     val size = cursor.getLong(sizeColumn)
-                    val dateAddedSeconds = cursor.getLong(dateColumn)
-                    val capturedAtIso = isoFormat.format(Date(dateAddedSeconds * 1000L))
+                    val dateTakenMs = if (dateTakenColumn >= 0) cursor.getLong(dateTakenColumn) else 0L
+                    val timestampMs = if (dateTakenMs > 0L) {
+                        dateTakenMs
+                    } else {
+                        val dateAddedSeconds = cursor.getLong(dateAddedColumn)
+                        dateAddedSeconds * 1000L
+                    }
+                    val capturedAtIso = isoFormat.format(Date(timestampMs))
 
                     val itemUri = ContentUris.withAppendedId(collectionUri, id)
                     val jobId = uploadManager.enqueueMedia(

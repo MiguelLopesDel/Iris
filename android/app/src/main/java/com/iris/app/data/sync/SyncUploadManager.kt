@@ -36,9 +36,13 @@ class SyncUploadManager(
         size: Long,
         capturedAtIso: String
     ): Long = withContext(Dispatchers.IO) {
+        val uriStr = uri.toString()
+        if (dbHelper.isUriEnqueued(uriStr)) {
+            return@withContext -1L
+        }
         val hash = computeSha256(uri)
         dbHelper.insertOrIgnoreJob(
-            localUri = uri.toString(),
+            localUri = uriStr,
             filename = filename,
             byteSize = size,
             sha256 = hash,
@@ -96,6 +100,7 @@ class SyncUploadManager(
             // Step 2: Sequential chunk upload loop
             val uri = Uri.parse(job.localUri)
             val octetStreamMediaType = "application/octet-stream".toMediaType()
+            var conflictCount = 0
 
             while (currentOffset < job.byteSize) {
                 val remaining = job.byteSize - currentOffset
@@ -112,13 +117,35 @@ class SyncUploadManager(
                 if (response.isSuccessful) {
                     val nextOffset = response.body()?.offset ?: (currentOffset + chunkBytes.size)
                     currentOffset = nextOffset
+                    conflictCount = 0
                     dbHelper.updateOffsetTransactionally(job.id, currentOffset)
                     _currentProgress.value = if (job.byteSize > 0) currentOffset.toFloat() / job.byteSize.toFloat() else 0f
                 } else if (response.code() == 409) {
-                    // Offset mismatch! Never guess it; query server confirmed position
+                    conflictCount++
+                    if (conflictCount > 3) {
+                        dbHelper.updateJobState(job.id, UploadJobState.FAILED, "Conflito persistente de offset no upload (409)")
+                        return@withContext false
+                    }
+                    // Offset mismatch! Query server confirmed position
                     val status = apiService.getUploadStatus(uploadId)
-                    currentOffset = status.offset
-                    dbHelper.updateOffsetTransactionally(job.id, currentOffset)
+                    when (status.state) {
+                        "ready" -> {
+                            dbHelper.updateJobState(job.id, UploadJobState.READY)
+                            return@withContext true
+                        }
+                        "duplicate" -> {
+                            dbHelper.updateJobState(job.id, UploadJobState.DUPLICATE)
+                            return@withContext true
+                        }
+                        "pending_processing" -> {
+                            dbHelper.updateJobState(job.id, UploadJobState.PENDING_PROCESSING)
+                            return@withContext true
+                        }
+                        else -> {
+                            currentOffset = status.offset
+                            dbHelper.updateOffsetTransactionally(job.id, currentOffset)
+                        }
+                    }
                 } else if (response.code() == 401) {
                     // Session expired or revoked
                     dbHelper.updateJobState(job.id, UploadJobState.FAILED, "Autenticação revogada (401)")
@@ -146,6 +173,9 @@ class SyncUploadManager(
                 }
             }
             true
+        } catch (e: java.io.IOException) {
+            // Transient network failure: keep job in UPLOADING state so WorkManager can retry cleanly
+            false
         } catch (e: Exception) {
             dbHelper.updateJobState(
                 job.id,
