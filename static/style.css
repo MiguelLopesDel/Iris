@@ -2932,6 +2932,38 @@ body[data-view="search"] .section-lead {
   display: none;
 }
 
+/* Photos is the familiar, low-density experience. Workspace keeps every
+   catalog control visible for people who need to administer a large library. */
+:root[data-experience="photos"] [data-advanced-control] {
+  display: none;
+}
+
+.gallery-controls-disclosure {
+  margin: 14px 0;
+}
+
+.gallery-controls-disclosure > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  list-style: none;
+}
+
+.gallery-controls-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gallery-controls-disclosure > summary::before {
+  content: "⚙";
+  margin-right: 7px;
+}
+
+.gallery-controls-disclosure[open] > summary {
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
 .settings-shortcut {
   min-width: 42px;
   min-height: 42px;

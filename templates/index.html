@@ -6,7 +6,8 @@
   <meta name="theme-color" content="#0b0d12">
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=41">
+  <script src="/static/experience.js?v=1"></script>
+  <link rel="stylesheet" href="/static/style.css?v=42">
 </head>
 <body>
 
@@ -55,7 +56,7 @@
       </div>
     </section>
 
-    <section class="filter-group" id="concepts-group" data-scope="gallery">
+    <section class="filter-group" id="concepts-group" data-scope="gallery" data-advanced-control>
       <div class="filter-heading">
         <span class="filter-step">03</span>
         <label class="filter-label">Ensinados ao Iris</label>
@@ -65,7 +66,7 @@
       </div>
     </section>
 
-    <section class="filter-group" data-scope="gallery">
+    <section class="filter-group" data-scope="gallery" data-advanced-control>
       <div class="filter-heading">
         <span class="filter-step">04</span>
         <label class="filter-label" for="search-mode">Como procurar</label>
@@ -78,7 +79,7 @@
       </select>
     </section>
 
-    <section class="filter-group filter-group-compact" data-scope="gallery">
+    <section class="filter-group filter-group-compact" data-scope="gallery" data-advanced-control>
       <label class="filter-label" for="search-scope">Abrangência</label>
       <select id="search-scope">
         <option value="precise">Mais precisa</option>
@@ -221,7 +222,9 @@
         </div>
       </div>
 
-      <div id="gallery-controls" class="control-surface">
+      <details id="gallery-controls-disclosure" class="gallery-controls-disclosure">
+        <summary>Organizar visualização</summary>
+        <div id="gallery-controls" class="control-surface">
         <div class="control-field">
           <label for="gallery-sort">Ordenar por</label>
           <select id="gallery-sort">
@@ -261,7 +264,8 @@
           <button id="gallery-prev" class="icon-btn" disabled aria-label="Página anterior">←</button>
           <button id="gallery-next" class="icon-btn" disabled aria-label="Próxima página">→</button>
         </div>
-      </div>
+        </div>
+      </details>
       <div id="gallery-context" class="gallery-context" hidden>
         <span class="gallery-context-icon" aria-hidden="true">⌕</span>
         <span id="gallery-context-label"></span>
@@ -397,6 +401,19 @@
       </section>
 
       <div class="system-grid">
+        <section class="detail-panel system-card">
+          <span class="eyebrow">APARÊNCIA</span>
+          <h4>Organização da biblioteca</h4>
+          <p class="system-hint">Esta preferência fica neste dispositivo. Ela não muda as fotos nem as permissões da conta.</p>
+          <label for="ui-experience">Experiência
+            <select id="ui-experience">
+              <option value="photos">Fotos — simples e familiar</option>
+              <option value="workspace">Espaço de trabalho — controles avançados</option>
+            </select>
+          </label>
+          <p id="ui-experience-help" class="system-hint"></p>
+        </section>
+
         <section class="detail-panel system-card" data-host-only>
           <span class="eyebrow">Configuração ativa</span>
           <h4>Banco e modelos</h4>
@@ -597,7 +614,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=59"></script>
+<script type="module" src="/static/app.js?v=60"></script>
 
 </body>
 </html>

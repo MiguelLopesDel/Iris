@@ -912,6 +912,27 @@ window.__showStats = async function() {
   document.querySelectorAll('[data-primary-tab]').forEach(function(btn) {
     btn.addEventListener('click', function() { switchTab(btn.dataset.primaryTab); });
   });
+  var experienceSelect = document.getElementById('ui-experience');
+  var experienceHelp = document.getElementById('ui-experience-help');
+  function syncExperienceControls() {
+    var experience = window.getIrisExperience ? window.getIrisExperience() : 'photos';
+    if (experienceSelect) experienceSelect.value = experience;
+    if (experienceHelp) {
+      experienceHelp.textContent = experience === 'workspace'
+        ? 'Mostra filtros e opções detalhadas para organizar muitos arquivos.'
+        : 'Mostra a biblioteca de forma mais simples. Os controles detalhados continuam disponíveis no Espaço de trabalho.';
+    }
+    var controls = document.getElementById('gallery-controls-disclosure');
+    if (controls) controls.open = experience === 'workspace';
+  }
+  if (experienceSelect) {
+    experienceSelect.addEventListener('change', function() {
+      if (window.setIrisExperience) window.setIrisExperience(experienceSelect.value);
+      syncExperienceControls();
+    });
+  }
+  window.addEventListener('iris:experience-changed', syncExperienceControls);
+  syncExperienceControls();
   document.addEventListener('click', function(event) {
     var destination = event.target.closest('[data-go-tab]');
     if (destination) switchTab(destination.dataset.goTab);
@@ -928,5 +949,8 @@ window.__showStats = async function() {
     switchTab(window.location.hash.slice(1) || 'home');
   });
   buildSidebar();
-  switchTab(window.location.hash.slice(1) || 'home');
+  var defaultTab = window.getIrisExperience && window.getIrisExperience() === 'photos'
+    ? 'gallery'
+    : 'home';
+  switchTab(window.location.hash.slice(1) || defaultTab);
 })();
