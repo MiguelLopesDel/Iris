@@ -1,8 +1,10 @@
 package com.iris.app.ui.screens.gallery
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,14 +12,17 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -44,7 +49,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -55,8 +63,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.data.model.MediaRecord
@@ -72,6 +84,9 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,6 +98,10 @@ fun GalleryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val gridState = rememberLazyGridState()
+    // The real cost of a denser grid was the server generating thumbnails
+    // synchronously on the FastAPI event loop on a cache miss (fixed
+    // server-side: server.py now runs that in a threadpool). 3 is a normal
+    // Google-Photos-ish default; pinch still goes denser or coarser.
     var columnCount by rememberSaveable { mutableIntStateOf(3) }
 
     // Infinite scroll trigger when reaching near the end
@@ -243,45 +262,64 @@ fun GalleryScreen(
 
                     else -> {
                         val sections = remember(uiState.records) { groupByDate(uiState.records) }
-                        LazyVerticalGrid(
-                            // Fixed column count driven by pinch-to-zoom (Google
-                            // Photos style) instead of Adaptive — the span needs to
-                            // be known up front to size date-header rows correctly.
-                            columns = GridCells.Fixed(columnCount),
-                            state = gridState,
-                            contentPadding = PaddingValues(8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pinchToZoomColumns(
-                                    columnCount = columnCount,
-                                    onColumnCountChange = { columnCount = it }
-                                )
-                        ) {
-                            sections.forEach { section ->
-                                item(
-                                    key = "header-${section.label}",
-                                    span = { GridItemSpan(maxLineSpan) }
-                                ) {
-                                    DateSectionHeader(section.label)
-                                }
-                                items(
-                                    items = section.records,
-                                    key = { record -> record.index }
-                                ) { record ->
-                                    MediaCard(
-                                        record = record,
-                                        performanceMonitor = viewModel.performanceMonitor,
-                                        onClick = { onMediaClick(record.index) }
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            LazyVerticalGrid(
+                                // Fixed column count driven by pinch-to-zoom (Google
+                                // Photos style) instead of Adaptive — the span needs
+                                // to be known up front to size date-header rows
+                                // correctly.
+                                columns = GridCells.Fixed(columnCount),
+                                state = gridState,
+                                contentPadding = PaddingValues(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pinchToZoomColumns(
+                                        columnCount = columnCount,
+                                        onColumnCountChange = { columnCount = it }
                                     )
+                            ) {
+                                sections.forEach { section ->
+                                    item(
+                                        key = "header-${section.label}",
+                                        span = { GridItemSpan(maxLineSpan) }
+                                    ) {
+                                        DateSectionHeader(section.label)
+                                    }
+                                    items(
+                                        items = section.records,
+                                        key = { record -> record.index }
+                                    ) { record ->
+                                        MediaCard(
+                                            record = record,
+                                            performanceMonitor = viewModel.performanceMonitor,
+                                            onClick = { onMediaClick(record.index) },
+                                            // Animates position/size when the pinch
+                                            // gesture changes columnCount instead of
+                                            // the grid reflowing in a single abrupt
+                                            // frame.
+                                            modifier = Modifier.animateItem()
+                                        )
+                                    }
+                                }
+
+                                if (uiState.isLoading && uiState.records.isNotEmpty()) {
+                                    items(12) {
+                                        GalleryPreviewSkeleton()
+                                    }
                                 }
                             }
 
-                            if (uiState.isLoading && uiState.records.isNotEmpty()) {
-                                items(12) {
-                                    GalleryPreviewSkeleton()
-                                }
+                            if (uiState.totalRecords > 40) {
+                                FastScrollbar(
+                                    gridState = gridState,
+                                    sections = sections,
+                                    modifier = Modifier
+                                        .align(Alignment.CenterEnd)
+                                        .fillMaxHeight()
+                                        .padding(vertical = 8.dp)
+                                )
                             }
                         }
                     }
@@ -376,6 +414,145 @@ private fun groupByDate(records: List<MediaRecord>): List<DateSection> {
         sections += DateSection(currentLabel!!, currentBucket)
     }
     return sections
+}
+
+/**
+ * Google-Photos-style fast-scroll rail on the trailing edge: drag anywhere on
+ * it to jump through the whole gallery instead of flinging repeatedly, with a
+ * date bubble showing where a release would land. Fades in on scroll/drag and
+ * out after a second of inactivity so it doesn't sit on screen permanently.
+ */
+@Composable
+private fun FastScrollbar(
+    gridState: LazyGridState,
+    sections: List<DateSection>,
+    modifier: Modifier = Modifier
+) {
+    if (sections.isEmpty()) return
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    // Mirrors the LazyGridScope item order built above (1 header slot + one
+    // grid item per record per section) so a drag fraction maps back to the
+    // same date the grid actually laid out at that position.
+    val sectionFlatCounts = remember(sections) { sections.map { 1 + it.records.size } }
+    val totalFlatItems = remember(sectionFlatCounts) { sectionFlatCounts.sum().coerceAtLeast(1) }
+
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+    var trackHeightPx by remember { mutableFloatStateOf(0f) }
+    val thumbHeightPx = with(density) { 32.dp.toPx() }
+
+    val scrollFraction by remember {
+        derivedStateOf {
+            val total = gridState.layoutInfo.totalItemsCount
+            if (total <= 1) 0f
+            else (gridState.firstVisibleItemIndex.toFloat() / (total - 1).toFloat()).coerceIn(0f, 1f)
+        }
+    }
+
+    // Keyed on isScrollInProgress (flips only at gesture start/stop) rather
+    // than scrollFraction, which changes on nearly every frame while
+    // scrolling — keying the effect on that relaunched a coroutine per frame.
+    var recentlyScrolled by remember { mutableStateOf(false) }
+    LaunchedEffect(gridState.isScrollInProgress) {
+        if (gridState.isScrollInProgress) {
+            recentlyScrolled = true
+        } else {
+            delay(1200)
+            recentlyScrolled = false
+        }
+    }
+    val thumbAlpha by animateFloatAsState(
+        targetValue = if (isDragging || recentlyScrolled) 1f else 0f,
+        label = "scrubberAlpha"
+    )
+
+    val activeFraction = if (isDragging) dragFraction else scrollFraction
+    val activeLabel = remember(activeFraction, sections) {
+        labelForFraction(sections, sectionFlatCounts, totalFlatItems, activeFraction)
+    }
+
+    fun seekTo(y: Float) {
+        val fraction = (y / trackHeightPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+        dragFraction = fraction
+        val total = gridState.layoutInfo.totalItemsCount
+        if (total > 0) {
+            val targetIndex = (fraction * (total - 1)).roundToInt().coerceIn(0, total - 1)
+            coroutineScope.launch { gridState.scrollToItem(targetIndex) }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .width(32.dp)
+            .onSizeChanged { trackHeightPx = it.height.toFloat() }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        isDragging = true
+                        seekTo(offset.y)
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        seekTo(change.position.y)
+                    },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false }
+                )
+            }
+    ) {
+        val thumbY = (trackHeightPx * activeFraction - thumbHeightPx / 2)
+            .coerceIn(0f, (trackHeightPx - thumbHeightPx).coerceAtLeast(0f))
+
+        if (isDragging) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset {
+                        IntOffset(
+                            x = -32.dp.roundToPx(),
+                            y = (thumbY + thumbHeightPx / 2 - 16.dp.toPx()).roundToInt()
+                        )
+                    }
+                    .background(IrisAccentLime, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = activeLabel,
+                    color = IrisAccentInk,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .graphicsLayer { alpha = thumbAlpha }
+                .offset { IntOffset(x = 0, y = thumbY.roundToInt()) }
+                .width(4.dp)
+                .height(32.dp)
+                .background(IrisAccentLime, RoundedCornerShape(2.dp))
+        )
+    }
+}
+
+private fun labelForFraction(
+    sections: List<DateSection>,
+    flatCounts: List<Int>,
+    totalFlatItems: Int,
+    fraction: Float
+): String {
+    val targetIndex = (fraction * totalFlatItems).toInt().coerceIn(0, totalFlatItems - 1)
+    var cumulative = 0
+    for (i in flatCounts.indices) {
+        cumulative += flatCounts[i]
+        if (targetIndex < cumulative) return sections[i].label
+    }
+    return sections.last().label
 }
 
 /**
