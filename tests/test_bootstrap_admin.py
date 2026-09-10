@@ -33,6 +33,59 @@ def test_bootstrap_admin_creates_an_empty_private_library(tmp_path: Path):
     assert user.media_root.is_dir()
 
 
+def test_bootstrap_accepts_the_empty_media_dir_every_fresh_install_has(tmp_path: Path):
+    """The Docker image creates ``media/`` before anyone runs the bootstrap.
+
+    The migration guard read that empty directory as a legacy library missing
+    its catalog and refused to create the first account, so a clean release
+    could not be set up at all (caught by the release smoke job).
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    data_dir = tmp_path / "data"
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable, str(project_root / "scripts" / "bootstrap_admin.py"),
+            "--data-dir", str(data_dir), "--media-root", str(media_dir),
+            "--username", "admin",
+        ],
+        input="a sufficiently strong password\na sufficiently strong password\n",
+        text=True,
+        capture_output=True,
+        env={**os.environ, "PYTHONPATH": str(project_root)},
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    user = get_user_by_username(data_dir / "users.db", "admin")
+    assert user is not None and user.db_path.is_file()
+
+
+def test_bootstrap_still_refuses_media_left_without_a_catalog(tmp_path: Path):
+    project_root = Path(__file__).resolve().parents[1]
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    (media_dir / "photo.jpg").write_bytes(b"photo")
+
+    result = subprocess.run(
+        [
+            sys.executable, str(project_root / "scripts" / "bootstrap_admin.py"),
+            "--data-dir", str(tmp_path / "data"), "--media-root", str(media_dir),
+            "--username", "admin",
+        ],
+        input="a sufficiently strong password\na sufficiently strong password\n",
+        text=True,
+        capture_output=True,
+        env={**os.environ, "PYTHONPATH": str(project_root)},
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Migração incompleta" in result.stderr
+
+
 def test_bootstrap_uses_the_supported_legacy_catalog_name(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()

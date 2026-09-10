@@ -67,9 +67,15 @@ def main() -> int:
     if has_users(users_db):
         parser.error("data/users.db já possui contas; o bootstrap só roda uma vez")
     has_legacy_db = source_db.exists()
-    has_legacy_media = source_media.is_dir()
-    if has_legacy_db != has_legacy_media:
-        parser.error("Migração incompleta: banco e pasta de mídia antigos devem existir juntos")
+    # An existing but empty ``media/`` is not a legacy library: the Docker image
+    # creates that directory in every fresh install, so demanding a catalog
+    # beside it refused the very first bootstrap. What still deserves a refusal
+    # is a genuine half-migration -- files on one side and nothing on the other.
+    legacy_media_files = source_media.is_dir() and any(source_media.iterdir())
+    if has_legacy_db and not source_media.is_dir():
+        parser.error("Migração incompleta: o banco antigo existe mas a pasta de mídia não")
+    if legacy_media_files and not has_legacy_db:
+        parser.error("Migração incompleta: há mídia antiga mas nenhum banco para indexá-la")
 
     password = getpass.getpass("Senha do administrador (mínimo 12 caracteres): ")
     confirmation = getpass.getpass("Repita a senha: ")
