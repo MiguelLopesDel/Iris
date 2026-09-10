@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core.search_engine import DEFAULT_MODEL
+from core.embedding_models import DEFAULT_MODEL, resolve_embedding_model
 
 _USERNAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,62}$")
 
@@ -134,7 +134,7 @@ def create_user(
     password_hash: str,
     display_name: str = "",
     is_admin: bool = False,
-    model_name: str = DEFAULT_MODEL,
+    model_name: str | None = None,
 ) -> IrisUser:
     init_users_db(path)
     username = validate_username(username)
@@ -145,7 +145,14 @@ def create_user(
                                media_root, model_name, created_at)
             VALUES (?, ?, ?, ?, '', '', ?, ?)
             """,
-            (username, password_hash, display_name.strip(), int(is_admin), model_name, now_iso()),
+            (
+                username,
+                password_hash,
+                display_name.strip(),
+                int(is_admin),
+                resolve_embedding_model(model_name or DEFAULT_MODEL),
+                now_iso(),
+            ),
         )
         user_id = int(cursor.lastrowid)
         db_path, media_root = _library_paths(data_dir, user_id)

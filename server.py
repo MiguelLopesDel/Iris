@@ -82,6 +82,7 @@ from core.auth import load_or_create_secret
 from core.backend import SearchBackend, create_backend
 from core.backend_registry import BackendRegistry
 from core.device_tokens import read_access_token
+from core.embedding_models import resolve_embedding_model
 from core.file_ops import move_to_trash
 from core.media_metadata import extract_full_metadata, extract_metadata
 from core.observability import configure_logging, request_path
@@ -191,7 +192,7 @@ _backend_lock = threading.RLock()
 _active_config: dict[str, Any] = {
     "db_path": _DEFAULT_DB,
     "media_root": _MEDIA_ROOT,
-    "model_name": os.environ.get("IRIS_MODEL", DEFAULT_MODEL),
+    "model_name": resolve_embedding_model(),
     "load_model": _LOAD_MODEL,
 }
 _import_job: dict[str, Any] = {
@@ -1194,7 +1195,11 @@ async def get_info(check_missing: int = Query(0)):
             "total_records": total,
             "db_path": "" if user else str(_active_config["db_path"]),
             "media_root": "" if user else str(_active_config["media_root"]),
-            "model_name": user.model_name if user else str(_active_config["model_name"]),
+            "model_name": (
+                resolve_embedding_model(user.model_name)
+                if user
+                else str(_active_config["model_name"])
+            ),
             "load_model": bool(_active_config["load_model"]),
             "multiuser": _multiuser_enabled(),
             "current_user": (
@@ -1407,7 +1412,15 @@ async def start_import(
 
     job_id = uuid.uuid4().hex
     user = _current_user()
-    model_name = LOW_RESOURCE_MODEL if low_resource else (user.model_name if user else str(_active_config["model_name"]))
+    model_name = (
+        LOW_RESOURCE_MODEL
+        if low_resource
+        else (
+            resolve_embedding_model(user.model_name)
+            if user
+            else str(_active_config["model_name"])
+        )
+    )
     settings = {
         "recursive": recursive,
         "library_name": "media" if user else (library_name.strip() or "default"),

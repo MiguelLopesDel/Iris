@@ -1,61 +1,69 @@
-"""Escolha do encoder de embedding (CLIP hoje, SigLIP 2 opcional).
+"""Embedding encoder selection for CLIP and optional SigLIP 2 checkpoints.
 
-Existe um seam aqui porque os dois modelos **não** se carregam do mesmo jeito.
-O CLIP funciona pelo ``sentence-transformers``; o SigLIP, não — e falha calado,
-que é o pior modo de falhar.
-
-O ``sentence-transformers`` 5.5 até carrega um checkpoint SigLIP 2 e devolve
-vetores com a forma certa, mas preenche o lote até a maior sequência dele
-(``padding=True``). A torre de texto do SigLIP foi treinada com preenchimento
-fixo de 64 tokens, e ela não é invariante a isso. Medido neste repositório, com
-``google/siglip2-base-patch16-224``:
-
-* o vetor da mesma consulta muda conforme o que mais está no lote — cosseno
-  **0,76** entre "a photo of a person" sozinha e a mesma frase acompanhada de
-  uma frase longa;
-* contra o caminho correto (``padding="max_length", max_length=64``), o cosseno
-  fica em **0,74/0,65**.
-
-Um índice construído assim guarda vetores que dependem da ordem em que os
-arquivos foram processados, e a consulta nunca cai no mesmo lugar duas vezes.
-Por isso o SigLIP passa por ``SiglipEncoder``, que fixa o preenchimento, em vez
-de ir pelo caminho aparentemente mais simples.
+The seam exists because the model families require different loading paths.
+Sentence Transformers can load SigLIP 2, but pads text only to the longest item
+in each batch. SigLIP 2 requires fixed-length text padding, so that path makes an
+embedding depend on the other inputs in its batch. ``SiglipEncoder`` enforces
+the checkpoint's fixed text length and keeps indexing deterministic.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
+from enum import Enum
+from typing import Any, Protocol
 
 import numpy as np
 
 DEFAULT_MODEL = "sentence-transformers/clip-ViT-L-14"
 
-# O limite da torre de texto, usado para orçar o texto indexado. O CLIP declara
-# 77 e o SigLIP 2, 64: quem escreve o texto precisa perguntar, não supor.
+# Fallback used by the text composer when an encoder exposes no token limit.
 _FALLBACK_TEXT_TOKENS = 77
 
 
+class EmbeddingEncoder(Protocol):
+    """Minimal encoder interface used by indexing and search."""
+
+    tokenizer: Any
+
+    def encode(
+        self,
+        inputs: Any,
+        batch_size: int = 32,
+        show_progress_bar: bool = False,
+        **kwargs: Any,
+    ) -> Any: ...
+
+    def half(self) -> Any: ...
+
+
+class EncoderFamily(Enum):
+    SENTENCE_TRANSFORMER = "sentence_transformer"
+    SIGLIP = "siglip"
+
+
+_SIGLIP_MODEL_PREFIXES = ("google/siglip-", "google/siglip2-")
+
+
 def resolve_embedding_model(default: str = DEFAULT_MODEL) -> str:
-    """Modelo de embedding configurado, ou o padrão.
-
-    Reaproveita ``IRIS_MODEL``, que o servidor e o docker-compose já usam, em
-    vez de criar uma segunda variável para a mesma decisão.
-
-    Trocar isso reescreve o espaço vetorial inteiro: um catálogo indexado com
-    CLIP não pode ser consultado com SigLIP. Quem muda a variável precisa
-    reindexar, e o guard em ``core/search_engine`` recusa a mistura em vez de
-    devolver resultado sem sentido.
-    """
+    """Return the deployment override or the supplied model fallback."""
     return (os.environ.get("IRIS_MODEL") or "").strip() or default
 
 
+def encoder_family(model_name: str) -> EncoderFamily:
+    """Resolve supported model families from explicit checkpoint namespaces."""
+    normalized = model_name.strip().lower()
+    if normalized.startswith(_SIGLIP_MODEL_PREFIXES):
+        return EncoderFamily.SIGLIP
+    return EncoderFamily.SENTENCE_TRANSFORMER
+
+
 def is_siglip(model_name: str) -> bool:
-    return "siglip" in model_name.lower()
+    return encoder_family(model_name) is EncoderFamily.SIGLIP
 
 
 def max_text_tokens(model: object) -> int:
-    """Quantos tokens a torre de texto do encoder realmente aceita."""
+    """Return the encoder's declared text limit or a safe CLIP fallback."""
     declared = getattr(model, "max_text_tokens", None)
     if isinstance(declared, int) and declared > 0:
         return declared
@@ -71,11 +79,7 @@ def max_text_tokens(model: object) -> int:
 
 
 class SiglipEncoder:
-    """Encoder SigLIP com o preenchimento de texto que o modelo exige.
-
-    Expõe a mesma superfície que o resto do código já usa do
-    ``SentenceTransformer``: ``encode``, ``half`` e ``tokenizer``.
-    """
+    """SigLIP encoder with the fixed text padding required by the model."""
 
     def __init__(self, model_name: str, device: str = "cpu"):
         from transformers import AutoConfig, AutoModel, AutoProcessor
@@ -101,7 +105,7 @@ class SiglipEncoder:
         self,
         inputs: Any,
         batch_size: int = 32,
-        show_progress_bar: bool = False,  # noqa: ARG002 - assinatura do SentenceTransformer
+        show_progress_bar: bool = False,  # noqa: ARG002 - interface compatibility
         **_: Any,
     ) -> np.ndarray:
         single = isinstance(inputs, str) or not isinstance(inputs, (list, tuple))
@@ -109,9 +113,10 @@ class SiglipEncoder:
         if not items:
             return np.empty((0, self.get_sentence_embedding_dimension()), dtype=np.float32)
 
-        chunks = [items[i : i + max(batch_size, 1)] for i in range(0, len(items), max(batch_size, 1))]
-        saidas = [self._encode_batch(chunk) for chunk in chunks]
-        matrix = np.concatenate(saidas, axis=0)
+        chunk_size = max(batch_size, 1)
+        chunks = [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
+        outputs = [self._encode_batch(chunk) for chunk in chunks]
+        matrix = np.concatenate(outputs, axis=0)
         return matrix[0] if single else matrix
 
     def _encode_batch(self, items: list[Any]) -> np.ndarray:
@@ -120,33 +125,35 @@ class SiglipEncoder:
         if all(isinstance(item, str) for item in items):
             encoded = self.processor(
                 text=items,
-                # O ponto de todo este módulo: comprimento fixo, sempre.
+                # Fixed length is required even for a one-item batch.
                 padding="max_length",
                 max_length=self.max_text_tokens,
                 truncation=True,
                 return_tensors="pt",
             )
-            metodo = self.model.get_text_features
+            feature_method = self.model.get_text_features
         else:
             encoded = self.processor(images=items, return_tensors="pt")
-            metodo = self.model.get_image_features
+            feature_method = self.model.get_image_features
 
-        encoded = {chave: valor.to(self.device) for chave, valor in encoded.items()}
+        encoded = {key: value.to(self.device) for key, value in encoded.items()}
         if next(self.model.parameters()).dtype == torch.float16:
             encoded = {
-                chave: (valor.half() if valor.is_floating_point() else valor)
-                for chave, valor in encoded.items()
+                key: (value.half() if value.is_floating_point() else value)
+                for key, value in encoded.items()
             }
         with torch.no_grad():
-            saida = metodo(**encoded)
-        # transformers 5.x devolve um objeto de saída aqui, não um tensor.
-        tensor = getattr(saida, "pooler_output", saida)
+            output = feature_method(**encoded)
+        # Transformers 5.x returns a model output object instead of a tensor.
+        tensor = getattr(output, "pooler_output", output)
         return tensor.float().cpu().numpy().astype(np.float32)
 
 
-def load_encoder(model_name: str, device: str = "cpu", half: bool = False) -> Any:
-    """Carrega o encoder certo para o checkpoint pedido."""
-    if is_siglip(model_name):
+def load_encoder(
+    model_name: str, device: str = "cpu", half: bool = False
+) -> EmbeddingEncoder:
+    """Load the adapter for the requested checkpoint family."""
+    if encoder_family(model_name) is EncoderFamily.SIGLIP:
         encoder = SiglipEncoder(model_name, device=device)
     else:
         from sentence_transformers import SentenceTransformer

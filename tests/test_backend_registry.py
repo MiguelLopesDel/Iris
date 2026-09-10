@@ -1,6 +1,9 @@
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from core.backend_registry import BackendRegistry
+from core.embedding_models import DEFAULT_MODEL
 from core.users_db import create_user
 
 
@@ -27,3 +30,28 @@ def test_registry_keeps_backends_separate_and_evicts_lru(tmp_path: Path, monkeyp
     registry.get(third.id)
     new_second_backend = registry.get(second.id)
     assert new_second_backend is not second_backend
+
+
+def test_environment_model_overrides_existing_user_model(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    users_db = tmp_path / "users.db"
+    user = create_user(
+        users_db,
+        tmp_path,
+        username="ana",
+        password_hash="hash-ana",
+        model_name=DEFAULT_MODEL,
+    )
+    selected_models: list[str] = []
+
+    def fake_backend(**kwargs: object) -> object:
+        selected_models.append(str(kwargs["model_name"]))
+        return object()
+
+    monkeypatch.setenv("IRIS_MODEL", "google/siglip2-base-patch16-224")
+    monkeypatch.setattr("core.backend_registry.create_backend", fake_backend)
+
+    BackendRegistry(users_db, load_model=False).get(user.id)
+
+    assert selected_models == ["google/siglip2-base-patch16-224"]

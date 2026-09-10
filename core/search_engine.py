@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,8 @@ from PIL import Image
 from sentence_transformers import util
 
 from core.db_manager import DatabaseManager
-from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # re-export histórico
-from core.embedding_models import load_encoder, resolve_embedding_model
+from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # historical re-export
+from core.embedding_models import EmbeddingEncoder, load_encoder, resolve_embedding_model
 from core.search_types import (
     STOP_WORDS,
     IndexRecord,
@@ -107,7 +108,7 @@ class IrisEngine:
             return "data/teste_playground.db"
         return "data/iris.db"
 
-    def _load_model(self):
+    def _load_model(self) -> EmbeddingEncoder:
         return load_encoder(self.model_name, device=self.device, half=True)
 
     def _load_weights(self, weights_path: Path) -> dict[str, float]:
@@ -816,32 +817,28 @@ class IrisEngine:
             )
 
     def _validate_catalog_model(self) -> None:
-        """Recusa consultar um catálogo indexado por outro modelo.
-
-        A checagem de dimensão sozinha não basta: ``siglip2-base-patch16-224``
-        também devolve 768 dimensões, iguais às do ``clip-ViT-L-14``. Os
-        espaços vetoriais não têm relação nenhuma entre si, então a busca
-        passaria e devolveria ranking aleatório — falha silenciosa, a pior de
-        todas. Comparar o nome pega o caso que a forma não pega.
-        """
+        """Reject catalogs containing embeddings from any other model."""
         if self._catalog_model_checked:
             return
-        self._catalog_model_checked = True
         try:
             rows = self.db.get_connection().execute(
                 "SELECT DISTINCT model_name FROM memes "
                 "WHERE embedding IS NOT NULL AND model_name IS NOT NULL AND model_name != ''"
             ).fetchall()
-        except Exception:
-            return  # catálogo antigo sem a coluna: nada a comparar
+        except sqlite3.OperationalError as exc:
+            if "no such column" not in str(exc).lower():
+                raise
+            self._catalog_model_checked = True
+            return
         catalog_models = {row[0] for row in rows}
-        if catalog_models and self.model_name not in catalog_models:
+        if catalog_models and catalog_models != {self.model_name}:
             raise ValueError(
-                f"O catálogo foi indexado com {', '.join(sorted(catalog_models))} e a "
-                f"busca está configurada para {self.model_name}. Os embeddings não são "
-                "comparáveis entre modelos: reindexe o acervo ou volte IRIS_MODEL ao "
-                "modelo original."
+                f"The catalog contains embeddings from {', '.join(sorted(catalog_models))}, "
+                f"but search is configured for {self.model_name}. Embeddings from different "
+                "models are not comparable. Reindex the library or restore IRIS_MODEL to "
+                "the original model."
             )
+        self._catalog_model_checked = True
 
     def _candidate_indices(self, query_embedding: np.ndarray, candidate_pool: int) -> list[int]:
         use_faiss = (

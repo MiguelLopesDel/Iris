@@ -22,14 +22,18 @@ import torch
 import whisper
 from deep_translator import GoogleTranslator
 from PIL import Image
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from transformers import AutoProcessor, Florence2ForConditionalGeneration
 from transformers import logging as transformers_logging
 
 from core import import_review
 from core.deleted_registry import load_deleted_content_hashes
-from core.embedding_models import load_encoder, max_text_tokens
+from core.embedding_models import (
+    EmbeddingEncoder,
+    load_encoder,
+    max_text_tokens,
+    resolve_embedding_model,
+)
 from core.indexer_db import (
     ensure_unique_destination,
     existing_hashes,
@@ -44,7 +48,7 @@ from core.media_inventory import (
     read_manifest,
 )
 from core.media_metadata import extract_metadata
-from core.search_engine import DEFAULT_MODEL, LOW_RESOURCE_MODEL, normalize_text
+from core.search_engine import LOW_RESOURCE_MODEL, normalize_text
 from core.taxonomy import (
     build_taxonomy_prompt_rows,
     classify_embedding,
@@ -118,7 +122,7 @@ class LoadedModels:
     reader: easyocr.Reader
     florence_model: Florence2ForConditionalGeneration | None
     florence_processor: AutoProcessor | None
-    clip_model: SentenceTransformer
+    clip_model: EmbeddingEncoder
     whisper_model: whisper.Whisper | None
     dtype: torch.dtype
     taxonomy_rows: list[dict[str, str]]
@@ -134,7 +138,12 @@ def parse_arguments() -> IndexerConfig:
     )
     parser.add_argument("--dir", "-d", default="./media", help="Pasta com imagens e videos.")
     parser.add_argument("--db", "-b", default="iris.db", help="Banco SQLite de saida.")
-    parser.add_argument("--model", "-m", default=DEFAULT_MODEL, help="Modelo CLIP.")
+    parser.add_argument(
+        "--model",
+        "-m",
+        default=None,
+        help="Embedding model (defaults to IRIS_MODEL, then the standard CLIP model).",
+    )
     parser.add_argument("--batch-size", "-bs", type=int, default=8, help="Tamanho do lote.")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
     parser.add_argument(
@@ -207,6 +216,8 @@ def parse_arguments() -> IndexerConfig:
         args.caption_model = "none"
         args.whisper_model = "none"
         args.no_faces = True
+    elif args.model is None:
+        args.model = resolve_embedding_model()
 
     return IndexerConfig(
         media_dir=Path(args.dir),
@@ -1215,7 +1226,7 @@ def _sample_video_frames(path: Path, n_frames: int = 6) -> list[tuple[Image.Imag
 
 def _compute_video_multi_frame_embedding(
     path: Path,
-    clip_model: SentenceTransformer,
+    clip_model: EmbeddingEncoder,
     n_frames: int = 6,
 ) -> np.ndarray | None:
     """Average CLIP embedding of N evenly-spaced meaningful frames.
@@ -1519,8 +1530,7 @@ def describe_image(
     return visual, tags
 
 
-# Encoder de texto do CLIP: 77 tokens, incluindo os dois marcadores. O que
-# passa disso é descartado em silêncio — sem erro, sem aviso.
+# CLIP accepts 77 text tokens, including its two marker tokens.
 def compose_description(tags: str, visual: str) -> str:
     """Descrição legível a partir das partes que existirem.
 
@@ -1541,37 +1551,20 @@ _TEXT_ENCODER_LIMIT = 77
 
 
 def build_embedding_text(*, visual: str, ocr: str, tags: str, model: object) -> str:
-    """Monta o texto indexado respeitando o limite do encoder.
-
-    O formato anterior era
-    ``"Meme Category/Tags: {tags}. Text: {ocr}. Context: {visual}"``. Duas
-    coisas davam errado nele: a legenda — a parte mais rica — ficava por último
-    e portanto era a primeira a ser cortada; e os rótulos ("Meme Category/Tags:")
-    gastavam tokens do orçamento sem acrescentar significado. Medido no acervo
-    real: mediana de 130 tokens contra um teto de 77, ou seja ~40% do texto
-    nunca chegava ao modelo.
-
-    Aqui cada parte recebe uma cota e é truncada dentro dela, então nenhuma
-    consegue expulsar as outras: uma legenda longa não apaga o OCR, e um OCR
-    longo não apaga a legenda.
-    """
-    # As cotas eram fixas em 40/24/9, medida do teto de 77 tokens do CLIP. O
-    # SigLIP 2 declara 64, então cotas fixas passariam a estourar em silêncio —
-    # justo a falha que esta função existe para evitar. Agora elas acompanham o
-    # teto real do encoder, mantendo a mesma proporção.
-    teto = max_text_tokens(model)
-    partes = [
-        (visual, max(round(teto * 40 / 77), 1)),  # o que a imagem mostra — o sinal mais forte
-        (ocr, max(round(teto * 24 / 77), 1)),     # texto dentro da imagem; decisivo em captura de tela
-        (tags, max(round(teto * 9 / 77), 1)),     # rótulos de objeto, os mais dispensáveis
+    """Compose balanced searchable text within the encoder's token budget."""
+    token_limit = max_text_tokens(model)
+    sections = [
+        (visual, max(round(token_limit * 40 / 77), 1)),
+        (ocr, max(round(token_limit * 24 / 77), 1)),
+        (tags, max(round(token_limit * 9 / 77), 1)),
     ]
-    montado: list[str] = []
-    for texto, cota in partes:
-        limpo = (texto or "").strip()
-        if not limpo or limpo == "N/A":
+    composed: list[str] = []
+    for text, budget in sections:
+        cleaned = (text or "").strip()
+        if not cleaned or cleaned == "N/A":
             continue
-        montado.append(_truncate_to_tokens(limpo, cota, model))
-    return ". ".join(p for p in montado if p)
+        composed.append(_truncate_to_tokens(cleaned, budget, model))
+    return ". ".join(part for part in composed if part)
 
 
 def _truncate_to_tokens(texto: str, limite: int, model: object) -> str:

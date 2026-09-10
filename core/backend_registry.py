@@ -5,6 +5,7 @@ import threading
 from collections import OrderedDict
 
 from core.backend import SearchBackend, create_backend
+from core.embedding_models import resolve_embedding_model
 from core.users_db import IrisUser, get_user_by_id
 
 
@@ -32,7 +33,8 @@ class BackendRegistry:
                 raise KeyError(user_id)
             backend = create_backend(
                 db_path=str(user.db_path), media_root=str(user.media_root),
-                model_name=user.model_name, load_model=self.load_model,
+                model_name=resolve_embedding_model(user.model_name),
+                load_model=self.load_model,
             )
             self._backends[user_id] = backend
             while len(self._backends) > self.cache_size:

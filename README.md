@@ -205,6 +205,12 @@ reindexing and search refuses to run rather than returning a meaningless ranking
 `siglip2-base` happens to have the same 768 dimensions as CLIP, so the shape check
 alone would not catch the mistake.
 
+The environment variable is a deployment-wide override. It applies to the server,
+existing multi-user accounts, newly created accounts, and `python -m core.indexer`
+when `--model` is omitted. Restart Iris after changing it. Until every embedding in
+an existing catalog has been rebuilt with the selected model, search deliberately
+rejects that catalog, including catalogs that contain a mixture of model names.
+
 Note for anyone extending this: SigLIP is loaded through `core/embedding_models.py`,
 not through `sentence-transformers`. `sentence-transformers` pads a batch to its
 longest sequence, while SigLIP's text tower was trained with a fixed 64-token
