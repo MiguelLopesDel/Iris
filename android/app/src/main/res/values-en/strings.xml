@@ -1,4 +1,11 @@
 <resources>
+    <string name="app_name">Iris</string>
+    <string name="tab_gallery">Gallery</string>
+    <string name="tab_search">Search</string>
+    <string name="tab_persons">People</string>
+    <string name="tab_collections">Collections</string>
+    <string name="tab_settings">Settings</string>
+
     <string name="sync_all_folders">All folders</string>
     <string name="sync_all_folders_on">Includes every visible source on this device</string>
     <string name="sync_all_folders_off">Includes only the folders selected below</string>
@@ -15,4 +22,17 @@
     <string name="origin_uploading">Uploading to Iris</string>
     <string name="origin_processing">In Iris, still processing</string>
     <string name="origin_failed">Upload failed, only on this device</string>
+    <string name="sync_folders_section">Device folders</string>
+    <string name="sync_folders_selected_count">%1$d of %2$d selected</string>
+    <string name="sync_queue_title">Upload queue (%1$d)</string>
+    <string name="sync_queue_section">Show queued items</string>
+    <string name="sync_queue_window">Showing the %1$d most recent of %2$d</string>
+    <string name="sync_queue_window_all">Showing all %1$d items</string>
+    <string name="section_expand">Expand section</string>
+    <string name="section_collapse">Collapse section</string>
+    <string name="queue_state_pending">Queued</string>
+    <string name="queue_state_sending">Uploading</string>
+    <string name="queue_state_processing">Processing on the server</string>
+    <string name="queue_state_done">Finished</string>
+    <string name="queue_state_failed">Failed</string>
 </resources>
