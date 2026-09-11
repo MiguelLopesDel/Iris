@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 import sqlite3
 
+import numpy as np
 import pytest
 
 from core.fingerprint_index import (
@@ -238,3 +239,61 @@ def test_the_gate_falls_back_when_the_index_cannot_be_built(conn, monkeypatch):
     assert context.index_conn is None
     assert context.phash_u64.size == 1, "a varredura em memória devia assumir"
     assert context.nearest_phash(_near(base, 3, rng)) == (1, 3)
+
+
+def test_the_clip_gate_does_not_hold_three_copies_while_it_builds(conn):
+    """Peak memory is what decides whether an import survives, not the residue.
+
+    Collecting embeddings into a list and stacking it kept the buffers, the
+    stacked matrix and the index's own storage alive at the same time: measured
+    at three times the data, which on an 8 GB machine ran out of memory around
+    700k items at 768 dimensions. Blocks bring the peak down to the index
+    itself.
+    """
+    import core.indexer as indexer
+
+    dimensions = 128
+    rows = []
+    rng = random.Random(41)
+    for item_id in range(1, 2 * indexer._CLIP_LOAD_BLOCK + 7):
+        vector = np.array(
+            [rng.random() for _ in range(dimensions)], dtype=np.float32
+        )
+        rows.append((item_id, f"h{item_id}", None, vector.tobytes()))
+
+    conn.execute(
+        "CREATE TABLE memes (id INTEGER PRIMARY KEY, content_hash TEXT,"
+        " perceptual_hash TEXT, embedding BLOB)"
+    )
+    conn.executemany("INSERT INTO memes VALUES (?, ?, ?, ?)", rows)
+    conn.commit()
+
+    context = indexer._build_dedup_context(conn)
+
+    # Every row indexed, across several blocks and a partial last one.
+    assert context.clip_index.ntotal == len(rows)
+    assert len(context.clip_ids) == len(rows)
+
+
+def test_an_embedding_of_another_width_is_skipped_rather_than_crashing(conn):
+    """A catalogue can hold vectors from an older model."""
+    import core.indexer as indexer
+
+    conn.execute(
+        "CREATE TABLE memes (id INTEGER PRIMARY KEY, content_hash TEXT,"
+        " perceptual_hash TEXT, embedding BLOB)"
+    )
+    conn.executemany(
+        "INSERT INTO memes VALUES (?, ?, ?, ?)",
+        [
+            (1, "a", None, np.ones(64, dtype=np.float32).tobytes()),
+            (2, "b", None, np.ones(32, dtype=np.float32).tobytes()),
+            (3, "c", None, np.ones(64, dtype=np.float32).tobytes()),
+        ],
+    )
+    conn.commit()
+
+    context = indexer._build_dedup_context(conn)
+
+    assert context.clip_index.ntotal == 2
+    assert context.clip_ids == [1, 3]

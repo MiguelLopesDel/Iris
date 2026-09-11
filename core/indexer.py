@@ -69,6 +69,9 @@ SCHEMA_VERSION = 4
 # Name the perceptual hash carries in the persistent index.
 _PHASH_KIND = "phash"
 
+# Embeddings read per block when building the duplicate gate's index.
+_CLIP_LOAD_BLOCK = 4096
+
 # O repositório da microsoft depende de código remoto que não acompanhou o
 # transformers 5.x: carregá-lo hoje falha com "'Florence2LanguageConfig' object
 # has no attribute 'forced_bos_token_id'". O repositório da comunidade traz os
@@ -502,6 +505,13 @@ class _DedupContext:
             self.clip_ids.append(meme_id)
 
 
+def _add_clip_block(index, block: np.ndarray, filled: int) -> None:
+    """Normalise and add one block, copied because FAISS reads a contiguous array."""
+    chunk = block[:filled].copy()
+    faiss.normalize_L2(chunk)
+    index.add(chunk)
+
+
 def _build_dedup_context(conn: sqlite3.Connection) -> _DedupContext:
     """Snapshot existing memes (hash → id, phash array, CLIP FAISS) for the dedup gates.
 
@@ -511,8 +521,17 @@ def _build_dedup_context(conn: sqlite3.Connection) -> _DedupContext:
     hash_to_meme: dict[str, int] = {}
     ph_u64: list[int] = []
     ph_ids: list[int] = []
-    embeddings: list[np.ndarray] = []
     clip_ids: list[int] = []
+    # Embeddings go straight into the FAISS index in blocks. Collecting them in
+    # a list and stacking it made three copies live at once -- the buffers, the
+    # stacked matrix and the index's own storage -- so the peak was three times
+    # the data even though only the index survives the call. Peak is what
+    # decides whether an import survives, and at 768 dimensions this is the
+    # difference between running out of memory around 700k items on an 8 GB
+    # machine and around 2.1M.
+    clip_index = None
+    clip_block = np.empty((_CLIP_LOAD_BLOCK, 0), dtype=np.float32)
+    clip_filled = 0
     # Tolerate older schemas missing perceptual_hash/embedding columns.
     cols = {row[1] for row in conn.execute("PRAGMA table_info(memes)")}
     chash_col = "content_hash" if "content_hash" in cols else "NULL"
@@ -528,8 +547,17 @@ def _build_dedup_context(conn: sqlite3.Connection) -> _DedupContext:
             ph_u64.append(u)
             ph_ids.append(int(mid))
         if embedding:
-            embeddings.append(np.frombuffer(embedding, dtype=np.float32))
-            clip_ids.append(int(mid))
+            vector = np.frombuffer(embedding, dtype=np.float32)
+            if clip_index is None:
+                clip_index = faiss.IndexFlatIP(vector.shape[0])
+                clip_block = np.empty((_CLIP_LOAD_BLOCK, vector.shape[0]), dtype=np.float32)
+            if vector.shape[0] == clip_block.shape[1]:
+                clip_block[clip_filled] = vector
+                clip_filled += 1
+                clip_ids.append(int(mid))
+                if clip_filled == _CLIP_LOAD_BLOCK:
+                    _add_clip_block(clip_index, clip_block, clip_filled)
+                    clip_filled = 0
 
     del_u64: list[int] = []
     del_ids: list[int] = []
@@ -544,12 +572,9 @@ def _build_dedup_context(conn: sqlite3.Connection) -> _DedupContext:
     except sqlite3.OperationalError:
         pass
 
-    clip_index = None
-    if embeddings:
-        matrix = np.vstack(embeddings).astype(np.float32)
-        faiss.normalize_L2(matrix)
-        clip_index = faiss.IndexFlatIP(matrix.shape[1])
-        clip_index.add(matrix)
+    if clip_index is not None and clip_filled:
+        _add_clip_block(clip_index, clip_block, clip_filled)
+    del clip_block
 
     index_conn = _ensure_phash_index(conn, ph_ids, ph_u64)
     return _DedupContext(
