@@ -208,3 +208,30 @@ def test_a_nearly_black_frame_with_only_compression_noise_is_still_refused():
     ).convert("RGB")
 
     assert _compute_phash(noisy) is None
+
+
+def test_embedding_similarity_no_longer_holds_an_import_back():
+    """Resemblance must not keep a file out of the library.
+
+    The grouping stopped treating CLIP as identity, but the import gate kept
+    quarantining on it, which is the same mistake in a different place: a file
+    was held back on the strength of looking like something else. The CLIP paper
+    reports this from its own attempt to use the space as a duplicate detector --
+    different objects described alike score near-perfectly, while some real
+    near-duplicates score lower than expected.
+    """
+    from core.indexer import _EMBEDDING_QUARANTINE
+
+    assert _EMBEDDING_QUARANTINE is False
+
+
+def test_identity_signals_still_hold_an_import_back():
+    """What was removed is the resemblance gate, not the duplicate gate."""
+    import inspect
+
+    from core import indexer
+
+    source = inspect.getsource(indexer.process_images)
+
+    assert 'detection="exact_hash"' in source
+    assert 'detection="perceptual"' in source

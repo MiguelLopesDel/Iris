@@ -62,6 +62,10 @@ def queries_may_leave_the_machine() -> bool:
 # returns.
 _PENDING_VECTOR = np.zeros(0, dtype=np.float32)
 
+# Ranking floor for an item that has no embedding for the field being scored.
+# Cosine lives in [-1, 1], so anything below -1 loses to every real score.
+_MISSING_SCORE = -2.0
+
 
 def _stack_vectors(vectors: list) -> np.ndarray | None:
     """Stack vectors, substituting zeros for the ones that are missing.
@@ -106,6 +110,7 @@ class IrisEngine:
         self.library_roots = self.db.get_library_roots()
         self._image_matrix: np.ndarray | None = None
         self._desc_matrix: np.ndarray | None = None
+        self._desc_present: np.ndarray | None = None
         self.records = self._load_records()
         self.image_matrix = self._stack_embeddings("embedding")
         self.desc_matrix = self._stack_embeddings("desc_embedding")
@@ -298,6 +303,7 @@ class IrisEngine:
         # description search for the entire catalogue because of one gap; a zero
         # row simply never matches.
         self._desc_matrix = desc_matrix if any(has_desc) else None
+        self._desc_present = np.array(has_desc, dtype=bool) if any(has_desc) else None
         for position, record in enumerate(records):
             object.__setattr__(record, "embedding", image_matrix[position])
             if self._desc_matrix is not None and has_desc[position]:
@@ -494,6 +500,28 @@ class IrisEngine:
             if candidate.exists():
                 return str(candidate)
         return str(candidates[0]) if candidates else None
+
+    def _mask_missing_descriptions(
+        self, scores: np.ndarray, candidate_indices: list[int]
+    ) -> np.ndarray:
+        """Push items with no description embedding below every real score.
+
+        The matrix keeps a row for them so it stays aligned with the records,
+        but a row of zeros is not neutral: cosine ranges over [-1, 1], so a zero
+        scores higher than anything genuinely dissimilar. Measured, an item with
+        no description outranked two real ones whose scores were negative.
+        """
+        if self._desc_present is None:
+            return scores
+        present = self._desc_present[candidate_indices]
+        if present.all():
+            return scores
+        masked = scores.copy()
+        # Below the domain, not at its edge: -1.0 is a score a genuinely opposite
+        # item can earn, so it would tie rather than lose. Finite on purpose --
+        # -inf becomes nan once a weight of zero multiplies it.
+        masked[~present] = _MISSING_SCORE
+        return masked
 
     def _stack_embeddings(self, field_name: str) -> np.ndarray | None:
         """Matrix built while loading; this only hands it over."""
@@ -969,6 +997,7 @@ class IrisEngine:
                 desc_scores = (candidate_desc_matrix @ query_embedding[0]) / np.maximum(
                     np.linalg.norm(candidate_desc_matrix, axis=1) * query_norm, 1e-12
                 )
+                desc_scores = self._mask_missing_descriptions(desc_scores, candidate_indices)
         else:
             query_tensor = torch.from_numpy(query_embedding).to(self.device)
             image_tensor = torch.from_numpy(candidate_image_matrix).to(self.device).to(
@@ -982,6 +1011,7 @@ class IrisEngine:
                     self.device
                 ).to(query_tensor.dtype)
                 desc_scores = util.cos_sim(query_tensor, desc_tensor)[0].detach().cpu().numpy()
+                desc_scores = self._mask_missing_descriptions(desc_scores, candidate_indices)
 
         scores: dict[int, float] = {}
         details: dict[int, dict[str, float | str]] = {}

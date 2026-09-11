@@ -72,6 +72,12 @@ _PHASH_KIND = "phash"
 # Embeddings read per block when building the duplicate gate's index.
 _CLIP_LOAD_BLOCK = 4096
 
+# Whether an embedding match alone may hold a file out of the library. Off: the
+# signal is a resemblance, not an identity, and the quarantine is where a file
+# waits to be judged a duplicate. Kept as a switch so the old behaviour can be
+# measured rather than argued about.
+_EMBEDDING_QUARANTINE = False
+
 # O repositório da microsoft depende de código remoto que não acompanhou o
 # transformers 5.x: carregá-lo hoje falha com "'Florence2LanguageConfig' object
 # has no attribute 'forced_bos_token_id'". O repositório da comunidade traz os
@@ -1037,9 +1043,19 @@ def process_images(
                     image_embedding = image_embeddings[idx].astype(np.float32)
                     desc_embedding = desc_embeddings[idx].astype(np.float32)
 
-                    # CLIP similarity gate: visually-similar to an existing meme
-                    # (not caught by hash/phash) → review queue instead of insert.
-                    if dedup is not None:
+                    # Embedding similarity is recorded, not acted on. CLIP
+                    # measures what a picture is *about*, so two different
+                    # photographs of the same kind of thing score as high as two
+                    # copies of one photograph -- the CLIP paper reports exactly
+                    # this from its own attempt to use the space as a duplicate
+                    # detector, and it is why the grouping stopped treating it as
+                    # identity. Holding an import back under the same signal was
+                    # the same mistake in a different place: it kept a file out of
+                    # the library on the strength of a resemblance.
+                    #
+                    # The match is still worth knowing, so it is saved as evidence
+                    # the similarity views can use, and the file goes in.
+                    if dedup is not None and _EMBEDDING_QUARANTINE:
                         _clip_hit = dedup.nearest_clip(image_embedding)
                         if _clip_hit is not None:
                             _mid, _score = _clip_hit

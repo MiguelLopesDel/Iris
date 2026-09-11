@@ -193,3 +193,29 @@ class DescriptionMatrixGapTests(unittest.TestCase):
         for position, record in enumerate(engine.records):
             self.assertIs(record.embedding.base, engine.image_matrix)
             self.assertTrue((record.embedding == engine.image_matrix[position]).all())
+
+    def test_an_item_without_a_description_never_outranks_a_real_one(self) -> None:
+        """A zero row is not neutral: cosine is signed.
+
+        Keeping a row so the matrix stays aligned with the records is fine, but
+        scoring it as 0.0 puts it above everything genuinely dissimilar.
+        Measured before the mask: an item with no description embedding ranked
+        second against a query opposed to the catalogue, beating two real items
+        whose scores were negative.
+        """
+        import numpy as np
+
+        engine = self._engine(with_gap=True)
+        assert engine.desc_matrix is not None
+
+        # Cosine, as the ranking code computes it, against a query opposed to
+        # the first item so that real scores go negative.
+        matrix = engine.desc_matrix
+        query = -matrix[0] / np.linalg.norm(matrix[0])
+        norms = np.maximum(np.linalg.norm(matrix, axis=1), 1e-12)
+        raw = (matrix @ query) / norms
+        masked = engine._mask_missing_descriptions(raw, list(range(len(engine.records))))
+
+        self.assertEqual(float(raw[1]), 0.0, "a linha do item sem descrição não era zero")
+        self.assertLess(float(masked[1]), -1.0, "tem de perder até de um item oposto")
+        self.assertEqual(int(np.argmin(masked)), 1, "o item sem descrição devia ficar por último")
