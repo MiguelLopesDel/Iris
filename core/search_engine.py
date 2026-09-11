@@ -14,6 +14,7 @@ from deep_translator import GoogleTranslator
 from PIL import Image
 from sentence_transformers import util
 
+from core import vector_sidecar
 from core.db_manager import DatabaseManager
 from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # historical re-export
 from core.embedding_models import EmbeddingEncoder, load_encoder, resolve_embedding_model
@@ -247,8 +248,13 @@ class IrisEngine:
         # embedding alive until the stacking finished, and a peak is not undone
         # by freeing it: the allocator keeps the arena.
         expected = self._embedding_count(conn)
-        image_matrix: np.ndarray | None = None
-        desc_matrix: np.ndarray | None = None
+        # Mapped from a sidecar when one agrees with the catalogue, so the bytes
+        # belong to the page cache instead of to this process. Falls back to
+        # reading the column when it does not: a stale file must cost a slower
+        # load, never a wrong vector.
+        image_matrix = self._mapped_column(conn, "embedding", expected)
+        desc_matrix = self._mapped_column(conn, "desc_embedding", None)
+        mapped = image_matrix is not None
         has_desc: list[bool] = []
         for idx, row in enumerate(rows):
             embedding_blob = row["embedding"]
@@ -263,23 +269,24 @@ class IrisEngine:
                 library_id=row["library_id"] if "library_id" in row.keys() else None,
             )
             desc_blob = row["desc_embedding"]
-            vector = np.frombuffer(embedding_blob, dtype=np.float32)
-            if image_matrix is None:
-                image_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
-                desc_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
             position = len(records)
-            if position < expected and vector.shape[0] == image_matrix.shape[1]:
-                image_matrix[position] = vector
-            desc_vector = (
-                np.frombuffer(desc_blob, dtype=np.float32) if desc_blob else None
-            )
-            if (
-                desc_vector is not None
-                and position < expected
-                and desc_vector.shape[0] == desc_matrix.shape[1]
-            ):
-                desc_matrix[position] = desc_vector
-            has_desc.append(desc_vector is not None)
+            if not mapped:
+                vector = np.frombuffer(embedding_blob, dtype=np.float32)
+                if image_matrix is None:
+                    image_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
+                    desc_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
+                if position < expected and vector.shape[0] == image_matrix.shape[1]:
+                    image_matrix[position] = vector
+                desc_vector = (
+                    np.frombuffer(desc_blob, dtype=np.float32) if desc_blob else None
+                )
+                if (
+                    desc_vector is not None
+                    and position < expected
+                    and desc_vector.shape[0] == desc_matrix.shape[1]
+                ):
+                    desc_matrix[position] = desc_vector
+            has_desc.append(desc_blob is not None)
             records.append(
                 IndexRecord(
                     index=idx,
@@ -316,7 +323,7 @@ class IrisEngine:
             return records
         # A row can be skipped after the matrices are sized, so trim to what was
         # actually written rather than leaving zero rows the engine would search.
-        if len(records) < expected:
+        if not mapped and len(records) < expected:
             image_matrix = image_matrix[: len(records)].copy()
             desc_matrix = desc_matrix[: len(records)].copy()
         self._image_matrix = image_matrix
@@ -331,6 +338,18 @@ class IrisEngine:
             if self._desc_matrix is not None and has_desc[position]:
                 object.__setattr__(record, "desc_embedding", desc_matrix[position])
         return records
+
+    def _mapped_column(self, conn, column: str, expected: int | None) -> np.ndarray | None:
+        """The column as a memory map, or None to read it the old way."""
+        try:
+            mapped = vector_sidecar.open_map(conn, self.db_path, column)
+        except Exception:
+            return None
+        if mapped is None:
+            return None
+        if expected is not None and mapped.shape[0] != expected:
+            return None
+        return mapped
 
     @staticmethod
     def _embedding_count(conn) -> int:

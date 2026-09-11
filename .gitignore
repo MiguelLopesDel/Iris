@@ -147,6 +147,8 @@ tmp_test_images/
 /data/
 *.db
 *.faiss
+# Sidecars de embedding: derivados do catálogo, reconstruídos quando divergem.
+*.vec
 .iris-dev/
 .iris-load/
 

@@ -285,3 +285,101 @@ class WeightedSignalMeanTests(unittest.TestCase):
         self.assertNotIn(1, scores, "item sem descrição pontuou com peso de imagem zero")
         self.assertIn(0, scores)
         self.assertIn(2, scores)
+
+
+class VectorSidecarTests(unittest.TestCase):
+    """Embeddings are read through a map the kernel owns, not into the process.
+
+    They were the largest thing the server held: 6.3 KB per item across both
+    modalities, 3.4 GB at the size an 8 GB machine already struggled with. The
+    bytes still exist; the page cache owns them now, keeps what is used and
+    drops the rest under pressure.
+    """
+
+    def _catalogue(self, with_gap: bool = False):
+        import numpy as np
+
+        tmp = Path(tempfile.mkdtemp())
+        db_path = tmp / "memes.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE memes (id INTEGER PRIMARY KEY, arquivo TEXT, caminho TEXT,"
+            " texto_extraido TEXT, descricao_ia TEXT, embedding BLOB, desc_embedding BLOB)"
+        )
+        for position in range(6):
+            vector = np.full(8, position + 1, dtype=np.float32).tobytes()
+            desc = None if (with_gap and position == 2) else vector
+            conn.execute(
+                "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia,"
+                " embedding, desc_embedding) VALUES (?, ?, '', '', ?, ?)",
+                (f"{position}.jpg", f"{position}.jpg", vector, desc),
+            )
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_vectors_read_through_the_map_match_the_catalogue(self) -> None:
+        from core.search_engine import IrisEngine
+
+        engine = IrisEngine(db_path=self._catalogue(), load_model=False)
+
+        for position, record in enumerate(engine.records):
+            self.assertEqual(float(record.embedding[0]), position + 1)
+
+    def test_every_sidecar_covers_the_same_rows(self) -> None:
+        """One position has to mean one item across all of them.
+
+        Selecting rows per column produced files of different lengths that were
+        then indexed as if they were parallel: the description column is missing
+        on rows the image column has. A shorter file raised; a longer one would
+        have silently served another item's vector.
+        """
+        from core.search_engine import IrisEngine
+
+        engine = IrisEngine(db_path=self._catalogue(with_gap=True), load_model=False)
+
+        self.assertEqual(engine.image_matrix.shape[0], len(engine.records))
+        self.assertEqual(engine.desc_matrix.shape[0], len(engine.records))
+        self.assertFalse(engine._has_description(2))
+        self.assertTrue(engine._has_description(3))
+        # The row is still the right one for the items that do have a vector.
+        self.assertEqual(float(engine.desc_matrix[3][0]), 4)
+
+    def test_a_sidecar_from_another_catalogue_is_rebuilt(self) -> None:
+        """Derived data: a disagreement costs a rebuild, never a wrong vector."""
+        from core import vector_sidecar
+        from core.search_engine import IrisEngine
+
+        db_path = self._catalogue()
+        IrisEngine(db_path=db_path, load_model=False)
+        path = vector_sidecar.sidecar_path(db_path, "embedding")
+        self.assertTrue(path.is_file())
+
+        conn = sqlite3.connect(db_path)
+        import numpy as np
+
+        conn.execute(
+            "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia,"
+            " embedding, desc_embedding) VALUES ('new.jpg', 'new.jpg', '', '', ?, ?)",
+            (np.full(8, 99, dtype=np.float32).tobytes(),) * 2,
+        )
+        conn.commit()
+        conn.close()
+
+        engine = IrisEngine(db_path=db_path, load_model=False)
+
+        self.assertEqual(len(engine.records), 7)
+        self.assertEqual(float(engine.records[6].embedding[0]), 99)
+
+    def test_a_corrupt_sidecar_does_not_serve_vectors(self) -> None:
+        from core import vector_sidecar
+        from core.search_engine import IrisEngine
+
+        db_path = self._catalogue()
+        IrisEngine(db_path=db_path, load_model=False)
+        vector_sidecar.sidecar_path(db_path, "embedding").write_bytes(b"lixo")
+
+        engine = IrisEngine(db_path=db_path, load_model=False)
+
+        self.assertEqual(len(engine.records), 6)
+        self.assertEqual(float(engine.records[0].embedding[0]), 1)
