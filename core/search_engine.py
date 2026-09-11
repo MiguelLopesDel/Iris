@@ -84,6 +84,32 @@ def _stack_vectors(vectors: list) -> np.ndarray | None:
     return matrix
 
 
+def _weighted_mean(signals: list[tuple[float, bool, float]]) -> float | None:
+    """Weighted mean over the signals an item actually has.
+
+    Ranking blends an image score and a description score, and not every item
+    carries both. Substituting a value for the missing one puts absence into the
+    arithmetic, where it becomes whatever that value happens to do: a zero
+    outranks anything genuinely dissimilar, and a sentinel below the domain
+    turns into a penalty scaled by a weight that means something else. Averaging
+    only over what exists keeps absence out of the numbers.
+
+    Returns None when no available signal carries weight -- balance 0 on an item
+    with no description, say. That item has no score for this query rather than
+    a score built from a signal the query asked to ignore.
+    """
+    total = 0.0
+    weight_sum = 0.0
+    for weight, available, value in signals:
+        if not available or weight <= 0.0:
+            continue
+        total += weight * value
+        weight_sum += weight
+    if weight_sum <= 0.0:
+        return None
+    return total / weight_sum
+
+
 class IrisEngine:
     def __init__(
         self,
@@ -1007,18 +1033,20 @@ class IrisEngine:
                 continue
 
             image_score = float(image_scores[local_idx])
-            if desc_scores is not None and self._has_description(record_idx):
-                desc_score = float(desc_scores[local_idx])
-                semantic_score = image_score * options.balance + desc_score * (1.0 - options.balance)
-            else:
-                # No description to weigh, so the item is judged on its image
-                # alone rather than blended against a stand-in. A sentinel score
-                # survives this combination and becomes an arbitrary penalty:
-                # -2.0 against a balance of 0.5 subtracts a full point, and
-                # against a balance of 1.0 subtracts nothing. Neither is a
-                # decision anyone made.
-                desc_score = 0.0
-                semantic_score = image_score
+            has_description = desc_scores is not None and self._has_description(record_idx)
+            desc_score = float(desc_scores[local_idx]) if has_description else 0.0
+            semantic_score = _weighted_mean(
+                [
+                    (options.balance, True, image_score),
+                    (1.0 - options.balance, has_description, desc_score),
+                ]
+            )
+            if semantic_score is None:
+                # Nothing this query asked for exists on this item: the weights
+                # it does have are zero and the ones it would have are absent.
+                # Falling back to the other signal would answer a question the
+                # user did not ask.
+                continue
 
             lexical_score = 0.0
             score = semantic_score

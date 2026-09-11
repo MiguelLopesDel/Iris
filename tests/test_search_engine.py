@@ -218,3 +218,70 @@ class DescriptionMatrixGapTests(unittest.TestCase):
         engine = self._engine(with_gap=False)
 
         self.assertTrue(all(engine._has_description(i) for i in range(len(engine.records))))
+
+
+class WeightedSignalMeanTests(unittest.TestCase):
+    """Ranking averages the signals an item has, never a stand-in for one it lacks.
+
+    The rule arrived through three wrong answers: None, then zero, then a
+    sentinel below the cosine domain. Each was an attempt to pick a value that
+    represents absence, and the problem was that absence should not be in the
+    arithmetic at all.
+    """
+
+    def test_both_signals_present_is_the_ordinary_blend(self) -> None:
+        from core.search_engine import _weighted_mean
+
+        result = _weighted_mean([(0.5, True, 1.0), (0.5, True, 0.0)])
+
+        self.assertAlmostEqual(result, 0.5)
+
+    def test_a_missing_signal_does_not_drag_the_score_down(self) -> None:
+        """The item is judged on what it has, not penalised for what it lacks."""
+        from core.search_engine import _weighted_mean
+
+        with_desc = _weighted_mean([(0.5, True, 0.8), (0.5, True, 0.8)])
+        without_desc = _weighted_mean([(0.5, True, 0.8), (0.5, False, 0.0)])
+
+        self.assertAlmostEqual(with_desc, without_desc)
+
+    def test_a_zero_weight_signal_is_not_averaged_in(self) -> None:
+        from core.search_engine import _weighted_mean
+
+        result = _weighted_mean([(1.0, True, 0.9), (0.0, True, -0.9)])
+
+        self.assertAlmostEqual(result, 0.9)
+
+    def test_no_available_signal_carries_weight_means_no_score(self) -> None:
+        """balance=0 on an item with no description.
+
+        Falling back to the image would answer a question the user did not ask:
+        they set the image weight to zero.
+        """
+        from core.search_engine import _weighted_mean
+
+        self.assertIsNone(_weighted_mean([(0.0, True, 0.9), (1.0, False, 0.0)]))
+
+    def test_the_mirror_case_is_also_refused(self) -> None:
+        """balance=1 on an item that only has a description."""
+        from core.search_engine import _weighted_mean
+
+        self.assertIsNone(_weighted_mean([(1.0, False, 0.0), (0.0, True, 0.9)]))
+
+    def test_an_item_with_no_description_is_dropped_when_balance_is_zero(self) -> None:
+        """End to end, not just the helper."""
+        import numpy as np
+
+        from core.search_engine import SearchOptions
+
+        engine = DescriptionMatrixGapTests._engine(DescriptionMatrixGapTests(), with_gap=True)
+        query = np.ones((1, 8), dtype=np.float32)
+        options = SearchOptions(top_k=10, threshold=-2.0, balance=0.0, text_bonus=1.0, lexical_weight=0.0)
+
+        scores, _ = engine._score_candidates(
+            query, [0, 1, 2], options, text_query="", translated_query="", negative_terms=[]
+        )
+
+        self.assertNotIn(1, scores, "item sem descrição pontuou com peso de imagem zero")
+        self.assertIn(0, scores)
+        self.assertIn(2, scores)
