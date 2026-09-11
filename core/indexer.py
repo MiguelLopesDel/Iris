@@ -26,7 +26,7 @@ from tqdm import tqdm
 from transformers import AutoProcessor, Florence2ForConditionalGeneration
 from transformers import logging as transformers_logging
 
-from core import import_review
+from core import fingerprint_index, import_review
 from core.deleted_registry import load_deleted_content_hashes
 from core.embedding_models import (
     EmbeddingEncoder,
@@ -65,6 +65,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 transformers_logging.set_verbosity_error()
 
 SCHEMA_VERSION = 4
+
+# Name the perceptual hash carries in the persistent index.
+_PHASH_KIND = "phash"
 
 # O repositório da microsoft depende de código remoto que não acompanhou o
 # transformers 5.x: carregá-lo hoje falha com "'Florence2LanguageConfig' object
@@ -427,8 +430,21 @@ class _DedupContext:
     clip_ids: list[int]
     clip_threshold: float = _DEDUP_CLIP_THRESHOLD
     phash_threshold: int = _DEDUP_PHASH_THRESHOLD
+    # Set when a persistent index is available. With it, a lookup probes a few
+    # hundred buckets instead of scanning every stored hash, and adding an item
+    # is one row instead of reallocating an array that grows with the catalogue.
+    index_conn: sqlite3.Connection | None = None
 
     def nearest_phash(self, phash: str | None) -> tuple[int, int] | None:
+        if self.index_conn is not None:
+            found = fingerprint_index.find_neighbours(
+                self.index_conn,
+                phash or "",
+                kind=_PHASH_KIND,
+                max_distance=self.phash_threshold,
+            )
+            return (found[0].item_id, found[0].distance) if found else None
+        # Fallback for callers without a catalogue connection (tests, tools).
         u = _phash_to_u64(phash)
         if u is None or self.phash_u64.size == 0:
             return None
@@ -469,8 +485,14 @@ class _DedupContext:
     ) -> None:
         if content_hash:
             self.hash_to_meme.setdefault(content_hash, meme_id)
-        u = _phash_to_u64(phash)
-        if u is not None:
+        if self.index_conn is not None and phash:
+            fingerprint_index.index_fingerprints(
+                self.index_conn, [(meme_id, phash)], kind=_PHASH_KIND
+            )
+        elif (u := _phash_to_u64(phash)) is not None:
+            # np.append reallocates the whole array, so this is linear per item
+            # and quadratic over an import. Only reached without an index, where
+            # the arrays are small by construction.
             self.phash_u64 = np.append(self.phash_u64, np.uint64(u))
             self.phash_ids = np.append(self.phash_ids, np.int64(meme_id))
         if self.clip_index is not None and embedding is not None:
@@ -529,15 +551,47 @@ def _build_dedup_context(conn: sqlite3.Connection) -> _DedupContext:
         clip_index = faiss.IndexFlatIP(matrix.shape[1])
         clip_index.add(matrix)
 
+    index_conn = _ensure_phash_index(conn, ph_ids, ph_u64)
     return _DedupContext(
         hash_to_meme=hash_to_meme,
-        phash_u64=np.array(ph_u64, dtype=np.uint64),
-        phash_ids=np.array(ph_ids, dtype=np.int64),
+        # Kept for the fallback path and for tools that build a context without
+        # a catalogue connection; unused once the index is available.
+        phash_u64=np.array([] if index_conn else ph_u64, dtype=np.uint64),
+        phash_ids=np.array([] if index_conn else ph_ids, dtype=np.int64),
+        index_conn=index_conn,
         deleted_phash_u64=np.array(del_u64, dtype=np.uint64),
         deleted_phash_ids=np.array(del_ids, dtype=np.int64),
         clip_index=clip_index,
         clip_ids=clip_ids,
     )
+
+
+def _ensure_phash_index(
+    conn: sqlite3.Connection, ids: list[int], values: list[int]
+) -> sqlite3.Connection | None:
+    """Fill the persistent index from the catalogue the first time it is needed.
+
+    A catalogue indexed before this existed has no rows, and rebuilding on every
+    import would defeat the purpose, so the bridge runs once: if the index holds
+    fewer fingerprints than the catalogue does, the missing ones are written.
+    Returns None when the index cannot be used, so the caller falls back to the
+    in-memory scan rather than silently skipping the duplicate gate.
+    """
+    if not ids:
+        return None
+    try:
+        stored = fingerprint_index.indexed_count(conn, kind=_PHASH_KIND)
+        if stored < len(ids):
+            fingerprint_index.index_fingerprints(
+                conn,
+                ((mid, f"{value:016x}") for mid, value in zip(ids, values, strict=True)),
+                kind=_PHASH_KIND,
+            )
+            conn.commit()
+        return conn
+    except Exception as exc:
+        print(f"  -> indice persistente indisponivel ({exc}); usando varredura em memoria")
+        return None
 
 
 class ImportSourceUnavailable(OSError):

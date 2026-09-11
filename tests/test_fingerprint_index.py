@@ -171,3 +171,70 @@ def test_an_unknown_width_still_gets_a_usable_plan():
 
     assert slices >= 1
     assert (8 // slices + 1) * slices > 8
+
+
+# ── A fiação com o caminho de importação ─────────────────────────────────────
+
+
+def _context(connection, rows):
+    """Dedup context backed by a catalogue, the way an import builds one."""
+    from core.indexer import _build_dedup_context
+
+    connection.execute(
+        "CREATE TABLE memes (id INTEGER PRIMARY KEY, content_hash TEXT,"
+        " perceptual_hash TEXT, embedding BLOB)"
+    )
+    connection.executemany(
+        "INSERT INTO memes (id, content_hash, perceptual_hash, embedding)"
+        " VALUES (?, ?, ?, NULL)",
+        rows,
+    )
+    connection.commit()
+    return _build_dedup_context(connection)
+
+
+def test_the_import_gate_uses_the_persistent_index(conn):
+    """The gate must stop scanning every stored hash for every new file."""
+    rng = random.Random(17)
+    base = f"{rng.getrandbits(64):016x}"
+    context = _context(conn, [(1, "aaa", base), (2, "bbb", f"{rng.getrandbits(64):016x}")])
+
+    assert context.index_conn is not None, "o índice não foi usado"
+    assert context.phash_u64.size == 0, "a varredura em memória continuou carregada"
+    assert indexed_count(conn, kind="phash") == 2
+    assert context.nearest_phash(_near(base, 2, rng)) == (1, 2)
+
+
+def test_an_item_added_during_the_run_is_found_by_the_next_one(conn):
+    """Candidates dedupe against each other, not only against the catalogue."""
+    rng = random.Random(23)
+    base = f"{rng.getrandbits(64):016x}"
+    context = _context(conn, [(1, "aaa", f"{rng.getrandbits(64):016x}")])
+
+    context.add(99, "ccc", base, None)
+
+    assert context.nearest_phash(_near(base, 1, rng)) == (99, 1)
+
+
+def test_an_unrelated_hash_finds_nothing(conn):
+    rng = random.Random(29)
+    context = _context(conn, [(1, "aaa", f"{rng.getrandbits(64):016x}")])
+
+    assert context.nearest_phash(f"{rng.getrandbits(64):016x}") is None
+
+
+def test_the_gate_falls_back_when_the_index_cannot_be_built(conn, monkeypatch):
+    """A broken index must not silently disable the duplicate gate."""
+    import core.indexer as indexer
+
+    def explode(*args, **kwargs):
+        raise sqlite3.OperationalError("disco cheio")
+
+    monkeypatch.setattr(indexer.fingerprint_index, "indexed_count", explode)
+    rng = random.Random(31)
+    base = f"{rng.getrandbits(64):016x}"
+    context = _context(conn, [(1, "aaa", base)])
+
+    assert context.index_conn is None
+    assert context.phash_u64.size == 1, "a varredura em memória devia assumir"
+    assert context.nearest_phash(_near(base, 3, rng)) == (1, 3)
