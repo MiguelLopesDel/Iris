@@ -144,3 +144,52 @@ class SearchEngineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DescriptionMatrixGapTests(unittest.TestCase):
+    """One missing description embedding must not disable the whole catalogue."""
+
+    def _engine(self, with_gap: bool):
+        import numpy as np
+
+        from core.search_engine import IrisEngine
+
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "memes.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE memes (id INTEGER PRIMARY KEY, arquivo TEXT, caminho TEXT,"
+            " texto_extraido TEXT, descricao_ia TEXT, embedding BLOB, desc_embedding BLOB)"
+        )
+        vector = np.ones(8, dtype=np.float32).tobytes()
+        rows = [
+            ("a.jpg", vector, vector),
+            ("b.jpg", vector, None if with_gap else vector),
+            ("c.jpg", vector, vector),
+        ]
+        for name, emb, desc in rows:
+            conn.execute(
+                "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia,"
+                " embedding, desc_embedding) VALUES (?, ?, '', '', ?, ?)",
+                (name, name, emb, desc),
+            )
+        conn.commit()
+        conn.close()
+        return IrisEngine(db_path=db_path, load_model=False)
+
+    def test_a_gap_leaves_the_matrix_usable(self) -> None:
+        """It used to return None for the matrix, switching off search entirely."""
+        engine = self._engine(with_gap=True)
+
+        self.assertIsNotNone(engine.desc_matrix)
+        self.assertEqual(engine.desc_matrix.shape[0], 3)
+        # The item without a description simply never matches.
+        self.assertEqual(float(engine.desc_matrix[1].sum()), 0.0)
+
+    def test_records_share_memory_with_the_matrix(self) -> None:
+        """A second copy per record doubled what an open catalogue costs."""
+        engine = self._engine(with_gap=False)
+
+        for position, record in enumerate(engine.records):
+            self.assertIs(record.embedding.base, engine.image_matrix)
+            self.assertTrue((record.embedding == engine.image_matrix[position]).all())

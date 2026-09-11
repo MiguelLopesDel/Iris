@@ -57,6 +57,33 @@ def queries_may_leave_the_machine() -> bool:
     }
 
 
+# Placeholder held by a record between its construction and the moment the
+# stacked matrix exists; every record is rewritten to a view before _load_records
+# returns.
+_PENDING_VECTOR = np.zeros(0, dtype=np.float32)
+
+
+def _stack_vectors(vectors: list) -> np.ndarray | None:
+    """Stack vectors, substituting zeros for the ones that are missing.
+
+    A single missing value used to return None for the whole matrix, which
+    silently disabled every search path that depends on it -- one item without a
+    description embedding switched off description search for the entire
+    catalogue. A zero row has zero cosine with everything, so the item simply
+    never matches and the rest keeps working: degradation proportional to the
+    gap rather than all or nothing.
+    """
+    present = [vector for vector in vectors if vector is not None]
+    if not present:
+        return None
+    width = present[0].shape[0]
+    matrix = np.zeros((len(vectors), width), dtype=np.float32)
+    for position, vector in enumerate(vectors):
+        if vector is not None and vector.shape[0] == width:
+            matrix[position] = vector
+    return matrix
+
+
 class IrisEngine:
     def __init__(
         self,
@@ -77,6 +104,8 @@ class IrisEngine:
         self.weights = self._load_weights(Path(weights_path))
         
         self.library_roots = self.db.get_library_roots()
+        self._image_matrix: np.ndarray | None = None
+        self._desc_matrix: np.ndarray | None = None
         self.records = self._load_records()
         self.image_matrix = self._stack_embeddings("embedding")
         self.desc_matrix = self._stack_embeddings("desc_embedding")
@@ -177,11 +206,23 @@ class IrisEngine:
                 select_columns.append("id")
             order_column = "id" if "id" in columns else "arquivo"
             sql = f"SELECT {', '.join(select_columns)} FROM memes ORDER BY {order_column}"
-            rows = conn.execute(sql).fetchall()
+            # Streamed, not fetched. fetchall held every row -- blobs included --
+            # while the records were being built from copies of the same bytes, so
+            # the embeddings existed three times over at the peak: the rows, the
+            # per-record copies, and the stacked matrices.
+            rows = conn.execute(sql)
         finally:
             pass
 
         records: list[IndexRecord] = []
+        # Written straight into the matrices as rows stream past. Collecting the
+        # vectors in a list first would have kept a second copy of every
+        # embedding alive until the stacking finished, and a peak is not undone
+        # by freeing it: the allocator keeps the arena.
+        expected = self._embedding_count(conn)
+        image_matrix: np.ndarray | None = None
+        desc_matrix: np.ndarray | None = None
+        has_desc: list[bool] = []
         for idx, row in enumerate(rows):
             embedding_blob = row["embedding"]
             if not embedding_blob:
@@ -195,6 +236,23 @@ class IrisEngine:
                 library_id=row["library_id"] if "library_id" in row.keys() else None,
             )
             desc_blob = row["desc_embedding"]
+            vector = np.frombuffer(embedding_blob, dtype=np.float32)
+            if image_matrix is None:
+                image_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
+                desc_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
+            position = len(records)
+            if position < expected and vector.shape[0] == image_matrix.shape[1]:
+                image_matrix[position] = vector
+            desc_vector = (
+                np.frombuffer(desc_blob, dtype=np.float32) if desc_blob else None
+            )
+            if (
+                desc_vector is not None
+                and position < expected
+                and desc_vector.shape[0] == desc_matrix.shape[1]
+            ):
+                desc_matrix[position] = desc_vector
+            has_desc.append(desc_vector is not None)
             records.append(
                 IndexRecord(
                     index=idx,
@@ -204,8 +262,9 @@ class IrisEngine:
                     texto_extraido=row["texto_extraido"] or "",
                     descricao_ia=row["descricao_ia"] or "",
                     tags=row["tags"] if "tags" in row.keys() and row["tags"] else "",
-                    embedding=np.frombuffer(embedding_blob, dtype=np.float32).copy(),
-                    desc_embedding=np.frombuffer(desc_blob, dtype=np.float32).copy() if desc_blob else None,
+                    # Replaced by a view into the stacked matrix below.
+                    embedding=_PENDING_VECTOR,
+                    desc_embedding=None,
                     relative_path=relative_path,
                     visual_json=row["visual_json"] if "visual_json" in row.keys() else "",
                     objects=row["objects"] if "objects" in row.keys() else "",
@@ -226,7 +285,34 @@ class IrisEngine:
                     thumb_hash=row["thumb_hash"] if "thumb_hash" in row.keys() and row["thumb_hash"] else "",
                 )
             )
+        if image_matrix is None or not records:
+            return records
+        # A row can be skipped after the matrices are sized, so trim to what was
+        # actually written rather than leaving zero rows the engine would search.
+        if len(records) < expected:
+            image_matrix = image_matrix[: len(records)].copy()
+            desc_matrix = desc_matrix[: len(records)].copy()
+        self._image_matrix = image_matrix
+        # Kept even when some rows have no description embedding. Returning None
+        # for the whole matrix, as this used to, silently switched off
+        # description search for the entire catalogue because of one gap; a zero
+        # row simply never matches.
+        self._desc_matrix = desc_matrix if any(has_desc) else None
+        for position, record in enumerate(records):
+            object.__setattr__(record, "embedding", image_matrix[position])
+            if self._desc_matrix is not None and has_desc[position]:
+                object.__setattr__(record, "desc_embedding", desc_matrix[position])
         return records
+
+    @staticmethod
+    def _embedding_count(conn) -> int:
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM memes WHERE embedding IS NOT NULL"
+            ).fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            return 0
 
     def invalidate_table_cache(self) -> None:
         self.db.invalidate_table_cache()
@@ -410,15 +496,12 @@ class IrisEngine:
         return str(candidates[0]) if candidates else None
 
     def _stack_embeddings(self, field_name: str) -> np.ndarray | None:
-        values: list[np.ndarray] = []
-        for record in self.records:
-            value = getattr(record, field_name)
-            if value is None:
-                return None
-            values.append(value)
-        if not values:
-            return None
-        return np.stack(values).astype("float32")
+        """Matrix built while loading; this only hands it over."""
+        if field_name == "embedding":
+            return self._image_matrix
+        if field_name == "desc_embedding":
+            return self._desc_matrix
+        return None
 
     def search_audio_text(self, query: str, top_k: int = 20) -> list[SearchResult]:
         if self.audio_index is None or not self.audio_record_indices:
