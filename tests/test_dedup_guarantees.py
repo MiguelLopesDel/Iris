@@ -7,10 +7,14 @@ rate one transformation at a time, and separate the two kinds of error, which
 are not equally bad: a miss leaves a second copy on disk, a wrong match puts a
 unique photo in front of a delete button.
 
-"Observed", not "guaranteed": zero failures in 120 samples puts the one-sided
-95% lower bound on recall near 97.5%, not at 100%. The only guarantee here that
-is mathematical rather than empirical is the candidate step in
-``core.duplicates``, where the pigeonhole argument rules out false negatives.
+Everything here is an *observed* rate, never a guarantee, and the word is
+avoided rather than footnoted: zero failures in 120 samples puts the one-sided
+95% lower bound on recall near 97.5%, not at 100%, and someone skimming in six
+months will quote the heading, not the caveat.
+
+Exactly one claim in this pipeline is a guarantee rather than a measurement:
+the candidate step in ``core.duplicates``, where the pigeonhole argument rules
+out false negatives within the radius. That one is a proof.
 
 Measured with ``scripts/evaluate_dedup.py`` over 120 real photos.
 """
@@ -57,7 +61,7 @@ def _reencode(image: Image.Image, image_format: str, **options) -> Image.Image:
     return Image.open(buffer).convert("RGB")
 
 
-# ── Observed at 100% over the sample, except where a docstring says otherwise ─
+# ── Observed 100% over the sample, except where a docstring says otherwise ───
 
 
 @pytest.mark.parametrize("factor", [0.25, 0.5, 2.0])

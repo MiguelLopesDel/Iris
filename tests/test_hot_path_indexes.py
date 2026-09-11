@@ -123,3 +123,43 @@ def test_reloading_the_backend_drops_every_cached_index(backend, tmp_path):
     assert str(novo.resolve()) in server._allowed_media_paths()
     assert server._record_for_db_id(4) is not None
     assert server._extension_counts(backend) == {".jpg": 3, ".png": 1}
+
+
+def test_coverage_separates_never_examined_from_no_hash_possible(tmp_path, monkeypatch):
+    """A detector's quality and its coverage are different numbers.
+
+    perceptual_hash is an additive column that had no backfill, so 79% of a real
+    catalogue was null while the duplicate finder answered "460 groups" with no
+    hint that four fifths of the library had never been examined. The column
+    already carries three meanings and the report has to keep them apart.
+    """
+    import sqlite3
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE memes (id INTEGER PRIMARY KEY, perceptual_hash TEXT)")
+    connection.executemany(
+        "INSERT INTO memes (perceptual_hash) VALUES (?)",
+        [("ff00ff00ff00ff00",), ("ff00ff00ff00ff01",), ("",), (None,), (None,), (None,)],
+    )
+    engine = type("Engine", (), {"db": type("Db", (), {"get_connection": staticmethod(lambda: connection)})()})()
+    backend = type("Backend", (), {"engine": engine})()
+    server._invalidate_view_caches()
+
+    coverage = server._fingerprint_coverage(backend)
+
+    assert coverage["total"] == 6
+    assert coverage["phash"] == {
+        "evaluated": 2,
+        "unavailable": 1,
+        "pending": 3,
+        "ratio": round(2 / 6, 4),
+    }
+    server._invalidate_view_caches()
+    connection.close()
+
+
+def test_coverage_is_empty_without_a_local_catalogue(monkeypatch):
+    backend = type("Backend", (), {"engine": None})()
+    server._invalidate_view_caches()
+
+    assert server._fingerprint_coverage(backend) == {}

@@ -124,6 +124,10 @@ class ServerInfoOut(_Out):
     has_faces: bool = False
     missing_count: int | None = None
     extension_counts: dict[str, int] = {}
+    # Quanto do acervo cada detector consegue enxergar. Separado de
+    # total_records de propósito: qualidade do detector e cobertura de
+    # metadado são coisas diferentes, e só uma delas era reportada.
+    fingerprint_coverage: dict[str, Any] = {}
     databases: list[str] = []
     capabilities: CapabilitiesOut | None = None
 

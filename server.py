@@ -232,6 +232,8 @@ _records_by_db_id_cache: dict[str, dict[int, IndexRecord]] = {}
 _allowed_media_paths_cache: dict[str, frozenset[str]] = {}
 # Extension histogram for /api/info, which the sidebar polls.
 _extension_counts_cache: dict[str, dict[str, int]] = {}
+# Fingerprint coverage per detector; one grouped scan, same lifetime.
+_fingerprint_coverage_cache: dict[str, dict[str, Any]] = {}
 
 
 def _invalidate_view_caches() -> None:
@@ -240,11 +242,59 @@ def _invalidate_view_caches() -> None:
     _records_by_db_id_cache.clear()
     _allowed_media_paths_cache.clear()
     _extension_counts_cache.clear()
+    _fingerprint_coverage_cache.clear()
 
 
 def _backend_cache_key(backend: SearchBackend) -> str:
     engine = getattr(backend, "engine", None)
     return str(getattr(engine, "db_path", id(backend)))
+
+
+def _fingerprint_coverage(backend: SearchBackend) -> dict[str, Any]:
+    """How much of the library each detector can actually see.
+
+    Detector quality and metadata coverage are different things, and only one of
+    them was ever reported. perceptual_hash is an additive column with no
+    backfill, so on a real catalogue 79% of rows were null and the duplicate
+    finder was reading a fifth of the library while answering "460 groups" with
+    no hint that the other four fifths were never examined.
+
+    Split three ways on purpose, because the column already carries three
+    meanings: a value, an empty string for "examined, no hash possible" (solid
+    colours, blank screens), and null for "never examined".
+    """
+    key = _backend_cache_key(backend)
+    cached = _fingerprint_coverage_cache.get(key)
+    if cached is not None:
+        return cached
+    engine = getattr(backend, "engine", None)
+    if engine is None:
+        return {}
+    try:
+        row = engine.db.get_connection().execute(
+            "SELECT COUNT(*),"
+            " SUM(CASE WHEN perceptual_hash IS NOT NULL AND perceptual_hash != '' THEN 1 ELSE 0 END),"
+            " SUM(CASE WHEN perceptual_hash = '' THEN 1 ELSE 0 END),"
+            " SUM(CASE WHEN perceptual_hash IS NULL THEN 1 ELSE 0 END)"
+            " FROM memes"
+        ).fetchone()
+        # Unpacked inside the guard on purpose: a backend that answers something
+        # unexpected must degrade to "no coverage reported", never take down the
+        # endpoint that the sidebar polls.
+        total, evaluated, unavailable, pending = (int(value or 0) for value in row)
+    except Exception:
+        return {}
+    coverage = {
+        "total": total,
+        "phash": {
+            "evaluated": evaluated,
+            "unavailable": unavailable,
+            "pending": pending,
+            "ratio": round(evaluated / total, 4) if total else 0.0,
+        },
+    }
+    _fingerprint_coverage_cache[key] = coverage
+    return coverage
 
 
 def _extension_counts(backend: SearchBackend) -> dict[str, int]:
@@ -1306,6 +1356,7 @@ async def get_info(check_missing: int = Query(0)):
         # cached — the sidebar's frequent /api/info stays syscall-free.
         records = backend.get_all_records()
         extension_counts = _extension_counts(backend)
+        fingerprint_coverage = await run_in_threadpool(_fingerprint_coverage, backend)
         total = backend.get_total_records()
         missing_count = None
         if check_missing:
@@ -1333,6 +1384,7 @@ async def get_info(check_missing: int = Query(0)):
             "has_faces": backend.has_face_tables(),
             "missing_count": missing_count,
             "extension_counts": extension_counts,
+            "fingerprint_coverage": fingerprint_coverage,
             "databases": [] if user else _available_databases(),
             "capabilities": {
                 "semantic_search": _LOAD_MODEL,
