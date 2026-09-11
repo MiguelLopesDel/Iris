@@ -38,6 +38,11 @@ with TestClient(server.app) as client:
     started = client.post("/api/sync/uploads", headers=headers, json={
         "filename": "photo.jpg", "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
         "captured_at": "2026-09-09T12:00:00Z",
+        "source": {
+            "id": "external:camera:image", "name": "Camera",
+            "relative_path": "../../must-not-be-used", "volume": "external",
+            "media_store_id": "42", "generation": 7, "media_kind": "image",
+        },
     })
     assert started.status_code == 200, started.text
     upload_id = started.json()["upload_id"]
@@ -46,7 +51,14 @@ with TestClient(server.app) as client:
     completed = client.post("/api/sync/uploads/" + upload_id + "/complete", headers=headers)
     assert completed.status_code == 200, completed.text
     assert completed.json()["state"] == "pending_processing"
-    assert Path(completed.json()["path"]).read_bytes() == body
+    completed_path = Path(completed.json()["path"])
+    assert completed_path.read_bytes() == body
+    assert "must-not-be-used" not in str(completed_path)
+    assert completed_path.name.endswith("-photo.jpg")
+    sources = client.get("/api/sync/sources", headers=headers).json()["sources"]
+    assert sources[0]["name"] == "Camera"
+    assert sources[0]["relative_path"] == "../../must-not-be-used"
+    assert sources[0]["item_count"] == 0
     changes = client.get("/api/sync/changes", headers=headers).json()
     assert changes["changes"][0]["operation"] == "created"
     assert changes["changes"][0]["payload"]["state"] == "pending_processing"

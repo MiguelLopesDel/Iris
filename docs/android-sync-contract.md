@@ -19,7 +19,10 @@ For every locally captured media item, persist an upload job in the app database
 making a network request. The job stores local URI, filename, byte size, SHA-256,
 capture timestamp, `upload_id`, and next byte offset.
 
-1. `POST /api/sync/uploads` JSON: `filename`, `size`, `sha256`, `captured_at`.
+1. `POST /api/sync/uploads` JSON: `filename`, `size`, `sha256`, `captured_at`, and
+   an optional `source` object containing the opaque MediaStore source ID, display
+   name, relative path, volume, item ID, generation, and media kind. The server stores
+   these as metadata and must never resolve a client relative path on its filesystem.
 2. The response supplies `upload_id`, `offset`, and `chunk_size` (currently 32 MiB).
 3. `PUT /api/sync/uploads/{upload_id}?offset={offset}` sends raw bytes, not multipart.
    Send chunks sequentially, then store the returned offset transactionally.
@@ -44,6 +47,10 @@ required for the first release.
 ## Android behavior
 
 - Discover new media with MediaStore, never arbitrary filesystem crawling.
+- Automatic synchronization defaults to off. Let the user include all MediaStore
+  sources or an explicit set, and select photos, videos, or both.
+- Treat source folders as derived views, not user albums. Deselecting a source stops
+  new uploads and never deletes an accepted original.
 - Use WorkManager with a durable local database queue. Default constraints: network
   required; expose Wi-Fi-only and battery preferences to the user.
 - Display server thumbnails/listing as cache. Do not download originals unless opened,

@@ -6,7 +6,7 @@ import threading
 from collections import defaultdict
 from pathlib import Path
 
-from core.sync_db import append_change, ensure_tables, now_iso
+from core.sync_db import append_change, ensure_tables, now_iso, record_origin
 
 _locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 
@@ -48,7 +48,30 @@ def process_upload(*, db_path: Path, media_root: Path, model_name: str, upload_i
         conn = sqlite3.connect(db_path)
         ensure_tables(conn)
         conn.execute("UPDATE sync_uploads SET state = ?, updated_at = ? WHERE id = ?", (state, now_iso(), upload_id))
-        append_change(conn, "media", upload_id, "updated", 3, {"upload_id": upload_id, "state": state, "error": error})
+        media_id = None
+        if state == "ready":
+            upload = conn.execute(
+                """SELECT device_id, expected_hash, source_id, source_name,
+                          source_relative_path, source_volume, source_media_store_id,
+                          source_generation, source_media_kind
+                   FROM sync_uploads WHERE id = ?""",
+                (upload_id,),
+            ).fetchone()
+            if upload is not None:
+                media = conn.execute(
+                    "SELECT id FROM memes WHERE content_hash = ? ORDER BY id DESC LIMIT 1",
+                    (upload[1],),
+                ).fetchone()
+                if media is not None:
+                    media_id = int(media[0])
+                    record_origin(conn, media_id, upload[0], {
+                        "id": upload[2], "name": upload[3], "relative_path": upload[4],
+                        "volume": upload[5], "media_store_id": upload[6],
+                        "generation": upload[7], "media_kind": upload[8],
+                    })
+        append_change(conn, "media", upload_id, "updated", 3, {
+            "upload_id": upload_id, "media_id": media_id, "state": state, "error": error,
+        })
         conn.commit()
         conn.close()
         on_finished()
