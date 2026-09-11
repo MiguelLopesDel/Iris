@@ -108,33 +108,51 @@ def find_duplicate_groups(
     pair_scores: dict[tuple[int, int], float] = {}
     dsu = DisjointSet(n_live)
 
+    # Membership, not pairs. Every member of one of these groups is directly
+    # connected to every other, so writing the pairs out is quadratic for no
+    # gain: 5,000 copies of one file produced 12.5 million entries and about a
+    # gigabyte of dictionary, and only the pairs involving the anchor are ever
+    # read back. Recording which group a position belongs to answers the same
+    # question exactly -- two positions share a direct edge when they share a
+    # group -- without inflating the score of a merely transitive pair.
+    exact_group_of: dict[int, int] = {}
+    phash_group_of: dict[int, int] = {}
+    audio_group_of: dict[int, int] = {}
+
     if include_exact_hash:
         # exact_hash_groups returns positions within the passed list → live-local indices
-        for indices in exact_hash_groups(records_live).values():
-            for base in indices:
-                for other in indices:
-                    if base >= other:
-                        continue
-                    dsu.union(base, other)
-                    pair_scores[(base, other)] = 1.0
+        for group_key, indices in enumerate(exact_hash_groups(records_live).values()):
+            for position in indices:
+                exact_group_of[position] = group_key
+            for other in indices[1:]:
+                dsu.union(indices[0], other)
 
     # pHash grouping for images — Hamming distance ≤ 8 means near-identical copy
-    for indices in phash_groups(records_live).values():
-        for base in indices:
-            for other in indices:
-                if base >= other:
-                    continue
-                dsu.union(base, other)
-                pair_scores[(base, other)] = max(0.99, pair_scores.get((base, other), -1.0))
+    for group_key, indices in enumerate(phash_groups(records_live).values()):
+        for position in indices:
+            phash_group_of[position] = group_key
+        for other in indices[1:]:
+            dsu.union(indices[0], other)
+
+    def signal_score(left: int, right: int) -> float | None:
+        """Score from a direct exact/perceptual edge, or None if there is none."""
+        exact = exact_group_of.get(left)
+        if exact is not None and exact == exact_group_of.get(right):
+            return 1.0
+        perceptual = phash_group_of.get(left)
+        if perceptual is not None and perceptual == phash_group_of.get(right):
+            return 0.99
+        audio = audio_group_of.get(left)
+        if audio is not None and audio == audio_group_of.get(right):
+            return 1.0
+        return None
 
     # Chromaprint fingerprint grouping for audio files
-    for indices in chromaprint_groups(records_live).values():
-        for base in indices:
-            for other in indices:
-                if base >= other:
-                    continue
-                dsu.union(base, other)
-                pair_scores[(base, other)] = 1.0
+    for group_key, indices in enumerate(chromaprint_groups(records_live).values()):
+        for position in indices:
+            audio_group_of[position] = group_key
+        for other in indices[1:]:
+            dsu.union(indices[0], other)
 
     live_matrix = matrix[live_eng]
     faiss_idx = faiss.IndexFlatIP(live_matrix.shape[1])
@@ -184,7 +202,9 @@ def find_duplicate_groups(
                 score = 1.0
             else:
                 left, right = sorted((anchor_local, loc_i))
-                score = pair_scores.get((left, right), cosine(matrix[anchor_eng], matrix[eng_i]))
+                score = pair_scores.get((left, right)) or signal_score(left, right)
+                if score is None:
+                    score = cosine(matrix[anchor_eng], matrix[eng_i])
                 if score < _min_direct:
                     continue
             group_score = min(group_score, score)

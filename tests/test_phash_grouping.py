@@ -24,6 +24,8 @@ MAX_DISTANCE = 8
 class _Record:
     arquivo: str
     perceptual_hash: str
+    content_hash: str = ""
+    resolved_path: str | None = None
 
 
 def _brute_force_groups(
@@ -239,3 +241,35 @@ def test_duplicate_hashes_still_merge_with_their_near_copies():
 
     assert _groups_from_pairs(hashes) == _brute_force_groups(hashes)
     assert _groups_from_pairs(hashes) == {frozenset({0, 1, 2, 3})}
+
+
+def test_a_large_identical_group_does_not_expand_into_every_pair():
+    """The quadratic expansion removed from grouping must not return upstream.
+
+    find_duplicate_groups used to write every pair inside a group: 5,000 copies
+    of one file produced 12.5 million entries and about a gigabyte of
+    dictionary, enough to exhaust a small machine. Only the pairs involving the
+    anchor are ever read, so membership answers the same question.
+    """
+    import tracemalloc
+    from types import SimpleNamespace
+
+    from core.duplicates import find_duplicate_groups
+
+    size = 3000
+    records = [
+        _Record(f"{i}.jpg", "0123456789abcdef")
+        for i in range(size)
+    ]
+    for record in records:
+        record.content_hash = "same"
+        record.resolved_path = None
+    engine = SimpleNamespace(records=records, image_matrix=None)
+
+    tracemalloc.start()
+    find_duplicate_groups(engine, require_existing_files=False)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    # A pair per couple would need hundreds of megabytes at this size.
+    assert peak < 50 * 1024 * 1024, f"pico de memória {peak / 1e6:.0f} MB"
