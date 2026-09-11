@@ -21,6 +21,14 @@ Há quatro recursos independentes:
 | Importação | disco, OCR, vídeo e modelos | duração, CPU/GPU, espaço livre |
 | Acesso remoto | upload do servidor e Wi-Fi/Internet | latência de cliente e throughput |
 
+No Android, ative o diagnóstico local em **Configurações** antes de reproduzir uma
+abertura lenta. Para álbuns, compare `collection.members_data` (requisição + decode),
+`collection.first_content` (toque até o primeiro frame com itens),
+`network.collection_members.total` (HTTP) e `preview.image`/`preview.video`
+(miniaturas). Se apenas o primeiro conteúdo for alto, o custo está na composição; se
+HTTP e dados subirem juntos, está no servidor/rede; se previews forem altos, está no
+cache ou geração de miniaturas.
+
 ## Preparação
 
 Suba o Iris normalmente, espere o modelo terminar de carregar e mantenha uma aba de

@@ -132,6 +132,42 @@ class TestViewCaches:
         server._invalidate_view_caches()
 
 
+class TestCollectionMembersPerformance:
+    def test_collection_members_scans_the_catalog_once(self, client):
+        """Opening an album must be O(catalog + members), not O(catalog * members)."""
+        import server
+        from core.search_types import IndexRecord
+
+        records = [
+            IndexRecord(
+                index=i,
+                arquivo=f"{i}.jpg",
+                caminho=f"/{i}.jpg",
+                resolved_path=None,
+                texto_extraido="",
+                descricao_ia="",
+                tags="",
+                embedding=None,
+                desc_embedding=None,
+                db_id=i,
+            )
+            for i in range(1, 6)
+        ]
+        backend = MagicMock()
+        backend.get_collection_members.return_value = [2, 4, 5]
+        backend.get_all_records.return_value = records
+        previous_backend = server._backend
+        server._backend = backend
+        try:
+            response = client.get("/api/collections/7/members")
+        finally:
+            server._backend = previous_backend
+
+        assert response.status_code == 200
+        assert [record["db_id"] for record in response.json()["records"]] == [2, 4, 5]
+        assert backend.get_all_records.call_count == 1
+
+
 class TestThumbUrlCache:
     def test_stat_is_skipped_within_ttl(self, monkeypatch, tmp_path):
         import server

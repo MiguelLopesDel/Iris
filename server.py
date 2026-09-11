@@ -222,11 +222,83 @@ _forced_worker_running = False
 _sorted_records_cache: dict[tuple[str, str, int], list[IndexRecord]] = {}
 # /api/info missing-file scan is O(N) syscalls; cache by (db_path, total_records).
 _missing_count_cache: dict[tuple[str, int], int] = {}
+# db_id -> record. Looking a record up by database id used to walk the whole
+# library, and several callers did it once per item, turning a page of results
+# into a full scan per row. Built once per backend load, like the caches above.
+_records_by_db_id_cache: dict[str, dict[int, IndexRecord]] = {}
+# Paths /media/ is allowed to serve. Rebuilding this per request cost one
+# Path.resolve() syscall per record — measured at 330 ms for a 17k library, paid
+# on the event loop, on every single original the gallery opened.
+_allowed_media_paths_cache: dict[str, frozenset[str]] = {}
+# Extension histogram for /api/info, which the sidebar polls.
+_extension_counts_cache: dict[str, dict[str, int]] = {}
 
 
 def _invalidate_view_caches() -> None:
     _sorted_records_cache.clear()
     _missing_count_cache.clear()
+    _records_by_db_id_cache.clear()
+    _allowed_media_paths_cache.clear()
+    _extension_counts_cache.clear()
+
+
+def _backend_cache_key(backend: SearchBackend) -> str:
+    engine = getattr(backend, "engine", None)
+    return str(getattr(engine, "db_path", id(backend)))
+
+
+def _extension_counts(backend: SearchBackend) -> dict[str, int]:
+    """Extension histogram for /api/info, cached per backend load.
+
+    The sidebar polls this endpoint, and the loop ran on the event loop: 25 ms
+    of Path() construction per call for a 17k library, blocking every other
+    request for that long. The value only changes when the catalog does.
+    """
+    key = _backend_cache_key(backend)
+    cached = _extension_counts_cache.get(key)
+    if cached is None:
+        cached = {}
+        for record in backend.get_all_records():
+            extension = Path(record.arquivo).suffix.lower() or "(sem extensão)"
+            cached[extension] = cached.get(extension, 0) + 1
+        _extension_counts_cache[key] = cached
+    return cached
+
+
+def _allowed_media_paths() -> frozenset[str]:
+    """The set of originals /media/ may serve, resolved once per backend load.
+
+    The check itself is a security boundary — it is what stops the route from
+    serving any file on disk — so it stays exact. What changed is that the set
+    is no longer rebuilt (one resolve() syscall per record) inside every
+    request handler.
+    """
+    backend = _get_backend()
+    key = _backend_cache_key(backend)
+    cached = _allowed_media_paths_cache.get(key)
+    if cached is None:
+        cached = frozenset(
+            str(Path(record.resolved_path).resolve())
+            for record in backend.get_all_records()
+            if record.resolved_path
+        )
+        _allowed_media_paths_cache[key] = cached
+    return cached
+
+
+def _records_by_db_id() -> dict[int, IndexRecord]:
+    """Index the library by database id, built once per backend load."""
+    backend = _get_backend()
+    key = _backend_cache_key(backend)
+    cached = _records_by_db_id_cache.get(key)
+    if cached is None:
+        cached = {
+            record.db_id: record
+            for record in backend.get_all_records()
+            if record.db_id is not None
+        }
+        _records_by_db_id_cache[key] = cached
+    return cached
 
 
 def _import_db() -> sqlite3.Connection:
@@ -724,8 +796,44 @@ _thumb_url_cache: dict[str, tuple[float, str]] = {}
 
 
 def _thumbnail_url(r: IndexRecord) -> str:
-    """Compute thumbnail URL for a gallery record."""
-    return _thumbnail_url_from_path(r.resolved_path)
+    """Return the thumbnail URL without decoding anything.
+
+    Building this URL used to generate the thumbnail on a cache miss, inside
+    the metadata request. Opening a collection whose previews were never built
+    therefore paid one decode-and-resize per item, sequentially: measured at
+    74 ms per image on the real library, a 125-item collection spent about
+    9 seconds before the client received a single byte of JSON. That is the
+    "collections take several seconds to open" report.
+
+    The work itself is not avoidable, but it belongs to the request that
+    actually wants the pixels. ``/thumbs/{index}/{key}.jpg`` generates on
+    demand, so the browser and the Android client pay it in parallel and only
+    for the items they really display. The record index makes the source file
+    recoverable from the URL alone; the key still identifies the content, so a
+    stale index cannot serve the wrong image.
+    """
+    key = _thumbnail_key(r.resolved_path)
+    if not key:
+        return ""
+    if r.index is None:
+        # No index to resolve later (import review, synthetic records): keep the
+        # old eager path so the URL is still serviceable.
+        return _thumbnail_url_from_path(r.resolved_path)
+    return f"/thumbs/{r.index}/{key}.jpg"
+
+
+def _thumbnail_key(fp: str) -> str:
+    """Content key for a source file: md5(path:mtime:size), or "" if unreadable.
+
+    Survives a rename, invalidates when the bytes change.
+    """
+    if not fp:
+        return ""
+    try:
+        stat = os.stat(fp)
+    except OSError:
+        return ""
+    return hashlib.md5(f"{fp}:{stat.st_mtime}:{stat.st_size}".encode()).hexdigest()
 
 
 def _thumbnail_url_from_path(fp: str) -> str:
@@ -762,11 +870,7 @@ def _compute_thumbnail_url(fp: str) -> str:
             thumb_dir.mkdir(parents=True, exist_ok=True)
             if _multiuser_enabled():
                 os.chmod(thumb_dir, 0o700)
-            ext = os.path.splitext(fp)[1].lower()
-            if ext in VIDEO_EXTENSIONS:
-                _generate_video_thumbnail(fp, thumb)
-            else:
-                _generate_image_thumbnail(fp, thumb)
+            _generate_thumbnail(fp, thumb)
 
         return f"/thumbs/{key}.jpg" if thumb.exists() else ""
     except Exception as exc:
@@ -810,6 +914,28 @@ def _generate_video_thumbnail(video_path: str, thumb_path: Path) -> None:
         img.save(str(thumb_path), format="JPEG", quality=_THUMB_QUALITY, optimize=True)
     finally:
         cap.release()
+
+
+def _generate_thumbnail(source_path: str, thumb_path: Path) -> None:
+    """Generate a thumbnail so that concurrent callers never see a partial file.
+
+    On-demand generation means several requests can race for the same missing
+    thumbnail, and writing straight to the destination would let one of them
+    serve a truncated JPEG. Each writer builds its own temporary file and the
+    rename is atomic, so a reader sees either nothing or a complete image.
+    """
+    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = thumb_path.with_name(f".{thumb_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        ext = os.path.splitext(source_path)[1].lower()
+        if ext in VIDEO_EXTENSIONS:
+            _generate_video_thumbnail(source_path, temporary)
+        else:
+            _generate_image_thumbnail(source_path, temporary)
+        if temporary.exists():
+            os.replace(temporary, thumb_path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _generate_image_thumbnail(image_path: str, thumb_path: Path) -> None:
@@ -923,7 +1049,7 @@ def _store_concept_reference(
 
 
 def _record_for_db_id(db_id: int) -> IndexRecord | None:
-    return next((record for record in _get_backend().get_all_records() if record.db_id == db_id), None)
+    return _records_by_db_id().get(db_id)
 
 
 def _set_import_progress(done: int, total: int, current: str) -> None:
@@ -1179,10 +1305,7 @@ async def get_info(check_missing: int = Query(0)):
         # one stat() per record, so it's opt-in (the stats panel asks for it) and
         # cached — the sidebar's frequent /api/info stays syscall-free.
         records = backend.get_all_records()
-        extension_counts: dict[str, int] = {}
-        for record in records:
-            extension = Path(record.arquivo).suffix.lower() or "(sem extensão)"
-            extension_counts[extension] = extension_counts.get(extension, 0) + 1
+        extension_counts = _extension_counts(backend)
         total = backend.get_total_records()
         missing_count = None
         if check_missing:
@@ -2443,13 +2566,16 @@ async def get_collection_members(col_id: int):
         db_ids = backend.get_collection_members(col_id)
 
         def _build() -> list[dict[str, Any]]:
-            records = []
-            for db_id in db_ids:
-                for r in backend.get_all_records():
-                    if r.db_id == db_id:
-                        records.append(_record_to_json(r))
-                        break
-            return records
+            records_by_id = {
+                record.db_id: record
+                for record in backend.get_all_records()
+                if record.db_id is not None
+            }
+            return [
+                _record_to_json(records_by_id[db_id])
+                for db_id in db_ids
+                if db_id in records_by_id
+            ]
 
         records = await run_in_threadpool(_build)
         return {"db_ids": db_ids, "records": records}
@@ -2813,7 +2939,7 @@ async def face_thumb(face_id: int):
 
 
 def _record_by_db_id(db_id: int) -> IndexRecord | None:
-    return next((record for record in _get_backend().get_all_records() if record.db_id == db_id), None)
+    return _records_by_db_id().get(db_id)
 
 
 def _run_web_enrichment_job(
@@ -3011,21 +3137,52 @@ async def get_duplicates(
 
 @app.post("/api/trash", response_model=TrashOut)
 async def trash_records(db_ids: str = Form(...)):
-    backend = _get_backend()
     await run_in_threadpool(maybe_auto_snapshot, "pre-trash")
     with trace("api.trash"):
         ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
+        by_db_id = _records_by_db_id()
         paths = []
         for db_id in ids:
-            records = [r for r in backend.get_all_records() if r.db_id == db_id]
-            for r in records:
-                if r.resolved_path and os.path.exists(r.resolved_path):
-                    paths.append(r.resolved_path)
+            record = by_db_id.get(db_id)
+            if record and record.resolved_path and os.path.exists(record.resolved_path):
+                paths.append(record.resolved_path)
         moved, failed = move_to_trash(paths)
         return {"moved": len(moved), "failed": len(failed)}
 
 
 # ── Static media ──────────────────────────────────────────────────────────────
+
+
+@app.get("/thumbs/{index}/{filename}")
+async def serve_record_thumbnail(index: int, filename: str):
+    """Serve a record's thumbnail, generating it on this request if missing.
+
+    This is where the decode-and-resize moved to (see ``_thumbnail_url``). The
+    cost is the same per image, but it is now paid concurrently by the requests
+    that display the pixels, instead of serially inside the metadata response.
+    """
+    thumb_dir = _thumbnail_dir()
+    thumb_path = (thumb_dir / filename).resolve()
+    if not thumb_path.is_relative_to(thumb_dir.resolve()) or not filename.endswith(".jpg"):
+        raise HTTPException(404, "Thumbnail not found")
+
+    if not thumb_path.exists():
+        record = _get_backend().get_record(index)
+        source_path = record.resolved_path if record else ""
+        # The key is derived from the source bytes, so a stale index (the
+        # catalog changed since the URL was built) fails this check instead of
+        # quietly serving a different photo.
+        if not source_path or f"{_thumbnail_key(source_path)}.jpg" != filename:
+            raise HTTPException(404, "Thumbnail not found")
+        await run_in_threadpool(_generate_thumbnail, source_path, thumb_path)
+        if not thumb_path.exists():
+            raise HTTPException(404, "Thumbnail not found")
+
+    return FileResponse(
+        thumb_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @app.get("/thumbs/{filename}")
@@ -3047,14 +3204,8 @@ async def serve_thumbnail(filename: str):
 @app.get("/media/{file_path:path}")
 async def serve_media(file_path: str):
     """Serve an original media file. Path is relative to filesystem root."""
-    abs_path = Path("/") / file_path
-    resolved = abs_path.resolve()
-    allowed_paths = {
-        Path(record.resolved_path).resolve()
-        for record in _get_backend().get_all_records()
-        if record.resolved_path
-    }
-    if resolved not in allowed_paths:
+    resolved = (Path("/") / file_path).resolve()
+    if str(resolved) not in _allowed_media_paths():
         raise HTTPException(404, f"File not found: {file_path}")
     if not resolved.exists():
         raise HTTPException(404, f"File not found: {file_path}")
