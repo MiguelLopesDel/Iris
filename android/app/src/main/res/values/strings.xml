@@ -5,4 +5,20 @@
     <string name="tab_persons">Pessoas</string>
     <string name="tab_collections">Coleções</string>
     <string name="tab_settings">Configurações</string>
+    <string name="sync_all_folders">Todas as pastas</string>
+    <string name="sync_all_folders_on">Inclui todas as fontes visíveis no aparelho</string>
+    <string name="sync_all_folders_off">Inclui somente as pastas escolhidas abaixo</string>
+    <string name="sync_photos">Fotos</string>
+    <string name="sync_photos_description">Inclui imagens das pastas selecionadas</string>
+    <string name="sync_videos">Vídeos</string>
+    <string name="sync_videos_description">Inclui vídeos das pastas selecionadas</string>
+    <string name="sync_choose_folders">Escolher pastas do aparelho</string>
+    <string name="sync_source_summary">%1$d itens · %2$s</string>
+    <string name="sync_videos_lowercase">vídeos</string>
+    <string name="sync_photos_lowercase">fotos</string>
+    <string name="sync_media_permission_required">Permita acesso às fotos e vídeos para listar as pastas</string>
+    <string name="origin_iris_only">Só no Iris, não está neste aparelho</string>
+    <string name="origin_uploading">Enviando para o Iris</string>
+    <string name="origin_processing">No Iris, ainda processando</string>
+    <string name="origin_failed">Falha no envio, só neste aparelho</string>
 </resources>

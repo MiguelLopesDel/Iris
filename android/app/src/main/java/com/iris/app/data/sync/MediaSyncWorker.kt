@@ -10,7 +10,10 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.iris.app.IrisApplication
+import com.iris.app.data.model.MediaScanPolicy
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 class MediaSyncWorker(
@@ -28,7 +31,15 @@ class MediaSyncWorker(
 
         try {
             // 2. Discover new media via MediaStore
-            app.mediaStoreScanner.scanAndEnqueueNewMedia()
+            if (app.settingsRepository.autoBackupEnabled.first() || inputData.getBoolean(FORCE_SCAN_KEY, false)) {
+                val policy = MediaScanPolicy(
+                    mode = app.settingsRepository.syncSourceMode.first(),
+                    selectedSourceIds = app.settingsRepository.syncSelectedSourceIds.first(),
+                    includeImages = app.settingsRepository.syncImagesEnabled.first(),
+                    includeVideos = app.settingsRepository.syncVideosEnabled.first()
+                )
+                app.mediaStoreScanner.scanAndEnqueueNewMedia(policy)
+            }
 
             // 3. Process the durable upload queue
             app.syncUploadManager.processQueue()
@@ -45,6 +56,7 @@ class MediaSyncWorker(
     companion object {
         private const val PERIODIC_WORK_TAG = "iris_periodic_sync"
         private const val ONE_TIME_WORK_TAG = "iris_immediate_sync"
+        private const val FORCE_SCAN_KEY = "force_media_scan"
 
         fun schedulePeriodic(context: Context, wifiOnly: Boolean = false, requiresCharging: Boolean = false) {
             val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
@@ -71,6 +83,7 @@ class MediaSyncWorker(
 
             val request = OneTimeWorkRequestBuilder<MediaSyncWorker>()
                 .setConstraints(constraints)
+                .setInputData(workDataOf(FORCE_SCAN_KEY to true))
                 .build()
 
             WorkManager.getInstance(context).enqueueUniqueWork(
@@ -78,6 +91,10 @@ class MediaSyncWorker(
                 ExistingWorkPolicy.REPLACE,
                 request
             )
+        }
+
+        fun cancelPeriodic(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK_TAG)
         }
     }
 }

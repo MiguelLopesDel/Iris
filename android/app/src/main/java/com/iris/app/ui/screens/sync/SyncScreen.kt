@@ -1,5 +1,9 @@
 package com.iris.app.ui.screens.sync
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,16 +56,21 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.UploadJobState
+import com.iris.app.R
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.theme.IrisAccentInk
 import com.iris.app.ui.theme.IrisAccentLime
@@ -80,6 +89,25 @@ fun SyncScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    var enableAfterPermission by remember { mutableStateOf(false) }
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        if (grants.values.any { it }) {
+            viewModel.discoverSources()
+            if (enableAfterPermission) viewModel.setAutoBackupEnabled(true)
+        }
+        enableAfterPermission = false
+    }
+    val requestMediaPermission: (Boolean) -> Unit = { enableAfterGrant ->
+        enableAfterPermission = enableAfterGrant
+        val permissions = if (Build.VERSION.SDK_INT >= 33) {
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        mediaPermissionLauncher.launch(permissions)
+    }
 
     Scaffold(
         topBar = {
@@ -361,8 +389,89 @@ fun SyncScreen(
                             title = "Backup automático contínuo",
                             subtitle = "Descobre novas fotos e vídeos via MediaStore",
                             checked = uiState.autoBackupEnabled,
-                            onCheckedChange = { viewModel.setAutoBackupEnabled(it) }
+                            onCheckedChange = { enabled ->
+                                if (enabled) requestMediaPermission(true)
+                                else viewModel.setAutoBackupEnabled(false)
+                            }
                         )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        PreferenceSwitch(
+                            title = stringResource(R.string.sync_all_folders),
+                            subtitle = if (uiState.sourceMode == "all") {
+                                stringResource(R.string.sync_all_folders_on)
+                            } else {
+                                stringResource(R.string.sync_all_folders_off)
+                            },
+                            checked = uiState.sourceMode == "all",
+                            onCheckedChange = {
+                                viewModel.setSourceMode(if (it) "all" else "selected")
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        PreferenceSwitch(
+                            title = stringResource(R.string.sync_photos),
+                            subtitle = stringResource(R.string.sync_photos_description),
+                            checked = uiState.syncImagesEnabled,
+                            onCheckedChange = viewModel::setSyncImagesEnabled
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        PreferenceSwitch(
+                            title = stringResource(R.string.sync_videos),
+                            subtitle = stringResource(R.string.sync_videos_description),
+                            checked = uiState.syncVideosEnabled,
+                            onCheckedChange = viewModel::setSyncVideosEnabled
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { requestMediaPermission(false) },
+                            enabled = !uiState.isDiscoveringSources
+                        ) {
+                            if (uiState.isDiscoveringSources) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text(stringResource(R.string.sync_choose_folders))
+                        }
+
+                        uiState.sourceDiscoveryError?.let { message ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                if (message == "MEDIA_PERMISSION_REQUIRED") {
+                                    stringResource(R.string.sync_media_permission_required)
+                                } else {
+                                    message
+                                },
+                                color = IrisDanger,
+                                fontSize = 12.sp
+                            )
+                        }
+
+                        if (uiState.sourceMode == "selected") {
+                            uiState.availableSources.forEach { source ->
+                                Spacer(modifier = Modifier.height(6.dp))
+                                PreferenceSwitch(
+                                    title = source.name,
+                                    subtitle = stringResource(
+                                        R.string.sync_source_summary,
+                                        source.itemCount,
+                                        if (source.mediaKind == "video") {
+                                            stringResource(R.string.sync_videos_lowercase)
+                                        } else {
+                                            stringResource(R.string.sync_photos_lowercase)
+                                        }
+                                    ),
+                                    checked = source.id in uiState.selectedSourceIds,
+                                    onCheckedChange = { viewModel.toggleSource(source.id, it) }
+                                )
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(8.dp))
 

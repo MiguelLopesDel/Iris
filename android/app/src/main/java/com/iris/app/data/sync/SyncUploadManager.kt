@@ -6,6 +6,7 @@ import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.UploadInitRequest
 import com.iris.app.data.model.UploadJobState
+import com.iris.app.data.model.UploadSource
 import com.iris.app.data.remote.IrisApiService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,7 +40,8 @@ class SyncUploadManager(
         uri: Uri,
         filename: String,
         size: Long,
-        capturedAtIso: String
+        capturedAtIso: String,
+        source: UploadSource? = null
     ): Long = withContext(Dispatchers.IO) {
         val uriStr = uri.toString()
         if (dbHelper.isUriEnqueued(uriStr)) {
@@ -51,7 +53,8 @@ class SyncUploadManager(
             filename = filename,
             byteSize = size,
             sha256 = hash,
-            capturedAt = capturedAtIso
+            capturedAt = capturedAtIso,
+            source = source
         )
     }
 
@@ -94,7 +97,8 @@ class SyncUploadManager(
                         filename = job.filename,
                         size = job.byteSize,
                         sha256 = job.sha256,
-                        capturedAt = job.capturedAt
+                        capturedAt = job.capturedAt,
+                        source = job.source
                     )
                 )
                 uploadId = initResponse.uploadId

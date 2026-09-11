@@ -32,6 +32,8 @@ class IrisPerformanceEventListener(
         private fun metricFor(request: Request): Metric = when {
             request.url.encodedPath.endsWith("/healthz") -> Metric.NetworkHealth
             request.url.encodedPath.contains("/api/info") -> Metric.NetworkInfo
+            request.url.encodedPath.contains("/api/collections/") &&
+                request.url.encodedPath.endsWith("/members") -> Metric.NetworkCollectionMembers
             request.url.encodedPath.contains("/api/records") -> Metric.NetworkRecords
             request.url.encodedPath.contains("/media/") || request.url.encodedPath.contains("/thumbnail") -> Metric.NetworkMedia
             else -> Metric.NetworkOther

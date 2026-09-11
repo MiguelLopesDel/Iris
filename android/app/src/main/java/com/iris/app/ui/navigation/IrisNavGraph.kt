@@ -260,7 +260,12 @@ fun IrisNavGraph(
                 val colName = backStackEntry.arguments?.getString("collectionName") ?: ""
                 val viewModel: CollectionMediaViewModel = viewModel(
                     key = "col_$colId",
-                    factory = CollectionMediaViewModel.Factory(colId, colName, application.irisRepository)
+                    factory = CollectionMediaViewModel.Factory(
+                        colId,
+                        colName,
+                        application.irisRepository,
+                        application.performanceMonitor
+                    )
                 )
                 CollectionMediaScreen(
                     viewModel = viewModel,

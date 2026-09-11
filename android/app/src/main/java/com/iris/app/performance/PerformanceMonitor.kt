@@ -109,6 +109,8 @@ enum class Metric(val key: String) {
     GalleryFirstPage("gallery.first_page_data"),
     GalleryFirstContent("gallery.first_content"),
     GalleryPage("gallery.page_data"),
+    CollectionMembers("collection.members_data"),
+    CollectionFirstContent("collection.first_content"),
     NavigationGallery("navigation.gallery_first_frame"),
     NavigationSearch("navigation.search_first_frame"),
     NavigationAlbums("navigation.albums_first_frame"),
@@ -118,6 +120,7 @@ enum class Metric(val key: String) {
     NetworkHealth("network.health.total"),
     NetworkInfo("network.info.total"),
     NetworkRecords("network.records.total"),
+    NetworkCollectionMembers("network.collection_members.total"),
     NetworkMedia("network.media.total"),
     NetworkOther("network.other.total")
 }

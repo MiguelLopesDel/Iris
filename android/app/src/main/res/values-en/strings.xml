@@ -1,0 +1,18 @@
+<resources>
+    <string name="sync_all_folders">All folders</string>
+    <string name="sync_all_folders_on">Includes every visible source on this device</string>
+    <string name="sync_all_folders_off">Includes only the folders selected below</string>
+    <string name="sync_photos">Photos</string>
+    <string name="sync_photos_description">Includes images from the selected folders</string>
+    <string name="sync_videos">Videos</string>
+    <string name="sync_videos_description">Includes videos from the selected folders</string>
+    <string name="sync_choose_folders">Choose device folders</string>
+    <string name="sync_source_summary">%1$d items · %2$s</string>
+    <string name="sync_videos_lowercase">videos</string>
+    <string name="sync_photos_lowercase">photos</string>
+    <string name="sync_media_permission_required">Allow photo and video access to list device folders</string>
+    <string name="origin_iris_only">In Iris only, not on this device</string>
+    <string name="origin_uploading">Uploading to Iris</string>
+    <string name="origin_processing">In Iris, still processing</string>
+    <string name="origin_failed">Upload failed, only on this device</string>
+</resources>

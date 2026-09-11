@@ -152,6 +152,8 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
                         wifiOnly = wifiOnly,
                         requiresCharging = chargingOnly
                     )
+                } else {
+                    MediaSyncWorker.cancelPeriodic(this@IrisApplication)
                 }
             }
         }

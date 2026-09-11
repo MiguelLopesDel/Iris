@@ -36,8 +36,41 @@ data class UploadInitRequest(
     @SerialName("filename") val filename: String,
     @SerialName("size") val size: Long,
     @SerialName("sha256") val sha256: String,
-    @SerialName("captured_at") val capturedAt: String
+    @SerialName("captured_at") val capturedAt: String,
+    @SerialName("source") val source: UploadSource? = null
 )
+
+@Serializable
+data class UploadSource(
+    @SerialName("id") val id: String,
+    @SerialName("name") val name: String,
+    @SerialName("relative_path") val relativePath: String = "",
+    @SerialName("volume") val volume: String = "",
+    @SerialName("media_store_id") val mediaStoreId: String = "",
+    @SerialName("generation") val generation: Long = 0L,
+    @SerialName("media_kind") val mediaKind: String
+)
+
+data class DeviceMediaSource(
+    val id: String,
+    val name: String,
+    val relativePath: String,
+    val volume: String,
+    val mediaKind: String,
+    val itemCount: Int
+)
+
+data class MediaScanPolicy(
+    val mode: String = "selected",
+    val selectedSourceIds: Set<String> = emptySet(),
+    val includeImages: Boolean = true,
+    val includeVideos: Boolean = true
+) {
+    fun includes(sourceId: String, mediaKind: String): Boolean {
+        val kindEnabled = if (mediaKind == "video") includeVideos else includeImages
+        return kindEnabled && (mode == "all" || sourceId in selectedSourceIds)
+    }
+}
 
 @Serializable
 data class UploadInitResponse(
@@ -106,6 +139,7 @@ data class LocalUploadJob(
     val byteSize: Long,
     val sha256: String,
     val capturedAt: String,
+    val source: UploadSource? = null,
     val uploadId: String? = null,
     val nextByteOffset: Long = 0L,
     val chunkSize: Int = 32 * 1024 * 1024,

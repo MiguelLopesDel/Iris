@@ -7,6 +7,8 @@ import com.iris.app.data.model.IrisCollection
 import com.iris.app.data.model.IrisConcept
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.performance.Metric
+import com.iris.app.performance.PerformanceMonitor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +29,10 @@ data class CollectionMediaUiState(
     val collectionName: String,
     val members: List<MediaRecord> = emptyList(),
     val isLoading: Boolean = false,
+    val isLoadingMore: Boolean = false,
+    val page: Int = 1,
+    val totalPages: Int = 1,
+    val totalRecords: Int = 0,
     val error: String? = null
 )
 
@@ -84,29 +90,61 @@ class CollectionsViewModel(
 class CollectionMediaViewModel(
     private val collectionId: Int,
     private val collectionName: String,
-    private val repository: IrisRepository
+    private val repository: IrisRepository,
+    val performanceMonitor: PerformanceMonitor
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
         CollectionMediaUiState(collectionId = collectionId, collectionName = collectionName)
     )
     val uiState: StateFlow<CollectionMediaUiState> = _uiState.asStateFlow()
+    private var firstContentFinish: (() -> Unit)? = null
 
     init {
         loadMembers()
     }
 
     fun loadMembers() {
+        loadPage(page = 1)
+    }
+
+    fun loadNextPage() {
+        val current = _uiState.value
+        if (current.isLoading || current.isLoadingMore || current.page >= current.totalPages) return
+        loadPage(page = current.page + 1)
+    }
+
+    private fun loadPage(page: Int) {
+        val finishMembers = performanceMonitor.begin(Metric.CollectionMembers)
+        if (page == 1 && _uiState.value.members.isEmpty()) {
+            firstContentFinish = performanceMonitor.begin(Metric.CollectionFirstContent)
+        }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            repository.getCollectionMembers(collectionId).onSuccess { list ->
+            _uiState.update {
+                it.copy(
+                    isLoading = page == 1,
+                    isLoadingMore = page > 1,
+                    error = null
+                )
+            }
+            repository.getCollectionMembersPage(collectionId, page).onSuccess { response ->
+                finishMembers()
                 _uiState.update {
-                    it.copy(members = list, isLoading = false, error = null)
+                    it.copy(
+                        members = if (page == 1) response.records else it.members + response.records,
+                        isLoading = false,
+                        isLoadingMore = false,
+                        page = response.page,
+                        totalPages = response.totalPages,
+                        totalRecords = response.total,
+                        error = null
+                    )
                 }
             }.onFailure { ex ->
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        isLoadingMore = false,
                         error = ex.localizedMessage ?: "Erro ao carregar membros da coleção"
                     )
                 }
@@ -114,14 +152,22 @@ class CollectionMediaViewModel(
         }
     }
 
+    fun onFirstContentDrawn() {
+        firstContentFinish?.invoke()
+        firstContentFinish = null
+    }
+
     class Factory(
         private val collectionId: Int,
         private val collectionName: String,
-        private val repository: IrisRepository
+        private val repository: IrisRepository,
+        private val performanceMonitor: PerformanceMonitor
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return CollectionMediaViewModel(collectionId, collectionName, repository) as T
+            return CollectionMediaViewModel(
+                collectionId, collectionName, repository, performanceMonitor
+            ) as T
         }
     }
 }

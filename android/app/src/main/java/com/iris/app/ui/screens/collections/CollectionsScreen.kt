@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,6 +46,10 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -279,6 +285,24 @@ fun CollectionMediaScreen(
     onMediaClick: (Int) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val gridState = rememberLazyGridState()
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = gridState.layoutInfo.totalItemsCount
+            total > 0 && lastVisible >= total - 8
+        }
+    }
+
+    LaunchedEffect(uiState.members.isNotEmpty()) {
+        if (uiState.members.isNotEmpty()) {
+            withFrameNanos { viewModel.onFirstContentDrawn() }
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore) {
+        if (shouldLoadMore) viewModel.loadNextPage()
+    }
 
     Scaffold(
         topBar = {
@@ -291,7 +315,7 @@ fun CollectionMediaScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${uiState.members.size} mídias",
+                            text = "${uiState.totalRecords} mídias",
                             fontSize = 12.sp,
                             color = IrisTextSoft
                         )
@@ -347,6 +371,7 @@ fun CollectionMediaScreen(
 
             else -> {
                 LazyVerticalGrid(
+                    state = gridState,
                     columns = GridCells.Adaptive(110.dp),
                     contentPadding = PaddingValues(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -361,8 +386,21 @@ fun CollectionMediaScreen(
                     ) { record ->
                         MediaCard(
                             record = record,
+                            performanceMonitor = viewModel.performanceMonitor,
                             onClick = { onMediaClick(record.index) }
                         )
+                    }
+                    if (uiState.isLoadingMore) {
+                        item(key = "loading-more") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(color = IrisAccentLime)
+                            }
+                        }
                     }
                 }
             }

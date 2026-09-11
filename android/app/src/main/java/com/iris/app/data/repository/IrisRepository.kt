@@ -7,6 +7,7 @@ import com.iris.app.data.model.IrisCollection
 import com.iris.app.data.model.IrisConcept
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.MediaRecord
+import com.iris.app.data.model.MediaScanPolicy
 import com.iris.app.data.model.Person
 import com.iris.app.data.model.PersonMediaResponse
 import com.iris.app.data.model.RecordMetadataResponse
@@ -68,8 +69,8 @@ class IrisRepository(
         return dbHelper.getAllJobs()
     }
 
-    suspend fun triggerSync(): Result<Int> = runCatchingCancellable {
-        val discovered = mediaScanner.scanAndEnqueueNewMedia()
+    suspend fun triggerSync(policy: MediaScanPolicy = MediaScanPolicy()): Result<Int> = runCatchingCancellable {
+        val discovered = mediaScanner.scanAndEnqueueNewMedia(policy)
         uploadManager.processQueue()
         changeFeedSync.syncChanges()
         discovered
@@ -187,6 +188,17 @@ class IrisRepository(
         val response = apiClient.apiService.getCollectionMembers(collectionId)
         response.records.ifEmpty { response.members }
     }
+
+    suspend fun getCollectionMembersPage(
+        collectionId: Int,
+        page: Int = 1,
+        perPage: Int = 24
+    ): Result<RecordsResponse> = getRecords(
+        page = page,
+        perPage = perPage,
+        sortBy = "data",
+        collectionIds = collectionId.toString()
+    )
 
     suspend fun getConcepts(): Result<List<IrisConcept>> = runCatchingCancellable {
         apiClient.apiService.getConcepts().concepts

@@ -52,6 +52,13 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 byte_size INTEGER NOT NULL,
                 sha256 TEXT NOT NULL,
                 captured_at TEXT NOT NULL,
+                source_id TEXT,
+                source_name TEXT,
+                source_relative_path TEXT,
+                source_volume TEXT,
+                source_media_store_id TEXT,
+                source_generation INTEGER NOT NULL DEFAULT 0,
+                source_media_kind TEXT,
                 upload_id TEXT,
                 next_byte_offset INTEGER NOT NULL DEFAULT 0,
                 chunk_size INTEGER NOT NULL DEFAULT 33554432,
@@ -76,9 +83,15 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS upload_jobs")
-        db.execSQL("DROP TABLE IF EXISTS sync_cursor")
-        onCreate(db)
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE upload_jobs ADD COLUMN source_id TEXT")
+            db.execSQL("ALTER TABLE upload_jobs ADD COLUMN source_name TEXT")
+            db.execSQL("ALTER TABLE upload_jobs ADD COLUMN source_relative_path TEXT")
+            db.execSQL("ALTER TABLE upload_jobs ADD COLUMN source_volume TEXT")
+            db.execSQL("ALTER TABLE upload_jobs ADD COLUMN source_media_store_id TEXT")
+            db.execSQL("ALTER TABLE upload_jobs ADD COLUMN source_generation INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE upload_jobs ADD COLUMN source_media_kind TEXT")
+        }
     }
 
     suspend fun insertOrIgnoreJob(
@@ -86,7 +99,8 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
         filename: String,
         byteSize: Long,
         sha256: String,
-        capturedAt: String
+        capturedAt: String,
+        source: com.iris.app.data.model.UploadSource? = null
     ): Long = withContext(Dispatchers.IO) {
         writableDatabase.let { db ->
             val values = ContentValues().apply {
@@ -95,6 +109,13 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 put("byte_size", byteSize)
                 put("sha256", sha256)
                 put("captured_at", capturedAt)
+                put("source_id", source?.id)
+                put("source_name", source?.name)
+                put("source_relative_path", source?.relativePath)
+                put("source_volume", source?.volume)
+                put("source_media_store_id", source?.mediaStoreId)
+                put("source_generation", source?.generation ?: 0L)
+                put("source_media_kind", source?.mediaKind)
                 put("state", UploadJobState.QUEUED.name)
                 put("updated_at", System.currentTimeMillis())
             }
@@ -168,7 +189,8 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
         runInWriteTransaction { db ->
             val cursor = db.rawQuery(
                 """
-                SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at
+                SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at,
+                       source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind
                 FROM upload_jobs
                 WHERE state IN ('QUEUED', 'UPLOADING')
                 ORDER BY id ASC
@@ -197,7 +219,7 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
     suspend fun getAllJobs(): List<LocalUploadJob> = withContext(Dispatchers.IO) {
         readableDatabase.let { db ->
             val cursor = db.rawQuery(
-                "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at FROM upload_jobs ORDER BY id DESC",
+                "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind FROM upload_jobs ORDER BY id DESC",
                 null
             )
             val list = mutableListOf<LocalUploadJob>()
@@ -237,6 +259,17 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
             byteSize = cursor.getLong(3),
             sha256 = cursor.getString(4),
             capturedAt = cursor.getString(5),
+            source = cursor.getString(12)?.let { sourceId ->
+                com.iris.app.data.model.UploadSource(
+                    id = sourceId,
+                    name = cursor.getString(13).orEmpty(),
+                    relativePath = cursor.getString(14).orEmpty(),
+                    volume = cursor.getString(15).orEmpty(),
+                    mediaStoreId = cursor.getString(16).orEmpty(),
+                    generation = cursor.getLong(17),
+                    mediaKind = cursor.getString(18).orEmpty()
+                )
+            },
             uploadId = cursor.getString(6),
             nextByteOffset = cursor.getLong(7),
             chunkSize = cursor.getInt(8),
@@ -252,6 +285,6 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
     }
 }

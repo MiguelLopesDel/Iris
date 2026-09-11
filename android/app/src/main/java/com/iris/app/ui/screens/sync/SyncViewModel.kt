@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.local.DeviceCredentialsStore
+import com.iris.app.data.model.DeviceMediaSource
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.ServerSettingsRepository
@@ -30,7 +31,14 @@ data class SyncUiState(
     val currentProgress: Float = 0f,
     val syncWifiOnly: Boolean = false,
     val syncChargingOnly: Boolean = false,
-    val autoBackupEnabled: Boolean = true
+    val autoBackupEnabled: Boolean = false,
+    val sourceMode: String = "selected",
+    val selectedSourceIds: Set<String> = emptySet(),
+    val syncImagesEnabled: Boolean = true,
+    val syncVideosEnabled: Boolean = true,
+    val availableSources: List<DeviceMediaSource> = emptyList(),
+    val isDiscoveringSources: Boolean = false,
+    val sourceDiscoveryError: String? = null
 )
 
 class SyncViewModel(
@@ -79,6 +87,26 @@ class SyncViewModel(
         viewModelScope.launch {
             settingsRepository.autoBackupEnabled.collect { autoBackup ->
                 _uiState.update { it.copy(autoBackupEnabled = autoBackup) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.syncSourceMode.collect { mode ->
+                _uiState.update { it.copy(sourceMode = mode) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.syncSelectedSourceIds.collect { sourceIds ->
+                _uiState.update { it.copy(selectedSourceIds = sourceIds) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.syncImagesEnabled.collect { enabled ->
+                _uiState.update { it.copy(syncImagesEnabled = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.syncVideosEnabled.collect { enabled ->
+                _uiState.update { it.copy(syncVideosEnabled = enabled) }
             }
         }
         viewModelScope.launch {
@@ -147,6 +175,44 @@ class SyncViewModel(
 
     fun setAutoBackupEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.updateAutoBackupEnabled(enabled) }
+    }
+
+    fun setSourceMode(mode: String) {
+        viewModelScope.launch { settingsRepository.updateSyncSourceMode(mode) }
+    }
+
+    fun toggleSource(sourceId: String, enabled: Boolean) {
+        val selected = _uiState.value.selectedSourceIds.toMutableSet()
+        if (enabled) selected += sourceId else selected -= sourceId
+        viewModelScope.launch { settingsRepository.updateSelectedSourceIds(selected) }
+    }
+
+    fun setSyncImagesEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.updateSyncImagesEnabled(enabled) }
+    }
+
+    fun setSyncVideosEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.updateSyncVideosEnabled(enabled) }
+    }
+
+    fun discoverSources() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDiscoveringSources = true, sourceDiscoveryError = null) }
+            runCatching { repository.mediaScanner.discoverSources() }
+                .onSuccess { sources ->
+                    _uiState.update {
+                        it.copy(availableSources = sources, isDiscoveringSources = false)
+                    }
+                }
+                .onFailure {
+                    _uiState.update {
+                        it.copy(
+                            isDiscoveringSources = false,
+                            sourceDiscoveryError = "MEDIA_PERMISSION_REQUIRED"
+                        )
+                    }
+                }
+        }
     }
 
     fun loadQueue() {
