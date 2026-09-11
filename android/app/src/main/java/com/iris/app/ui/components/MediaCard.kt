@@ -13,6 +13,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material3.Icon
@@ -28,10 +32,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.iris.app.IrisApplication
+import com.iris.app.R
+import com.iris.app.data.model.MediaOrigin
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
@@ -40,6 +47,7 @@ import com.iris.app.performance.PerformanceMonitor
 fun MediaCard(
     record: MediaRecord,
     performanceMonitor: PerformanceMonitor? = null,
+    origin: MediaOrigin = MediaOrigin.IRIS_ONLY,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -126,7 +134,53 @@ fun MediaCard(
                 }
             }
 
+            OriginBadge(
+                origin = origin,
+                modifier = Modifier
+                    .padding(6.dp)
+                    .align(Alignment.TopEnd)
+            )
         }
+    }
+}
+
+/**
+ * Says whether the item is also on the phone, still uploading, or server-only.
+ *
+ * Without this the grid gives no way to tell an item that exists in two places
+ * from one that exists in exactly one, which is precisely what a user needs to
+ * know before freeing space on the phone.
+ */
+@Composable
+private fun OriginBadge(origin: MediaOrigin, modifier: Modifier = Modifier) {
+    // An item present in both places is the ordinary case: badging it too would
+    // put an icon on every single cell and stop meaning anything.
+    if (origin == MediaOrigin.ON_DEVICE) return
+
+    val (icon, description) = when (origin) {
+        MediaOrigin.IRIS_ONLY -> Icons.Outlined.Cloud to stringResource(R.string.origin_iris_only)
+        MediaOrigin.UPLOADING -> Icons.Outlined.CloudUpload to stringResource(R.string.origin_uploading)
+        MediaOrigin.PROCESSING -> Icons.Outlined.Sync to stringResource(R.string.origin_processing)
+        MediaOrigin.FAILED -> Icons.Outlined.CloudOff to stringResource(R.string.origin_failed)
+        MediaOrigin.ON_DEVICE -> return
+    }
+
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = if (origin == MediaOrigin.FAILED) {
+                MaterialTheme.colorScheme.errorContainer
+            } else {
+                Color.White
+            },
+            modifier = Modifier.size(15.dp)
+        )
     }
 }
 

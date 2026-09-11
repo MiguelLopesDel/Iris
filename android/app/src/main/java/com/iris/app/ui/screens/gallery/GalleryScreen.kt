@@ -306,6 +306,7 @@ fun GalleryScreen(
                                         MediaCard(
                                             record = record,
                                             performanceMonitor = viewModel.performanceMonitor,
+                                            origin = uiState.origins.originOf(record.contentHash),
                                             onClick = { onMediaClick(record.index) },
                                             // Animates position/size when the pinch
                                             // gesture changes columnCount instead of

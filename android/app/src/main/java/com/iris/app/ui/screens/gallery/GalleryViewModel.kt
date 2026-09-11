@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.catalog.MediaCatalog
+import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.repository.IrisRepository
@@ -28,7 +29,8 @@ data class GalleryUiState(
     val totalRecords: Int = 0,
     val mediaType: String = "all",
     val serverInfo: ServerInfo? = null,
-    val isServerChecking: Boolean = false
+    val isServerChecking: Boolean = false,
+    val origins: MediaOriginIndex = MediaOriginIndex.EMPTY
 )
 
 class GalleryViewModel(
@@ -45,7 +47,21 @@ class GalleryViewModel(
 
     init {
         showMirroredCatalog()
+        refreshOrigins()
         checkServerAndLoad()
+    }
+
+    /**
+     * Reads the durable upload queue so each cell can say where it lives.
+     *
+     * The queue is local and small, so this stays off the network entirely:
+     * a cell can be marked before the server answers anything.
+     */
+    fun refreshOrigins() {
+        viewModelScope.launch {
+            val jobs = runCatching { repository.getUploadQueue() }.getOrNull() ?: return@launch
+            _uiState.update { it.copy(origins = MediaOriginIndex.from(jobs)) }
+        }
     }
 
     /**
@@ -134,6 +150,9 @@ class GalleryViewModel(
     }
 
     fun refresh() {
+        // Uploads progress while the grid is open, so the badges are only
+        // truthful if they are re-read whenever the user asks for fresh data.
+        refreshOrigins()
         _uiState.update { it.copy(isRefreshing = true) }
         checkServerAndLoad()
     }
