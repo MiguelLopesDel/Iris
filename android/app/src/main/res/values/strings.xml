@@ -21,4 +21,17 @@
     <string name="origin_uploading">Enviando para o Iris</string>
     <string name="origin_processing">No Iris, ainda processando</string>
     <string name="origin_failed">Falha no envio, só neste aparelho</string>
+    <string name="sync_folders_section">Pastas do aparelho</string>
+    <string name="sync_folders_selected_count">%1$d de %2$d selecionadas</string>
+    <string name="sync_queue_title">Fila de envio (%1$d)</string>
+    <string name="sync_queue_section">Ver itens da fila</string>
+    <string name="sync_queue_window">Mostra os %1$d mais recentes de %2$d</string>
+    <string name="sync_queue_window_all">Mostra os %1$d itens</string>
+    <string name="section_expand">Abrir seção</string>
+    <string name="section_collapse">Fechar seção</string>
+    <string name="queue_state_pending">Na fila</string>
+    <string name="queue_state_sending">Enviando</string>
+    <string name="queue_state_processing">Processando no servidor</string>
+    <string name="queue_state_done">Concluídos</string>
+    <string name="queue_state_failed">Com falha</string>
 </resources>

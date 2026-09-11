@@ -19,11 +19,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.HourglassEmpty
@@ -61,6 +64,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -70,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.UploadJobState
+import com.iris.app.data.model.UploadQueueSummary
 import com.iris.app.R
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.theme.IrisAccentInk
@@ -453,23 +458,40 @@ fun SyncScreen(
                             )
                         }
 
-                        if (uiState.sourceMode == "selected") {
-                            uiState.availableSources.forEach { source ->
-                                Spacer(modifier = Modifier.height(6.dp))
-                                PreferenceSwitch(
-                                    title = source.name,
-                                    subtitle = stringResource(
-                                        R.string.sync_source_summary,
-                                        source.itemCount,
-                                        if (source.mediaKind == "video") {
-                                            stringResource(R.string.sync_videos_lowercase)
-                                        } else {
-                                            stringResource(R.string.sync_photos_lowercase)
-                                        }
-                                    ),
-                                    checked = source.id in uiState.selectedSourceIds,
-                                    onCheckedChange = { viewModel.toggleSource(source.id, it) }
-                                )
+                        if (uiState.sourceMode == "selected" && uiState.availableSources.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            // A lista já chegou a dezenas de álbuns num aparelho
+                            // real, empurrando Wi-Fi, bateria e a fila para fora
+                            // da tela. Fechada por padrão, com a contagem do que
+                            // está escolhido visível sem precisar abrir.
+                            SectionToggle(
+                                title = stringResource(R.string.sync_folders_section),
+                                subtitle = stringResource(
+                                    R.string.sync_folders_selected_count,
+                                    uiState.selectedSourceIds.size,
+                                    uiState.availableSources.size
+                                ),
+                                expanded = uiState.isFolderPickerExpanded,
+                                onToggle = viewModel::toggleFolderPicker
+                            )
+                            if (uiState.isFolderPickerExpanded) {
+                                uiState.availableSources.forEach { source ->
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    PreferenceSwitch(
+                                        title = source.name,
+                                        subtitle = stringResource(
+                                            R.string.sync_source_summary,
+                                            source.itemCount,
+                                            if (source.mediaKind == "video") {
+                                                stringResource(R.string.sync_videos_lowercase)
+                                            } else {
+                                                stringResource(R.string.sync_photos_lowercase)
+                                            }
+                                        ),
+                                        checked = source.id in uiState.selectedSourceIds,
+                                        onCheckedChange = { viewModel.toggleSource(source.id, it) }
+                                    )
+                                }
                             }
                         }
 
@@ -496,21 +518,15 @@ fun SyncScreen(
 
             // ── Section 3: Upload Queue & History ────────────────────────────────
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Fila de Envio (${uiState.uploadQueue.size})",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
+                Text(
+                    text = stringResource(R.string.sync_queue_title, uiState.queueTotal),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
             }
 
-            if (uiState.uploadQueue.isEmpty()) {
+            if (uiState.queueTotal == 0) {
                 item {
                     EmptyState(
                         icon = Icons.Default.CloudUpload,
@@ -519,13 +535,98 @@ fun SyncScreen(
                     )
                 }
             } else {
-                items(uiState.uploadQueue, key = { it.id }) { job ->
-                    UploadJobCard(job = job)
+                // Milhares de cartões idênticos não dizem mais que quatro números,
+                // e o usuário tinha de rolar por todos eles para chegar a qualquer
+                // outra coisa. O resumo responde "como está indo?"; a lista existe
+                // para inspecionar casos específicos, então fica fechada.
+                item { QueueSummary(counts = uiState.queueCounts) }
+                item {
+                    SectionToggle(
+                        title = stringResource(R.string.sync_queue_section),
+                        subtitle = if (uiState.queueTotal > SyncViewModel.QUEUE_WINDOW) {
+                            stringResource(
+                                R.string.sync_queue_window,
+                                SyncViewModel.QUEUE_WINDOW,
+                                uiState.queueTotal
+                            )
+                        } else {
+                            stringResource(R.string.sync_queue_window_all, uiState.queueTotal)
+                        },
+                        expanded = uiState.isQueueExpanded,
+                        onToggle = viewModel::toggleQueue
+                    )
+                }
+                if (uiState.isQueueExpanded) {
+                    items(uiState.uploadQueue, key = { it.id }) { job ->
+                        UploadJobCard(job = job)
+                    }
                 }
             }
 
             item {
                 Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+/** Header that opens and closes a section, keeping its summary always visible. */
+@Composable
+private fun SectionToggle(
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onToggle)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                subtitle,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Icon(
+            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            contentDescription = stringResource(
+                if (expanded) R.string.section_collapse else R.string.section_expand
+            ),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** Four numbers that answer "how is the queue going" without listing it. */
+@Composable
+private fun QueueSummary(counts: Map<UploadJobState, Int>) {
+    val summary = remember(counts) { UploadQueueSummary.from(counts) }
+    val entries = listOf(
+        stringResource(R.string.queue_state_pending) to summary.queued,
+        stringResource(R.string.queue_state_sending) to summary.uploading,
+        stringResource(R.string.queue_state_processing) to summary.processing,
+        stringResource(R.string.queue_state_done) to summary.finished,
+        stringResource(R.string.queue_state_failed) to summary.failed
+    ).filter { it.second > 0 }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        entries.forEach { (label, count) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("$count", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }

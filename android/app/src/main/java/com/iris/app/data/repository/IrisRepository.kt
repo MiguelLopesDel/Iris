@@ -6,6 +6,7 @@ import com.iris.app.data.model.DeviceLoginResponse
 import com.iris.app.data.model.IrisCollection
 import com.iris.app.data.model.IrisConcept
 import com.iris.app.data.model.LocalUploadJob
+import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.MediaScanPolicy
 import com.iris.app.data.model.Person
@@ -67,6 +68,15 @@ class IrisRepository(
 
     suspend fun getUploadQueue(): List<LocalUploadJob> {
         return dbHelper.getAllJobs()
+    }
+
+    /** Newest jobs only: the screen shows a window, never the whole queue. */
+    suspend fun getRecentUploadJobs(limit: Int): List<LocalUploadJob> {
+        return dbHelper.getRecentJobs(limit)
+    }
+
+    suspend fun getUploadQueueCounts(): Map<UploadJobState, Int> {
+        return dbHelper.countsByState()
     }
 
     suspend fun triggerSync(policy: MediaScanPolicy = MediaScanPolicy()): Result<Int> = runCatchingCancellable {

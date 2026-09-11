@@ -232,6 +232,43 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    /**
+     * Counts per state, so the screen can describe the queue without loading it.
+     *
+     * A first full sync enqueues thousands of rows. Reading them all to display
+     * a header made the sync screen deserialize the entire queue every few
+     * seconds; this answers the same question with one grouped query.
+     */
+    suspend fun countsByState(): Map<UploadJobState, Int> = withContext(Dispatchers.IO) {
+        val counts = mutableMapOf<UploadJobState, Int>()
+        readableDatabase.rawQuery(
+            "SELECT state, COUNT(*) FROM upload_jobs GROUP BY state",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val state = runCatching { UploadJobState.valueOf(cursor.getString(0)) }.getOrNull()
+                if (state != null) counts[state] = cursor.getInt(1)
+            }
+        }
+        counts
+    }
+
+    /**
+     * The newest jobs, bounded. Callers show a window, never the whole queue.
+     */
+    suspend fun getRecentJobs(limit: Int): List<LocalUploadJob> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<LocalUploadJob>()
+        readableDatabase.rawQuery(
+            "$JOB_COLUMNS ORDER BY id DESC LIMIT ?",
+            arrayOf(limit.coerceAtLeast(0).toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                list.add(cursorToJob(cursor))
+            }
+        }
+        list
+    }
+
     suspend fun getLastSyncCursor(): Long = withContext(Dispatchers.IO) {
         readableDatabase.let { db ->
             val cursor = db.rawQuery("SELECT last_cursor FROM sync_cursor WHERE id = 1", null)
@@ -286,5 +323,7 @@ class UploadDatabaseHelper(context: Context) : SQLiteOpenHelper(
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
         const val DATABASE_VERSION = 2
+        private const val JOB_COLUMNS =
+            "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind FROM upload_jobs"
     }
 }

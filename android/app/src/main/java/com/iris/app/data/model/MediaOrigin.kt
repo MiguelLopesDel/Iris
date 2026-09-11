@@ -79,3 +79,38 @@ class MediaOriginIndex(private val stateByHash: Map<String, MediaOrigin>) {
         }
     }
 }
+
+/**
+ * The upload queue reduced to the few numbers a person actually reads.
+ *
+ * A first sync enqueues thousands of rows, and a list of thousands of identical
+ * cards answers no question that these counts do not. The grouping is not
+ * obvious enough to leave implicit: a duplicate is a success (the server
+ * already holds those bytes), and an item accepted but not yet indexed is
+ * neither "sending" nor "done".
+ */
+data class UploadQueueSummary(
+    val queued: Int = 0,
+    val uploading: Int = 0,
+    val processing: Int = 0,
+    val finished: Int = 0,
+    val failed: Int = 0
+) {
+    val total: Int get() = queued + uploading + processing + finished + failed
+
+    companion object {
+        fun from(counts: Map<UploadJobState, Int>): UploadQueueSummary {
+            fun count(vararg states: UploadJobState) = states.sumOf { counts[it] ?: 0 }
+            return UploadQueueSummary(
+                queued = count(UploadJobState.QUEUED),
+                uploading = count(UploadJobState.UPLOADING),
+                processing = count(
+                    UploadJobState.PENDING_PROCESSING,
+                    UploadJobState.PROCESSING
+                ),
+                finished = count(UploadJobState.READY, UploadJobState.DUPLICATE),
+                failed = count(UploadJobState.FAILED, UploadJobState.FAILED_PROCESSING)
+            )
+        }
+    }
+}

@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.model.DeviceMediaSource
 import com.iris.app.data.model.LocalUploadJob
+import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.data.sync.MediaSyncWorker
@@ -26,7 +27,12 @@ data class SyncUiState(
     val deviceNameInput: String = "Android Device",
     val isLoggingIn: Boolean = false,
     val loginError: String? = null,
+    // Só a janela exibida. A fila inteira pode ter milhares de linhas depois
+    // da primeira sincronização, e carregá-la toda a cada atualização travava
+    // a tela em vez de informá-la.
     val uploadQueue: List<LocalUploadJob> = emptyList(),
+    val queueCounts: Map<UploadJobState, Int> = emptyMap(),
+    val queueTotal: Int = 0,
     val isSyncing: Boolean = false,
     val currentProgress: Float = 0f,
     val syncWifiOnly: Boolean = false,
@@ -38,7 +44,9 @@ data class SyncUiState(
     val syncVideosEnabled: Boolean = true,
     val availableSources: List<DeviceMediaSource> = emptyList(),
     val isDiscoveringSources: Boolean = false,
-    val sourceDiscoveryError: String? = null
+    val sourceDiscoveryError: String? = null,
+    val isFolderPickerExpanded: Boolean = false,
+    val isQueueExpanded: Boolean = false
 )
 
 class SyncViewModel(
@@ -201,7 +209,13 @@ class SyncViewModel(
             runCatching { repository.mediaScanner.discoverSources() }
                 .onSuccess { sources ->
                     _uiState.update {
-                        it.copy(availableSources = sources, isDiscoveringSources = false)
+                        it.copy(
+                            availableSources = sources,
+                            isDiscoveringSources = false,
+                            // Asking for the folder list and getting a closed
+                            // header back reads like the button did nothing.
+                            isFolderPickerExpanded = sources.isNotEmpty()
+                        )
                     }
                 }
                 .onFailure {
@@ -217,9 +231,27 @@ class SyncViewModel(
 
     fun loadQueue() {
         viewModelScope.launch {
-            val jobs = repository.getUploadQueue()
-            _uiState.update { it.copy(uploadQueue = jobs) }
+            val counts = runCatching { repository.getUploadQueueCounts() }.getOrNull() ?: return@launch
+            val total = counts.values.sum()
+            // A janela só é lida quando a lista está aberta: fechada, os números
+            // do resumo já respondem o que o usuário quer saber.
+            val window = if (_uiState.value.isQueueExpanded) {
+                runCatching { repository.getRecentUploadJobs(QUEUE_WINDOW) }.getOrNull().orEmpty()
+            } else {
+                emptyList()
+            }
+            _uiState.update { it.copy(uploadQueue = window, queueCounts = counts, queueTotal = total) }
         }
+    }
+
+    fun toggleFolderPicker() {
+        _uiState.update { it.copy(isFolderPickerExpanded = !it.isFolderPickerExpanded) }
+    }
+
+    fun toggleQueue() {
+        val expanded = !_uiState.value.isQueueExpanded
+        _uiState.update { it.copy(isQueueExpanded = expanded) }
+        if (expanded) loadQueue() else _uiState.update { it.copy(uploadQueue = emptyList()) }
     }
 
     private fun startPeriodicQueuePoller() {
@@ -229,6 +261,11 @@ class SyncViewModel(
                 loadQueue()
             }
         }
+    }
+
+    companion object {
+        /** Rows kept in memory for the queue list. */
+        const val QUEUE_WINDOW = 40
     }
 
     class Factory(
