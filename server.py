@@ -39,7 +39,7 @@ from starlette.middleware.sessions import SessionMiddleware
 # Ensure core/ is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import app_config, import_review
+from core import app_config, equivalence_graph, import_review
 from core import backup as backup_mod
 from core.api_models import (
     BackupConfigOut,
@@ -1713,7 +1713,25 @@ async def import_review_resolve(
             return {"ok": True, "resolved": resolved}
 
         if action == "trash":
+            # Better evidence than the gallery has: the quarantine already knows
+            # which catalogue item this candidate matched, so the equivalence is
+            # recorded, not inferred.
+            try:
+                _remember_quarantined_before_removal(items)
+            except Exception as exc:
+                logger.error("equivalence graph: recusando remover sem registrar: %s", exc)
+                raise HTTPException(
+                    503, "Não foi possível registrar as evidências antes de remover"
+                ) from exc
             moved, failed = move_to_trash([it["candidate_path"] for it in items])
+            trashed = set(moved)
+            _mark_removed_in_graph(
+                [
+                    it["candidate_hash"]
+                    for it in items
+                    if it.get("candidate_hash") and it["candidate_path"] in trashed
+                ]
+            )
             resolved = import_review.mark_resolved(conn, item_ids, "trashed")
             import_review.ledger_mark_paths(conn, [it["candidate_path"] for it in items], "trashed")
             return {"ok": True, "resolved": resolved, "moved": len(moved), "failed": len(failed)}
@@ -3142,12 +3160,126 @@ async def trash_records(db_ids: str = Form(...)):
         ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
         by_db_id = _records_by_db_id()
         paths = []
+        doomed: dict[str, IndexRecord] = {}
         for db_id in ids:
             record = by_db_id.get(db_id)
             if record and record.resolved_path and os.path.exists(record.resolved_path):
                 paths.append(record.resolved_path)
+                if record.content_hash:
+                    doomed[record.resolved_path] = record
+
+        # Fingerprints can only be read while the file is on disk, and a later
+        # detector cannot link what it can never fingerprint. Whatever is not
+        # captured here is unrecoverable once the bytes are in the trash, so a
+        # failure to record refuses the deletion instead of proceeding: not
+        # freeing space is recoverable, destroying the evidence is not.
+        try:
+            await run_in_threadpool(_remember_before_removal, list(doomed.values()))
+        except Exception as exc:
+            logger.error("equivalence graph: recusando remover sem registrar: %s", exc)
+            raise HTTPException(
+                503, "Não foi possível registrar as evidências antes de remover"
+            ) from exc
+
         moved, failed = move_to_trash(paths)
+        removed_hashes = [
+            record.content_hash for path, record in doomed.items() if path in set(moved)
+        ]
+        await run_in_threadpool(_mark_removed_in_graph, removed_hashes)
         return {"moved": len(moved), "failed": len(failed)}
+
+
+def _remember_quarantined_before_removal(items: list[dict]) -> None:
+    """Record a rejected import and the item it was judged equal to.
+
+    The candidate never entered the catalogue, so without this its fingerprints
+    vanish with the file and a later detector has nothing to bridge from. The
+    quarantine knows which catalogue item it matched, so the equivalence here is
+    recorded rather than inferred.
+
+    Raises rather than logging, for the same reason as _remember_before_removal:
+    the caller must not delete what it could not record.
+    """
+    if not items:
+        return
+    # No local catalogue means no graph to preserve, which is a deployment
+    # without deduplication rather than a failure to record. Distinguished from
+    # a real write failure on purpose: only the latter must stop a deletion.
+    if getattr(_get_backend(), "engine", None) is None:
+        return
+    conn = _backend_connection()
+    by_db_id = _records_by_db_id()
+    for item in items:
+        candidate_hash = item.get("candidate_hash")
+        if not candidate_hash:
+            continue
+        fingerprints = {}
+        if item.get("candidate_phash"):
+            fingerprints[equivalence_graph.KIND_PHASH] = item["candidate_phash"]
+        member = equivalence_graph.record_member(
+            conn,
+            content_hash=candidate_hash,
+            fingerprints=fingerprints,
+            original_path=item.get("candidate_path"),
+        )
+        matched = by_db_id.get(item.get("match_meme_id") or 0)
+        if matched is None or not matched.content_hash:
+            continue
+        counterpart = equivalence_graph.record_member(
+            conn,
+            content_hash=matched.content_hash,
+            fingerprints=(
+                {equivalence_graph.KIND_PHASH: matched.perceptual_hash}
+                if getattr(matched, "perceptual_hash", "")
+                else {}
+            ),
+            media_id=matched.db_id,
+            original_path=matched.resolved_path,
+        )
+        equivalence_graph.link(conn, member, counterpart)
+    conn.commit()
+
+
+def _remember_before_removal(records: list[IndexRecord]) -> None:
+    """Persist each record's identity and evidence into the equivalence graph.
+
+    Raises rather than logging: the caller must not delete what it could not
+    record. Swallowing this would report a successful deletion while quietly
+    discarding the only copy of the evidence.
+    """
+    if not records:
+        return
+    # No local catalogue means no graph to preserve, which is a deployment
+    # without deduplication rather than a failure to record. Distinguished from
+    # a real write failure on purpose: only the latter must stop a deletion.
+    if getattr(_get_backend(), "engine", None) is None:
+        return
+    conn = _backend_connection()
+    for record in records:
+        fingerprints = {}
+        if getattr(record, "perceptual_hash", ""):
+            fingerprints[equivalence_graph.KIND_PHASH] = record.perceptual_hash
+        equivalence_graph.record_member(
+            conn,
+            content_hash=record.content_hash,
+            fingerprints=fingerprints,
+            media_id=record.db_id,
+            original_path=record.resolved_path,
+        )
+    conn.commit()
+
+
+def _mark_removed_in_graph(content_hashes: list[str]) -> None:
+    if not content_hashes:
+        return
+    try:
+        conn = _backend_connection()
+        equivalence_graph.mark_removed(
+            conn, content_hashes, dt.datetime.now(dt.UTC).isoformat()
+        )
+        conn.commit()
+    except Exception as exc:
+        logger.warning("equivalence graph: falha ao marcar remoção: %s", exc)
 
 
 # ── Static media ──────────────────────────────────────────────────────────────
