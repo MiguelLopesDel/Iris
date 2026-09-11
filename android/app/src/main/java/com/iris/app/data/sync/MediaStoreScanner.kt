@@ -28,7 +28,15 @@ class MediaStoreScanner(
         val sources = linkedMapOf<String, DeviceMediaSource>()
         discoverCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image", sources)
         discoverCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", sources)
-        sources.values.sortedWith(compareBy({ it.name.lowercase(Locale.getDefault()) }, { it.mediaKind }))
+        // Biggest first. Alphabetical order buried Camera and Screenshots under
+        // hundreds of folders named after whatever a downloaded archive happened
+        // to contain -- a real device here listed 273 sources, most of them
+        // "06", "07", "72x72" from extracted website backups.
+        sources.values.sortedWith(
+            compareByDescending<DeviceMediaSource> { it.itemCount }
+                .thenBy { it.name.lowercase(Locale.getDefault()) }
+                .thenBy { it.mediaKind }
+        )
     }
 
     suspend fun scanAndEnqueueNewMedia(policy: MediaScanPolicy = MediaScanPolicy()): Int = withContext(Dispatchers.IO) {

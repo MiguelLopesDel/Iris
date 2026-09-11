@@ -69,6 +69,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -477,17 +478,29 @@ fun SyncScreen(
                             if (uiState.isFolderPickerExpanded) {
                                 uiState.availableSources.forEach { source ->
                                     Spacer(modifier = Modifier.height(6.dp))
+                                    val kindLabel = if (source.mediaKind == "video") {
+                                        stringResource(R.string.sync_videos_lowercase)
+                                    } else {
+                                        stringResource(R.string.sync_photos_lowercase)
+                                    }
+                                    val summary = stringResource(
+                                        R.string.sync_source_summary,
+                                        source.itemCount,
+                                        kindLabel
+                                    )
                                     PreferenceSwitch(
+                                        // The bucket name alone is not an identity:
+                                        // an extracted website backup produces folders
+                                        // called "06" and "07", and this device had two
+                                        // separate backups with the same folder names and
+                                        // the same item counts. The path is what tells
+                                        // them apart and what reveals they are junk.
                                         title = source.name,
-                                        subtitle = stringResource(
-                                            R.string.sync_source_summary,
-                                            source.itemCount,
-                                            if (source.mediaKind == "video") {
-                                                stringResource(R.string.sync_videos_lowercase)
-                                            } else {
-                                                stringResource(R.string.sync_photos_lowercase)
-                                            }
-                                        ),
+                                        subtitle = if (source.relativePath.isNotBlank()) {
+                                            "$summary\n${source.relativePath}"
+                                        } else {
+                                            summary
+                                        },
                                         checked = source.id in uiState.selectedSourceIds,
                                         onCheckedChange = { viewModel.toggleSource(source.id, it) }
                                     )
@@ -646,7 +659,15 @@ private fun PreferenceSwitch(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Text(text = subtitle, fontSize = 12.sp, color = IrisTextSoft)
+            Text(
+                text = subtitle,
+                fontSize = 12.sp,
+                color = IrisTextSoft,
+                // A device folder path can be five lines long. Truncating keeps
+                // the head, which is the part that says where it came from.
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
         Switch(
             checked = checked,
