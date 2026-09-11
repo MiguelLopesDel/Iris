@@ -62,10 +62,6 @@ def queries_may_leave_the_machine() -> bool:
 # returns.
 _PENDING_VECTOR = np.zeros(0, dtype=np.float32)
 
-# Ranking floor for an item that has no embedding for the field being scored.
-# Cosine lives in [-1, 1], so anything below -1 loses to every real score.
-_MISSING_SCORE = -2.0
-
 
 def _stack_vectors(vectors: list) -> np.ndarray | None:
     """Stack vectors, substituting zeros for the ones that are missing.
@@ -501,27 +497,19 @@ class IrisEngine:
                 return str(candidate)
         return str(candidates[0]) if candidates else None
 
-    def _mask_missing_descriptions(
-        self, scores: np.ndarray, candidate_indices: list[int]
-    ) -> np.ndarray:
-        """Push items with no description embedding below every real score.
+    def _has_description(self, record_index: int) -> bool:
+        """Whether this record actually has a description embedding.
 
-        The matrix keeps a row for them so it stays aligned with the records,
-        but a row of zeros is not neutral: cosine ranges over [-1, 1], so a zero
-        scores higher than anything genuinely dissimilar. Measured, an item with
-        no description outranked two real ones whose scores were negative.
+        The matrix keeps a row for every record so it stays aligned with them,
+        but a row of zeros is not a neutral score: cosine is signed, so zero
+        outranks anything genuinely dissimilar. Measured, an item with no
+        description ranked second against a query opposed to the catalogue,
+        beating two real items whose scores were negative. Asking here, at the
+        point where the score is used, keeps that out of the numbers entirely.
         """
         if self._desc_present is None:
-            return scores
-        present = self._desc_present[candidate_indices]
-        if present.all():
-            return scores
-        masked = scores.copy()
-        # Below the domain, not at its edge: -1.0 is a score a genuinely opposite
-        # item can earn, so it would tie rather than lose. Finite on purpose --
-        # -inf becomes nan once a weight of zero multiplies it.
-        masked[~present] = _MISSING_SCORE
-        return masked
+            return True
+        return bool(self._desc_present[record_index])
 
     def _stack_embeddings(self, field_name: str) -> np.ndarray | None:
         """Matrix built while loading; this only hands it over."""
@@ -997,7 +985,6 @@ class IrisEngine:
                 desc_scores = (candidate_desc_matrix @ query_embedding[0]) / np.maximum(
                     np.linalg.norm(candidate_desc_matrix, axis=1) * query_norm, 1e-12
                 )
-                desc_scores = self._mask_missing_descriptions(desc_scores, candidate_indices)
         else:
             query_tensor = torch.from_numpy(query_embedding).to(self.device)
             image_tensor = torch.from_numpy(candidate_image_matrix).to(self.device).to(
@@ -1011,7 +998,6 @@ class IrisEngine:
                     self.device
                 ).to(query_tensor.dtype)
                 desc_scores = util.cos_sim(query_tensor, desc_tensor)[0].detach().cpu().numpy()
-                desc_scores = self._mask_missing_descriptions(desc_scores, candidate_indices)
 
         scores: dict[int, float] = {}
         details: dict[int, dict[str, float | str]] = {}
@@ -1021,10 +1007,16 @@ class IrisEngine:
                 continue
 
             image_score = float(image_scores[local_idx])
-            if desc_scores is not None:
+            if desc_scores is not None and self._has_description(record_idx):
                 desc_score = float(desc_scores[local_idx])
                 semantic_score = image_score * options.balance + desc_score * (1.0 - options.balance)
             else:
+                # No description to weigh, so the item is judged on its image
+                # alone rather than blended against a stand-in. A sentinel score
+                # survives this combination and becomes an arbitrary penalty:
+                # -2.0 against a balance of 0.5 subtracts a full point, and
+                # against a balance of 1.0 subtracts nothing. Neither is a
+                # decision anyone made.
                 desc_score = 0.0
                 semantic_score = image_score
 

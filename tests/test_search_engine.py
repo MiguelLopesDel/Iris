@@ -194,28 +194,27 @@ class DescriptionMatrixGapTests(unittest.TestCase):
             self.assertIs(record.embedding.base, engine.image_matrix)
             self.assertTrue((record.embedding == engine.image_matrix[position]).all())
 
-    def test_an_item_without_a_description_never_outranks_a_real_one(self) -> None:
-        """A zero row is not neutral: cosine is signed.
+    def test_an_item_without_a_description_is_judged_on_its_image_alone(self) -> None:
+        """Never blended against a stand-in value.
 
-        Keeping a row so the matrix stays aligned with the records is fine, but
-        scoring it as 0.0 puts it above everything genuinely dissimilar.
-        Measured before the mask: an item with no description embedding ranked
+        A zero row keeps the matrix aligned with the records, but it is not a
+        neutral score: cosine is signed, so zero outranks anything genuinely
+        dissimilar. Measured before the fix, an item with no description ranked
         second against a query opposed to the catalogue, beating two real items
         whose scores were negative.
+
+        A sentinel score does not solve it either, because the value survives
+        the blend: -2.0 at a balance of 0.5 subtracts a full point from the
+        item, and at a balance of 1.0 subtracts nothing. The decision belongs
+        where the score is combined, not inside the numbers.
         """
-        import numpy as np
-
         engine = self._engine(with_gap=True)
-        assert engine.desc_matrix is not None
 
-        # Cosine, as the ranking code computes it, against a query opposed to
-        # the first item so that real scores go negative.
-        matrix = engine.desc_matrix
-        query = -matrix[0] / np.linalg.norm(matrix[0])
-        norms = np.maximum(np.linalg.norm(matrix, axis=1), 1e-12)
-        raw = (matrix @ query) / norms
-        masked = engine._mask_missing_descriptions(raw, list(range(len(engine.records))))
+        self.assertTrue(engine._has_description(0))
+        self.assertFalse(engine._has_description(1))
+        self.assertTrue(engine._has_description(2))
 
-        self.assertEqual(float(raw[1]), 0.0, "a linha do item sem descrição não era zero")
-        self.assertLess(float(masked[1]), -1.0, "tem de perder até de um item oposto")
-        self.assertEqual(int(np.argmin(masked)), 1, "o item sem descrição devia ficar por último")
+    def test_a_catalogue_without_any_gap_needs_no_check(self) -> None:
+        engine = self._engine(with_gap=False)
+
+        self.assertTrue(all(engine._has_description(i) for i in range(len(engine.records))))
