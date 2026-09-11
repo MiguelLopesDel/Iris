@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from core import vector_sidecar
 from core.db_manager import DatabaseManager
 from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # historical re-export
 from core.embedding_models import EmbeddingEncoder, load_encoder, resolve_embedding_model
+from core.record_text import TEXT_COLUMNS, TextStore
 from core.search_types import (
     STOP_WORDS,
     IndexRecord,
@@ -62,6 +64,40 @@ def queries_may_leave_the_machine() -> bool:
 # stacked matrix exists; every record is rewritten to a view before _load_records
 # returns.
 _PENDING_VECTOR = np.zeros(0, dtype=np.float32)
+
+# Where each ranking column sits in the folded tuple, and what it is worth.
+# Positions rather than names: this runs once per candidate per query.
+_OCR = TEXT_COLUMNS.index("texto_extraido")
+_TAGS = TEXT_COLUMNS.index("tags")
+_LEXICAL_WEIGHTS: tuple[tuple[int, float], ...] = (
+    (_TAGS, 1.4),
+    (_OCR, 1.3),
+    (TEXT_COLUMNS.index("descricao_ia"), 1.0),
+    (TEXT_COLUMNS.index("objects"), 1.1),
+    (TEXT_COLUMNS.index("style"), 1.1),
+    (TEXT_COLUMNS.index("source_work"), 1.4),
+    (TEXT_COLUMNS.index("humor"), 1.0),
+    (TEXT_COLUMNS.index("context"), 1.1),
+)
+# Everything the caption pipeline produced, as opposed to what the image itself
+# showed in text: the multiplier weighs the two differently.
+_DESCRIPTIVE: tuple[int, ...] = tuple(
+    position for position, _ in _LEXICAL_WEIGHTS if position not in (_TAGS, _OCR)
+)
+
+@dataclass(frozen=True)
+class _QueryText:
+    """The folded query, prepared once and read by every candidate."""
+
+    words: list[str]
+    normalized: str
+    bigrams: list[str]
+    total_weight: int
+
+
+# How many records are warmed at once when the whole catalogue is walked.
+# Smaller than the store's cache so a chunk survives until it has been read.
+_TEXT_CHUNK = 512
 
 
 def _stack_vectors(vectors: list) -> np.ndarray | None:
@@ -134,6 +170,7 @@ class IrisEngine:
         self._image_matrix: np.ndarray | None = None
         self._desc_matrix: np.ndarray | None = None
         self._desc_present: np.ndarray | None = None
+        self._text_store: TextStore | None = None
         self.records = self._load_records()
         self.image_matrix = self._stack_embeddings("embedding")
         self.desc_matrix = self._stack_embeddings("desc_embedding")
@@ -200,22 +237,20 @@ class IrisEngine:
             select_columns = [
                 "arquivo",
                 "caminho",
-                "texto_extraido",
-                "descricao_ia",
                 "embedding",
                 "desc_embedding",
             ]
-            if "tags" in columns:
-                select_columns.append("tags")
+            # Text is read by id when the catalogue has one. A schema without
+            # `id` -- only very old ones -- has nothing to read it by, so there
+            # the columns still come along with the row.
+            text_columns = [name for name in TEXT_COLUMNS if name in columns]
+            eager_text = "id" not in columns
+            self._text_store = None if eager_text else TextStore(self.db, columns)
+            if eager_text:
+                select_columns.extend(text_columns)
             if "relative_path" in columns:
                 select_columns.append("relative_path")
             for optional in [
-                "visual_json",
-                "objects",
-                "style",
-                "source_work",
-                "humor",
-                "context",
                 "content_hash",
                 "file_size",
                 "file_mtime",
@@ -293,19 +328,16 @@ class IrisEngine:
                     arquivo=row["arquivo"] or "",
                     caminho=caminho,
                     resolved_path=resolved_path,
-                    texto_extraido=row["texto_extraido"] or "",
-                    descricao_ia=row["descricao_ia"] or "",
-                    tags=row["tags"] if "tags" in row.keys() and row["tags"] else "",
+                    text_store=self._text_store,
+                    **(
+                        {name: row[name] or "" for name in text_columns}
+                        if eager_text
+                        else {}
+                    ),
                     # Replaced by a view into the stacked matrix below.
                     embedding=_PENDING_VECTOR,
                     desc_embedding=None,
                     relative_path=relative_path,
-                    visual_json=row["visual_json"] if "visual_json" in row.keys() else "",
-                    objects=row["objects"] if "objects" in row.keys() else "",
-                    style=row["style"] if "style" in row.keys() else "",
-                    source_work=row["source_work"] if "source_work" in row.keys() else "",
-                    humor=row["humor"] if "humor" in row.keys() else "",
-                    context=row["context"] if "context" in row.keys() else "",
                     content_hash=row["content_hash"] if "content_hash" in row.keys() else "",
                     file_size=row["file_size"] if "file_size" in row.keys() else None,
                     file_mtime=row["file_mtime"] if "file_mtime" in row.keys() else None,
@@ -795,7 +827,15 @@ class IrisEngine:
     def dados(self) -> list[dict[str, Any]]:
         """Lazy list-of-dicts for eval/benchmark scripts. Computed once on first read."""
         if self._dados_cache is None:
-            self._dados_cache = [self._record_to_dict(r) for r in self.records]
+            # Chunked against the store's cache: warming all of it at once would
+            # evict the start of the catalogue before the first dict is built,
+            # turning one bulk read back into a query per item.
+            rows: list[dict[str, Any]] = []
+            for start in range(0, len(self.records), _TEXT_CHUNK):
+                block = self.records[start : start + _TEXT_CHUNK]
+                self._prefetch_text(range(start, start + len(block)))
+                rows.extend(self._record_to_dict(record) for record in block)
+            self._dados_cache = rows
         return self._dados_cache
 
     def encode_text(self, query: str, translate: bool = True) -> tuple[np.ndarray, str]:
@@ -1044,6 +1084,12 @@ class IrisEngine:
                 ).to(query_tensor.dtype)
                 desc_scores = util.cos_sim(query_tensor, desc_tensor)[0].detach().cpu().numpy()
 
+        # One statement per batch instead of one per candidate: the loop below
+        # reads text from every candidate it does not reject, and negative terms
+        # read it from all of them.
+        self._prefetch_text(candidate_indices)
+        query_text = self._prepare_query_text(text_query, translated_query)
+
         scores: dict[int, float] = {}
         details: dict[int, dict[str, float | str]] = {}
         for local_idx, record_idx in enumerate(candidate_indices):
@@ -1070,18 +1116,9 @@ class IrisEngine:
             lexical_score = 0.0
             score = semantic_score
             if text_query:
-                lexical_score = self._lexical_score(
-                    record=record,
-                    text_query=text_query,
-                    translated_query=translated_query,
-                )
+                lexical_score = self._lexical_score(record, query_text)
                 score += lexical_score * options.lexical_weight
-                score *= self._text_multiplier(
-                    record=record,
-                    text_query=text_query,
-                    translated_query=translated_query,
-                    text_bonus=options.text_bonus,
-                )
+                score *= self._text_multiplier(record, query_text, options.text_bonus)
             scores[record_idx] = score
             details[record_idx] = {
                 "image": image_score,
@@ -1097,88 +1134,83 @@ class IrisEngine:
             }
         return scores, details
 
+    def _prefetch_text(self, record_indices: Iterable[int]) -> None:
+        """Warm the text store for a set of records, if there is one."""
+        if self._text_store is None:
+            return
+        self._text_store.prefetch(
+            self.records[index].db_id
+            for index in record_indices
+            if 0 <= index < len(self.records)
+        )
+
     def _matches_negative(self, record: IndexRecord, negative_terms: Iterable[str]) -> bool:
         if not negative_terms:
             return False
-        content = normalize_text(
-            f"{record.texto_extraido} {record.descricao_ia} {record.tags} "
-            f"{record.objects} {record.style} {record.source_work} {record.humor} {record.context}"
-        )
+        _, content = record.normalized_text()
         return any(term and term in content for term in negative_terms)
 
-    def _lexical_score(
-        self,
-        record: IndexRecord,
-        text_query: str,
-        translated_query: str,
-    ) -> float:
+    def _prepare_query_text(self, text_query: str, translated_query: str) -> _QueryText:
+        """Everything about the query that does not depend on the item.
+
+        Folding the query inside the per-candidate loop meant normalising the
+        same handful of words once per candidate -- ten to twelve calls each,
+        the largest remaining cost in a search once the item text was cached.
+        """
         words = self._query_words(text_query) + self._query_words(translated_query)
         q_words = list(dict.fromkeys(words))
+        return _QueryText(
+            words=q_words,
+            normalized=normalize_text(text_query),
+            bigrams=[" ".join(q_words[i : i + 2]) for i in range(len(q_words) - 1)],
+            total_weight=max(sum(len(word) for word in q_words), 1),
+        )
+
+    def _lexical_score(self, record: IndexRecord, query: _QueryText) -> float:
+        q_words = query.words
         if not q_words:
             return 0.0
 
-        weighted_fields = [
-            (record.tags, 1.4),
-            (record.texto_extraido, 1.3),
-            (record.descricao_ia, 1.0),
-            (record.objects, 1.1),
-            (record.style, 1.1),
-            (record.source_work, 1.4),
-            (record.humor, 1.0),
-            (record.context, 1.1),
-        ]
+        fields, full_content = record.normalized_text()
         score = 0.0
         max_score = 0.0
-        for field, weight in weighted_fields:
-            normalized = normalize_text(field)
+        for position, weight in _LEXICAL_WEIGHTS:
+            normalized = fields[position]
             for word in q_words:
                 max_score += weight
                 if word in normalized:
                     score += weight
 
-        normalized_query = normalize_text(text_query)
-        full_content = normalize_text(" ".join(field for field, _ in weighted_fields if field))
-        if normalized_query and normalized_query in full_content:
+        if query.normalized and query.normalized in full_content:
             score += 2.0
             max_score += 2.0
         return score / max(max_score, 1.0)
 
     def _text_multiplier(
-        self,
-        record: IndexRecord,
-        text_query: str,
-        translated_query: str,
-        text_bonus: float,
+        self, record: IndexRecord, query: _QueryText, text_bonus: float
     ) -> float:
-        words = self._query_words(text_query) + self._query_words(translated_query)
-        q_words = list(dict.fromkeys(words))
+        q_words = query.words
         if not q_words:
             return 1.0
 
-        tags_content = normalize_text(record.tags)
-        ocr_content = normalize_text(record.texto_extraido)
-        desc_content = normalize_text(
-            f"{record.descricao_ia} {record.objects} {record.style} "
-            f"{record.source_work} {record.humor} {record.context}"
-        )
-        content = f"{tags_content} {ocr_content} {desc_content}"
+        fields, joined = record.normalized_text()
+        tags_content = fields[_TAGS]
+        ocr_content = fields[_OCR]
+        desc_content = " ".join(fields[position] for position in _DESCRIPTIVE)
 
         matched_tags = [word for word in q_words if word in tags_content]
         matched_text = [word for word in q_words if word in ocr_content or word in desc_content]
-        total_weight = max(sum(len(word) for word in q_words), 1)
         match_score = (
             sum(len(word) for word in matched_tags) * 1.5
             + sum(len(word) for word in matched_text)
-        ) / (total_weight * 1.5)
+        ) / (query.total_weight * 1.5)
 
         multiplier = 1.0 + min(1.0, match_score) * text_bonus
-        if len(q_words) >= 2:
-            bigrams = [" ".join(q_words[i : i + 2]) for i in range(len(q_words) - 1)]
-            matched_bigrams = sum(1 for bigram in bigrams if bigram in content)
-            multiplier += (matched_bigrams / len(bigrams)) * text_bonus * 0.3
+        if query.bigrams:
+            matched = sum(1 for bigram in query.bigrams if bigram in joined)
+            multiplier += (matched / len(query.bigrams)) * text_bonus * 0.3
 
-        normalized_query = normalize_text(text_query)
-        if normalized_query and normalized_query in content:
+        if query.normalized and query.normalized in joined:
             multiplier += text_bonus * 0.2
         return multiplier
 
