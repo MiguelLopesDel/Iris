@@ -15,13 +15,17 @@ import pytest
 from core.equivalence_graph import (
     KIND_CONTENT,
     KIND_PHASH,
+    PROVENANCE_EXACT_CONTENT,
+    PROVENANCE_IMPORT_QUARANTINE,
+    PROVENANCE_USER_CONFIRMED,
     add_fingerprints,
-    canonical_of,
-    component,
+    assert_equivalent,
+    component_of,
+    edges_of,
     fingerprints_of,
-    link,
     mark_removed,
     member_for_fingerprint,
+    members_of_component,
     record_member,
 )
 
@@ -38,8 +42,8 @@ def conn():
 def test_a_new_member_is_its_own_component(conn):
     member = record_member(conn, content_hash="aaa")
 
-    assert canonical_of(conn, member) == member
-    assert [row["content_hash"] for row in component(conn, member)] == ["aaa"]
+    assert component_of(conn, member) == member
+    assert [row["content_hash"] for row in members_of_component(conn, member)] == ["aaa"]
 
 
 def test_registering_the_same_file_twice_does_not_duplicate_it(conn):
@@ -47,8 +51,8 @@ def test_registering_the_same_file_twice_does_not_duplicate_it(conn):
     second = record_member(conn, content_hash="aaa", original_path="/x/a.jpg")
 
     assert first == second
-    assert component(conn, first)[0]["original_path"] == "/x/a.jpg"
-    assert component(conn, first)[0]["media_id"] == 1
+    assert members_of_component(conn, first)[0]["original_path"] == "/x/a.jpg"
+    assert members_of_component(conn, first)[0]["media_id"] == 1
 
 
 def test_a_later_detector_enriches_an_existing_member(conn):
@@ -67,12 +71,12 @@ def test_linking_merges_components_and_is_stable(conn):
     a = record_member(conn, content_hash="aaa")
     b = record_member(conn, content_hash="bbb")
 
-    canonical = link(conn, a, b)
+    surviving = assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
 
-    # The lower id wins, so the choice does not depend on detector order.
-    assert canonical == min(a, b)
-    assert canonical_of(conn, a) == canonical_of(conn, b) == canonical
-    assert len(component(conn, b)) == 2
+    # The older component absorbs the newer, so the result does not depend on
+    # the order detectors happen to run in.
+    assert component_of(conn, a) == component_of(conn, b) == surviving
+    assert len(members_of_component(conn, b)) == 2
 
 
 def test_linking_is_transitive_across_separate_calls(conn):
@@ -80,18 +84,18 @@ def test_linking_is_transitive_across_separate_calls(conn):
     b = record_member(conn, content_hash="bbb")
     c = record_member(conn, content_hash="ccc")
 
-    link(conn, a, b)
-    link(conn, b, c)
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
+    assert_equivalent(conn, b, c, provenance=PROVENANCE_USER_CONFIRMED)
 
-    assert canonical_of(conn, a) == canonical_of(conn, c)
-    assert len(component(conn, c)) == 3
+    assert component_of(conn, a) == component_of(conn, c)
+    assert len(members_of_component(conn, c)) == 3
 
 
 def test_linking_an_unknown_member_is_refused(conn):
     a = record_member(conn, content_hash="aaa")
 
     with pytest.raises(ValueError):
-        link(conn, a, 999)
+        assert_equivalent(conn, a, 999, provenance=PROVENANCE_USER_CONFIRMED)
 
 
 def test_removal_keeps_the_member_and_its_evidence(conn):
@@ -101,7 +105,7 @@ def test_removal_keeps_the_member_and_its_evidence(conn):
 
     assert mark_removed(conn, ["bbb"], "2026-09-11T00:00:00Z") == 1
 
-    row = component(conn, member)[0]
+    row = members_of_component(conn, member)[0]
     assert row["removed_at"] == "2026-09-11T00:00:00Z"
     assert row["media_id"] is None, "o vínculo com o catálogo deve sair"
     assert fingerprints_of(conn, member)[KIND_PHASH] == ["ff00"], "a evidência não pode sumir"
@@ -127,7 +131,7 @@ def test_a_deleted_member_bridges_two_detectors(conn):
         content_hash="bbb",
         fingerprints={KIND_PHASH: "ff01", CROP: "segX,segY"},
     )
-    link(conn, a, b)
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
     mark_removed(conn, ["bbb"], "2026-09-11T00:00:00Z")
 
     # Much later: a detector that did not exist then computes a crop fingerprint
@@ -135,10 +139,10 @@ def test_a_deleted_member_bridges_two_detectors(conn):
     c = record_member(conn, content_hash="ccc", fingerprints={CROP: "segX,segY"})
     bridged = member_for_fingerprint(conn, CROP, "segX,segY")
     assert bridged == b, "a ponte tinha de vir do membro apagado"
-    link(conn, c, bridged)
+    assert_equivalent(conn, c, bridged, provenance=PROVENANCE_USER_CONFIRMED)
 
-    assert canonical_of(conn, c) == canonical_of(conn, a)
-    hashes = sorted(row["content_hash"] for row in component(conn, a))
+    assert component_of(conn, c) == component_of(conn, a)
+    hashes = sorted(row["content_hash"] for row in members_of_component(conn, a))
     assert hashes == ["aaa", "bbb", "ccc"]
 
 
@@ -150,13 +154,13 @@ def test_without_the_deleted_member_the_bridge_is_lost(conn):
     """
     a = record_member(conn, content_hash="aaa", fingerprints={KIND_PHASH: "ff00"})
     b = record_member(conn, content_hash="bbb", fingerprints={KIND_PHASH: "ff01"})
-    link(conn, a, b)
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
     mark_removed(conn, ["bbb"], "2026-09-11T00:00:00Z")
 
     c = record_member(conn, content_hash="ccc", fingerprints={CROP: "segX,segY"})
 
     assert member_for_fingerprint(conn, CROP, "segX,segY") == c
-    assert canonical_of(conn, c) != canonical_of(conn, a)
+    assert component_of(conn, c) != component_of(conn, a)
 
 
 def test_a_fingerprint_lookup_misses_cleanly(conn):
@@ -169,11 +173,11 @@ def test_the_component_survives_the_removal_of_every_file(conn):
     """Even with nothing left on disk, the equivalences are still known."""
     a = record_member(conn, content_hash="aaa", fingerprints={KIND_PHASH: "ff00"})
     b = record_member(conn, content_hash="bbb", fingerprints={KIND_PHASH: "ff01"})
-    link(conn, a, b)
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
 
     mark_removed(conn, ["aaa", "bbb"], "2026-09-11T00:00:00Z")
 
-    assert len(component(conn, a)) == 2
+    assert len(members_of_component(conn, a)) == 2
     assert member_for_fingerprint(conn, KIND_PHASH, "ff01") == b
 
 
@@ -240,7 +244,7 @@ def test_the_trash_endpoint_records_evidence_before_deleting(tmp_path, monkeypat
     member = member_for_fingerprint(connection, KIND_PHASH, "ff00ff00ff00ff00")
     assert member is not None, "a evidência perceptual foi perdida na remoção"
     assert member_for_fingerprint(connection, KIND_CONTENT, "abc123") == member
-    row = component(connection, member)[0]
+    row = members_of_component(connection, member)[0]
     assert row["removed_at"], "o membro não foi marcado como removido"
     assert row["media_id"] is None
     connection.close()
@@ -341,44 +345,30 @@ def _trash(server, records, db_ids, connection, monkeypatch):
         server._invalidate_view_caches()
 
 
-def test_deleting_a_duplicate_links_it_to_the_copy_that_survives(tmp_path, monkeypatch):
-    """Choosing to delete B while A stays is the user confirming they are one.
+def test_deleting_near_identical_photos_asserts_no_equivalence(tmp_path, monkeypatch):
+    """Deleting is not declaring, and the interface never asked the question.
 
-    Recording the link earlier, when the duplicates view only suggests a group,
-    would write a detector's guess into the graph for every later detector to
-    inherit.
+    The trash button asks only "move to the trash?". An earlier version inferred
+    equivalence from "B was deleted while A survived within eight bits" and wrote
+    a permanent edge. On a burst of near-identical frames -- the most common
+    group in a real library -- deleting the blurry one would have declared the
+    whole burst to be one picture, and every later detector would have inherited
+    that as fact.
     """
     import server
 
     keeper = _record(tmp_path, 1, "keep.jpg", "aaa", "ff00ff00ff00ff00")
-    doomed = _record(tmp_path, 2, "dupe.jpg", "bbb", "ff00ff00ff00ff01")
+    doomed = _record(tmp_path, 2, "blurry.jpg", "bbb", "ff00ff00ff00ff01")
     connection = sqlite3.connect(":memory:", check_same_thread=False)
 
     response = _trash(server, [keeper, doomed], "2", connection, monkeypatch)
 
     assert response.status_code == 200
     removed = member_for_fingerprint(connection, KIND_CONTENT, "bbb")
-    survivor = member_for_fingerprint(connection, KIND_CONTENT, "aaa")
-    assert canonical_of(connection, removed) == canonical_of(connection, survivor)
-    assert sorted(row["content_hash"] for row in component(connection, removed)) == ["aaa", "bbb"]
-    connection.close()
-
-
-def test_deleting_an_unrelated_photo_creates_no_equivalence(tmp_path, monkeypatch):
-    """Not every deletion is a deduplication. A link here would be a lie."""
-    import server
-
-    other = _record(tmp_path, 1, "other.jpg", "aaa", "0000ffff0000ffff")
-    doomed = _record(tmp_path, 2, "bad.jpg", "bbb", "ffff0000ffff0000")
-    connection = sqlite3.connect(":memory:", check_same_thread=False)
-
-    response = _trash(server, [other, doomed], "2", connection, monkeypatch)
-
-    assert response.status_code == 200
-    removed = member_for_fingerprint(connection, KIND_CONTENT, "bbb")
-    assert removed is not None, "a evidência ainda tem de ser gravada"
-    assert [row["content_hash"] for row in component(connection, removed)] == ["bbb"]
-    assert member_for_fingerprint(connection, KIND_CONTENT, "aaa") is None
+    assert removed is not None, "a evidência tem de ser gravada"
+    assert fingerprints_of(connection, removed)[KIND_PHASH] == ["ff00ff00ff00ff01"]
+    assert edges_of(connection, removed) == [], "gravou equivalência que ninguém afirmou"
+    assert [row["content_hash"] for row in members_of_component(connection, removed)] == ["bbb"]
     connection.close()
 
 
@@ -396,5 +386,84 @@ def test_deleting_a_whole_group_does_not_link_it_to_itself_only(tmp_path, monkey
     for content_hash in ("aaa", "bbb"):
         member = member_for_fingerprint(connection, KIND_CONTENT, content_hash)
         assert member is not None
-        assert component(connection, member)[0]["removed_at"]
+        assert members_of_component(connection, member)[0]["removed_at"]
     connection.close()
+
+
+# ── Identidade da componente e proveniência ──────────────────────────────────
+
+
+def test_a_component_survives_losing_every_member_file(conn):
+    """Component identity cannot be a surviving member.
+
+    Naming the component after one of its files breaks the moment all of them
+    are deleted -- and deleting every copy is an ordinary outcome, not an edge
+    case.
+    """
+    a = record_member(conn, content_hash="aaa", fingerprints={KIND_PHASH: "ff00"})
+    b = record_member(conn, content_hash="bbb", fingerprints={KIND_PHASH: "ff01"})
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
+    before = component_of(conn, a)
+
+    mark_removed(conn, ["aaa", "bbb"], "2026-09-11T00:00:00Z")
+
+    assert component_of(conn, a) == before
+    assert len(members_of_component(conn, a)) == 2
+
+
+def test_an_edge_records_who_asserted_it(conn):
+    a = record_member(conn, content_hash="aaa")
+    b = record_member(conn, content_hash="bbb")
+
+    assert_equivalent(
+        conn, a, b,
+        provenance=PROVENANCE_IMPORT_QUARANTINE,
+        detector_version="phash-v1",
+        confirmed_at="2026-09-11T00:00:00Z",
+    )
+
+    edge = edges_of(conn, a)[0]
+    assert edge["provenance"] == PROVENANCE_IMPORT_QUARANTINE
+    assert edge["detector_version"] == "phash-v1"
+
+
+def test_the_same_pair_can_be_asserted_by_more_than_one_source(conn):
+    """A person confirming what a detector already suggested is not a duplicate row.
+
+    Keeping both is what later allows a whole class of assertion to be
+    reconsidered without losing the others.
+    """
+    a = record_member(conn, content_hash="aaa")
+    b = record_member(conn, content_hash="bbb")
+
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_IMPORT_QUARANTINE)
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
+
+    assert sorted(edge["provenance"] for edge in edges_of(conn, a)) == [
+        PROVENANCE_IMPORT_QUARANTINE,
+        PROVENANCE_USER_CONFIRMED,
+    ]
+
+
+def test_an_edge_is_kept_even_when_it_merges_nothing(conn):
+    """The assertion is the record, not its effect on the components."""
+    a = record_member(conn, content_hash="aaa")
+    b = record_member(conn, content_hash="bbb")
+    assert_equivalent(conn, a, b, provenance=PROVENANCE_USER_CONFIRMED)
+
+    assert_equivalent(conn, b, a, provenance=PROVENANCE_EXACT_CONTENT)
+
+    assert len(edges_of(conn, a)) == 2
+
+
+def test_fingerprints_carry_a_version(conn):
+    """A fingerprint's meaning changes when its algorithm does."""
+    member = record_member(conn, content_hash="aaa")
+    add_fingerprints(conn, member, {KIND_PHASH: "ff00"}, version="2", bits=256)
+
+    rows = conn.execute(
+        "SELECT version, bits FROM equivalence_fingerprints"
+        " WHERE member_id = ? AND kind = ? AND value = ?",
+        (member, KIND_PHASH, "ff00"),
+    ).fetchone()
+    assert rows == ("2", 256)

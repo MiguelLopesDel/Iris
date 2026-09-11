@@ -82,7 +82,6 @@ from core.auth import load_or_create_secret
 from core.backend import SearchBackend, create_backend
 from core.backend_registry import BackendRegistry
 from core.device_tokens import read_access_token
-from core.duplicates import _PHASH_MAX_DISTANCE
 from core.embedding_models import resolve_embedding_model
 from core.file_ops import move_to_trash
 from core.media_metadata import extract_full_metadata, extract_metadata
@@ -3237,12 +3236,29 @@ def _remember_quarantined_before_removal(items: list[dict]) -> None:
             media_id=matched.db_id,
             original_path=matched.resolved_path,
         )
-        equivalence_graph.link(conn, member, counterpart)
+        # The quarantine knows which catalogue item this candidate matched,
+        # so this equivalence is recorded rather than inferred.
+        equivalence_graph.assert_equivalent(
+            conn,
+            member,
+            counterpart,
+            provenance=equivalence_graph.PROVENANCE_IMPORT_QUARANTINE,
+            confirmed_at=dt.datetime.now(dt.UTC).isoformat(),
+        )
     conn.commit()
 
 
 def _remember_before_removal(records: list[IndexRecord]) -> None:
     """Persist each record's identity and evidence into the equivalence graph.
+
+    Evidence only. No equivalence is asserted here, because nothing in this
+    request says the user believes these files are the same picture: the only
+    question the interface asked was whether to move them to the trash. An
+    earlier version inferred it -- "B was deleted while A survived nearby" -- and
+    wrote a permanent edge. On a burst of near-identical frames, deleting the
+    blurry one would have declared the whole burst equivalent, and a later
+    detector would have inherited that as fact. Asserting equivalence needs an
+    action that means it; recording evidence does not.
 
     Raises rather than logging: the caller must not delete what it could not
     record. Swallowing this would report a successful deletion while quietly
@@ -3256,24 +3272,15 @@ def _remember_before_removal(records: list[IndexRecord]) -> None:
     if getattr(_get_backend(), "engine", None) is None:
         return
     conn = _backend_connection()
-    doomed_ids = {record.db_id for record in records}
     for record in records:
-        member = equivalence_graph.record_member(
+        equivalence_graph.record_member(
             conn,
             content_hash=record.content_hash,
             fingerprints=_record_fingerprints(record),
             media_id=record.db_id,
             original_path=record.resolved_path,
+            now=dt.datetime.now(dt.UTC).isoformat(),
         )
-        for survivor in _perceptual_survivors(record, doomed_ids):
-            counterpart = equivalence_graph.record_member(
-                conn,
-                content_hash=survivor.content_hash,
-                fingerprints=_record_fingerprints(survivor),
-                media_id=survivor.db_id,
-                original_path=survivor.resolved_path,
-            )
-            equivalence_graph.link(conn, member, counterpart)
     conn.commit()
 
 
@@ -3281,44 +3288,6 @@ def _record_fingerprints(record: IndexRecord) -> dict[str, str]:
     if getattr(record, "perceptual_hash", ""):
         return {equivalence_graph.KIND_PHASH: record.perceptual_hash}
     return {}
-
-
-def _perceptual_survivors(
-    record: IndexRecord, doomed_ids: set[int | None]
-) -> list[IndexRecord]:
-    """Surviving records this one is perceptually equivalent to.
-
-    Deleting an item while a near-identical one stays is the user confirming
-    they are the same picture, so that is the moment the equivalence is worth
-    persisting. Asserting it earlier, when the duplicates view merely suggests a
-    group, would record a detector's guess as a fact and leave a wrong link in
-    the graph for every future detector to inherit.
-
-    Bounded by how many items the user selected, not by the catalogue: the scan
-    runs once per deleted record.
-    """
-    value = _phash_to_int(getattr(record, "perceptual_hash", ""))
-    if value is None:
-        return []
-    survivors = []
-    for candidate in _records_by_db_id().values():
-        if candidate.db_id in doomed_ids or not candidate.content_hash:
-            continue
-        other = _phash_to_int(getattr(candidate, "perceptual_hash", ""))
-        if other is None:
-            continue
-        if bin(value ^ other).count("1") <= _PHASH_MAX_DISTANCE:
-            survivors.append(candidate)
-    return survivors
-
-
-def _phash_to_int(value: str) -> int | None:
-    if not value or len(value) != 16:
-        return None
-    try:
-        return int(value, 16)
-    except ValueError:
-        return None
 
 
 def _mark_removed_in_graph(content_hashes: list[str]) -> None:

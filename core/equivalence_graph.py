@@ -6,7 +6,7 @@ the user keeps A and deletes B, and a later crop-aware detector would have linke
 B and C. Run it on the survivors and it sees A and C, which it cannot link. The
 evidence that connected them was in B, and B is gone.
 
-The fix is not to keep B. It is to keep what B *was*: a few dozen bytes of
+The fix is not to keep B. It is to keep what B *was*: a few hundred bytes of
 fingerprints and the component it belonged to. Deduplication then stops being a
 list of surviving files and becomes a record of every equivalence ever
 established, which later detectors can still reason over.
@@ -16,19 +16,33 @@ computed while the file is on disk, so anything a future layer will need has to
 be written *before* the first deletion. Whatever is not captured then is gone
 for good, no matter how good the later detector is.
 
-Two tables, for two different reasons:
+Four tables, each for a reason that is easy to get wrong:
+
+``equivalence_components``
+    A component has its own identity. Naming it after a surviving member breaks
+    the moment every member is deleted, and again when a component is restored,
+    merged, or has its representative removed. Which member to show is an
+    attribute of the component, not what the component *is*.
 
 ``equivalence_members``
-    One row per item ever considered, present or removed, carrying the component
-    it belongs to. ``canonical_id`` is stored resolved rather than as a parent
-    pointer, so reading it is one indexed lookup instead of a pointer chase --
-    the same reason the rest of this pipeline avoids structures that assume
-    everything is in memory.
+    One row per item ever considered, present or removed. ``component_id`` is
+    stored resolved rather than as a parent pointer, so reading it is one
+    indexed lookup instead of a pointer chase.
+
+``equivalence_edges``
+    Every assertion of equivalence, with who made it. An edge asserted by a
+    detector and one confirmed by a person are different claims, and a schema
+    that stores both as "linked" becomes a pile of indistinguishable inferences
+    within a year. Keeping the edges also means components can be rebuilt from
+    scratch if a class of assertion is later found to be wrong.
 
 ``equivalence_fingerprints``
-    ``(member_id, kind, value)``. A new detector adds rows of a new ``kind`` and
-    needs no migration, which is the whole point: the schema has to accept
-    evidence from detectors that do not exist yet.
+    ``(member_id, kind, version, value)``. A new detector adds rows of a new
+    kind and needs no migration, which is the point: the schema has to accept
+    evidence from detectors that do not exist yet. ``version`` and ``bits`` are
+    there because a fingerprint's meaning changes when its algorithm does, and
+    because assuming every future hash fits in 64 bits is exactly the kind of
+    assumption that is free now and expensive later.
 """
 
 from __future__ import annotations
@@ -36,39 +50,66 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable, Mapping
 
-# Fingerprint kinds in use. Values are free-form strings so a new detector can
-# store whatever shape it needs (a hex digest, a joined list of segment hashes).
+# Fingerprint kinds in use. Values are text so a new detector can store whatever
+# shape it needs: a hex digest, a joined list of segment hashes, a base64 blob.
 KIND_PHASH = "phash"
 KIND_CONTENT = "content_sha256"
+
+# Who asserted an equivalence. The distinction is the whole reason edges are
+# stored rather than only their resulting components.
+PROVENANCE_USER_CONFIRMED = "user_confirmed_duplicate"
+PROVENANCE_EXACT_CONTENT = "exact_content_match"
+PROVENANCE_IMPORT_QUARANTINE = "import_quarantine_match"
 
 
 def ensure_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
+        """CREATE TABLE IF NOT EXISTS equivalence_components (
+            component_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            preferred_member_id INTEGER,
+            created_at          TEXT
+        )"""
+    )
+    conn.execute(
         """CREATE TABLE IF NOT EXISTS equivalence_members (
             member_id     INTEGER PRIMARY KEY AUTOINCREMENT,
             content_hash  TEXT NOT NULL UNIQUE,
-            canonical_id  INTEGER NOT NULL,
+            component_id  INTEGER NOT NULL,
             media_id      INTEGER,
             original_path TEXT,
-            removed_at    TEXT
+            removed_at    TEXT,
+            FOREIGN KEY (component_id) REFERENCES equivalence_components(component_id)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS equivalence_edges (
+            member_a         INTEGER NOT NULL,
+            member_b         INTEGER NOT NULL,
+            provenance       TEXT NOT NULL,
+            detector_version TEXT NOT NULL DEFAULT '',
+            confirmed_at     TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (member_a, member_b, provenance)
         )"""
     )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS equivalence_fingerprints (
             member_id INTEGER NOT NULL,
             kind      TEXT NOT NULL,
+            version   TEXT NOT NULL DEFAULT '1',
+            bits      INTEGER,
             value     TEXT NOT NULL,
-            PRIMARY KEY (member_id, kind, value),
+            PRIMARY KEY (member_id, kind, version, value),
             FOREIGN KEY (member_id) REFERENCES equivalence_members(member_id) ON DELETE CASCADE
         )"""
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_equiv_canonical ON equivalence_members(canonical_id)"
+        "CREATE INDEX IF NOT EXISTS idx_equiv_component ON equivalence_members(component_id)"
     )
     # The lookup a later detector performs: given a fingerprint it just computed,
     # which member does it belong to -- including members whose file is gone.
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_equiv_fp_lookup ON equivalence_fingerprints(kind, value)"
+        "CREATE INDEX IF NOT EXISTS idx_equiv_fp_lookup"
+        " ON equivalence_fingerprints(kind, value)"
     )
 
 
@@ -79,28 +120,32 @@ def record_member(
     fingerprints: Mapping[str, str] | None = None,
     media_id: int | None = None,
     original_path: str | None = None,
+    now: str = "",
 ) -> int:
-    """Register an item and its fingerprints, or add fingerprints to a known one.
+    """Register an item and its fingerprints, or enrich one already known.
 
-    Idempotent on ``content_hash``, so the import path can call it freely. New
-    fingerprint kinds are merged into an existing member rather than replacing
-    it: a later detector enriching an old row is the normal case, not an error.
+    Idempotent on ``content_hash``, so import and deletion paths can call it
+    freely. New fingerprint kinds merge into an existing member rather than
+    replacing it: a later detector enriching an old row is the normal case.
     """
     ensure_tables(conn)
     row = conn.execute(
         "SELECT member_id FROM equivalence_members WHERE content_hash = ?", (content_hash,)
     ).fetchone()
     if row is None:
-        cursor = conn.execute(
-            "INSERT INTO equivalence_members (content_hash, canonical_id, media_id, original_path)"
-            " VALUES (?, 0, ?, ?)",
-            (content_hash, media_id, original_path),
+        component = conn.execute(
+            "INSERT INTO equivalence_components (created_at) VALUES (?)", (now,)
+        ).lastrowid
+        member_id = int(
+            conn.execute(
+                "INSERT INTO equivalence_members"
+                " (content_hash, component_id, media_id, original_path) VALUES (?, ?, ?, ?)",
+                (content_hash, component, media_id, original_path),
+            ).lastrowid
         )
-        member_id = int(cursor.lastrowid)
-        # A member with no known equivalences is its own component.
         conn.execute(
-            "UPDATE equivalence_members SET canonical_id = ? WHERE member_id = ?",
-            (member_id, member_id),
+            "UPDATE equivalence_components SET preferred_member_id = ? WHERE component_id = ?",
+            (member_id, component),
         )
     else:
         member_id = int(row[0])
@@ -116,55 +161,99 @@ def record_member(
 
 
 def add_fingerprints(
-    conn: sqlite3.Connection, member_id: int, fingerprints: Mapping[str, str]
+    conn: sqlite3.Connection,
+    member_id: int,
+    fingerprints: Mapping[str, str],
+    *,
+    version: str = "1",
+    bits: int | None = None,
 ) -> None:
     """Attach evidence to a member. Works after the file is gone."""
     ensure_tables(conn)
     rows = [
-        (member_id, kind, value)
+        (member_id, kind, version, bits, value)
         for kind, value in fingerprints.items()
         if kind and value
     ]
     if rows:
         conn.executemany(
-            "INSERT OR IGNORE INTO equivalence_fingerprints (member_id, kind, value)"
-            " VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO equivalence_fingerprints"
+            " (member_id, kind, version, bits, value) VALUES (?, ?, ?, ?, ?)",
             rows,
         )
 
 
-def canonical_of(conn: sqlite3.Connection, member_id: int) -> int | None:
+def component_of(conn: sqlite3.Connection, member_id: int) -> int | None:
     row = conn.execute(
-        "SELECT canonical_id FROM equivalence_members WHERE member_id = ?", (member_id,)
+        "SELECT component_id FROM equivalence_members WHERE member_id = ?", (member_id,)
     ).fetchone()
     return int(row[0]) if row else None
 
 
-def link(conn: sqlite3.Connection, left_id: int, right_id: int) -> int:
-    """Declare two members equivalent and merge their components.
+def assert_equivalent(
+    conn: sqlite3.Connection,
+    left_id: int,
+    right_id: int,
+    *,
+    provenance: str,
+    detector_version: str = "",
+    confirmed_at: str = "",
+) -> int:
+    """Record that two members were declared equivalent, and merge components.
 
-    Returns the surviving canonical id. The lower id wins so the choice is
-    stable across runs and independent of the order detectors happen to run in.
+    ``provenance`` is required and not defaulted, because the difference between
+    a detector's suggestion and a person's decision is the one thing this table
+    exists to keep. An edge is kept even when it changes no component, so the
+    assertion survives and components can be rebuilt without it later.
     """
     ensure_tables(conn)
-    left = canonical_of(conn, left_id)
-    right = canonical_of(conn, right_id)
+    left = component_of(conn, left_id)
+    right = component_of(conn, right_id)
     if left is None or right is None:
         raise ValueError("membro desconhecido no grafo de equivalências")
+
+    first, second = sorted((left_id, right_id))
+    conn.execute(
+        "INSERT OR IGNORE INTO equivalence_edges"
+        " (member_a, member_b, provenance, detector_version, confirmed_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (first, second, provenance, detector_version, confirmed_at),
+    )
     if left == right:
         return left
 
+    # The older component absorbs the newer one, so the surviving id does not
+    # depend on the order detectors happen to run in.
     survivor, absorbed = (left, right) if left < right else (right, left)
     conn.execute(
-        "UPDATE equivalence_members SET canonical_id = ? WHERE canonical_id = ?",
+        "UPDATE equivalence_members SET component_id = ? WHERE component_id = ?",
         (survivor, absorbed),
     )
+    conn.execute("DELETE FROM equivalence_components WHERE component_id = ?", (absorbed,))
     return survivor
 
 
-def member_for_fingerprint(
-    conn: sqlite3.Connection, kind: str, value: str
-) -> int | None:
+def edges_of(conn: sqlite3.Connection, member_id: int) -> list[dict]:
+    ensure_tables(conn)
+    rows = conn.execute(
+        "SELECT member_a, member_b, provenance, detector_version, confirmed_at"
+        " FROM equivalence_edges WHERE member_a = ? OR member_b = ?"
+        " ORDER BY member_a, member_b",
+        (member_id, member_id),
+    ).fetchall()
+    return [
+        {
+            "member_a": int(row[0]),
+            "member_b": int(row[1]),
+            "provenance": row[2],
+            "detector_version": row[3],
+            "confirmed_at": row[4],
+        }
+        for row in rows
+    ]
+
+
+def member_for_fingerprint(conn: sqlite3.Connection, kind: str, value: str) -> int | None:
     """The member carrying this fingerprint, whether or not its file still exists.
 
     This is the bridge lookup: a detector that has just computed a fingerprint
@@ -183,7 +272,8 @@ def mark_removed(
 ) -> int:
     """Record that these files no longer exist, keeping their evidence.
 
-    The row and its fingerprints stay. That is the point of the table.
+    The row, its fingerprints and its edges all stay, and the component keeps
+    its identity even when nothing in it survives on disk.
     """
     ensure_tables(conn)
     hashes = [h for h in content_hashes if h]
@@ -198,16 +288,16 @@ def mark_removed(
     return cursor.rowcount
 
 
-def component(conn: sqlite3.Connection, member_id: int) -> list[dict]:
+def members_of_component(conn: sqlite3.Connection, member_id: int) -> list[dict]:
     """Every member ever placed in this component, removed ones included."""
     ensure_tables(conn)
-    canonical = canonical_of(conn, member_id)
-    if canonical is None:
+    component = component_of(conn, member_id)
+    if component is None:
         return []
     rows = conn.execute(
         "SELECT member_id, content_hash, media_id, original_path, removed_at"
-        " FROM equivalence_members WHERE canonical_id = ? ORDER BY member_id",
-        (canonical,),
+        " FROM equivalence_members WHERE component_id = ? ORDER BY member_id",
+        (component,),
     ).fetchall()
     return [
         {
