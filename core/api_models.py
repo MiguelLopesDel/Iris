@@ -351,6 +351,10 @@ class DuplicatesOut(_Out):
     min_group_size: int
     total_groups: int
     groups: list[Any] = []
+    # Pairs an embedding considers close, kept apart from `groups` on purpose:
+    # they are a resemblance, not a claim that two files are the same picture.
+    total_similar_pairs: int = 0
+    similar_pairs: list[Any] = []
 
 
 class TrashOut(_Out):

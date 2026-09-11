@@ -381,14 +381,27 @@ class TestDuplicateInteractions(unittest.TestCase):
                 return
         self.fail("gato_bravo.jpg e duplicado_exato.jpg deviam estar no mesmo grupo (hash igual)")
 
-    def test_near_duplicates_grouped_at_low_threshold(self) -> None:
-        """gato_variante (98% similar) + threshold 0.97 → mesmo grupo."""
+    def test_a_variant_is_similar_not_a_duplicate(self) -> None:
+        """gato_variante é 98% parecido com gato_bravo — parecido não é o mesmo.
+
+        Era o contrato anterior: 0.98 de cosseno virava grupo de duplicatas. Um
+        embedding mede do que a foto trata, então duas fotos diferentes do mesmo
+        gato pontuam como duas cópias da mesma foto, e o union-find espalha isso
+        em cadeia. Agora aparece como par semelhante, que é o que de fato é.
+        """
+        from core.duplicates import find_similar_pairs
+
         groups = self.backend.find_duplicate_groups(threshold=0.97, max_neighbors=5)
         for g in groups:
             files = [item.arquivo for item in g.items]
-            if "gato_bravo.jpg" in files and "gato_variante.jpg" in files:
-                return
-        self.fail("gato_bravo e gato_variante deviam estar no mesmo grupo (98% similar)")
+            self.assertFalse(
+                "gato_bravo.jpg" in files and "gato_variante.jpg" in files,
+                "semelhança virou duplicata de novo",
+            )
+
+        pares = find_similar_pairs(self.backend.engine, threshold=0.97, max_neighbors=5)
+        nomes = {tuple(sorted((p.left_arquivo, p.right_arquivo))) for p in pares}
+        self.assertIn(("gato_bravo.jpg", "gato_variante.jpg"), nomes)
 
     def test_duplicate_items_have_valid_paths(self) -> None:
         """Todos os itens nos grupos de duplicatas têm ficheiros acessíveis."""

@@ -56,7 +56,16 @@ def make_duplicate_db(path: Path) -> None:
 
 
 class DuplicateTests(unittest.TestCase):
-    def test_find_duplicate_groups_uses_similarity_and_exact_hash(self) -> None:
+    def test_duplicates_are_grouped_by_identity_not_by_resemblance(self) -> None:
+        """c/d share a content hash; a/b only have close embeddings.
+
+        Embedding closeness is not identity: CLIP scores two photographs of the
+        same kind of thing as high as two copies of one photograph, and
+        union-find then spreads that along chains. Measured on the real
+        catalogue, chaining embedding edges grew the largest group from 8
+        members to 23 and left 22% of multi-item components holding a pair as
+        far apart as 0.574.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "memes.db"
             make_duplicate_db(db_path)
@@ -65,8 +74,38 @@ class DuplicateTests(unittest.TestCase):
             groups = find_duplicate_groups(engine, threshold=0.98, max_neighbors=2, require_existing_files=False)
             grouped_files = [sorted(item.arquivo for item in group.items) for group in groups]
 
-            self.assertIn(["a.jpg", "b.jpg"], grouped_files)
             self.assertIn(["c.jpg", "d.jpg"], grouped_files)
+            self.assertNotIn(["a.jpg", "b.jpg"], grouped_files)
+
+    def test_resemblance_is_reported_as_pairs_instead(self) -> None:
+        """What the duplicate finder drops is still shown, as what it is."""
+        from core.duplicates import find_similar_pairs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "memes.db"
+            make_duplicate_db(db_path)
+            engine = IrisEngine(db_path=db_path, load_model=False)
+
+            pairs = find_similar_pairs(engine, threshold=0.98, require_existing_files=False)
+            names = {tuple(sorted((pair.left_arquivo, pair.right_arquivo))) for pair in pairs}
+
+            self.assertIn(("a.jpg", "b.jpg"), names)
+            # Already explained by an identical content hash, so not repeated here.
+            self.assertNotIn(("c.jpg", "d.jpg"), names)
+
+    def test_embedding_grouping_remains_available_for_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "memes.db"
+            make_duplicate_db(db_path)
+            engine = IrisEngine(db_path=db_path, load_model=False)
+
+            groups = find_duplicate_groups(
+                engine, threshold=0.98, max_neighbors=2,
+                require_existing_files=False, include_embedding_similarity=True,
+            )
+            grouped_files = [sorted(item.arquivo for item in group.items) for group in groups]
+
+            self.assertIn(["a.jpg", "b.jpg"], grouped_files)
 
 
 def _group(*items: DuplicateItem) -> DuplicateGroup:

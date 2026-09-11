@@ -78,7 +78,31 @@ def find_duplicate_groups(
     max_neighbors: int = 50,
     include_exact_hash: bool = True,
     require_existing_files: bool = True,
+    include_embedding_similarity: bool = False,
 ) -> list[DuplicateGroup]:
+    """Group items that are the same file, by signals that mean identity.
+
+    Embedding similarity is excluded by default, and the parameter exists for
+    measurement rather than for use. CLIP encodes what a picture is *about*, so
+    two different photographs of the same kind of thing score as high as two
+    copies of one photograph -- a problem the CLIP paper itself reports when it
+    describes trying to use the embedding space as a duplicate detector.
+
+    Union-find makes that worse by being transitive. Measured on the real
+    catalogue: with embedding edges the largest group grew from 8 members to 23,
+    and 22% of the components holding three or more items contained a pair below
+    the threshold, one of them as low as 0.574. The existing post-filter softens
+    this without fixing it, because it compares each member to the anchor rather
+    than to every other member: 14% of delivered groups still contained a pair
+    under the 0.955 the code itself requires.
+
+    Identity signals do not have that problem. A recompression of a
+    recompression is still the same photograph, so chaining them is sound.
+
+    Embedding similarity is still worth showing -- it catches crops and angles
+    that a frequency hash cannot -- but as ``find_similar_pairs``, which returns
+    pairs and asserts nothing transitive.
+    """
     if not engine.records or engine.image_matrix is None:
         return []
 
@@ -175,8 +199,9 @@ def find_duplicate_groups(
             if media_types[nb_local] != mt_row:
                 continue
             left, right = sorted((row_local, nb_local))
-            dsu.union(left, right)
             pair_scores[(left, right)] = max(score, pair_scores.get((left, right), -1.0))
+            if include_embedding_similarity:
+                dsu.union(left, right)
 
     grouped: dict[int, list[int]] = defaultdict(list)
     for loc_i in range(n_live):
@@ -740,6 +765,100 @@ def _is_phash(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+@dataclass(frozen=True)
+class SimilarPair:
+    """Two items an embedding considers close. Not a claim that they are one file."""
+
+    left_index: int
+    right_index: int
+    left_arquivo: str
+    right_arquivo: str
+    score: float
+
+
+def find_similar_pairs(
+    engine: IrisEngine,
+    *,
+    threshold: float = 0.985,
+    max_neighbors: int = 12,
+    require_existing_files: bool = True,
+    limit: int = 500,
+) -> list[SimilarPair]:
+    """Visually or semantically close items, as pairs rather than components.
+
+    Deliberately not union-find. Embedding closeness is not transitive in the way
+    identity is: measured on the real catalogue, chaining these edges built a
+    23-member group whose most distant pair scored 0.574. A pair is a claim
+    about two items and stays true; a component silently claims things about
+    every pair inside it.
+
+    Pairs already explained by an identity signal are left out, so this shows
+    what the duplicate finder cannot see -- crops and angles a frequency hash
+    misses -- without dressing it up as the same picture.
+    """
+    if not engine.records or engine.image_matrix is None:
+        return []
+    if require_existing_files:
+        live_eng = [
+            i for i, r in enumerate(engine.records)
+            if r.resolved_path and os.path.exists(r.resolved_path)
+        ]
+    else:
+        live_eng = list(range(len(engine.records)))
+    if len(live_eng) < 2:
+        return []
+
+    records_live = [engine.records[i] for i in live_eng]
+    matrix = np.asarray(engine.image_matrix, dtype=np.float32)[live_eng].copy()
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    matrix /= norms
+
+    already: set[tuple[int, int]] = set()
+    for indices in exact_hash_groups(records_live).values():
+        already.update(
+            (min(a, b), max(a, b))
+            for i, a in enumerate(indices)
+            for b in indices[i + 1 :]
+        )
+    for indices in phash_groups(records_live).values():
+        already.update(
+            (min(a, b), max(a, b))
+            for i, a in enumerate(indices)
+            for b in indices[i + 1 :]
+        )
+
+    index = faiss.IndexFlatIP(matrix.shape[1])
+    index.add(matrix)
+    scores, neighbors = index.search(matrix, min(max_neighbors + 1, len(live_eng)))
+    media_types = [_media_type(r.arquivo) for r in records_live]
+
+    seen: dict[tuple[int, int], float] = {}
+    for row, row_neighbors in enumerate(neighbors):
+        for position, neighbor in enumerate(row_neighbors.tolist()):
+            if neighbor < 0 or neighbor == row:
+                continue
+            score = float(scores[row][position])
+            if score < threshold or media_types[neighbor] != media_types[row]:
+                continue
+            pair = (min(row, neighbor), max(row, neighbor))
+            if pair in already:
+                continue
+            seen[pair] = max(score, seen.get(pair, -1.0))
+
+    ordered = sorted(seen.items(), key=lambda entry: entry[1], reverse=True)[:limit]
+    return [
+        SimilarPair(
+            left_index=live_eng[left],
+            right_index=live_eng[right],
+            left_arquivo=records_live[left].arquivo,
+            right_arquivo=records_live[right].arquivo,
+            score=round(score, 4),
+        )
+        for (left, right), score in ordered
+    ]
 
 
 def exact_hash_groups(records: list[IndexRecord]) -> dict[str, list[int]]:

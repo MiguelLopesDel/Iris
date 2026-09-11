@@ -3109,6 +3109,16 @@ async def reject_enrichment_suggestion(suggestion_id: int):
 # ── Duplicates ────────────────────────────────────────────────────────────────
 
 
+def _similar_pairs(backend: SearchBackend, threshold: float, max_neighbors: int):
+    """Embedding-close pairs, or nothing when there is no local engine."""
+    engine = getattr(backend, "engine", None)
+    if engine is None:
+        return []
+    from core.duplicates import find_similar_pairs
+
+    return find_similar_pairs(engine, threshold=threshold, max_neighbors=max_neighbors)
+
+
 @app.get("/api/duplicates", response_model=DuplicatesOut)
 async def get_duplicates(
     threshold: float = Query(0.985, ge=0.0, le=1.0),
@@ -3119,11 +3129,23 @@ async def get_duplicates(
     with trace("api.duplicates"):
         groups = backend.find_duplicate_groups(threshold, max_neighbors)
         groups = [group for group in groups if len(group.items) >= min_group_size]
+        similar = await run_in_threadpool(_similar_pairs, backend, threshold, max_neighbors)
         return {
             "threshold": threshold,
             "max_neighbors": max_neighbors,
             "min_group_size": min_group_size,
             "total_groups": len(groups),
+            "total_similar_pairs": len(similar),
+            "similar_pairs": [
+                {
+                    "left_index": pair.left_index,
+                    "right_index": pair.right_index,
+                    "left_arquivo": pair.left_arquivo,
+                    "right_arquivo": pair.right_arquivo,
+                    "score": pair.score,
+                }
+                for pair in similar
+            ],
             "groups": [
                 {
                     "group_id": g.group_id,
