@@ -299,3 +299,102 @@ def test_deletion_is_refused_when_the_evidence_cannot_be_recorded(tmp_path, monk
     assert response.status_code == 503
     assert trashed == [], "o arquivo foi para a lixeira apesar de a evidência ter falhado"
     assert doomed.exists()
+
+
+def _record(tmp_path, db_id, name, content_hash, phash):
+    from core.search_types import IndexRecord
+
+    path = tmp_path / name
+    path.write_bytes(b"bytes")
+    return IndexRecord(
+        index=db_id - 1, db_id=db_id, arquivo=name, caminho=str(path),
+        texto_extraido="", descricao_ia="", tags="", embedding=None,
+        desc_embedding=None, resolved_path=str(path), content_hash=content_hash,
+        perceptual_hash=phash,
+    )
+
+
+def _trash(server, records, db_ids, connection, monkeypatch):
+    import asyncio
+
+    import httpx
+
+    backend = type(
+        "Backend",
+        (),
+        {"get_all_records": staticmethod(lambda: records), "engine": object()},
+    )()
+    monkeypatch.setattr(server, "_get_backend", lambda: backend)
+    monkeypatch.setattr(server, "_backend_connection", lambda *a, **k: connection)
+    monkeypatch.setattr(server, "maybe_auto_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(server, "move_to_trash", lambda paths: (list(paths), []))
+    server._invalidate_view_caches()
+
+    async def run():
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post("/api/trash", data={"db_ids": db_ids})
+
+    try:
+        return asyncio.run(run())
+    finally:
+        server._invalidate_view_caches()
+
+
+def test_deleting_a_duplicate_links_it_to_the_copy_that_survives(tmp_path, monkeypatch):
+    """Choosing to delete B while A stays is the user confirming they are one.
+
+    Recording the link earlier, when the duplicates view only suggests a group,
+    would write a detector's guess into the graph for every later detector to
+    inherit.
+    """
+    import server
+
+    keeper = _record(tmp_path, 1, "keep.jpg", "aaa", "ff00ff00ff00ff00")
+    doomed = _record(tmp_path, 2, "dupe.jpg", "bbb", "ff00ff00ff00ff01")
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+
+    response = _trash(server, [keeper, doomed], "2", connection, monkeypatch)
+
+    assert response.status_code == 200
+    removed = member_for_fingerprint(connection, KIND_CONTENT, "bbb")
+    survivor = member_for_fingerprint(connection, KIND_CONTENT, "aaa")
+    assert canonical_of(connection, removed) == canonical_of(connection, survivor)
+    assert sorted(row["content_hash"] for row in component(connection, removed)) == ["aaa", "bbb"]
+    connection.close()
+
+
+def test_deleting_an_unrelated_photo_creates_no_equivalence(tmp_path, monkeypatch):
+    """Not every deletion is a deduplication. A link here would be a lie."""
+    import server
+
+    other = _record(tmp_path, 1, "other.jpg", "aaa", "0000ffff0000ffff")
+    doomed = _record(tmp_path, 2, "bad.jpg", "bbb", "ffff0000ffff0000")
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+
+    response = _trash(server, [other, doomed], "2", connection, monkeypatch)
+
+    assert response.status_code == 200
+    removed = member_for_fingerprint(connection, KIND_CONTENT, "bbb")
+    assert removed is not None, "a evidência ainda tem de ser gravada"
+    assert [row["content_hash"] for row in component(connection, removed)] == ["bbb"]
+    assert member_for_fingerprint(connection, KIND_CONTENT, "aaa") is None
+    connection.close()
+
+
+def test_deleting_a_whole_group_does_not_link_it_to_itself_only(tmp_path, monkeypatch):
+    """When every copy goes, the members are still recorded for later bridges."""
+    import server
+
+    first = _record(tmp_path, 1, "a.jpg", "aaa", "ff00ff00ff00ff00")
+    second = _record(tmp_path, 2, "b.jpg", "bbb", "ff00ff00ff00ff01")
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+
+    response = _trash(server, [first, second], "1,2", connection, monkeypatch)
+
+    assert response.status_code == 200
+    for content_hash in ("aaa", "bbb"):
+        member = member_for_fingerprint(connection, KIND_CONTENT, content_hash)
+        assert member is not None
+        assert component(connection, member)[0]["removed_at"]
+    connection.close()
