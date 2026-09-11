@@ -568,12 +568,23 @@ def _phash_linking_pairs(hashes: list[str], max_distance: int) -> list[tuple[int
     that small per-slice radius therefore misses no pair, and the exact distance
     check then discards the rest.
 
+    Both directions stated plainly, because they are easy to invert: within the
+    radius this loses **nothing** -- the pigeonhole makes that a proof, not a
+    measurement -- and it produces spurious candidates that the popcount
+    rejects. It is the exactness of the final check, not the index, that keeps
+    unrelated hashes apart.
+
+    And that check is exact about the stored fingerprints, not about the images.
+    Two photographs can sit within eight bits of each other and not be the same
+    picture; solid colours used to do exactly that, which is why they no longer
+    reach this function at all.
+
     Three slices of ~21 bits give two million buckets each, which stays sparse
     well past any realistic library, so a probe usually lands on nothing and the
     cost tracks the number of distinct hashes rather than the number of pairs.
 
-    A tree is the obvious alternative and it does not work here, for a reason
-    specific to this metric rather than to trees. Two unrelated 64-bit hashes
+    A tree is the obvious alternative and it lost badly in the one measurement
+    made here, for a reason specific to this metric rather than to trees. Two unrelated 64-bit hashes
     are almost always about 32 bits apart, so a radius of 8 admits nearly every
     branch under the triangle inequality and the prune collapses. Measured on
     this data, a BK-tree visited about half its nodes per lookup: roughly 160
@@ -594,7 +605,9 @@ def _phash_linking_pairs(hashes: list[str], max_distance: int) -> list[tuple[int
     in a few years. Sharding per account does not bound this the way it bounds
     storage. Treat the numbers above as the budget this index actually has:
     past roughly a million hashes in one catalogue it needs replacing, not
-    tuning.
+    tuning. What that replacement should be is open: a wider fingerprint, a
+    probabilistic index, or another signal entirely. The measurements here rule
+    out this configuration at that size, not every configuration.
 
     The diagnostic that reveals it early, without waiting for a huge benchmark:
     plot candidates per hash against catalogue size. Flat means the index scales;
