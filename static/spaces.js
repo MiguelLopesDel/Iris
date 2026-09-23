@@ -7,6 +7,7 @@
 import {
   addSpaceItem,
   addSpaceMember,
+  changeSpaceMemberRole,
   createSpace,
   escapeHtml,
   getSpace,
@@ -16,10 +17,11 @@ import {
   listSpaces,
   listSpaceTrash,
   removeSpaceItem,
+  removeSpaceMember,
   restoreSpaceItem,
   saveSpaceItem,
-} from './api.js?v=43';
-import { confirmModal, openModal, promptModal, toast } from './ui.js?v=2';
+} from './api.js?v=44';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=3';
 
 const ROLE_LABELS = { viewer: 'Visualizador', contributor: 'Colaborador', manager: 'Gestor' };
 const CAN_ADD = new Set(['contributor', 'manager']);
@@ -199,14 +201,70 @@ async function loadMembers() {
   container.innerHTML = '<p class="filter-empty">Carregando...</p>';
   try {
     const { members } = await listSpaceMembers(current.id);
-    container.innerHTML = members.map((member) => `
-      <div class="space-row">
-        <span><b>${escapeHtml(member.display_name || member.username)}</b>
-          <small>${escapeHtml(member.username)}</small></span>
-        <span class="space-role">${ROLE_LABELS[member.role] || member.role}</span>
-      </div>`).join('');
+    const manager = current.role === 'manager';
+    container.innerHTML = members.map((member) => {
+      const name = escapeHtml(member.display_name || member.username);
+      // A manager edits everyone but themselves here; stepping down or
+      // leaving goes through "Sair do espaço" and the last-manager rule.
+      const controls = manager && !member.is_you
+        ? `<select data-member-role="${member.user_id}" aria-label="Papel de ${name}">
+             ${Object.entries(ROLE_LABELS).map(([value, label]) =>
+               `<option value="${value}"${value === member.role ? ' selected' : ''}>${label}</option>`).join('')}
+           </select>
+           <button class="btn btn-subtle" type="button" data-member-remove="${member.user_id}"
+             data-member-name="${name}">Remover</button>`
+        : `<span class="space-role">${ROLE_LABELS[member.role] || member.role}${member.is_you ? ' · você' : ''}</span>`;
+      return `<div class="space-row">
+        <span><b>${name}</b><small>${escapeHtml(member.username)}</small></span>
+        <span class="space-member-controls">${controls}</span>
+      </div>`;
+    }).join('');
   } catch (error) {
     container.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function setRole(select) {
+  try {
+    await changeSpaceMemberRole(current.id, select.dataset.memberRole, select.value);
+    toast('Papel atualizado.', 'success');
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+  loadMembers();
+}
+
+async function removeMember(button) {
+  const name = button.dataset.memberName;
+  const ok = await confirmModal(
+    `${name} perde o acesso ao espaço na hora. As fotos que adicionou continuam no espaço.`,
+    { kicker: current.name, title: `Remover ${name}?`, confirmLabel: 'Remover', danger: true },
+  );
+  if (!ok) return;
+  try {
+    await removeSpaceMember(current.id, button.dataset.memberRemove);
+    toast(`${name} não participa mais de ${current.name}.`, 'success');
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+  loadMembers();
+}
+
+async function leave() {
+  const ok = await confirmModal(
+    'Você perde o acesso a este espaço. As fotos que adicionou continuam nele'
+    + ' e as cópias na sua biblioteca não mudam.',
+    { kicker: current.name, title: 'Sair do espaço?', confirmLabel: 'Sair', danger: true },
+  );
+  if (!ok) return;
+  try {
+    const { members } = await listSpaceMembers(current.id);
+    const me = members.find((member) => member.is_you);
+    await removeSpaceMember(current.id, me.user_id);
+    toast(`Você saiu de ${current.name}.`, 'success');
+    showList();
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
   }
 }
 
@@ -331,6 +389,11 @@ export function initSpaces() {
     $('space-more').addEventListener('click', () => loadItems(false));
     $('space-trash-more').addEventListener('click', () => loadTrash(false));
     $('space-invite').addEventListener('submit', invite);
+    $('space-leave').addEventListener('click', leave);
+    $('space-members').addEventListener('change', (event) => {
+      const select = event.target.closest('[data-member-role]');
+      if (select) setRole(select);
+    });
     $('tab-spaces').addEventListener('click', (event) => {
       const open = event.target.closest('[data-open-space]');
       if (open) return openSpace(open.dataset.openSpace);
@@ -340,6 +403,8 @@ export function initSpaces() {
       if (save) return saveItem(save.dataset.spaceSave, save);
       const remove = event.target.closest('[data-space-remove]');
       if (remove) return removeItem(remove.dataset.spaceRemove);
+      const drop = event.target.closest('[data-member-remove]');
+      if (drop) return removeMember(drop);
       const back = event.target.closest('[data-space-restore]');
       if (back) return restore(back.dataset.spaceRestore);
       return null;

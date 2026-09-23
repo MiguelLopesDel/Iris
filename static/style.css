@@ -4022,3 +4022,18 @@ a.btn {
 #mobile-navigation button[hidden] {
   display: none;
 }
+
+.space-member-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.space-member-controls select {
+  width: auto;
+  min-width: 150px;
+}
+
+.space-leave {
+  margin-top: 20px;
+}

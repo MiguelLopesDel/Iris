@@ -16,16 +16,16 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=43';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=38';
-import { initCollections } from './collections.js?v=32';
-import { initConcepts } from './concepts.js?v=33';
-import { initDuplicates } from './duplicates.js?v=32';
-import { initSystem } from './system.js?v=41';
-import { initPersons } from './persons.js?v=6';
-import { initImportReview } from './import-review.js?v=7';
-import { chooseSpaceFor, initSpaces } from './spaces.js?v=2';
-import { confirmModal, toast } from './ui.js?v=2';
+} from './api.js?v=44';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=39';
+import { initCollections } from './collections.js?v=33';
+import { initConcepts } from './concepts.js?v=34';
+import { initDuplicates } from './duplicates.js?v=33';
+import { initSystem } from './system.js?v=42';
+import { initPersons } from './persons.js?v=7';
+import { initImportReview } from './import-review.js?v=8';
+import { chooseSpaceFor, initSpaces } from './spaces.js?v=3';
+import { confirmModal, toast } from './ui.js?v=3';
 
 window.__irisSelection = window.__irisSelection || new Map();
 

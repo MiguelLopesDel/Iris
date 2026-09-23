@@ -15,8 +15,8 @@ import {
   rejectConceptMedia,
   updateConcept,
   mediaUrl,
-} from './api.js?v=43';
-import { confirmModal, toast } from './ui.js?v=2';
+} from './api.js?v=44';
+import { confirmModal, toast } from './ui.js?v=3';
 
 var wizardStep = 0;
 var wizardData = {};

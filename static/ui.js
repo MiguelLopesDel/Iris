@@ -7,7 +7,7 @@
      60 floating-panel · 110 web-enrichment · 190 detail-modal ·
      200 image-lightbox · 300 app-modal · 400 toasts */
 
-import { escapeHtml } from './api.js?v=43';
+import { escapeHtml } from './api.js?v=44';
 
 export function toast(msg, level) {
   level = level || 'info';

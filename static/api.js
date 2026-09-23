@@ -118,6 +118,14 @@ export async function addSpaceMember(id, username, role) {
   return apiJson('POST', spaceUrl(id, '/members'), { username, role });
 }
 
+export async function changeSpaceMemberRole(id, userId, role) {
+  return apiJson('PATCH', spaceUrl(id, `/members/${encodeURIComponent(userId)}`), { role });
+}
+
+export async function removeSpaceMember(id, userId) {
+  return apiJson('DELETE', spaceUrl(id, `/members/${encodeURIComponent(userId)}`));
+}
+
 export async function listSpaceItems(id, { before = null, limit = 60 } = {}) {
   return apiGet(spaceUrl(id, '/items'), { before, limit });
 }

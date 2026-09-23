@@ -13,16 +13,20 @@ from pydantic import BaseModel, Field
 from core import space_catalog
 from core.library_intake import LibraryQuotaExceeded, save_copy, start_processing
 from core.shared_spaces import (
+    SpaceLastManager,
     SpaceMemberExists,
+    SpaceMemberNotFound,
     SpaceNotFound,
     SpacePermissionDenied,
     SpaceUserNotFound,
     add_member,
+    change_role,
     create_space,
     get_space,
     list_members,
     list_spaces,
     member_role,
+    remove_member,
     usernames,
 )
 from core.space_catalog import (
@@ -43,6 +47,10 @@ class CreateSpaceIn(BaseModel):
 
 class AddMemberIn(BaseModel):
     username: str
+    role: str
+
+
+class ChangeRoleIn(BaseModel):
     role: str
 
 
@@ -96,7 +104,11 @@ def members(request: Request, space_id: int):
         found = list_members(request.app.state.users_db_path, space_id, actor.id)
     except SpaceNotFound as exc:
         raise HTTPException(404, "Espaço não encontrado") from exc
-    return {"members": [asdict(member) for member in found]}
+    return {
+        "members": [
+            {**asdict(member), "is_you": member.user_id == actor.id} for member in found
+        ]
+    }
 
 
 @router.post("/{space_id}/members", status_code=201)
@@ -353,3 +365,43 @@ def restore_space_item(request: Request, space_id: int, item_id: int):
         raise HTTPException(409, "O mesmo conteúdo já está no espaço") from exc
     authors = _authors(request, [item])
     return {"item": _item_json(request, space_id, item, actor.id, role, authors)}
+
+
+_LAST_MANAGER = "O espaço precisa de pelo menos um gestor: nomeie outro antes"
+
+
+@router.patch("/{space_id}/members/{user_id}")
+def set_member_role(request: Request, space_id: int, user_id: int, payload: ChangeRoleIn):
+    actor = _actor(request)
+    try:
+        member = change_role(
+            request.app.state.users_db_path, space_id, actor.id, user_id, payload.role
+        )
+    except SpaceNotFound as exc:
+        raise HTTPException(404, _NOT_FOUND) from exc
+    except SpacePermissionDenied as exc:
+        raise HTTPException(403, "Apenas gestores mudam papéis") from exc
+    except SpaceMemberNotFound as exc:
+        raise HTTPException(404, "Conta não participa do espaço") from exc
+    except SpaceLastManager as exc:
+        raise HTTPException(409, _LAST_MANAGER) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"member": {**asdict(member), "is_you": member.user_id == actor.id}}
+
+
+@router.delete("/{space_id}/members/{user_id}", status_code=204)
+def drop_member(request: Request, space_id: int, user_id: int):
+    """A manager removes someone, or anyone removes themselves (leaving)."""
+    actor = _actor(request)
+    try:
+        remove_member(request.app.state.users_db_path, space_id, actor.id, user_id)
+    except SpaceNotFound as exc:
+        raise HTTPException(404, _NOT_FOUND) from exc
+    except SpacePermissionDenied as exc:
+        raise HTTPException(403, "Apenas gestores removem outras contas") from exc
+    except SpaceMemberNotFound as exc:
+        raise HTTPException(404, "Conta não participa do espaço") from exc
+    except SpaceLastManager as exc:
+        raise HTTPException(409, _LAST_MANAGER) from exc
+    return Response(status_code=204)

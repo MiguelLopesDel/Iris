@@ -1,12 +1,15 @@
 """Membership and identity for shared spaces within one Iris instance.
 
-This module stores no media. Access to a future space catalogue must be gated
-through membership here, independently of instance administration.
+This module stores no media. Access to a space's catalogue (see
+:mod:`core.space_catalog`) is gated through membership here, independently of
+instance administration. A space always keeps at least one manager.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +32,14 @@ class SpaceMemberExists(Exception):
 
 class SpaceUserNotFound(Exception):
     """The invited account is not registered in this instance."""
+
+
+class SpaceMemberNotFound(Exception):
+    """The target account does not belong to the space."""
+
+
+class SpaceLastManager(Exception):
+    """The change would leave the space without a manager."""
 
 
 @dataclass(frozen=True)
@@ -230,3 +241,81 @@ def add_member(path: Path, space_id: int, actor_id: int, username: str, role: st
         if cursor.rowcount == 0:
             raise SpaceMemberExists
     return SpaceMember(int(user["id"]), str(user["username"]), str(user["display_name"]), role)
+
+
+@contextmanager
+def _serialised(path: Path) -> Iterator[sqlite3.Connection]:
+    """A write transaction taken up front, so "am I the last manager?" and the
+    change that depends on it cannot interleave with another manager's."""
+    init_shared_spaces_db(path)
+    connection = sqlite3.connect(path, isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("PRAGMA busy_timeout=5000")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield connection
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+        connection.execute("COMMIT")
+    finally:
+        connection.close()
+
+
+def _target_role(connection: sqlite3.Connection, space_id: int, user_id: int) -> str:
+    row = connection.execute(
+        "SELECT role FROM shared_space_members WHERE space_id = ? AND user_id = ?",
+        (space_id, user_id),
+    ).fetchone()
+    if row is None:
+        raise SpaceMemberNotFound
+    return str(row["role"])
+
+
+def _managers(connection: sqlite3.Connection, space_id: int) -> int:
+    return int(connection.execute(
+        "SELECT COUNT(*) FROM shared_space_members WHERE space_id = ? AND role = 'manager'",
+        (space_id,),
+    ).fetchone()[0])
+
+
+def change_role(path: Path, space_id: int, actor_id: int, user_id: int, role: str) -> SpaceMember:
+    """A manager sets any member's role; the last manager cannot step down."""
+    if role not in ROLES:
+        raise ValueError("Invalid space role")
+    with _serialised(path) as connection:
+        if _membership(connection, space_id, actor_id)["role"] != "manager":
+            raise SpacePermissionDenied
+        current = _target_role(connection, space_id, user_id)
+        if current == "manager" and role != "manager" and _managers(connection, space_id) == 1:
+            raise SpaceLastManager
+        connection.execute(
+            "UPDATE shared_space_members SET role = ? WHERE space_id = ? AND user_id = ?",
+            (role, space_id, user_id),
+        )
+        user = connection.execute(
+            "SELECT username, display_name FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return SpaceMember(user_id, str(user["username"]), str(user["display_name"]), role)
+
+
+def remove_member(path: Path, space_id: int, actor_id: int, user_id: int) -> None:
+    """A manager removes a member, or a member leaves.
+
+    Access ends at once, because every request checks membership. What the
+    member added stays in the space: items belong to the space, not to the
+    account that contributed them.
+    """
+    with _serialised(path) as connection:
+        actor_role = str(_membership(connection, space_id, actor_id)["role"])
+        if actor_id != user_id and actor_role != "manager":
+            raise SpacePermissionDenied
+        target = _target_role(connection, space_id, user_id)
+        if target == "manager" and _managers(connection, space_id) == 1:
+            raise SpaceLastManager
+        connection.execute(
+            "DELETE FROM shared_space_members WHERE space_id = ? AND user_id = ?",
+            (space_id, user_id),
+        )
