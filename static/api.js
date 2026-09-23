@@ -65,6 +65,35 @@ export async function createUser(data) {
   return apiPost('/api/auth/users', data);
 }
 
+// ── Instance settings (administrators) ────────────────────────────────────
+
+async function apiJson(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401) { window.location.assign('/login'); throw new Error('Sessão expirada'); }
+  if (!res.ok) {
+    let detail = await res.text();
+    try { detail = JSON.parse(detail).detail || detail; } catch { /* plain text */ }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export async function getInstanceSettings() {
+  return apiGet('/api/admin/settings');
+}
+
+export async function saveInstanceSettings(values) {
+  return apiJson('PUT', '/api/admin/settings', values);
+}
+
+export async function resetInstanceSetting(key) {
+  return apiJson('DELETE', `/api/admin/settings/${encodeURIComponent(key)}`);
+}
+
 // ── Records ───────────────────────────────────────────────────────────────
 
 export async function fetchRecords(page = 1, perPage = 24, sortBy = 'importacao', sortAsc = 0, mediaType = 'all', collectionIds = '', conceptIds = '') {

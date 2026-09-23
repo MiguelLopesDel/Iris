@@ -34,6 +34,9 @@ for username, colour in (("alice", (200, 30, 30)), ("bob", (30, 200, 30)),
                      (image.name, str(image), b"\0" * 16))
     private[username] = (user, image)
 
+create_user(data / "users.db", data, username="root",
+            password_hash=hash_password(PASSWORD), is_admin=True)
+
 import server
 
 def login(name):
@@ -159,3 +162,58 @@ def test_impossible_storage_choice_stops_the_server(tmp_path: Path) -> None:
     assert "StorageConfigError" in result.stderr
     assert "IRIS_SPACE_STORAGE" in result.stderr
 
+
+def test_administrator_configures_storage_from_the_interface(tmp_path: Path) -> None:
+    body = r'''
+root, alice, bob = login("root"), login("alice"), login("bob")
+anonymous = TestClient(server.app)
+assert anonymous.get("/api/admin/settings").status_code == 401
+assert alice.get("/api/admin/settings").status_code == 403
+assert alice.put("/api/admin/settings", json={"space_trash_days": 1}).status_code == 403
+
+state = root.get("/api/admin/settings").json()
+assert state["settings"]["space_quota_bytes"]["source"] == "env"
+assert state["settings"]["space_trash_days"]["source"] == "default"
+assert state["storage"]["strategy"] in {"reflink", "copy"}
+assert state["storage"]["warning"] is None
+
+# Invalid values are refused and nothing is stored.
+for bad in ({"space_trash_days": 0}, {"space_storage": "magic"}, {"nope": 1}, {}):
+    assert root.put("/api/admin/settings", json=bad).status_code == 422, bad
+assert root.get("/api/admin/settings").json()["settings"]["space_trash_days"]["source"] == "default"
+
+# A tiny quota set in the interface applies at once, without a restart.
+space = alice.post("/api/spaces", json={"name": "Family"}).json()["space"]["id"]
+saved = root.put("/api/admin/settings", json={
+    "space_quota_bytes": 1, "space_trash_days": 9, "space_storage": "copy",
+})
+assert saved.status_code == 200, saved.text
+settings = saved.json()["settings"]
+assert settings["space_quota_bytes"] == {
+    "value": 1, "source": "interface", "env_value": 10995116277760, "default": 10995116277760,
+}
+assert saved.json()["storage"]["strategy"] == "copy"
+assert alice.get(f"/api/spaces/{space}/storage").json()["trash_days"] == 9
+assert alice.post(f"/api/spaces/{space}/items", json={"record_id": 1}).status_code == 507
+
+# Back to the installer's value: adding works again.
+reset = root.delete("/api/admin/settings/space_quota_bytes")
+assert reset.status_code == 200, reset.text
+assert reset.json()["settings"]["space_quota_bytes"]["source"] == "env"
+added = alice.post(f"/api/spaces/{space}/items", json={"record_id": 1})
+assert added.status_code == 201, added.text
+assert root.delete("/api/admin/settings/unknown").status_code == 404
+
+# Configuring the instance grants no access to a space's media.
+item = added.json()["item"]
+assert root.get(f"/api/spaces/{space}/items").status_code == 404
+assert root.get(item["original_url"]).status_code == 404
+
+# The interface value survives a restart and wins over .env.
+import subprocess, sys
+check = "import server; s = server.app.state.space_storage; print(s.trash_days, s.strategy)"
+out = subprocess.run([sys.executable, "-c", check], text=True, capture_output=True)
+assert out.stdout.split() == ["9", "copy"], out.stdout + out.stderr
+'''
+    result = _run(tmp_path, body, IRIS_SPACE_QUOTA_BYTES="10995116277760")
+    assert result.returncode == 0, result.stdout + result.stderr

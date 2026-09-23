@@ -8,14 +8,17 @@ import {
   getBackupConfig,
   getImportStatus,
   getImportSuggestions,
+  getInstanceSettings,
   listSnapshots,
   reconcileMedia,
+  resetInstanceSetting,
   restoreSnapshot,
   saveBackupConfig,
+  saveInstanceSettings,
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=40';
+} from './api.js?v=41';
 import { confirmModal } from './ui.js?v=1';
 
 let initialized = false;
@@ -30,6 +33,7 @@ export function initSystem() {
       browseFolder(document.getElementById('import-folder').value);
     }
     pollImportStatus();
+    if (info.multiuser && info.current_user?.is_admin) loadInstanceSettings();
   });
   if (initialized) return;
   initialized = true;
@@ -48,6 +52,11 @@ export function initSystem() {
   document.getElementById('media-reconcile').addEventListener('click', runReconcile);
   document.getElementById('media-export').addEventListener('click', runExport);
   document.getElementById('account-create').addEventListener('click', createAccount);
+  document.getElementById('instance-settings-save').addEventListener('click', saveInstance);
+  document.getElementById('instance-settings').addEventListener('click', (event) => {
+    const key = event.target.closest('[data-reset-setting]')?.dataset.resetSetting;
+    if (key) resetInstance(key);
+  });
 }
 
 async function loadSystemInfo() {
@@ -68,7 +77,9 @@ async function loadSystemInfo() {
       document.getElementById('system-media-root').value = info.media_root || 'media';
       document.getElementById('system-model').value = info.model_name || '';
     }
-    document.getElementById('account-management').hidden = !(info.multiuser && info.current_user?.is_admin);
+    const administrator = !!(info.multiuser && info.current_user?.is_admin);
+    document.getElementById('account-management').hidden = !administrator;
+    document.getElementById('instance-settings').hidden = !administrator;
     const privateHealth = document.getElementById('private-library-health');
     privateHealth.hidden = hostAdministration;
     privateHealth.innerHTML = `<strong>${info.total_records}</strong> itens na sua biblioteca`
@@ -411,6 +422,100 @@ async function runExport() {
   try {
     const res = await exportMedia();
     status.textContent = `Exportado: ${res.files} arquivos (${formatBytes(res.bytes)}) → ${res.path}`;
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  }
+}
+
+// ── Instance settings (administrators) ────────────────────────────────────
+
+const GIB = 1024 ** 3;
+const SOURCE_LABELS = { interface: 'definido aqui', env: 'do arquivo .env', default: 'padrão' };
+const STRATEGY_LABELS = { reflink: 'reflink', hardlink: 'hard link', copy: 'cópia comum', auto: 'automático' };
+
+let instanceState = null;
+
+function renderInstanceSettings(state) {
+  instanceState = state;
+  const { settings, storage } = state;
+  const yes = (flag) => (flag ? 'sim' : 'não');
+  document.getElementById('instance-storage-report').textContent =
+    `Disco dos dados: ${storage.filesystem} · reflink: ${yes(storage.reflink)}`
+    + ` · hard link: ${yes(storage.hardlink)} · em uso agora: ${STRATEGY_LABELS[storage.strategy] || storage.strategy}`;
+  const warning = document.getElementById('instance-storage-warning');
+  warning.hidden = !storage.warning;
+  warning.textContent = storage.warning
+    ? `A opção salva não funciona neste disco e o modo automático foi usado: ${storage.warning}`
+    : '';
+
+  const select = document.getElementById('instance-space-storage');
+  select.value = settings.space_storage.value;
+  // Offer only what this disk can actually do (the server re-checks anyway).
+  select.querySelector('option[value="reflink"]').disabled = !storage.reflink;
+  select.querySelector('option[value="hardlink"]').disabled = !storage.hardlink;
+  const quota = settings.space_quota_bytes.value / GIB;
+  document.getElementById('instance-space-quota-gib').value = Number.isInteger(quota) ? quota : quota.toFixed(2);
+  document.getElementById('instance-space-trash-days').value = settings.space_trash_days.value;
+
+  document.querySelectorAll('[data-source-for]').forEach((element) => {
+    const setting = settings[element.dataset.sourceFor];
+    const fallback = setting.env_value !== null ? 'Usar valor do .env' : 'Usar padrão';
+    element.innerHTML = escapeHtml(SOURCE_LABELS[setting.source] || setting.source)
+      + (setting.source === 'interface'
+        ? ` · <button type="button" class="link-button" data-reset-setting="${escapeHtml(element.dataset.sourceFor)}">${fallback}</button>`
+        : '');
+  });
+}
+
+async function loadInstanceSettings() {
+  const status = document.getElementById('instance-settings-status');
+  try {
+    renderInstanceSettings(await getInstanceSettings());
+    status.textContent = '';
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  }
+}
+
+async function saveInstance() {
+  const status = document.getElementById('instance-settings-status');
+  const button = document.getElementById('instance-settings-save');
+  const gib = Number(document.getElementById('instance-space-quota-gib').value);
+  if (!(gib >= 1)) {
+    status.textContent = 'O limite por espaço precisa ser de pelo menos 1 GiB.';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Salvando e testando o disco...';
+  try {
+    const form = {
+      space_storage: document.getElementById('instance-space-storage').value,
+      space_quota_bytes: Math.round(gib * GIB),
+      space_trash_days: Number(document.getElementById('instance-space-trash-days').value),
+    };
+    // Send only what changed: an untouched field keeps following .env.
+    const changed = Object.fromEntries(Object.entries(form).filter(
+      ([key, value]) => String(instanceState?.settings[key]?.value) !== String(value),
+    ));
+    if (!Object.keys(changed).length) {
+      status.textContent = 'Nada mudou.';
+      return;
+    }
+    const state = await saveInstanceSettings(changed);
+    renderInstanceSettings(state);
+    status.textContent = 'Configurações salvas. Valem a partir de agora, sem reiniciar.';
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function resetInstance(key) {
+  const status = document.getElementById('instance-settings-status');
+  try {
+    renderInstanceSettings(await resetInstanceSetting(key));
+    status.textContent = 'Voltou ao valor do instalador.';
   } catch (error) {
     status.textContent = `Erro: ${error.message}`;
   }

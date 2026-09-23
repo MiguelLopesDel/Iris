@@ -3821,3 +3821,29 @@ body.sidebar-open #sidebar-scrim {
 .login-form button { padding: 11px 14px; border: 0; border-radius: 8px; cursor: pointer; }
 .form-error { color: #b42318 !important; margin: 0 !important; }
 .account-button { white-space: nowrap; }
+
+/* Instance settings: where each value comes from, and a way back to it. */
+#instance-settings .system-form-grid label {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
+}
+
+.instance-source {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, inherit);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+#instance-settings-status:empty {
+  display: none;
+}

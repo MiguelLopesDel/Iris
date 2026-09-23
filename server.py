@@ -39,7 +39,7 @@ from starlette.middleware.sessions import SessionMiddleware
 # Ensure core/ is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import app_config, equivalence_graph, fs_clone, import_review
+from core import app_config, equivalence_graph, import_review, instance_settings
 from core import backup as backup_mod
 from core.api_models import (
     BackupConfigOut,
@@ -90,9 +90,6 @@ from core.perf import dump, trace
 from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
-from core.space_catalog import DEFAULT_QUOTA_BYTES as DEFAULT_SPACE_QUOTA_BYTES
-from core.space_catalog import DEFAULT_TRASH_DAYS as DEFAULT_SPACE_TRASH_DAYS
-from core.space_catalog import SpaceStorage
 from core.users_db import IrisUser, get_device, get_user_by_id, has_users
 from core.web_enrichment import (
     EnrichmentSuggestion,
@@ -110,6 +107,7 @@ from core.web_enrichment import (
     reject_suggestion,
     update_job,
 )
+from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.spaces import router as spaces_router
 from routers.sync import router as sync_router
@@ -578,7 +576,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     if app.state.multiuser_enabled:
-        report = app.state.space_storage_report
+        report = app.state.space_policy.report
         print(
             "[iris] Ready — private libraries enabled; shared-space storage: "
             f"{report.strategy} (requested {report.requested}, filesystem {report.filesystem})"
@@ -628,17 +626,14 @@ if app.state.multiuser_enabled:
     app.state.backend_registry = BackendRegistry(
         _USERS_DB, cache_size=engine_cache_size, load_model=_LOAD_MODEL
     )
-    # Shared-space storage policy, chosen by the installer in .env. An
-    # impossible choice (reflink on ext4, say) stops the server here rather
-    # than failing on the first shared photo.
-    app.state.space_storage_report = fs_clone.resolve(
-        os.environ.get("IRIS_SPACE_STORAGE", fs_clone.DEFAULT_STRATEGY), _DATA_DIR / "spaces"
+    # Shared-space storage policy: the administrator's choice in the interface,
+    # else the installer's .env, else the defaults. An impossible .env choice
+    # (reflink on ext4, say) stops the server here rather than failing on the
+    # first shared photo.
+    app.state.space_policy = instance_settings.space_storage_policy(
+        _USERS_DB, _DATA_DIR / "spaces"
     )
-    app.state.space_storage = SpaceStorage(
-        strategy=app.state.space_storage_report.strategy,
-        quota_bytes=_positive_env_int("IRIS_SPACE_QUOTA_BYTES", DEFAULT_SPACE_QUOTA_BYTES),
-        trash_days=_positive_env_int("IRIS_SPACE_TRASH_DAYS", DEFAULT_SPACE_TRASH_DAYS),
-    )
+    app.state.space_storage = app.state.space_policy.storage
 
 
 @app.middleware("http")
@@ -768,6 +763,7 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 app.include_router(auth_router)
 app.include_router(sync_router)
 app.include_router(spaces_router)
+app.include_router(admin_router)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -16,12 +16,12 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=40';
+} from './api.js?v=41';
 import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=37';
 import { initCollections } from './collections.js?v=31';
 import { initConcepts } from './concepts.js?v=32';
 import { initDuplicates } from './duplicates.js?v=31';
-import { initSystem } from './system.js?v=35';
+import { initSystem } from './system.js?v=37';
 import { initPersons } from './persons.js?v=5';
 import { initImportReview } from './import-review.js?v=6';
 import { confirmModal, toast } from './ui.js?v=1';

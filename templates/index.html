@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=42">
+  <link rel="stylesheet" href="/static/style.css?v=45">
 </head>
 <body>
 
@@ -407,6 +407,37 @@
         <span id="account-status" class="system-status"></span>
       </section>
 
+      <section id="instance-settings" class="detail-panel system-card" hidden>
+        <span class="eyebrow">INSTALAÇÃO</span>
+        <h4>Espaços compartilhados</h4>
+        <p class="system-hint">Vale para todo o servidor. Alterar estas opções não dá acesso às fotos de ninguém.
+          Um valor definido aqui tem prioridade sobre o arquivo <code>.env</code> do instalador.</p>
+        <p id="instance-storage-report" class="system-hint"></p>
+        <p id="instance-storage-warning" class="system-hint danger-text" hidden></p>
+        <div class="system-form-grid">
+          <label>Como guardar a cópia de cada item
+            <select id="instance-space-storage">
+              <option value="auto">Automático — sem gastar espaço quando o disco permite (recomendado)</option>
+              <option value="reflink">Reflink — exigir cópia sem gasto de espaço</option>
+              <option value="hardlink">Hard link — sem gasto de espaço, mas editar um altera o outro</option>
+              <option value="copy">Cópia comum — sempre duplica os bytes</option>
+            </select>
+            <small class="instance-source" data-source-for="space_storage"></small>
+          </label>
+          <label>Limite por espaço (GiB)
+            <input id="instance-space-quota-gib" type="number" min="1" step="1" inputmode="numeric">
+            <small class="instance-source" data-source-for="space_quota_bytes"></small>
+          </label>
+          <label>Dias na lixeira antes de apagar
+            <input id="instance-space-trash-days" type="number" min="1" max="3650" step="1" inputmode="numeric">
+            <small class="instance-source" data-source-for="space_trash_days"></small>
+          </label>
+        </div>
+        <p class="system-hint">O modo de cópia vale para os próximos itens; os que já estão nos espaços não mudam.</p>
+        <button id="instance-settings-save" class="btn btn-primary" type="button">Salvar</button>
+        <span id="instance-settings-status" class="system-status"></span>
+      </section>
+
       <div class="system-grid">
         <section class="detail-panel system-card">
           <span class="eyebrow">APARÊNCIA</span>
@@ -621,7 +652,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=60"></script>
+<script type="module" src="/static/app.js?v=62"></script>
 
 </body>
 </html>
