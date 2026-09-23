@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- windowLightNavigationBar exists from API 27; Android 8.0 keeps the base. -->
+    <style name="Theme.Iris" parent="Base.Theme.Iris">
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

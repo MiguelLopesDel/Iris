@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Android 8-9 only: "Baixar" writes to the public Downloads folder, which
+         before scoped storage (API 29) needs this runtime permission together
+         with READ_EXTERNAL_STORAGE above. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
         android:name=".IrisApplication"

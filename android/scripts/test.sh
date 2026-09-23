@@ -34,7 +34,7 @@ case "${1:-fast}" in
         "$adb_command" -s "$emulator_serial" install -r -t app/build/outputs/apk/debug/app-debug.apk
         "$adb_command" -s "$emulator_serial" install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
         "$adb_command" -s "$emulator_serial" shell am instrument -w -r \
-            -e class com.iris.app.AuthenticatedMediaTransportTest \
+            -e class com.iris.app.AuthenticatedMediaTransportTest,com.iris.app.MediaDownloaderTest \
             com.iris.app.test/androidx.test.runner.AndroidJUnitRunner
         ;;
     *)

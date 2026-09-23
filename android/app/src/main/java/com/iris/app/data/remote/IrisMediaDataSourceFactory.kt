@@ -1,3 +1,7 @@
+// This whole file adapts Media3's data-source API, which Media3 marks as
+// unstable: a Media3 upgrade must be checked against it deliberately.
+@file:androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+
 package com.iris.app.data.remote
 
 import android.net.Uri

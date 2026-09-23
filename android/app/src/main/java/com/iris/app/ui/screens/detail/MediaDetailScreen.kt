@@ -2,6 +2,8 @@ package com.iris.app.ui.screens.detail
 
 import android.content.Intent
 import android.graphics.Color as AndroidColor
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -157,22 +159,35 @@ fun MediaDetailScreen(
                     exit = fadeOut() + slideOutVertically { it },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
+                    val startDownload = {
+                        val url = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
+                        viewModel.showNotice("Baixando…")
+                        scope.launch {
+                            val result = MediaDownloader(context, apiClient)
+                                .download(url, record.cleanFilename)
+                            viewModel.showNotice(
+                                when (result) {
+                                    is MediaDownloader.Result.Saved ->
+                                        "Salvo em Downloads: ${result.displayName}"
+                                    is MediaDownloader.Result.Failed ->
+                                        "Falha ao baixar: ${result.reason}"
+                                }
+                            )
+                        }
+                        Unit
+                    }
+                    // Android 8-9 need a runtime grant to write to Downloads.
+                    val storagePermission = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestMultiplePermissions()
+                    ) { grants ->
+                        if (grants.values.all { it }) startDownload()
+                        else viewModel.showNotice("Sem permissão de armazenamento, não dá para baixar")
+                    }
                     ViewerActionBar(
                         onDownload = {
-                            val url = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
-                            viewModel.showNotice("Baixando…")
-                            scope.launch {
-                                val result = MediaDownloader(context, apiClient)
-                                    .download(url, record.cleanFilename)
-                                viewModel.showNotice(
-                                    when (result) {
-                                        is MediaDownloader.Result.Saved ->
-                                            "Salvo em Downloads: ${result.displayName}"
-                                        is MediaDownloader.Result.Failed ->
-                                            "Falha ao baixar: ${result.reason}"
-                                    }
-                                )
-                            }
+                            val missing = MediaDownloader.missingPermissions(context)
+                            if (missing.isEmpty()) startDownload()
+                            else storagePermission.launch(missing.toTypedArray())
                         },
                         onDetails = { showDetails = true },
                         onShare = { shareRecord(context, record, apiClient) },
@@ -286,6 +301,8 @@ private fun MediaStage(
     }
 }
 
+// Custom data source and shutter colour are Media3 APIs marked unstable.
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
 private fun VideoStage(
     mediaUrl: String,
