@@ -1,0 +1,350 @@
+/* ── Shared spaces ─────────────────────────────────────────────────────────
+   Galleries of their own, shared with other accounts of this server. Nothing
+   from the private library shows up here unless someone sends it; removing a
+   private copy never removes the space's one. The server enforces every
+   permission; the interface only hides what a role cannot do. */
+
+import {
+  addSpaceItem,
+  addSpaceMember,
+  createSpace,
+  escapeHtml,
+  getSpace,
+  getSpaceStorage,
+  listSpaceItems,
+  listSpaceMembers,
+  listSpaces,
+  listSpaceTrash,
+  removeSpaceItem,
+  restoreSpaceItem,
+  saveSpaceItem,
+} from './api.js?v=43';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=2';
+
+const ROLE_LABELS = { viewer: 'Visualizador', contributor: 'Colaborador', manager: 'Gestor' };
+const CAN_ADD = new Set(['contributor', 'manager']);
+
+let initialized = false;
+let current = null; // { id, name, role, trashDays }
+let itemsCursor = null;
+let trashCursor = null;
+
+const $ = (id) => document.getElementById(id);
+
+function formatBytes(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = Number(bytes) || 0;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
+}
+
+function formatDate(iso) {
+  return iso ? new Date(iso).toLocaleDateString('pt-BR', { dateStyle: 'medium' }) : '';
+}
+
+// ── List of spaces ──────────────────────────────────────────────────────
+
+async function showList() {
+  current = null;
+  $('space-view').hidden = true;
+  $('spaces-list-view').hidden = false;
+  const container = $('spaces-list');
+  container.innerHTML = '<p class="filter-empty">Carregando...</p>';
+  try {
+    const { spaces } = await listSpaces();
+    container.innerHTML = spaces.length
+      ? spaces.map((space) => `
+          <button class="space-card" type="button" data-open-space="${space.id}">
+            <b>${escapeHtml(space.name)}</b>
+            <span>${ROLE_LABELS[space.role] || space.role}</span>
+          </button>`).join('')
+      : `<div class="empty-state"><span class="empty-state-icon">◎</span>
+           <p>Você ainda não participa de nenhum espaço.</p>
+           <small>Crie um e convide outras contas deste servidor.</small></div>`;
+  } catch (error) {
+    container.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function newSpace() {
+  const name = await promptModal({
+    kicker: 'Compartilhados', title: 'Novo espaço', label: 'Nome',
+    placeholder: 'Família, Viagem 2026, Equipe...', confirmLabel: 'Criar',
+  });
+  if (!name || !name.trim()) return;
+  try {
+    const { space } = await createSpace(name.trim());
+    toast(`Espaço ${space.name} criado. Você é o gestor.`, 'success');
+    openSpace(space.id);
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+}
+
+// ── One space ───────────────────────────────────────────────────────────
+
+async function openSpace(id) {
+  try {
+    const [{ space }, storage] = await Promise.all([getSpace(id), getSpaceStorage(id)]);
+    current = { id: space.id, name: space.name, role: space.role, trashDays: storage.trash_days };
+    $('spaces-list-view').hidden = true;
+    $('space-view').hidden = false;
+    $('space-name').textContent = space.name;
+    $('space-meta').textContent = `Seu papel: ${ROLE_LABELS[space.role] || space.role}`
+      + ` · ${formatBytes(storage.used_bytes)} usados de ${formatBytes(storage.quota_bytes)}`;
+    document.querySelector('[data-space-view="trash"]').hidden = !CAN_ADD.has(space.role);
+    $('space-invite').hidden = space.role !== 'manager';
+    $('space-items-hint').textContent = CAN_ADD.has(space.role)
+      ? 'Para adicionar, selecione fotos em Fotos e use a ação Espaço.'
+      : 'Como visualizador, você pode ver, baixar e salvar cópias na sua biblioteca.';
+    showPanel('items');
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+    showList();
+  }
+}
+
+function showPanel(name) {
+  document.querySelectorAll('[data-space-view]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.spaceView === name);
+  });
+  document.querySelectorAll('[data-space-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.spacePanel !== name;
+  });
+  if (name === 'items') loadItems(true);
+  if (name === 'members') loadMembers();
+  if (name === 'trash') loadTrash(true);
+}
+
+function itemCard(item) {
+  const name = escapeHtml(item.name);
+  const media = item.media_type === 'video'
+    ? `<a href="${escapeHtml(item.original_url)}" target="_blank" rel="noopener">
+         <img src="${escapeHtml(item.thumbnail_url)}" loading="lazy" alt="${name}">
+         <span class="play-overlay" aria-hidden="true">▶</span></a>`
+    : `<img src="${escapeHtml(item.thumbnail_url)}" loading="lazy" alt="${name}"
+         data-lightbox-src="${escapeHtml(item.original_url)}" data-lightbox-title="${name}">`;
+  const author = item.added_by_username ? `por ${escapeHtml(item.added_by_username)}` : 'conta removida';
+  return `<div class="media-card" data-space-item="${item.id}">
+    <div class="media-card-img">${media}</div>
+    <div class="media-card-body">
+      <div class="caption" title="${name}">${name}</div>
+      <div class="space-item-author">${author} · ${formatDate(item.added_at)}</div>
+      <div class="actions">
+        <button class="btn" type="button" data-space-save="${item.id}" title="Guardar uma cópia na sua biblioteca">Salvar</button>
+        <a class="btn" href="${escapeHtml(item.original_url)}" download="${name}">Baixar</a>
+        ${item.can_remove ? `<button class="btn" type="button" data-space-remove="${item.id}">Remover</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function loadItems(reset) {
+  if (!current) return;
+  const grid = $('space-items');
+  if (reset) {
+    itemsCursor = null;
+    grid.innerHTML = '<p class="filter-empty">Carregando...</p>';
+  }
+  try {
+    const page = await listSpaceItems(current.id, { before: itemsCursor });
+    if (reset) grid.innerHTML = '';
+    grid.insertAdjacentHTML('beforeend', page.items.map(itemCard).join(''));
+    if (reset && !page.items.length) {
+      grid.innerHTML = `<div class="empty-state"><span class="empty-state-icon">◎</span>
+        <p>Este espaço ainda não tem fotos.</p></div>`;
+    }
+    itemsCursor = page.next_before;
+    $('space-more').hidden = !itemsCursor;
+  } catch (error) {
+    grid.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function saveItem(itemId, button) {
+  button.disabled = true;
+  try {
+    const result = await saveSpaceItem(current.id, itemId);
+    toast(result.state === 'duplicate'
+      ? 'Esta foto já está na sua biblioteca.'
+      : 'Salva na sua biblioteca. Aparece em Fotos depois de processada.', 'success');
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeItem(itemId) {
+  const ok = await confirmModal(
+    `A foto sai do espaço para todos e fica na lixeira do espaço por ${current.trashDays} dias.`
+    + ' As cópias nas bibliotecas pessoais não são afetadas.',
+    { kicker: current.name, title: 'Remover do espaço?', confirmLabel: 'Remover', danger: true },
+  );
+  if (!ok) return;
+  try {
+    await removeSpaceItem(current.id, itemId);
+    document.querySelector(`[data-space-item="${itemId}"]`)?.remove();
+    toast('Removida do espaço. Pode ser restaurada pela lixeira.', 'success');
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+}
+
+// ── Members ─────────────────────────────────────────────────────────────
+
+async function loadMembers() {
+  const container = $('space-members');
+  container.innerHTML = '<p class="filter-empty">Carregando...</p>';
+  try {
+    const { members } = await listSpaceMembers(current.id);
+    container.innerHTML = members.map((member) => `
+      <div class="space-row">
+        <span><b>${escapeHtml(member.display_name || member.username)}</b>
+          <small>${escapeHtml(member.username)}</small></span>
+        <span class="space-role">${ROLE_LABELS[member.role] || member.role}</span>
+      </div>`).join('');
+  } catch (error) {
+    container.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function invite(event) {
+  event.preventDefault();
+  const username = $('space-invite-username').value.trim();
+  if (!username) return;
+  try {
+    await addSpaceMember(current.id, username, $('space-invite-role').value);
+    $('space-invite-username').value = '';
+    toast(`${username} agora participa de ${current.name}.`, 'success');
+    loadMembers();
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+}
+
+// ── Trash ───────────────────────────────────────────────────────────────
+
+async function loadTrash(reset) {
+  const container = $('space-trash');
+  $('space-trash-hint').textContent = current.role === 'manager'
+    ? `Fotos removidas do espaço ficam aqui por ${current.trashDays} dias e depois são apagadas.`
+    : `Fotos que você adicionou e foram removidas ficam aqui por ${current.trashDays} dias.`;
+  if (reset) {
+    trashCursor = null;
+    container.innerHTML = '<p class="filter-empty">Carregando...</p>';
+  }
+  try {
+    const page = await listSpaceTrash(current.id, { before: trashCursor });
+    const rows = page.items.map((item) => `
+      <div class="space-row" data-space-trashed="${item.id}">
+        <span><b>${escapeHtml(item.name)}</b>
+          <small>removida em ${formatDate(item.removed_at)} · apagada em ${formatDate(item.purge_after)}</small></span>
+        <button class="btn btn-subtle" type="button" data-space-restore="${item.id}">Restaurar</button>
+      </div>`).join('');
+    if (reset) container.innerHTML = rows || '<p class="filter-empty">A lixeira está vazia.</p>';
+    else container.insertAdjacentHTML('beforeend', rows);
+    trashCursor = page.next_before;
+    $('space-trash-more').hidden = !trashCursor;
+  } catch (error) {
+    container.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function restore(itemId) {
+  try {
+    await restoreSpaceItem(current.id, itemId);
+    document.querySelector(`[data-space-trashed="${itemId}"]`)?.remove();
+    if (!$('space-trash').querySelector('.space-row')) {
+      $('space-trash').innerHTML = '<p class="filter-empty">A lixeira está vazia.</p>';
+    }
+    toast('Foto de volta ao espaço.', 'success');
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+}
+
+// ── Sending a selection from the private library ────────────────────────
+
+/** Ask which space, then send each private item to it. */
+export async function chooseSpaceFor(dbIds) {
+  let spaces;
+  try {
+    spaces = (await listSpaces()).spaces.filter((space) => CAN_ADD.has(space.role));
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+    return false;
+  }
+  if (!spaces.length) {
+    openModal({
+      kicker: 'Compartilhados', title: 'Nenhum espaço disponível',
+      body: '<p>Você só pode enviar fotos a espaços em que é colaborador ou gestor. '
+        + 'Crie um em <b>Compartilhados</b> ou peça a um gestor para mudar seu papel.</p>',
+      actions: [{ label: 'Fechar', primary: true }],
+    });
+    return false;
+  }
+  return new Promise((resolve) => {
+    const modal = openModal({
+      kicker: 'Compartilhados',
+      title: `Enviar ${dbIds.length} item(ns) para um espaço`,
+      body: '<p class="section-hint">Cada foto ganha uma cópia no espaço: apagar a sua não apaga a de lá.</p>'
+        + spaces.map((space) => `<button class="collection-choice" type="button" data-choose-space="${space.id}">
+            <strong>${escapeHtml(space.name)}</strong><span>${ROLE_LABELS[space.role]}</span></button>`).join(''),
+      onCancel: () => resolve(false),
+    });
+    modal.body.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-choose-space]');
+      if (!button) return;
+      const space = spaces.find((item) => String(item.id) === button.dataset.chooseSpace);
+      modal.close();
+      resolve(await sendItems(space, dbIds));
+    });
+  });
+}
+
+async function sendItems(space, dbIds) {
+  let added = 0;
+  let already = 0;
+  for (const dbId of dbIds) {
+    try {
+      const result = await addSpaceItem(space.id, dbId);
+      if (result.created) added += 1; else already += 1;
+    } catch (error) {
+      toast(`Parou em ${added + already} de ${dbIds.length}: ${error.message}`, 'error');
+      return added > 0;
+    }
+  }
+  toast(`${added} enviada(s) para ${space.name}`
+    + (already ? `, ${already} já estavam lá` : '') + '.', 'success');
+  return true;
+}
+
+// ── Wiring ──────────────────────────────────────────────────────────────
+
+export function initSpaces() {
+  if (!initialized) {
+    initialized = true;
+    $('btn-new-space').addEventListener('click', newSpace);
+    $('space-back').addEventListener('click', showList);
+    $('space-more').addEventListener('click', () => loadItems(false));
+    $('space-trash-more').addEventListener('click', () => loadTrash(false));
+    $('space-invite').addEventListener('submit', invite);
+    $('tab-spaces').addEventListener('click', (event) => {
+      const open = event.target.closest('[data-open-space]');
+      if (open) return openSpace(open.dataset.openSpace);
+      const tab = event.target.closest('[data-space-view]');
+      if (tab) return showPanel(tab.dataset.spaceView);
+      const save = event.target.closest('[data-space-save]');
+      if (save) return saveItem(save.dataset.spaceSave, save);
+      const remove = event.target.closest('[data-space-remove]');
+      if (remove) return removeItem(remove.dataset.spaceRemove);
+      const back = event.target.closest('[data-space-restore]');
+      if (back) return restore(back.dataset.spaceRestore);
+      return null;
+    });
+  }
+  if (current) openSpace(current.id);
+  else showList();
+}

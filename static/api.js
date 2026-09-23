@@ -79,7 +79,7 @@ async function apiJson(method, path, body) {
     try { detail = JSON.parse(detail).detail || detail; } catch { /* plain text */ }
     throw new Error(detail);
   }
-  return res.json();
+  return res.status === 204 ? null : res.json();
 }
 
 export async function getInstanceSettings() {
@@ -88,6 +88,58 @@ export async function getInstanceSettings() {
 
 export async function saveInstanceSettings(values) {
   return apiJson('PUT', '/api/admin/settings', values);
+}
+
+// ── Shared spaces ─────────────────────────────────────────────────────────
+
+const spaceUrl = (id, rest = '') => `/api/spaces/${encodeURIComponent(id)}${rest}`;
+
+export async function listSpaces() {
+  return apiGet('/api/spaces');
+}
+
+export async function createSpace(name) {
+  return apiJson('POST', '/api/spaces', { name });
+}
+
+export async function getSpace(id) {
+  return apiGet(spaceUrl(id));
+}
+
+export async function getSpaceStorage(id) {
+  return apiGet(spaceUrl(id, '/storage'));
+}
+
+export async function listSpaceMembers(id) {
+  return apiGet(spaceUrl(id, '/members'));
+}
+
+export async function addSpaceMember(id, username, role) {
+  return apiJson('POST', spaceUrl(id, '/members'), { username, role });
+}
+
+export async function listSpaceItems(id, { before = null, limit = 60 } = {}) {
+  return apiGet(spaceUrl(id, '/items'), { before, limit });
+}
+
+export async function addSpaceItem(id, recordId) {
+  return apiJson('POST', spaceUrl(id, '/items'), { record_id: recordId });
+}
+
+export async function removeSpaceItem(id, itemId) {
+  return apiJson('DELETE', spaceUrl(id, `/items/${encodeURIComponent(itemId)}`));
+}
+
+export async function saveSpaceItem(id, itemId) {
+  return apiJson('POST', spaceUrl(id, `/items/${encodeURIComponent(itemId)}/save`));
+}
+
+export async function listSpaceTrash(id, { before = null, limit = 60 } = {}) {
+  return apiGet(spaceUrl(id, '/trash'), { before, limit });
+}
+
+export async function restoreSpaceItem(id, itemId) {
+  return apiJson('POST', spaceUrl(id, `/trash/${encodeURIComponent(itemId)}/restore`));
 }
 
 export async function getBackupStatus() {

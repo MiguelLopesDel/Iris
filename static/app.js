@@ -16,15 +16,16 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=42';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=37';
-import { initCollections } from './collections.js?v=31';
-import { initConcepts } from './concepts.js?v=32';
-import { initDuplicates } from './duplicates.js?v=31';
-import { initSystem } from './system.js?v=40';
-import { initPersons } from './persons.js?v=5';
-import { initImportReview } from './import-review.js?v=6';
-import { confirmModal, toast } from './ui.js?v=1';
+} from './api.js?v=43';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=38';
+import { initCollections } from './collections.js?v=32';
+import { initConcepts } from './concepts.js?v=33';
+import { initDuplicates } from './duplicates.js?v=32';
+import { initSystem } from './system.js?v=41';
+import { initPersons } from './persons.js?v=6';
+import { initImportReview } from './import-review.js?v=7';
+import { chooseSpaceFor, initSpaces } from './spaces.js?v=2';
+import { confirmModal, toast } from './ui.js?v=2';
 
 window.__irisSelection = window.__irisSelection || new Map();
 
@@ -114,6 +115,11 @@ function switchTab(name) {
       title: 'Organizar',
       description: 'Álbuns, pessoas e cuidados com seus arquivos.'
     },
+    spaces: {
+      kicker: 'Compartilhados',
+      title: 'Espaços',
+      description: 'Galerias compartilhadas com outras contas deste servidor.'
+    },
     collections: {
       kicker: 'Organização',
       title: 'Álbuns',
@@ -144,6 +150,7 @@ function switchTab(name) {
   // are hidden elsewhere and replaced by a short context block).
   var sidebarHints = {
     collections: 'Para adicionar itens em lote, selecione fotos e use a ação <strong>Álbum</strong>.',
+    spaces: 'Para enviar fotos a um espaço, selecione-as em Fotos e use a ação <strong>Espaço</strong>.',
     concepts: 'O Iris aprende com imagens de exemplo. Confirme ou rejeite sugestões para melhorar o reconhecimento.',
     persons: 'Rostos são agrupados por similaridade. Nomeie pessoas para vê-las nos cards da Galeria.',
     duplicates: 'Ajuste a similaridade e analise a biblioteca. Deleções vão para a lixeira do sistema.',
@@ -171,6 +178,7 @@ function switchTab(name) {
   if (name === 'home') loadHomeRecent();
   if (name === 'gallery' || name === 'search') initGallery();
   if (name === 'collections') initCollections();
+  if (name === 'spaces') initSpaces();
   if (name === 'concepts') initConcepts();
   if (name === 'persons') initPersons();
   if (name === 'duplicates') initDuplicates();
@@ -256,6 +264,10 @@ async function buildSidebar() {
   try {
     var info = await fetchInfo();
     applyCapabilities(info.capabilities || {});
+    // Shared spaces exist only between accounts of a private server.
+    document.querySelectorAll('[data-requires-accounts]').forEach(function(element) {
+      element.hidden = !info.multiuser;
+    });
     document.getElementById('status-badge').innerHTML =
       '<i></i>' + info.total_records + ' itens';
 
@@ -509,6 +521,19 @@ document.getElementById('btn-trash-selected').addEventListener('click', async fu
 
 document.getElementById('btn-collection-selected').addEventListener('click', async function() {
   openCollectionModal();
+});
+
+document.getElementById('btn-space-selected').addEventListener('click', async function() {
+  if (!window.__irisSelection.size) return;
+  try {
+    var ids = await resolveSelectedDbIds();
+    if (await chooseSpaceFor(ids)) {
+      window.__irisSelection.clear();
+      window.dispatchEvent(new CustomEvent('iris:selection-changed'));
+    }
+  } catch (err) {
+    toast('Erro: ' + err.message, 'error');
+  }
 });
 
 document.getElementById('btn-enrich-selected').addEventListener('click', async function() {

@@ -2154,7 +2154,8 @@ img[data-lightbox-src] {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 18px;
-  background: rgba(18, 22, 30, 0.98);
+  /* The theme's surface, not a fixed dark tone: the text follows the theme. */
+  background: var(--surface-solid);
   box-shadow: var(--shadow-lg);
 }
 
@@ -3203,7 +3204,9 @@ body[data-view="search"] .section-lead {
     bottom: 0;
     left: 0;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    /* One column per visible button: Espaços only exists with accounts. */
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--border);
     background: color-mix(in srgb, var(--surface-solid) 94%, transparent);
@@ -3881,4 +3884,141 @@ body.sidebar-open #sidebar-scrim {
   gap: 8px;
   color: var(--text);
   font-size: 13px;
+}
+
+/* ── Shared spaces ──────────────────────────────────────────────────────── */
+
+.space-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.space-card {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-solid);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--ease), background var(--ease);
+}
+
+.space-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.space-card b {
+  font-size: 16px;
+}
+
+.space-card span,
+.space-role,
+.space-item-author,
+.space-row small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.space-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.space-header h3 {
+  margin: 0;
+}
+
+.space-header p {
+  margin: 4px 0 0;
+}
+
+.space-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.space-tabs button {
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.space-tabs button.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.space-item-author {
+  margin: 2px 0 6px;
+}
+
+.space-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.space-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+}
+
+.space-row > span:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.space-invite {
+  display: grid;
+  gap: 8px;
+  max-width: 420px;
+  margin-top: 20px;
+}
+
+.space-invite h4 {
+  margin: 0;
+}
+
+#space-more,
+#space-trash-more {
+  margin-top: 14px;
+}
+
+.media-card-img a {
+  display: block;
+  position: relative;
+}
+
+/* `hidden` must win over the display these classes set, or a viewer would
+   see an invite form and a lone "load more" would show on a short page. */
+.btn[hidden],
+.space-invite[hidden] {
+  display: none;
+}
+
+a.btn {
+  text-decoration: none;
+}
+
+#mobile-navigation button[hidden] {
+  display: none;
 }
