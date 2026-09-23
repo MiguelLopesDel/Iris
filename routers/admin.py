@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from core import fs_clone, instance_settings
+from core.instance_backup import BackupError, snapshots
 from core.instance_settings import SettingError
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -100,3 +103,58 @@ def reset_setting(request: Request, key: str):
             instance_settings.save(path, {key: previous.value}, actor.id)
         raise HTTPException(409, f"O valor do .env não funciona neste disco: {exc}") from exc
     return _state(request)
+
+
+# -- backups -----------------------------------------------------------------------
+
+_RETENTION = {
+    "policy": "segue a política",
+    "pinned": "guardado para sempre",
+    None: "anterior à política",
+}
+
+
+class RunBackupIn(BaseModel):
+    pin: bool = False
+
+
+@router.get("/backups")
+def backup_status(request: Request):
+    _admin(request)
+    service = request.app.state.backup_service
+    settings = service.settings()
+    next_run = service.next_run()
+    return {
+        # Where the files land on the host, when Docker told us; else ours.
+        "destination": os.environ.get("IRIS_BACKUP_HOST_DIR") or str(service.dest.resolve()),
+        "same_disk_as_data": service.same_disk_as_data(),
+        "enabled": settings.enabled,
+        "next_run": next_run.astimezone(settings.zone).isoformat() if next_run else None,
+        # Today's time has passed without a scheduled backup: it runs shortly.
+        "catching_up": bool(next_run and next_run <= service.clock()),
+        "running": service.running,
+        "runs": [asdict(run) for run in service.runs()],
+        "snapshots": [
+            {
+                "name": info.path.name,
+                "created_at": info.created_at.astimezone(settings.zone).isoformat(),
+                "iris_version": info.iris_version,
+                "iris_commit": info.iris_commit,
+                "retention": info.retention,
+                "retention_label": _RETENTION.get(info.retention, info.retention),
+                "files": info.files,
+                "bytes_total": info.bytes_total,
+            }
+            for info in reversed(snapshots(service.dest))
+        ] if service.dest.is_dir() else [],
+    }
+
+
+@router.post("/backups", status_code=202)
+def run_backup(request: Request, payload: RunBackupIn):
+    _admin(request)
+    try:
+        request.app.state.backup_service.run_in_background("manual", pinned=payload.pin)
+    except BackupError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"started": True}

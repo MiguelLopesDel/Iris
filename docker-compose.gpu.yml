@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./media:/app/media
+      - ${IRIS_BACKUP_DIR:-./backups}:/backup
       - huggingface_cache:/home/iris/.cache/huggingface
       - whisper_cache:/home/iris/.cache/whisper
     environment:
@@ -37,6 +38,15 @@ services:
       IRIS_SPACE_STORAGE: ${IRIS_SPACE_STORAGE:-auto}
       IRIS_SPACE_QUOTA_BYTES: ${IRIS_SPACE_QUOTA_BYTES:-10995116277760}
       IRIS_SPACE_TRASH_DAYS: ${IRIS_SPACE_TRASH_DAYS:-30}
+      IRIS_BACKUP_DEST: /backup
+      IRIS_BACKUP_HOST_DIR: ${IRIS_BACKUP_HOST_DIR:-}
+      IRIS_COMMIT: ${IRIS_COMMIT:-}
+      IRIS_BACKUP_SCHEDULE: ${IRIS_BACKUP_SCHEDULE:-daily}
+      IRIS_BACKUP_TIME: ${IRIS_BACKUP_TIME:-03:00}
+      IRIS_BACKUP_TIMEZONE: ${IRIS_BACKUP_TIMEZONE:-UTC}
+      IRIS_BACKUP_KEEP_DAILY: ${IRIS_BACKUP_KEEP_DAILY:-7}
+      IRIS_BACKUP_KEEP_WEEKLY: ${IRIS_BACKUP_KEEP_WEEKLY:-4}
+      IRIS_BACKUP_KEEP_MONTHLY: ${IRIS_BACKUP_KEEP_MONTHLY:-6}
     deploy:
       resources:
         reservations:

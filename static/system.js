@@ -8,6 +8,7 @@ import {
   getBackupConfig,
   getImportStatus,
   getImportSuggestions,
+  getBackupStatus,
   getInstanceSettings,
   listSnapshots,
   reconcileMedia,
@@ -15,10 +16,11 @@ import {
   restoreSnapshot,
   saveBackupConfig,
   saveInstanceSettings,
+  startBackup,
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=41';
+} from './api.js?v=42';
 import { confirmModal } from './ui.js?v=1';
 
 let initialized = false;
@@ -52,11 +54,7 @@ export function initSystem() {
   document.getElementById('media-reconcile').addEventListener('click', runReconcile);
   document.getElementById('media-export').addEventListener('click', runExport);
   document.getElementById('account-create').addEventListener('click', createAccount);
-  document.getElementById('instance-settings-save').addEventListener('click', saveInstance);
-  document.getElementById('instance-settings').addEventListener('click', (event) => {
-    const key = event.target.closest('[data-reset-setting]')?.dataset.resetSetting;
-    if (key) resetInstance(key);
-  });
+  bindSettingsSections();
 }
 
 async function loadSystemInfo() {
@@ -80,6 +78,7 @@ async function loadSystemInfo() {
     const administrator = !!(info.multiuser && info.current_user?.is_admin);
     document.getElementById('account-management').hidden = !administrator;
     document.getElementById('instance-settings').hidden = !administrator;
+    document.getElementById('backup-settings').hidden = !administrator;
     const privateHealth = document.getElementById('private-library-health');
     privateHealth.hidden = hostAdministration;
     privateHealth.innerHTML = `<strong>${info.total_records}</strong> itens na sua biblioteca`
@@ -428,12 +427,25 @@ async function runExport() {
 }
 
 // ── Instance settings (administrators) ────────────────────────────────────
+// Every field declares the setting it edits (data-setting) and, optionally, a
+// display scale (data-scale, e.g. bytes shown as GiB). Saving a section sends
+// only the fields that changed, so untouched ones keep following .env.
 
-const GIB = 1024 ** 3;
 const SOURCE_LABELS = { interface: 'definido aqui', env: 'do arquivo .env', default: 'padrão' };
 const STRATEGY_LABELS = { reflink: 'reflink', hardlink: 'hard link', copy: 'cópia comum', auto: 'automático' };
 
 let instanceState = null;
+let backupPoll = null;
+
+function scaleOf(input) {
+  return Number(input.dataset.scale || 1);
+}
+
+function displayValue(input, value) {
+  const scaled = Number(value) / scaleOf(input);
+  if (input.type !== 'number') return String(value);
+  return Number.isInteger(scaled) ? String(scaled) : scaled.toFixed(2);
+}
 
 function renderInstanceSettings(state) {
   instanceState = state;
@@ -447,63 +459,72 @@ function renderInstanceSettings(state) {
   warning.textContent = storage.warning
     ? `A opção salva não funciona neste disco e o modo automático foi usado: ${storage.warning}`
     : '';
-
-  const select = document.getElementById('instance-space-storage');
-  select.value = settings.space_storage.value;
   // Offer only what this disk can actually do (the server re-checks anyway).
+  const select = document.getElementById('instance-space-storage');
   select.querySelector('option[value="reflink"]').disabled = !storage.reflink;
   select.querySelector('option[value="hardlink"]').disabled = !storage.hardlink;
-  const quota = settings.space_quota_bytes.value / GIB;
-  document.getElementById('instance-space-quota-gib').value = Number.isInteger(quota) ? quota : quota.toFixed(2);
-  document.getElementById('instance-space-trash-days').value = settings.space_trash_days.value;
 
+  document.querySelectorAll('[data-setting]').forEach((input) => {
+    const setting = settings[input.dataset.setting];
+    if (setting) input.value = displayValue(input, setting.value);
+  });
   document.querySelectorAll('[data-source-for]').forEach((element) => {
-    const setting = settings[element.dataset.sourceFor];
+    const key = element.dataset.sourceFor;
+    const setting = settings[key];
+    if (!setting) return;
     const fallback = setting.env_value !== null ? 'Usar valor do .env' : 'Usar padrão';
     element.innerHTML = escapeHtml(SOURCE_LABELS[setting.source] || setting.source)
       + (setting.source === 'interface'
-        ? ` · <button type="button" class="link-button" data-reset-setting="${escapeHtml(element.dataset.sourceFor)}">${fallback}</button>`
+        ? ` · <button type="button" class="link-button" data-reset-setting="${escapeHtml(key)}">${fallback}</button>`
         : '');
   });
 }
 
 async function loadInstanceSettings() {
-  const status = document.getElementById('instance-settings-status');
   try {
     renderInstanceSettings(await getInstanceSettings());
-    status.textContent = '';
   } catch (error) {
-    status.textContent = `Erro: ${error.message}`;
+    document.querySelectorAll('[data-settings-status]').forEach((status) => {
+      status.textContent = `Erro: ${error.message}`;
+    });
   }
+  loadBackupStatus();
 }
 
-async function saveInstance() {
-  const status = document.getElementById('instance-settings-status');
-  const button = document.getElementById('instance-settings-save');
-  const gib = Number(document.getElementById('instance-space-quota-gib').value);
-  if (!(gib >= 1)) {
-    status.textContent = 'O limite por espaço precisa ser de pelo menos 1 GiB.';
+function changedSettings(section) {
+  const changed = {};
+  for (const input of section.querySelectorAll('[data-setting]')) {
+    const key = input.dataset.setting;
+    let value = input.value.trim();
+    if (input.type === 'number') {
+      if (value === '' || Number.isNaN(Number(value))) throw new Error('Preencha os campos numéricos.');
+      value = Math.round(Number(value) * scaleOf(input));
+    }
+    if (String(instanceState?.settings[key]?.value) !== String(value)) changed[key] = value;
+  }
+  return changed;
+}
+
+async function saveSettingsSection(section) {
+  const status = section.querySelector('[data-settings-status]');
+  const button = section.querySelector('[data-save-settings]');
+  let changed;
+  try {
+    changed = changedSettings(section);
+  } catch (error) {
+    status.textContent = error.message;
+    return;
+  }
+  if (!Object.keys(changed).length) {
+    status.textContent = 'Nada mudou.';
     return;
   }
   button.disabled = true;
-  status.textContent = 'Salvando e testando o disco...';
+  status.textContent = 'Salvando...';
   try {
-    const form = {
-      space_storage: document.getElementById('instance-space-storage').value,
-      space_quota_bytes: Math.round(gib * GIB),
-      space_trash_days: Number(document.getElementById('instance-space-trash-days').value),
-    };
-    // Send only what changed: an untouched field keeps following .env.
-    const changed = Object.fromEntries(Object.entries(form).filter(
-      ([key, value]) => String(instanceState?.settings[key]?.value) !== String(value),
-    ));
-    if (!Object.keys(changed).length) {
-      status.textContent = 'Nada mudou.';
-      return;
-    }
-    const state = await saveInstanceSettings(changed);
-    renderInstanceSettings(state);
+    renderInstanceSettings(await saveInstanceSettings(changed));
     status.textContent = 'Configurações salvas. Valem a partir de agora, sem reiniciar.';
+    loadBackupStatus();
   } catch (error) {
     status.textContent = `Erro: ${error.message}`;
   } finally {
@@ -511,12 +532,98 @@ async function saveInstance() {
   }
 }
 
-async function resetInstance(key) {
-  const status = document.getElementById('instance-settings-status');
+async function resetSetting(section, key) {
+  const status = section.querySelector('[data-settings-status]');
   try {
     renderInstanceSettings(await resetInstanceSetting(key));
     status.textContent = 'Voltou ao valor do instalador.';
+    loadBackupStatus();
   } catch (error) {
     status.textContent = `Erro: ${error.message}`;
   }
+}
+
+function bindSettingsSections() {
+  document.querySelectorAll('[data-settings-section]').forEach((section) => {
+    section.addEventListener('click', (event) => {
+      if (event.target.closest('[data-save-settings]')) saveSettingsSection(section);
+      const key = event.target.closest('[data-reset-setting]')?.dataset.resetSetting;
+      if (key) resetSetting(section, key);
+    });
+  });
+  document.getElementById('backup-run').addEventListener('click', runBackupNow);
+}
+
+// ── Backups (administrators) ──────────────────────────────────────────────
+
+const RUN_STATUS = { ok: 'concluído', failed: 'falhou', running: 'em andamento' };
+
+function formatWhen(iso) {
+  if (!iso) return '—';
+  // In the schedule's time zone, not the browser's: "03:00" must read 03:00.
+  const timeZone = instanceState?.settings.backup_timezone?.value;
+  const options = { dateStyle: 'short', timeStyle: 'short' };
+  try {
+    return new Date(iso).toLocaleString('pt-BR', timeZone ? { ...options, timeZone } : options);
+  } catch {
+    return new Date(iso).toLocaleString('pt-BR', options);
+  }
+}
+
+function renderBackupStatus(state) {
+  document.getElementById('backup-destination').textContent =
+    `Destino: ${state.destination}`
+    + (!state.enabled
+      ? ' · backup automático desligado'
+      : state.catching_up
+        ? ` · o backup das ${formatWhen(state.next_run).split(' ').pop()} de hoje ainda não rodou: roda nos próximos minutos`
+        : ` · próximo backup: ${formatWhen(state.next_run)}`);
+  document.getElementById('backup-same-disk').hidden = !state.same_disk_as_data;
+
+  const last = state.runs[0];
+  const lastLine = document.getElementById('backup-last');
+  lastLine.classList.toggle('danger-text', last?.status === 'failed');
+  lastLine.textContent = state.running
+    ? 'Backup em andamento...'
+    : last
+      ? `Último: ${formatWhen(last.finished_at || last.started_at)} · ${RUN_STATUS[last.status] || last.status}`
+        + (last.pruned ? ` · ${last.pruned} antigo(s) apagado(s) pela política` : '')
+        + (last.message ? ` · ${last.message}` : '')
+      : 'Nenhum backup feito ainda.';
+  document.getElementById('backup-run').disabled = state.running;
+
+  document.getElementById('backup-list').innerHTML = state.snapshots.length
+    ? `<table class="backup-table"><thead><tr><th>Data</th><th>Versão do Iris</th><th>Tamanho</th><th>Retenção</th></tr></thead><tbody>`
+      + state.snapshots.map((item) => `<tr>
+          <td>${escapeHtml(formatWhen(item.created_at))}</td>
+          <td>${escapeHtml(item.iris_version || '?')} <small>${escapeHtml(item.iris_commit || '')}</small></td>
+          <td>${escapeHtml(formatBytes(item.bytes_total))}</td>
+          <td>${escapeHtml(item.retention_label)}</td>
+        </tr>`).join('')
+      + '</tbody></table>'
+    : '';
+  return state;
+}
+
+async function loadBackupStatus() {
+  if (document.getElementById('backup-settings').hidden) return;
+  try {
+    const state = renderBackupStatus(await getBackupStatus());
+    clearTimeout(backupPoll);
+    if (state.running) backupPoll = setTimeout(loadBackupStatus, 3000);
+  } catch (error) {
+    document.getElementById('backup-last').textContent = `Erro: ${error.message}`;
+  }
+}
+
+async function runBackupNow() {
+  const button = document.getElementById('backup-run');
+  button.disabled = true;
+  try {
+    await startBackup({ pin: document.getElementById('backup-pin').checked });
+    document.getElementById('backup-pin').checked = false;
+  } catch (error) {
+    document.getElementById('backup-last').textContent = `Erro: ${error.message}`;
+  }
+  loadBackupStatus();
 }

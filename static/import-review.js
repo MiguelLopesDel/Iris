@@ -6,7 +6,7 @@
    one import job, so importing many at once never collides), plus a lightbox
    to inspect any candidate (and its match) at full size. */
 
-import { escapeHtml, getImportReview, resolveImportReview } from './api.js?v=41';
+import { escapeHtml, getImportReview, resolveImportReview } from './api.js?v=42';
 import { confirmModal, toast } from './ui.js?v=1';
 
 let busy = false;

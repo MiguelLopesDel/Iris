@@ -81,6 +81,7 @@ from core.api_models import (
 from core.auth import load_or_create_secret
 from core.backend import SearchBackend, create_backend
 from core.backend_registry import BackendRegistry
+from core.backup_scheduler import BackupService
 from core.device_tokens import read_access_token
 from core.embedding_models import resolve_embedding_model
 from core.file_ops import move_to_trash
@@ -590,7 +591,13 @@ async def lifespan(app: FastAPI):
         print(f"[iris] Ready — {backend.get_total_records()} records")
     if not app.state.multiuser_enabled:
         _resume_unfinished_imports()
+    else:
+        app.state.backup_service.start(
+            startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
+        )
     yield
+    if app.state.multiuser_enabled:
+        app.state.backup_service.stop()
     dump()
     try:
         from core.browser_session import close_browser_session
@@ -634,6 +641,14 @@ if app.state.multiuser_enabled:
         _USERS_DB, _DATA_DIR / "spaces"
     )
     app.state.space_storage = app.state.space_policy.storage
+    # Whole-instance backups: scheduled by this process, configured in the
+    # interface. The destination is a volume in Docker (IRIS_BACKUP_DIR).
+    _media_root = Path(os.environ.get("IRIS_MEDIA_DIR", "media"))
+    app.state.backup_service = BackupService(
+        _USERS_DB,
+        {"data": _DATA_DIR, **({"media": _media_root} if _media_root.is_dir() else {})},
+        Path(os.environ.get("IRIS_BACKUP_DEST", "backups")),
+    )
 
 
 @app.middleware("http")

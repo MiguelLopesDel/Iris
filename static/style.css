@@ -314,6 +314,7 @@ textarea:focus-visible {
 select,
 input[type="text"],
 input[type="number"],
+input[type="time"],
 textarea {
   width: 100%;
   min-height: 40px;
@@ -339,6 +340,7 @@ select {
 
 input[type="text"],
 input[type="number"],
+input[type="time"],
 textarea {
   padding: 10px 12px;
 }
@@ -350,6 +352,7 @@ textarea {
 select:hover,
 input[type="text"]:hover,
 input[type="number"]:hover,
+input[type="time"]:hover,
 textarea:hover {
   border-color: var(--border-strong);
 }
@@ -3844,6 +3847,38 @@ body.sidebar-open #sidebar-scrim {
   cursor: pointer;
 }
 
-#instance-settings-status:empty {
+/* Backups: one row per snapshot, with the Iris version that wrote it. */
+.backup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.backup-table th,
+.backup-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.backup-table small {
+  color: var(--text-soft);
+}
+
+#backup-settings .system-form-grid label {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
+}
+
+[data-settings-status]:empty {
   display: none;
+}
+
+.system-card > label.backup-pin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
 }

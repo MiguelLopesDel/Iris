@@ -13,7 +13,7 @@ import {
   getRecordMetadata,
   listPersons,
   mediaUrl,
-} from './api.js?v=41';
+} from './api.js?v=42';
 import { toast } from './ui.js?v=1';
 import { pickPersonModal } from './persons.js?v=5';
 

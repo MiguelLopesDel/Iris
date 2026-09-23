@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=45">
+  <link rel="stylesheet" href="/static/style.css?v=48">
 </head>
 <body>
 
@@ -407,7 +407,7 @@
         <span id="account-status" class="system-status"></span>
       </section>
 
-      <section id="instance-settings" class="detail-panel system-card" hidden>
+      <section id="instance-settings" class="detail-panel system-card" data-settings-section hidden>
         <span class="eyebrow">INSTALAÇÃO</span>
         <h4>Espaços compartilhados</h4>
         <p class="system-hint">Vale para todo o servidor. Alterar estas opções não dá acesso às fotos de ninguém.
@@ -416,7 +416,7 @@
         <p id="instance-storage-warning" class="system-hint danger-text" hidden></p>
         <div class="system-form-grid">
           <label>Como guardar a cópia de cada item
-            <select id="instance-space-storage">
+            <select id="instance-space-storage" data-setting="space_storage">
               <option value="auto">Automático — sem gastar espaço quando o disco permite (recomendado)</option>
               <option value="reflink">Reflink — exigir cópia sem gasto de espaço</option>
               <option value="hardlink">Hard link — sem gasto de espaço, mas editar um altera o outro</option>
@@ -425,17 +425,66 @@
             <small class="instance-source" data-source-for="space_storage"></small>
           </label>
           <label>Limite por espaço (GiB)
-            <input id="instance-space-quota-gib" type="number" min="1" step="1" inputmode="numeric">
+            <input type="number" min="1" step="1" inputmode="numeric" data-setting="space_quota_bytes" data-scale="1073741824">
             <small class="instance-source" data-source-for="space_quota_bytes"></small>
           </label>
           <label>Dias na lixeira antes de apagar
-            <input id="instance-space-trash-days" type="number" min="1" max="3650" step="1" inputmode="numeric">
+            <input type="number" min="1" max="3650" step="1" inputmode="numeric" data-setting="space_trash_days">
             <small class="instance-source" data-source-for="space_trash_days"></small>
           </label>
         </div>
         <p class="system-hint">O modo de cópia vale para os próximos itens; os que já estão nos espaços não mudam.</p>
-        <button id="instance-settings-save" class="btn btn-primary" type="button">Salvar</button>
-        <span id="instance-settings-status" class="system-status"></span>
+        <button class="btn btn-primary" type="button" data-save-settings>Salvar</button>
+        <span class="system-status" data-settings-status></span>
+      </section>
+
+      <section id="backup-settings" class="detail-panel system-card" data-settings-section hidden>
+        <span class="eyebrow">INSTALAÇÃO</span>
+        <h4>Backup</h4>
+        <p class="system-hint">Cópia completa do servidor: contas, bibliotecas, espaços compartilhados e originais.
+          Cada backup é uma pasta completa; fotos que não mudaram ocupam espaço uma vez só.</p>
+        <p id="backup-destination" class="system-hint"></p>
+        <p id="backup-same-disk" class="system-hint danger-text" hidden>O destino está no mesmo disco dos dados:
+          protege contra exclusões por engano, mas não contra a perda do disco. Aponte <code>IRIS_BACKUP_DIR</code>
+          para outro disco no <code>.env</code>.</p>
+        <div class="system-form-grid">
+          <label>Backup automático
+            <select data-setting="backup_schedule">
+              <option value="daily">Todo dia</option>
+              <option value="off">Desligado</option>
+            </select>
+            <small class="instance-source" data-source-for="backup_schedule"></small>
+          </label>
+          <label>Horário
+            <input type="time" data-setting="backup_time">
+            <small class="instance-source" data-source-for="backup_time"></small>
+          </label>
+          <label>Fuso horário
+            <input type="text" data-setting="backup_timezone" placeholder="America/Sao_Paulo" autocomplete="off">
+            <small class="instance-source" data-source-for="backup_timezone"></small>
+          </label>
+          <label>Guardar um por dia, dos últimos
+            <input type="number" min="0" max="1000" step="1" inputmode="numeric" data-setting="backup_keep_daily">
+            <small class="instance-source" data-source-for="backup_keep_daily"></small>
+          </label>
+          <label>Guardar um por semana, das últimas
+            <input type="number" min="0" max="1000" step="1" inputmode="numeric" data-setting="backup_keep_weekly">
+            <small class="instance-source" data-source-for="backup_keep_weekly"></small>
+          </label>
+          <label>Guardar um por mês, dos últimos
+            <input type="number" min="0" max="1000" step="1" inputmode="numeric" data-setting="backup_keep_monthly">
+            <small class="instance-source" data-source-for="backup_keep_monthly"></small>
+          </label>
+        </div>
+        <p class="system-hint">A limpeza só apaga backups feitos sob esta política. Os marcados para guardar
+          para sempre e os de antes dela nunca são apagados. Zero nos três campos guarda todos.</p>
+        <button class="btn btn-primary" type="button" data-save-settings>Salvar</button>
+        <span class="system-status" data-settings-status></span>
+        <hr>
+        <label class="backup-pin"><input type="checkbox" id="backup-pin"> Guardar este backup para sempre</label>
+        <button id="backup-run" class="btn btn-subtle" type="button">Fazer backup agora</button>
+        <p id="backup-last" class="system-hint"></p>
+        <div id="backup-list" class="backup-list"></div>
       </section>
 
       <div class="system-grid">
@@ -652,7 +701,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=62"></script>
+<script type="module" src="/static/app.js?v=65"></script>
 
 </body>
 </html>

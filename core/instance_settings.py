@@ -23,6 +23,7 @@ from core.space_catalog import DEFAULT_QUOTA_BYTES, DEFAULT_TRASH_DAYS, SpaceSto
 from core.users_db import init_users_db, now_iso
 
 _MAX_TRASH_DAYS = 3650
+_MAX_KEEP = 1000
 
 
 class SettingError(ValueError):
@@ -34,6 +35,51 @@ def _strategy(raw: str) -> str:
     if value not in STRATEGIES:
         raise SettingError(f"use um de: {', '.join(STRATEGIES)}")
     return value
+
+
+def _choice(*allowed: str) -> Callable[[str], str]:
+    def parse(raw: str) -> str:
+        value = str(raw).strip().lower()
+        if value not in allowed:
+            raise SettingError(f"use um de: {', '.join(allowed)}")
+        return value
+
+    return parse
+
+
+def _clock_time(raw: str) -> str:
+    value = str(raw).strip()
+    try:
+        hours, minutes = (int(part) for part in value.split(":"))
+    except ValueError as exc:
+        raise SettingError("use o formato HH:MM, por exemplo 03:00") from exc
+    if not (0 <= hours < 24 and 0 <= minutes < 60):
+        raise SettingError("use um horário entre 00:00 e 23:59")
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _timezone(raw: str) -> str:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    value = str(raw).strip()
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise SettingError(f"fuso horário desconhecido: {value} (ex.: America/Sao_Paulo)") from exc
+    return value
+
+
+def _count(maximum: int) -> Callable[[str], int]:
+    def parse(raw: str) -> int:
+        try:
+            value = int(str(raw).strip())
+        except ValueError as exc:
+            raise SettingError("precisa ser um número inteiro") from exc
+        if not 0 <= value <= maximum:
+            raise SettingError(f"precisa ser entre 0 e {maximum}")
+        return value
+
+    return parse
 
 
 def _positive_int(maximum: int | None = None) -> Callable[[str], int]:
@@ -67,6 +113,12 @@ SETTINGS: dict[str, Setting] = {
                 _positive_int()),
         Setting("space_trash_days", "IRIS_SPACE_TRASH_DAYS", DEFAULT_TRASH_DAYS,
                 _positive_int(_MAX_TRASH_DAYS)),
+        Setting("backup_schedule", "IRIS_BACKUP_SCHEDULE", "daily", _choice("daily", "off")),
+        Setting("backup_time", "IRIS_BACKUP_TIME", "03:00", _clock_time),
+        Setting("backup_timezone", "IRIS_BACKUP_TIMEZONE", "UTC", _timezone),
+        Setting("backup_keep_daily", "IRIS_BACKUP_KEEP_DAILY", 7, _count(_MAX_KEEP)),
+        Setting("backup_keep_weekly", "IRIS_BACKUP_KEEP_WEEKLY", 4, _count(_MAX_KEEP)),
+        Setting("backup_keep_monthly", "IRIS_BACKUP_KEEP_MONTHLY", 6, _count(_MAX_KEEP)),
     )
 }
 

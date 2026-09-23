@@ -90,6 +90,14 @@ export async function saveInstanceSettings(values) {
   return apiJson('PUT', '/api/admin/settings', values);
 }
 
+export async function getBackupStatus() {
+  return apiGet('/api/admin/backups');
+}
+
+export async function startBackup({ pin = false } = {}) {
+  return apiJson('POST', '/api/admin/backups', { pin });
+}
+
 export async function resetInstanceSetting(key) {
   return apiJson('DELETE', `/api/admin/settings/${encodeURIComponent(key)}`);
 }

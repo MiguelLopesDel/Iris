@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     git \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt constraints-common.txt ./
