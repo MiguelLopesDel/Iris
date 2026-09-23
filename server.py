@@ -39,7 +39,7 @@ from starlette.middleware.sessions import SessionMiddleware
 # Ensure core/ is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import app_config, equivalence_graph, import_review
+from core import app_config, equivalence_graph, fs_clone, import_review
 from core import backup as backup_mod
 from core.api_models import (
     BackupConfigOut,
@@ -90,6 +90,9 @@ from core.perf import dump, trace
 from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
+from core.space_catalog import DEFAULT_QUOTA_BYTES as DEFAULT_SPACE_QUOTA_BYTES
+from core.space_catalog import DEFAULT_TRASH_DAYS as DEFAULT_SPACE_TRASH_DAYS
+from core.space_catalog import SpaceStorage
 from core.users_db import IrisUser, get_device, get_user_by_id, has_users
 from core.web_enrichment import (
     EnrichmentSuggestion,
@@ -108,6 +111,7 @@ from core.web_enrichment import (
     update_job,
 )
 from routers.auth import router as auth_router
+from routers.spaces import router as spaces_router
 from routers.sync import router as sync_router
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -574,7 +578,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     if app.state.multiuser_enabled:
-        print("[iris] Ready — private libraries enabled")
+        report = app.state.space_storage_report
+        print(
+            "[iris] Ready — private libraries enabled; shared-space storage: "
+            f"{report.strategy} (requested {report.requested}, filesystem {report.filesystem})"
+        )
     elif _backend is None:
         print(f"[iris] Loading backend — DB: {_active_config['db_path']}")
         backend = _reload_backend()
@@ -619,6 +627,17 @@ if app.state.multiuser_enabled:
         engine_cache_size = 1
     app.state.backend_registry = BackendRegistry(
         _USERS_DB, cache_size=engine_cache_size, load_model=_LOAD_MODEL
+    )
+    # Shared-space storage policy, chosen by the installer in .env. An
+    # impossible choice (reflink on ext4, say) stops the server here rather
+    # than failing on the first shared photo.
+    app.state.space_storage_report = fs_clone.resolve(
+        os.environ.get("IRIS_SPACE_STORAGE", fs_clone.DEFAULT_STRATEGY), _DATA_DIR / "spaces"
+    )
+    app.state.space_storage = SpaceStorage(
+        strategy=app.state.space_storage_report.strategy,
+        quota_bytes=_positive_env_int("IRIS_SPACE_QUOTA_BYTES", DEFAULT_SPACE_QUOTA_BYTES),
+        trash_days=_positive_env_int("IRIS_SPACE_TRASH_DAYS", DEFAULT_SPACE_TRASH_DAYS),
     )
 
 
@@ -748,6 +767,7 @@ template_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 app.include_router(auth_router)
 app.include_router(sync_router)
+app.include_router(spaces_router)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -3523,3 +3543,24 @@ async def serve_media(file_path: str):
         raise HTTPException(404, f"File not found: {file_path}")
     return FileResponse(resolved, media_type=_guess_mime(str(resolved)))
 
+
+def _private_original_for(db_id: int) -> tuple[Path, str] | None:
+    """The caller's own original for a private record id, or None.
+
+    Used by shared spaces to copy an item in. The id is looked up only in the
+    authenticated library, and the file must pass the same allow-list as
+    /media/, so an id from another library -- or a row pointing outside the
+    catalogue -- names nothing.
+    """
+    record = _record_for_db_id(db_id)
+    if record is None or not record.resolved_path:
+        return None
+    resolved = Path(record.resolved_path).resolve()
+    if str(resolved) not in _allowed_media_paths() or not resolved.is_file():
+        return None
+    return resolved, record.arquivo or resolved.name
+
+
+# Seams for routers/spaces.py, which must not import this module.
+app.state.private_original_for = _private_original_for
+app.state.thumbnail_generator = _generate_thumbnail

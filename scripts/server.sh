@@ -54,6 +54,13 @@ set_port() {
     echo "  sudo tailscale serve --bg http://127.0.0.1:$port"
 }
 
+show_storage() {
+    # Probe the data/ mount as the container sees it: that is where shared
+    # spaces and private libraries live, so it decides whether reflinks work.
+    docker compose run --rm --no-deps iris python -m core.fs_clone /app/data/spaces \
+        "$(sed -n 's/^IRIS_SPACE_STORAGE=//p' .env | tail -n 1)"
+}
+
 wait_for_health() {
     local attempt
     local port
@@ -75,6 +82,8 @@ case "${1:-}" in
         prepare_env
         docker compose up -d --build
         wait_for_health
+        echo "Shared-space storage (IRIS_SPACE_STORAGE in .env):"
+        show_storage || true
         echo "Iris is running locally. Create the first account with:"
         echo "  ./scripts/server.sh create-admin --username administrator --display-name 'Your name'"
         ;;
@@ -102,13 +111,18 @@ case "${1:-}" in
         wait_for_health
         echo "Update completed. Run ./scripts/server.sh status to confirm."
         ;;
+    storage)
+        require_compose
+        prepare_env
+        show_storage
+        ;;
     port)
         require_compose
         [ "$#" -eq 2 ] || { echo "Usage: $0 port <1024-65535>" >&2; exit 2; }
         set_port "$2"
         ;;
     *)
-        echo "Usage: $0 {install|create-admin|status|logs|update|port <1024-65535>}" >&2
+        echo "Usage: $0 {install|create-admin|status|logs|update|storage|port <1024-65535>}" >&2
         exit 2
         ;;
 esac
