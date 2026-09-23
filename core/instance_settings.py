@@ -113,6 +113,7 @@ SETTINGS: dict[str, Setting] = {
                 _positive_int()),
         Setting("space_trash_days", "IRIS_SPACE_TRASH_DAYS", DEFAULT_TRASH_DAYS,
                 _positive_int(_MAX_TRASH_DAYS)),
+        Setting("library_trash_days", "IRIS_TRASH_DAYS", 30, _positive_int(_MAX_TRASH_DAYS)),
         Setting("backup_schedule", "IRIS_BACKUP_SCHEDULE", "daily", _choice("daily", "off")),
         Setting("backup_time", "IRIS_BACKUP_TIME", "03:00", _clock_time),
         Setting("backup_timezone", "IRIS_BACKUP_TIMEZONE", "UTC", _timezone),

@@ -13,19 +13,21 @@ import {
   listEnrichmentSuggestions,
   listCollections,
   listConcepts,
+  listTrash,
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=44';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=39';
-import { initCollections } from './collections.js?v=33';
-import { initConcepts } from './concepts.js?v=34';
-import { initDuplicates } from './duplicates.js?v=33';
-import { initSystem } from './system.js?v=42';
-import { initPersons } from './persons.js?v=7';
-import { initImportReview } from './import-review.js?v=8';
-import { chooseSpaceFor, initSpaces } from './spaces.js?v=3';
-import { confirmModal, toast } from './ui.js?v=3';
+} from './api.js?v=45';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=40';
+import { initCollections } from './collections.js?v=34';
+import { initConcepts } from './concepts.js?v=35';
+import { initDuplicates } from './duplicates.js?v=34';
+import { initSystem } from './system.js?v=43';
+import { initPersons } from './persons.js?v=8';
+import { initImportReview } from './import-review.js?v=9';
+import { chooseSpaceFor, initSpaces } from './spaces.js?v=4';
+import { initTrash } from './trash.js?v=2';
+import { confirmModal, toast } from './ui.js?v=4';
 
 window.__irisSelection = window.__irisSelection || new Map();
 
@@ -115,6 +117,11 @@ function switchTab(name) {
       title: 'Organizar',
       description: 'Álbuns, pessoas e cuidados com seus arquivos.'
     },
+    trash: {
+      kicker: 'Biblioteca',
+      title: 'Lixeira',
+      description: 'Itens apagados, recuperáveis até a data indicada.'
+    },
     spaces: {
       kicker: 'Compartilhados',
       title: 'Espaços',
@@ -153,7 +160,7 @@ function switchTab(name) {
     spaces: 'Para enviar fotos a um espaço, selecione-as em Fotos e use a ação <strong>Espaço</strong>.',
     concepts: 'O Iris aprende com imagens de exemplo. Confirme ou rejeite sugestões para melhorar o reconhecimento.',
     persons: 'Rostos são agrupados por similaridade. Nomeie pessoas para vê-las nos cards da Galeria.',
-    duplicates: 'Ajuste a similaridade e analise a biblioteca. Deleções vão para a lixeira do sistema.',
+    duplicates: 'Ajuste a similaridade e analise a biblioteca. O que você apagar vai para a Lixeira e pode ser restaurado.',
     system: 'Configuração do catálogo, importação, indexação e backups.'
   };
   var meta = viewMeta[name] || viewMeta.home;
@@ -179,6 +186,7 @@ function switchTab(name) {
   if (name === 'gallery' || name === 'search') initGallery();
   if (name === 'collections') initCollections();
   if (name === 'spaces') initSpaces();
+  if (name === 'trash') initTrash();
   if (name === 'concepts') initConcepts();
   if (name === 'persons') initPersons();
   if (name === 'duplicates') initDuplicates();
@@ -226,6 +234,12 @@ function openSearch(query) {
 }
 
 // ── Custom events ─────────────────────────────────────────────────────────
+
+// Something came back from the trash: cached pages show the old catalogue.
+window.addEventListener('iris:library-changed', function() {
+  invalidateCache();
+  homeLoaded = false;
+});
 
 window.addEventListener('iris:similar', function(e) {
   // Set the gallery into search mode (runGallerySimilar flips searchActive
@@ -505,12 +519,19 @@ document.getElementById('collection-modal-create-form').addEventListener('submit
 document.getElementById('btn-trash-selected').addEventListener('click', async function() {
   var count = window.__irisSelection.size;
   if (!count) return;
-  var okTrash = await confirmModal('Mover ' + count + ' item(ns) para a lixeira do sistema?', { kicker: 'Seleção', title: 'Enviar para a lixeira?', confirmLabel: 'Mover', danger: true });
+  var days = 30;
+  try { days = (await listTrash({ limit: 1 })).trash_days; } catch (err) { /* keep the default */ }
+  var okTrash = await confirmModal(
+    count + ' item(ns) saem da biblioteca e ficam na Lixeira por ' + days + ' dias. '
+    + 'Até lá podem ser restaurados; depois o Iris apaga os originais de vez.',
+    { kicker: 'Seleção', title: 'Mover para a lixeira?', confirmLabel: 'Mover', danger: true });
   if (!okTrash) return;
   try {
     var ids = await resolveSelectedDbIds();
     var result = await trashRecords(ids);
-    toast('Movidos: ' + result.moved + ', Falhas: ' + result.failed, result.failed ? 'error' : 'success');
+    toast(result.moved + ' item(ns) na Lixeira.'
+      + (result.failed ? ' ' + result.failed + ' não puderam ser movidos.' : ''),
+      result.failed ? 'error' : 'success');
     window.__irisSelection.clear();
     window.dispatchEvent(new CustomEvent('iris:selection-changed'));
     window.location.reload();

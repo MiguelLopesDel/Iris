@@ -33,13 +33,21 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 # Ensure core/ is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import app_config, equivalence_graph, import_review, instance_settings
+from core import (
+    app_config,
+    equivalence_graph,
+    import_review,
+    instance_settings,
+    library_trash,
+    space_catalog,
+)
 from core import backup as backup_mod
 from core.api_models import (
     BackupConfigOut,
@@ -91,7 +99,8 @@ from core.perf import dump, trace
 from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
-from core.users_db import IrisUser, get_device, get_user_by_id, has_users
+from core.sync_processor import rebuild_indexes_in_background
+from core.users_db import IrisUser, get_device, get_user_by_id, has_users, list_users
 from core.web_enrichment import (
     EnrichmentSuggestion,
     WebEnrichmentService,
@@ -648,6 +657,7 @@ if app.state.multiuser_enabled:
         _USERS_DB,
         {"data": _DATA_DIR, **({"media": _media_root} if _media_root.is_dir() else {})},
         Path(os.environ.get("IRIS_BACKUP_DEST", "backups")),
+        maintenance=lambda: _sweep_trash(),
     )
 
 
@@ -3345,39 +3355,196 @@ async def get_duplicates(
 # ── Trash ─────────────────────────────────────────────────────────────────────
 
 
+def _library_db_path() -> Path:
+    """The catalogue this request's backend serves -- never a global default.
+
+    Taking it from configuration instead would let a request whose backend is
+    a different (or a test's fake) catalogue act on whatever database the
+    install points at.
+    """
+    db_path = getattr(getattr(_get_backend(), "engine", None), "db_path", None)
+    if not db_path:
+        raise HTTPException(503, "Catálogo indisponível para a lixeira")
+    return Path(db_path)
+
+
+def _library_trash_days() -> int:
+    if _multiuser_enabled():
+        return int(instance_settings.resolve_all(_USERS_DB)["library_trash_days"].value)
+    # A single-user install has no account registry to hold interface choices.
+    return _positive_env_int("IRIS_TRASH_DAYS", library_trash.DEFAULT_TRASH_DAYS)
+
+
+def _trash_items(originals: dict[int, Path | None]) -> list[int]:
+    """Seam for tests: the catalogue rows and files leave together."""
+    return library_trash.move_to_trash(_library_db_path(), originals)
+
+
+def _catalog_changed() -> None:
+    """Items left or came back: views refresh now, indexes in the background.
+
+    Until the rebuild finishes the engine searches exactly, because its FAISS
+    indexes no longer match the catalogue's size; nothing is ever wrong, only
+    slower for a moment.
+    """
+    _invalidate_view_caches()
+    user = _current_user()
+    if user is not None:
+        registry = app.state.backend_registry
+        registry.invalidate(user.id)
+        rebuild_indexes_in_background(
+            db_path=user.db_path,
+            model_name=user.model_name,
+            on_finished=lambda: registry.invalidate(user.id),
+        )
+    else:
+        rebuild_indexes_in_background(
+            db_path=_library_db_path(),
+            model_name=str(_active_config["model_name"]),
+            on_finished=lambda: _reload_backend(),
+        )
+
+
 @app.post("/api/trash", response_model=TrashOut)
 async def trash_records(db_ids: str = Form(...)):
+    """Move items to the Iris trash: gone from the library, restorable for a while."""
     await run_in_threadpool(maybe_auto_snapshot, "pre-trash")
     with trace("api.trash"):
         ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
-        paths = []
-        doomed: dict[str, IndexRecord] = {}
+        records: dict[int, IndexRecord] = {}
+        originals: dict[int, Path | None] = {}
         for db_id in ids:
             record = _record_for_db_id(db_id)
-            if record and record.resolved_path and os.path.exists(record.resolved_path):
-                paths.append(record.resolved_path)
-                if record.content_hash:
-                    doomed[record.resolved_path] = record
+            if record is None:
+                continue
+            records[db_id] = record
+            path = record.resolved_path
+            originals[db_id] = Path(path) if path and os.path.exists(path) else None
 
         # Fingerprints can only be read while the file is on disk, and a later
-        # detector cannot link what it can never fingerprint. Whatever is not
-        # captured here is unrecoverable once the bytes are in the trash, so a
-        # failure to record refuses the deletion instead of proceeding: not
-        # freeing space is recoverable, destroying the evidence is not.
+        # detector cannot link what it can never fingerprint. A failure to
+        # record refuses the removal instead of proceeding: not freeing space
+        # is recoverable, destroying the evidence is not.
+        doomed = [r for i, r in records.items() if r.content_hash and originals[i] is not None]
         try:
-            await run_in_threadpool(_remember_before_removal, list(doomed.values()))
+            await run_in_threadpool(_remember_before_removal, doomed)
         except Exception as exc:
             logger.error("equivalence graph: recusando remover sem registrar: %s", exc)
             raise HTTPException(
                 503, "Não foi possível registrar as evidências antes de remover"
             ) from exc
 
-        moved, failed = move_to_trash(paths)
-        removed_hashes = [
-            record.content_hash for path, record in doomed.items() if path in set(moved)
-        ]
-        await run_in_threadpool(_mark_removed_in_graph, removed_hashes)
-        return {"moved": len(moved), "failed": len(failed)}
+        moved = await run_in_threadpool(_trash_items, originals)
+        await run_in_threadpool(
+            _mark_removed_in_graph,
+            [records[i].content_hash for i in moved if records[i].content_hash],
+        )
+        if moved:
+            _catalog_changed()
+        return {"moved": len(moved), "failed": len(ids) - len(moved)}
+
+
+def _sweep_trash() -> None:
+    """Purge expired items of every private library and every shared space.
+
+    Hourly, from the backup scheduler's loop, so a trash nobody opens still
+    empties on time.
+    """
+    days = _library_trash_days()
+    for user in list_users(_USERS_DB):
+        library_trash.purge_expired(user.db_path, days)
+    space_days = app.state.space_storage.trash_days
+    for root in sorted((_DATA_DIR / "spaces").glob("*")):
+        if (root / "space.db").is_file():
+            space_catalog.purge_expired(root, space_days)
+
+
+def _trash_item_json(item: library_trash.TrashedItem) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "size_bytes": item.size_bytes,
+        "trashed_at": item.trashed_at,
+        "purge_after": item.purge_after,
+        "thumbnail_url": f"/api/trash/items/{item.id}/thumbnail" if item.has_file else None,
+    }
+
+
+@app.get("/api/trash/items")
+async def list_trashed(limit: int = Query(60, ge=1, le=200), before: int | None = Query(None)):
+    days = _library_trash_days()
+    db_path = _library_db_path()
+
+    def _load() -> list[library_trash.TrashedItem]:
+        # Lazily finish what the hourly sweep would, so the list never shows
+        # an item past its date.
+        library_trash.purge_expired(db_path, days)
+        return library_trash.list_trash(db_path, days, limit, before)
+
+    items = await run_in_threadpool(_load)
+    return {
+        "items": [_trash_item_json(item) for item in items],
+        "next_before": items[-1].id if len(items) == limit else None,
+        "trash_days": days,
+    }
+
+
+@app.get("/api/trash/items/{item_id}/thumbnail")
+async def trashed_thumbnail(item_id: int):
+    try:
+        held = library_trash.trashed_file(_library_db_path(), item_id)
+    except library_trash.TrashItemNotFound as exc:
+        raise HTTPException(404, "Item não encontrado na lixeira") from exc
+    thumb = held.parent / ".thumbnail.jpg"
+    if not thumb.exists():
+        await run_in_threadpool(_generate_thumbnail, str(held), thumb)
+    if not thumb.exists():
+        raise HTTPException(404, "Sem miniatura")
+    return FileResponse(thumb, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+class RestoreTrashIn(BaseModel):
+    ids: list[int]
+
+
+@app.post("/api/trash/restore")
+async def restore_trashed(payload: RestoreTrashIn):
+    db_path = _library_db_path()
+    restored: list[tuple[int, str | None]] = []
+    conflicts: list[int] = []
+    missing: list[int] = []
+    skipped = 0
+    for item_id in payload.ids:
+        try:
+            done, lost = await run_in_threadpool(library_trash.restore, db_path, [item_id])
+        except library_trash.TrashRestoreConflict:
+            conflicts.append(item_id)
+            continue
+        except library_trash.TrashItemNotFound:
+            missing.append(item_id)
+            continue
+        restored += done
+        skipped += lost
+    if restored:
+        await run_in_threadpool(_mark_restored_in_graph, restored)
+        _catalog_changed()
+    return {
+        "restored": [item_id for item_id, _ in restored],
+        "conflicts": conflicts,
+        "missing": missing,
+        "links_not_restored": skipped,
+    }
+
+
+def _mark_restored_in_graph(restored: list[tuple[int, str | None]]) -> None:
+    try:
+        conn = _backend_connection()
+        equivalence_graph.mark_restored(
+            conn, [(content_hash, item_id) for item_id, content_hash in restored if content_hash]
+        )
+        conn.commit()
+    except Exception as exc:
+        logger.warning("equivalence graph: falha ao desfazer remoção: %s", exc)
 
 
 def _remember_quarantined_before_removal(items: list[dict]) -> None:

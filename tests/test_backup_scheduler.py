@@ -206,3 +206,25 @@ with TestClient(server.app) as root, TestClient(server.app) as ana:
         text=True, capture_output=True, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_housekeeping_runs_at_most_hourly_and_never_stops_backups(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    create_user(data / "users.db", data, username="ana", password_hash="x")
+    calls: list[datetime] = []
+    clock = Clock(datetime(2026, 9, 23, 10, 0, tzinfo=SP))
+
+    def maintenance() -> None:
+        calls.append(clock())
+        raise RuntimeError("a failing purge")  # must be contained
+
+    service = BackupService(
+        data / "users.db", {"data": data}, tmp_path / "backups",
+        clock=clock, maintenance=maintenance,
+    )
+    service.maintain()
+    clock.advance(minutes=59)
+    service.maintain()
+    clock.advance(minutes=2)
+    service.maintain()
+    assert len(calls) == 2

@@ -427,6 +427,14 @@ export async function resolveImportReview({ ids = [], detection = '', action = '
 
 // ── Trash ─────────────────────────────────────────────────────────────────
 
+export async function listTrash({ before = null, limit = 60 } = {}) {
+  return apiGet('/api/trash/items', { before, limit });
+}
+
+export async function restoreTrash(ids) {
+  return apiJson('POST', '/api/trash/restore', { ids });
+}
+
 export async function trashRecords(dbIds) {
   return apiPost('/api/trash', { db_ids: dbIds.join(',') });
 }

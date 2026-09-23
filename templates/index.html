@@ -297,6 +297,19 @@
       </div>
     </section>
 
+    <!-- The Iris trash of the private library: restorable until its date. -->
+    <section id="tab-trash" class="tab-pane">
+      <div class="section-lead section-lead-compact">
+        <div>
+          <span class="eyebrow">Recuperável</span>
+        </div>
+        <button id="trash-restore-selected" class="btn btn-primary" type="button" disabled>Restaurar selecionados</button>
+      </div>
+      <p id="trash-hint" class="section-hint"></p>
+      <div id="trash-items" class="media-grid"></div>
+      <button id="trash-more" class="btn btn-subtle" type="button" hidden>Carregar mais</button>
+    </section>
+
     <!-- Shared spaces: galleries of their own, shared with other accounts. -->
     <section id="tab-spaces" class="tab-pane">
       <div id="spaces-list-view">
@@ -366,6 +379,7 @@
         <button class="organize-card" type="button" data-go-tab="collections"><i>◇</i><span><b>Álbuns</b><small>Agrupe fotos e vídeos importantes.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="spaces" data-requires-accounts hidden><i>◎</i><span><b>Compartilhados</b><small>Galerias com a família ou a equipe.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="persons"><i>☺</i><span><b>Pessoas</b><small>Nomeie e encontre pessoas reconhecidas.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="trash"><i>↺</i><span><b>Lixeira</b><small>Recupere o que foi apagado há pouco.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="duplicates"><i>✓</i><span><b>Revisar duplicatas</b><small>Libere espaço sem apagar o arquivo errado.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="concepts"><i>✦</i><span><b>Ensinar o Iris</b><small>Mostre exemplos de personagens, objetos e ideias.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="system"><i>＋</i><span><b>Adicionar mídia</b><small>Importe e acompanhe a indexação.</small></span><em>→</em></button>
@@ -470,7 +484,7 @@
 
       <section id="instance-settings" class="detail-panel system-card" data-settings-section hidden>
         <span class="eyebrow">INSTALAÇÃO</span>
-        <h4>Espaços compartilhados</h4>
+        <h4>Espaços e lixeira</h4>
         <p class="system-hint">Vale para todo o servidor. Alterar estas opções não dá acesso às fotos de ninguém.
           Um valor definido aqui tem prioridade sobre o arquivo <code>.env</code> do instalador.</p>
         <p id="instance-storage-report" class="system-hint"></p>
@@ -489,9 +503,13 @@
             <input type="number" min="1" step="1" inputmode="numeric" data-setting="space_quota_bytes" data-scale="1073741824">
             <small class="instance-source" data-source-for="space_quota_bytes"></small>
           </label>
-          <label>Dias na lixeira antes de apagar
+          <label>Dias na lixeira dos espaços antes de apagar
             <input type="number" min="1" max="3650" step="1" inputmode="numeric" data-setting="space_trash_days">
             <small class="instance-source" data-source-for="space_trash_days"></small>
+          </label>
+          <label>Dias na lixeira das bibliotecas pessoais antes de apagar
+            <input type="number" min="1" max="3650" step="1" inputmode="numeric" data-setting="library_trash_days">
+            <small class="instance-source" data-source-for="library_trash_days"></small>
           </label>
         </div>
         <p class="system-hint">O modo de cópia vale para os próximos itens; os que já estão nos espaços não mudam.</p>
@@ -763,7 +781,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=68"></script>
+<script type="module" src="/static/app.js?v=69"></script>
 
 </body>
 </html>

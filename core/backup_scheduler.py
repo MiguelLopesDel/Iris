@@ -28,6 +28,7 @@ from core.users_db import init_users_db, now_iso
 _CHECK_SECONDS = 30
 _RETRY_AFTER = timedelta(hours=1)
 _MAX_DAILY_FAILURES = 3
+_MAINTENANCE_EVERY = timedelta(hours=1)
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ class BackupService:
         dest: Path,
         *,
         clock: Callable[[], datetime] | None = None,
+        maintenance: Callable[[], None] | None = None,
     ) -> None:
         self.users_db = users_db
         self.roots = roots
@@ -105,6 +107,9 @@ class BackupService:
         self._running = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Hourly housekeeping sharing this loop, e.g. purging expired trash.
+        self._maintenance = maintenance
+        self._last_maintenance: datetime | None = None
 
     # -- settings and history ---------------------------------------------------
 
@@ -269,10 +274,24 @@ class BackupService:
                         self.run("schedule")
                 except Exception:
                     pass  # a broken setting must not kill the loop; runs record errors
+                self.maintain()
                 self._stop.wait(_CHECK_SECONDS)
 
         self._thread = threading.Thread(target=loop, name="iris-backup-schedule", daemon=True)
         self._thread.start()
+
+    def maintain(self) -> None:
+        """Run the housekeeping callable at most once per hour."""
+        if self._maintenance is None:
+            return
+        now = self._clock()
+        if self._last_maintenance and now - self._last_maintenance < _MAINTENANCE_EVERY:
+            return
+        self._last_maintenance = now
+        try:
+            self._maintenance()
+        except Exception:
+            pass  # housekeeping retries next hour; it must not stop backups
 
     def stop(self) -> None:
         self._stop.set()

@@ -288,6 +288,24 @@ def mark_removed(
     return cursor.rowcount
 
 
+def mark_restored(conn: sqlite3.Connection, restored: Iterable[tuple[str, int]]) -> int:
+    """Undo :func:`mark_removed` for items brought back from the Iris trash.
+
+    ``restored`` pairs each content hash with the catalogue id it returned
+    under, since removal had cleared the link.
+    """
+    ensure_tables(conn)
+    pairs = [(media_id, content_hash) for content_hash, media_id in restored if content_hash]
+    if not pairs:
+        return 0
+    cursor = conn.executemany(
+        "UPDATE equivalence_members SET removed_at = NULL, media_id = ?"
+        " WHERE content_hash = ? AND removed_at IS NOT NULL",
+        pairs,
+    )
+    return cursor.rowcount
+
+
 def members_of_component(conn: sqlite3.Connection, member_id: int) -> list[dict]:
     """Every member ever placed in this component, removed ones included."""
     ensure_tables(conn)

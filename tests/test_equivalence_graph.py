@@ -8,6 +8,7 @@ The evidence lived in B.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import pytest
@@ -231,7 +232,8 @@ def test_the_trash_endpoint_records_evidence_before_deleting(tmp_path, monkeypat
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
     monkeypatch.setattr(server, "_backend_connection", lambda *a, **k: connection)
     monkeypatch.setattr(server, "maybe_auto_snapshot", lambda *a, **k: None)
-    monkeypatch.setattr(server, "move_to_trash", lambda paths: (list(paths), []))
+    monkeypatch.setattr(server, "_catalog_changed", lambda: None)
+    monkeypatch.setattr(server, "_trash_items", lambda originals: list(originals))
     server._invalidate_view_caches()
 
     async def run():
@@ -295,7 +297,8 @@ def test_deletion_is_refused_when_the_evidence_cannot_be_recorded(tmp_path, monk
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
     monkeypatch.setattr(server, "_backend_connection", exploding_connection)
     monkeypatch.setattr(server, "maybe_auto_snapshot", lambda *a, **k: None)
-    monkeypatch.setattr(server, "move_to_trash", lambda paths: (trashed.extend(paths), []))
+    monkeypatch.setattr(server, "_catalog_changed", lambda: None)
+    monkeypatch.setattr(server, "_trash_items", lambda originals: trashed.extend(originals) or [])
     server._invalidate_view_caches()
 
     async def run():
@@ -343,7 +346,8 @@ def _trash(server, records, db_ids, connection, monkeypatch):
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
     monkeypatch.setattr(server, "_backend_connection", lambda *a, **k: connection)
     monkeypatch.setattr(server, "maybe_auto_snapshot", lambda *a, **k: None)
-    monkeypatch.setattr(server, "move_to_trash", lambda paths: (list(paths), []))
+    monkeypatch.setattr(server, "_catalog_changed", lambda: None)
+    monkeypatch.setattr(server, "_trash_items", lambda originals: list(originals))
     server._invalidate_view_caches()
 
     async def run():
@@ -479,3 +483,48 @@ def test_fingerprints_carry_a_version(conn):
         (member, KIND_PHASH, "ff00"),
     ).fetchone()
     assert rows == ("2", 256)
+
+
+def test_trash_never_falls_back_to_a_configured_database(tmp_path, monkeypatch):
+    """A backend without its own catalogue must not send the trash elsewhere.
+
+    The first version took the database from the install's configuration when
+    the request had no account: a test with a fake backend then trashed real
+    rows of the developer's catalogue.
+    """
+    import asyncio
+
+    import httpx
+
+    import server
+    from core import library_trash
+
+    record = _record(tmp_path, 1, "a.jpg", "aaa", "ff00ff00ff00ff00")
+    backend = type(
+        "Backend",
+        (),
+        {
+            "get_all_records": staticmethod(lambda: [record]),
+            "get_record": staticmethod(lambda index: [record][index]),
+            "engine": object(),  # no db_path
+        },
+    )()
+    touched: list[object] = []
+    monkeypatch.setattr(server, "_get_backend", lambda: backend)
+    monkeypatch.setattr(server, "_remember_before_removal", lambda records: None)
+    monkeypatch.setattr(server, "maybe_auto_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(library_trash, "move_to_trash", lambda *a, **k: touched.append(a) or [])
+    server._invalidate_view_caches()
+
+    async def run():
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post("/api/trash", data={"db_ids": "1"})
+
+    try:
+        response = asyncio.run(run())
+    finally:
+        server._invalidate_view_caches()
+    assert response.status_code == 503
+    assert touched == []
+    assert os.path.exists(record.resolved_path)

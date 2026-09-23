@@ -75,3 +75,28 @@ def process_upload(*, db_path: Path, media_root: Path, model_name: str, upload_i
         conn.commit()
         conn.close()
         on_finished()
+
+
+def rebuild_indexes(*, db_path: Path, model_name: str, on_finished) -> None:
+    """Rebuild a library's FAISS indexes after rows left or returned.
+
+    Serialised with upload processing through the same per-library lock: both
+    rewrite the same index files. Until it finishes the engine searches
+    exactly, because its indexes no longer match the catalogue's size.
+    """
+    with _locks[str(db_path.resolve())]:
+        try:
+            from core.indexer import create_faiss_indices
+
+            create_faiss_indices(db_path, model_name)
+        finally:
+            on_finished()
+
+
+def rebuild_indexes_in_background(*, db_path: Path, model_name: str, on_finished) -> None:
+    threading.Thread(
+        target=rebuild_indexes,
+        kwargs={"db_path": db_path, "model_name": model_name, "on_finished": on_finished},
+        name="iris-reindex",
+        daemon=True,
+    ).start()

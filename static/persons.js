@@ -10,8 +10,8 @@ import {
   listPersons,
   mergePersons,
   renamePerson,
-} from './api.js?v=44';
-import { confirmModal, openModal, promptModal, toast } from './ui.js?v=3';
+} from './api.js?v=45';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=4';
 
 let _persons = [];
 
