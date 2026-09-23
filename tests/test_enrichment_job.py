@@ -56,7 +56,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(server, "_create_web_enrichment_service", lambda *a, **k: service)
     monkeypatch.setattr(
         server,
-        "_record_by_db_id",
+        "_record_for_db_id",
         lambda db_id: SimpleNamespace(arquivo="x.jpg", resolved_path=real_file.name),
     )
     yield SimpleNamespace(conn=conn, service=service)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +24,18 @@ class VectorStore:
         desc_index = faiss.read_index(str(desc_path)) if desc_path.exists() else None
         return image_index, desc_index
 
-    def build_audio_index(self, records: list[Any]) -> tuple[np.ndarray | None, list[int]]:
+    def build_audio_index(self, records: Sequence[Any]) -> tuple[np.ndarray | None, list[int]]:
         """Build in-memory audio FAISS index from CLAP embeddings stored in records."""
         audio_vecs = []
         audio_indices = []
-        for i, rec in enumerate(records):
-            if rec.audio_embedding is not None and len(rec.audio_embedding) > 0:
-                audio_vecs.append(rec.audio_embedding)
+        # The compact catalogue exposes audio vectors as a column. Reading it
+        # directly avoids constructing every IndexRecord at engine startup.
+        embeddings = getattr(getattr(records, "columns", None), "audio_embedding", None)
+        if embeddings is None:
+            embeddings = (record.audio_embedding for record in records)
+        for i, embedding in enumerate(embeddings):
+            if embedding is not None and len(embedding) > 0:
+                audio_vecs.append(embedding)
                 audio_indices.append(i)
         
         if not audio_vecs:

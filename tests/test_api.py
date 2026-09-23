@@ -123,12 +123,110 @@ class TestViewCaches:
         first = server._sorted_records(backend, "importacao", 1)
         second = server._sorted_records(backend, "importacao", 1)
         assert first is second  # served from cache, no re-sort
-        assert [r.db_id for r in first] == [1, 2, 3]  # ascending by db_id
+        assert first == [1, 2, 0]  # ascending positions, not retained records
         assert backend.get_all_records.call_count == 1  # only sorted once
 
         server._invalidate_view_caches()
         third = server._sorted_records(backend, "importacao", 1)
         assert third is not first  # cache cleared → recomputed
+        server._invalidate_view_caches()
+
+    def test_sorted_catalogue_caches_positions_without_materialising_every_record(self):
+        import server
+        from core.record_catalog import RecordCatalog, RecordColumns
+        from core.search_types import SearchOptions
+
+        class TrackingCatalog(RecordCatalog):
+            materialisations = 0
+
+            def record_at(self, index):
+                self.materialisations += 1
+                return super().record_at(index)
+
+        columns = RecordColumns(
+            arquivo=("z.jpg", "a.jpg"),
+            caminho=("z.jpg", "a.jpg"),
+            resolved_path=(None, None),
+            relative_path=(None, None),
+            content_hash=("", ""),
+            file_size=np.asarray([-1, -1], dtype=np.int64),
+            file_mtime=np.asarray([2.0, 1.0], dtype=np.float64),
+            library_id=np.asarray([-1, -1], dtype=np.int64),
+            storage_path=(None, None),
+            source_path=(None, None),
+            db_id=np.asarray([2, 1], dtype=np.int64),
+            audio_fingerprint=("", ""),
+            audio_embedding=(None, None),
+            perceptual_hash=("", ""),
+            thumb_hash=("", ""),
+            eager_text=(None, None),
+        )
+        catalog = TrackingCatalog(
+            columns,
+            image_matrix=np.eye(2, dtype=np.float32),
+            desc_matrix=None,
+            desc_present=None,
+            text_store=None,
+        )
+        backend = MagicMock()
+        backend.get_all_records.return_value = catalog
+        backend.engine.db_path = "catalogue.db"
+        server._invalidate_view_caches()
+
+        assert server._sorted_records(backend, "nome", 1) == [1, 0]
+        assert catalog.materialisations == 0
+
+        assert server._filter_records([0, 1], backend, SearchOptions()) == [0, 1]
+        assert catalog.materialisations == 0
+        server._invalidate_view_caches()
+
+    def test_database_id_cache_keeps_positions_not_records(self, monkeypatch):
+        import server
+        from core.record_catalog import RecordCatalog, RecordColumns
+
+        class TrackingCatalog(RecordCatalog):
+            materialisations = 0
+
+            def record_at(self, index):
+                self.materialisations += 1
+                return super().record_at(index)
+
+        columns = RecordColumns(
+            arquivo=("first.jpg", "second.jpg"),
+            caminho=("first.jpg", "second.jpg"),
+            resolved_path=(None, None),
+            relative_path=(None, None),
+            content_hash=("", ""),
+            file_size=np.asarray([-1, -1], dtype=np.int64),
+            file_mtime=np.asarray([1.0, 2.0], dtype=np.float64),
+            library_id=np.asarray([-1, -1], dtype=np.int64),
+            storage_path=(None, None),
+            source_path=(None, None),
+            db_id=np.asarray([41, 99], dtype=np.int64),
+            audio_fingerprint=("", ""),
+            audio_embedding=(None, None),
+            perceptual_hash=("", ""),
+            thumb_hash=("", ""),
+            eager_text=(None, None),
+        )
+        catalog = TrackingCatalog(
+            columns,
+            image_matrix=np.eye(2, dtype=np.float32),
+            desc_matrix=None,
+            desc_present=None,
+            text_store=None,
+        )
+        backend = MagicMock()
+        backend.get_all_records.return_value = catalog
+        backend.get_record.side_effect = catalog.record_at
+        backend.engine.db_path = "catalogue.db"
+        monkeypatch.setattr(server, "_get_backend", lambda: backend)
+        server._invalidate_view_caches()
+
+        assert server._record_positions_by_db_id() == {41: 0, 99: 1}
+        assert catalog.materialisations == 0
+        assert server._record_for_db_id(99).arquivo == "second.jpg"
+        assert catalog.materialisations == 1
         server._invalidate_view_caches()
 
 

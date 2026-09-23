@@ -6,6 +6,7 @@ import os
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -13,12 +14,12 @@ import numpy as np
 import torch
 from deep_translator import GoogleTranslator
 from PIL import Image
-from sentence_transformers import util
 
 from core import vector_sidecar
 from core.db_manager import DatabaseManager
 from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # historical re-export
 from core.embedding_models import EmbeddingEncoder, load_encoder, resolve_embedding_model
+from core.record_catalog import RecordCatalog, RecordColumns
 from core.record_text import TEXT_COLUMNS, TextStore
 from core.search_types import (
     STOP_WORDS,
@@ -59,11 +60,6 @@ def queries_may_leave_the_machine() -> bool:
         "off",
     }
 
-
-# Placeholder held by a record between its construction and the moment the
-# stacked matrix exists; every record is rewritten to a view before _load_records
-# returns.
-_PENDING_VECTOR = np.zeros(0, dtype=np.float32)
 
 # Where each ranking column sits in the folded tuple, and what it is worth.
 # Positions rather than names: this runs once per candidate per query.
@@ -119,6 +115,20 @@ def _stack_vectors(vectors: list) -> np.ndarray | None:
         if vector is not None and vector.shape[0] == width:
             matrix[position] = vector
     return matrix
+
+
+def _torch_cosine_similarity(query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
+    """Calculate row-wise cosine scores without importing an encoder package.
+
+    ``sentence-transformers`` is required to load and run an embedding model,
+    but importing it during server startup made a model-free development server
+    depend on its full optional dependency stack. Keep this small tensor
+    operation local so gallery, accounts, and API development work with
+    ``IRIS_LOAD_MODEL=0``.
+    """
+    query_normalized = torch.nn.functional.normalize(query, p=2, dim=1)
+    candidates_normalized = torch.nn.functional.normalize(candidates, p=2, dim=1)
+    return query_normalized @ candidates_normalized.T
 
 
 def _weighted_mean(signals: list[tuple[float, bool, float]]) -> float | None:
@@ -189,7 +199,9 @@ class IrisEngine:
         self._catalog_model_checked = False
 
     @staticmethod
+    @lru_cache(maxsize=1)
     def _detect_device() -> str:
+        """Detect the compute device once per process, not once per library."""
         if torch.cuda.is_available():
             return "cuda"
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -223,7 +235,7 @@ class IrisEngine:
         except (OSError, ValueError, TypeError):
             return dict(DEFAULT_WEIGHTS)
 
-    def _load_records(self) -> list[IndexRecord]:
+    def _load_records(self) -> RecordCatalog | list[IndexRecord]:
         if not self.db_path.exists():
             return []
 
@@ -277,7 +289,25 @@ class IrisEngine:
         finally:
             pass
 
-        records: list[IndexRecord] = []
+        # Scalar metadata is kept columnar.  Retaining an IndexRecord for every
+        # row costs an object plus a long run of pointers per item; the adapter
+        # created below materialises one only when a caller asks for it.
+        arquivos: list[str] = []
+        caminhos: list[str] = []
+        resolved_paths: list[str | None] = []
+        relative_paths: list[str | None] = []
+        content_hashes: list[str] = []
+        file_sizes: list[int] = []
+        file_mtimes: list[float] = []
+        library_ids: list[int] = []
+        storage_paths: list[str | None] = []
+        source_paths: list[str | None] = []
+        db_ids: list[int] = []
+        audio_fingerprints: list[str] = []
+        audio_embeddings: list[np.ndarray | None] = []
+        perceptual_hashes: list[str] = []
+        thumb_hashes: list[str] = []
+        eager_text_values: list[tuple[str, ...] | None] = []
         # Written straight into the matrices as rows stream past. Collecting the
         # vectors in a list first would have kept a second copy of every
         # embedding alive until the stacking finished, and a peak is not undone
@@ -291,7 +321,7 @@ class IrisEngine:
         desc_matrix = self._mapped_column(conn, "desc_embedding", None)
         mapped = image_matrix is not None
         has_desc: list[bool] = []
-        for idx, row in enumerate(rows):
+        for _idx, row in enumerate(rows):
             embedding_blob = row["embedding"]
             if not embedding_blob:
                 continue
@@ -304,7 +334,7 @@ class IrisEngine:
                 library_id=row["library_id"] if "library_id" in row.keys() else None,
             )
             desc_blob = row["desc_embedding"]
-            position = len(records)
+            position = len(arquivos)
             if not mapped:
                 vector = np.frombuffer(embedding_blob, dtype=np.float32)
                 if image_matrix is None:
@@ -322,42 +352,38 @@ class IrisEngine:
                 ):
                     desc_matrix[position] = desc_vector
             has_desc.append(desc_blob is not None)
-            records.append(
-                IndexRecord(
-                    index=idx,
-                    arquivo=row["arquivo"] or "",
-                    caminho=caminho,
-                    resolved_path=resolved_path,
-                    text_store=self._text_store,
-                    **(
-                        {name: row[name] or "" for name in text_columns}
-                        if eager_text
-                        else {}
-                    ),
-                    # Replaced by a view into the stacked matrix below.
-                    embedding=_PENDING_VECTOR,
-                    desc_embedding=None,
-                    relative_path=relative_path,
-                    content_hash=row["content_hash"] if "content_hash" in row.keys() else "",
-                    file_size=row["file_size"] if "file_size" in row.keys() else None,
-                    file_mtime=row["file_mtime"] if "file_mtime" in row.keys() else None,
-                    library_id=row["library_id"] if "library_id" in row.keys() else None,
-                    storage_path=row["storage_path"] if "storage_path" in row.keys() else None,
-                    source_path=row["source_path"] if "source_path" in row.keys() else None,
-                    db_id=int(row["id"]) if "id" in row.keys() and row["id"] is not None else 0,
-                    audio_fingerprint=row["audio_fingerprint"] if "audio_fingerprint" in row.keys() and row["audio_fingerprint"] else "",
-                    audio_embedding=np.frombuffer(row["audio_embedding"], dtype=np.float32).copy() if "audio_embedding" in row.keys() and row["audio_embedding"] else None,
-                    perceptual_hash=row["perceptual_hash"] if "perceptual_hash" in row.keys() and row["perceptual_hash"] else "",
-                    thumb_hash=row["thumb_hash"] if "thumb_hash" in row.keys() and row["thumb_hash"] else "",
-                )
+            keys = row.keys()
+            arquivos.append(row["arquivo"] or "")
+            caminhos.append(caminho)
+            resolved_paths.append(resolved_path)
+            relative_paths.append(relative_path)
+            content_hashes.append(row["content_hash"] if "content_hash" in keys else "")
+            file_sizes.append(int(row["file_size"]) if "file_size" in keys and row["file_size"] is not None else -1)
+            file_mtimes.append(float(row["file_mtime"]) if "file_mtime" in keys and row["file_mtime"] is not None else float("nan"))
+            library_ids.append(int(row["library_id"]) if "library_id" in keys and row["library_id"] is not None else -1)
+            storage_paths.append(row["storage_path"] if "storage_path" in keys else None)
+            source_paths.append(row["source_path"] if "source_path" in keys else None)
+            db_ids.append(int(row["id"]) if "id" in keys and row["id"] is not None else 0)
+            audio_fingerprints.append(row["audio_fingerprint"] if "audio_fingerprint" in keys and row["audio_fingerprint"] else "")
+            audio_embeddings.append(
+                np.frombuffer(row["audio_embedding"], dtype=np.float32).copy()
+                if "audio_embedding" in keys and row["audio_embedding"]
+                else None
             )
-        if image_matrix is None or not records:
-            return records
+            perceptual_hashes.append(row["perceptual_hash"] if "perceptual_hash" in keys and row["perceptual_hash"] else "")
+            thumb_hashes.append(row["thumb_hash"] if "thumb_hash" in keys and row["thumb_hash"] else "")
+            eager_text_values.append(
+                tuple(row[name] or "" if name in text_columns else "" for name in TEXT_COLUMNS)
+                if eager_text
+                else None
+            )
+        if image_matrix is None or not arquivos:
+            return []
         # A row can be skipped after the matrices are sized, so trim to what was
         # actually written rather than leaving zero rows the engine would search.
-        if not mapped and len(records) < expected:
-            image_matrix = image_matrix[: len(records)].copy()
-            desc_matrix = desc_matrix[: len(records)].copy()
+        if not mapped and len(arquivos) < expected:
+            image_matrix = image_matrix[: len(arquivos)].copy()
+            desc_matrix = desc_matrix[: len(arquivos)].copy()
         self._image_matrix = image_matrix
         # Kept even when some rows have no description embedding. Returning None
         # for the whole matrix, as this used to, silently switched off
@@ -365,11 +391,31 @@ class IrisEngine:
         # row simply never matches.
         self._desc_matrix = desc_matrix if any(has_desc) else None
         self._desc_present = np.array(has_desc, dtype=bool) if any(has_desc) else None
-        for position, record in enumerate(records):
-            object.__setattr__(record, "embedding", image_matrix[position])
-            if self._desc_matrix is not None and has_desc[position]:
-                object.__setattr__(record, "desc_embedding", desc_matrix[position])
-        return records
+        columns = RecordColumns(
+            arquivo=tuple(arquivos),
+            caminho=tuple(caminhos),
+            resolved_path=tuple(resolved_paths),
+            relative_path=tuple(relative_paths),
+            content_hash=tuple(content_hashes),
+            file_size=np.asarray(file_sizes, dtype=np.int64),
+            file_mtime=np.asarray(file_mtimes, dtype=np.float64),
+            library_id=np.asarray(library_ids, dtype=np.int64),
+            storage_path=tuple(storage_paths),
+            source_path=tuple(source_paths),
+            db_id=np.asarray(db_ids, dtype=np.int64),
+            audio_fingerprint=tuple(audio_fingerprints),
+            audio_embedding=tuple(audio_embeddings),
+            perceptual_hash=tuple(perceptual_hashes),
+            thumb_hash=tuple(thumb_hashes),
+            eager_text=tuple(eager_text_values),
+        )
+        return RecordCatalog(
+            columns,
+            image_matrix=image_matrix,
+            desc_matrix=self._desc_matrix,
+            desc_present=self._desc_present,
+            text_store=self._text_store,
+        )
 
     def _mapped_column(self, conn, column: str, expected: int | None) -> np.ndarray | None:
         """The column as a memory map, or None to read it the old way."""
@@ -427,7 +473,32 @@ class IrisEngine:
         return self.db.get_collection_db_ids(collection_ids)
 
     def _db_id_to_idx(self) -> dict[int, int]:
-        return {r.db_id: r.index for r in self.records if r.db_id}
+        if isinstance(self.records, RecordCatalog):
+            return {
+                int(db_id): index
+                for index, db_id in enumerate(self.records.columns.db_id)
+                if db_id > 0
+            }
+        return {
+            record.db_id: position
+            for position, record in enumerate(self.records)
+            if record.db_id
+        }
+
+    def _record_db_id(self, index: int) -> int:
+        if isinstance(self.records, RecordCatalog):
+            return self.records.db_id_at(index)
+        return self.records[index].db_id
+
+    def _record_filename(self, index: int) -> str:
+        if isinstance(self.records, RecordCatalog):
+            return self.records.filename_at(index)
+        return self.records[index].arquivo
+
+    def _record_resolved_path(self, index: int) -> str | None:
+        if isinstance(self.records, RecordCatalog):
+            return self.records.resolved_path_at(index)
+        return self.records[index].resolved_path
 
     def _concept_refined_centroid(self, concept_id: int) -> np.ndarray | None:
         from core.concepts import (
@@ -539,8 +610,7 @@ class IrisEngine:
 
         results: list[tuple[int, float]] = []
         for idx in candidates:
-            record = self.records[idx]
-            if record.db_id in already_decided:
+            if self._record_db_id(idx) in already_decided:
                 continue
             score = float(np.dot(centroid.reshape(-1), self.image_matrix[idx].reshape(-1)))
             if score >= min_score:
@@ -741,7 +811,7 @@ class IrisEngine:
     def _best_face_embedding_for_record(self, record_index: int) -> np.ndarray | None:
         if record_index < 0 or record_index >= len(self.records):
             return None
-        db_id = self.records[record_index].db_id
+        db_id = self._record_db_id(record_index)
         if not db_id:
             return None
         conn = self.db.get_connection()
@@ -922,7 +992,7 @@ class IrisEngine:
             allowed_db_ids = self.db.get_collection_db_ids(options.collection_ids)
             candidate_indices = [
                 idx for idx in candidate_indices
-                if self.records[idx].db_id in allowed_db_ids
+                if self._record_db_id(idx) in allowed_db_ids
             ]
             if not candidate_indices:
                 return []
@@ -936,7 +1006,7 @@ class IrisEngine:
                 pass
             candidate_indices = [
                 idx for idx in candidate_indices
-                if self.records[idx].db_id in allowed_db_ids
+                if self._record_db_id(idx) in allowed_db_ids
             ]
             if not candidate_indices:
                 return []
@@ -945,7 +1015,7 @@ class IrisEngine:
             allowed_exts = VIDEO_EXTENSIONS if options.media_type == "video" else IMAGE_EXTENSIONS
             candidate_indices = [
                 idx for idx in candidate_indices
-                if os.path.splitext(self.records[idx].arquivo)[1].lower() in allowed_exts
+                if os.path.splitext(self._record_filename(idx))[1].lower() in allowed_exts
             ]
             if not candidate_indices:
                 return []
@@ -953,7 +1023,7 @@ class IrisEngine:
         if options.excluded_db_ids:
             candidate_indices = [
                 idx for idx in candidate_indices
-                if self.records[idx].db_id not in options.excluded_db_ids
+                if self._record_db_id(idx) not in options.excluded_db_ids
             ]
             if not candidate_indices:
                 return []
@@ -1075,14 +1145,18 @@ class IrisEngine:
             image_tensor = torch.from_numpy(candidate_image_matrix).to(self.device).to(
                 query_tensor.dtype
             )
-            image_scores = util.cos_sim(query_tensor, image_tensor)[0].detach().cpu().numpy()
+            image_scores = _torch_cosine_similarity(
+                query_tensor, image_tensor
+            )[0].detach().cpu().numpy()
 
             desc_scores = None
             if self.desc_matrix is not None:
                 desc_tensor = torch.from_numpy(self.desc_matrix[candidate_indices]).to(
                     self.device
                 ).to(query_tensor.dtype)
-                desc_scores = util.cos_sim(query_tensor, desc_tensor)[0].detach().cpu().numpy()
+                desc_scores = _torch_cosine_similarity(
+                    query_tensor, desc_tensor
+                )[0].detach().cpu().numpy()
 
         # One statement per batch instead of one per candidate: the loop below
         # reads text from every candidate it does not reject, and negative terms
@@ -1139,7 +1213,7 @@ class IrisEngine:
         if self._text_store is None:
             return
         self._text_store.prefetch(
-            self.records[index].db_id
+            self._record_db_id(index)
             for index in record_indices
             if 0 <= index < len(self.records)
         )

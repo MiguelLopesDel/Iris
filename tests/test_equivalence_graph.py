@@ -221,7 +221,11 @@ def test_the_trash_endpoint_records_evidence_before_deleting(tmp_path, monkeypat
     backend = type(
         "Backend",
         (),
-        {"get_all_records": staticmethod(lambda: [record]), "engine": object()},
+        {
+            "get_all_records": staticmethod(lambda: [record]),
+            "get_record": staticmethod(lambda index: [record][index]),
+            "engine": object(),
+        },
     )()
 
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
@@ -277,7 +281,11 @@ def test_deletion_is_refused_when_the_evidence_cannot_be_recorded(tmp_path, monk
     backend = type(
         "Backend",
         (),
-        {"get_all_records": staticmethod(lambda: [record]), "engine": object()},
+        {
+            "get_all_records": staticmethod(lambda: [record]),
+            "get_record": staticmethod(lambda index: [record][index]),
+            "engine": object(),
+        },
     )()
     trashed: list[str] = []
 
@@ -326,7 +334,11 @@ def _trash(server, records, db_ids, connection, monkeypatch):
     backend = type(
         "Backend",
         (),
-        {"get_all_records": staticmethod(lambda: records), "engine": object()},
+        {
+            "get_all_records": staticmethod(lambda: records),
+            "get_record": staticmethod(lambda index: records[index]),
+            "engine": object(),
+        },
     )()
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
     monkeypatch.setattr(server, "_backend_connection", lambda *a, **k: connection)

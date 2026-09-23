@@ -94,7 +94,7 @@ def test_ler_mil_candidatos_nao_custa_mil_consultas(catalogo):
     store.prefetch(ids)
     consultas_do_prefetch = catalogo.consultas
     for db_id in ids:
-        _registro(store, db_id).descricao_ia
+        _ = _registro(store, db_id).descricao_ia
     # Uma por lote, e nada depois: o que foi aquecido é servido do cache.
     assert consultas_do_prefetch <= 4
     assert catalogo.consultas == consultas_do_prefetch
@@ -104,7 +104,7 @@ def test_o_cache_e_limitado_e_nao_vira_o_acervo_residente(catalogo):
     store = TextStore(catalogo, COLUNAS, cache_size=64)
 
     for db_id in range(1, 1001):
-        _registro(store, db_id).descricao_ia
+        _ = _registro(store, db_id).descricao_ia
 
     assert len(store._scoring._cache) <= 64
     assert len(store._normalized) <= 64
@@ -115,10 +115,10 @@ def test_o_visual_json_nao_viaja_com_o_texto_de_ranqueamento(catalogo):
 
     store.prefetch([1, 2, 3])
     aquecido = catalogo.consultas
-    _registro(store, 1).tags  # ranqueamento: já está em memória
+    _ = _registro(store, 1).tags  # ranqueamento: já está em memória
     assert catalogo.consultas == aquecido
 
-    _registro(store, 1).visual_json  # detalhe: só agora é lido
+    _ = _registro(store, 1).visual_json  # detalhe: só agora é lido
     assert catalogo.consultas == aquecido + 1
 
 

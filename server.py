@@ -87,6 +87,7 @@ from core.file_ops import move_to_trash
 from core.media_metadata import extract_full_metadata, extract_metadata
 from core.observability import configure_logging, request_path
 from core.perf import dump, trace
+from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
 from core.users_db import IrisUser, get_device, get_user_by_id, has_users
@@ -219,13 +220,18 @@ _forced_worker_running = False
 # expensive part of /api/records — sorting the whole library — is cached per
 # (sort_by, sort_asc). Filters (media type / collection / concept) stay live on
 # each request so membership changes are never served stale. Cleared on reload.
-_sorted_records_cache: dict[tuple[str, str, int], list[IndexRecord]] = {}
+# Gallery sorting used to pin a second full catalogue of IndexRecord objects in
+# memory for every sort order.  Positions are enough to preserve the ordering;
+# materialise records only for the requested page.
+_sorted_records_cache: dict[tuple[str, str, int], list[int]] = {}
 # /api/info missing-file scan is O(N) syscalls; cache by (db_path, total_records).
 _missing_count_cache: dict[tuple[str, int], int] = {}
-# db_id -> record. Looking a record up by database id used to walk the whole
-# library, and several callers did it once per item, turning a page of results
-# into a full scan per row. Built once per backend load, like the caches above.
-_records_by_db_id_cache: dict[str, dict[int, IndexRecord]] = {}
+# db_id -> catalogue position. Looking a record up by database id used to walk
+# the whole library, and several callers did it once per item, turning a page
+# of results into a full scan per row. Keep positions rather than IndexRecord
+# instances: the engine's catalogue is intentionally columnar and materialises
+# a record only for the item being handled.
+_record_positions_by_db_id_cache: dict[str, dict[int, int]] = {}
 # Paths /media/ is allowed to serve. Rebuilding this per request cost one
 # Path.resolve() syscall per record — measured at 330 ms for a 17k library, paid
 # on the event loop, on every single original the gallery opened.
@@ -239,7 +245,7 @@ _fingerprint_coverage_cache: dict[str, dict[str, Any]] = {}
 def _invalidate_view_caches() -> None:
     _sorted_records_cache.clear()
     _missing_count_cache.clear()
-    _records_by_db_id_cache.clear()
+    _record_positions_by_db_id_cache.clear()
     _allowed_media_paths_cache.clear()
     _extension_counts_cache.clear()
     _fingerprint_coverage_cache.clear()
@@ -336,19 +342,33 @@ def _allowed_media_paths() -> frozenset[str]:
     return cached
 
 
-def _records_by_db_id() -> dict[int, IndexRecord]:
-    """Index the library by database id, built once per backend load."""
+def _record_positions_by_db_id() -> dict[int, int]:
+    """Index database ids to catalogue positions once per backend load."""
     backend = _get_backend()
     key = _backend_cache_key(backend)
-    cached = _records_by_db_id_cache.get(key)
+    cached = _record_positions_by_db_id_cache.get(key)
     if cached is None:
-        cached = {
-            record.db_id: record
-            for record in backend.get_all_records()
-            if record.db_id is not None
-        }
-        _records_by_db_id_cache[key] = cached
+        records = backend.get_all_records()
+        if isinstance(records, RecordCatalog):
+            cached = {
+                int(db_id): position
+                for position, db_id in enumerate(records.columns.db_id)
+                if db_id > 0
+            }
+        else:
+            cached = {
+                record.db_id: position
+                for position, record in enumerate(records)
+                if record.db_id is not None
+            }
+        _record_positions_by_db_id_cache[key] = cached
     return cached
+
+
+def _record_for_db_id(db_id: int) -> IndexRecord | None:
+    """Materialise the one catalogue record identified by ``db_id``."""
+    position = _record_positions_by_db_id().get(db_id)
+    return _get_backend().get_record(position) if position is not None else None
 
 
 def _import_db() -> sqlite3.Connection:
@@ -1096,10 +1116,6 @@ def _store_concept_reference(
     thumbnail = make_thumbnail(image)
     embedding = np.asarray(backend.encode_image(image), dtype=np.float32).reshape(-1).tobytes()
     backend.add_reference(concept_id, embedding, thumbnail, upload.filename or "")
-
-
-def _record_for_db_id(db_id: int) -> IndexRecord | None:
-    return _records_by_db_id().get(db_id)
 
 
 def _set_import_progress(done: int, total: int, current: str) -> None:
@@ -2081,8 +2097,8 @@ def _sort_key_for(sort_by: str):
     return _key
 
 
-def _sorted_records(backend: SearchBackend, sort_by: str, sort_asc: int) -> list[IndexRecord]:
-    """Full library sorted by the given criteria — cached per (sort_by, sort_asc).
+def _sorted_records(backend: SearchBackend, sort_by: str, sort_asc: int) -> list[int]:
+    """Catalogue positions sorted by the given criteria — cached per view.
 
     The sort is the O(N log N) cost paid on every page nav (the gallery prefetches
     ±1 page); memoising it makes subsequent pages of the same view ~O(page). Safe
@@ -2094,36 +2110,78 @@ def _sorted_records(backend: SearchBackend, sort_by: str, sort_asc: int) -> list
     cached = _sorted_records_cache.get(key)
     if cached is not None:
         return cached
-    result = sorted(
-        backend.get_all_records(), key=_sort_key_for(sort_by), reverse=not bool(sort_asc)
-    )
-    _sorted_records_cache[key] = result
-    return result
+    records = backend.get_all_records()
+    if isinstance(records, RecordCatalog):
+        columns = records.columns
+
+        def _column_key(index: int) -> object:
+            if sort_by == "nome":
+                return columns.arquivo[index].lower()
+            if sort_by == "data":
+                value = columns.file_mtime[index]
+                return 0.0 if np.isnan(value) else float(value)
+            if sort_by == "tamanho":
+                return max(int(columns.file_size[index]), 0)
+            if sort_by == "tipo":
+                return os.path.splitext(columns.arquivo[index])[1].lower()
+            return int(columns.db_id[index]) or index
+
+        positions = list(range(len(records)))
+        positions.sort(key=_column_key, reverse=not bool(sort_asc))
+    else:
+        indexed_records = list(enumerate(records))
+        record_key = _sort_key_for(sort_by)
+        indexed_records.sort(
+            key=lambda item: record_key(item[1]),
+            reverse=not bool(sort_asc),
+        )
+        positions = [position for position, _record in indexed_records]
+    _sorted_records_cache[key] = positions
+    return positions
 
 
 def _filter_records(
-    records: list[IndexRecord],
+    record_indices: list[int],
     backend: SearchBackend,
     options: SearchOptions,
-) -> list[IndexRecord]:
-    if options.media_type == "video":
-        records = [
-            r for r in records if os.path.splitext(r.arquivo)[1].lower() in VIDEO_EXTENSIONS
-        ]
-    elif options.media_type == "image":
-        records = [
-            r for r in records if os.path.splitext(r.arquivo)[1].lower() in IMAGE_EXTENSIONS
-        ]
+) -> list[int]:
+    """Keep positions matching live filters without retaining record objects."""
+    # The normal gallery has no filter. Its sorted positions are already the
+    # answer, so walking the entire catalogue would merely materialise and
+    # discard every record before returning one page.
+    if (
+        options.media_type == "all"
+        and not options.collection_ids
+        and not options.concept_ids
+    ):
+        return record_indices
 
-    if options.collection_ids:
-        allowed = backend.get_collection_db_ids(options.collection_ids)
-        records = [r for r in records if r.db_id in allowed]
-
-    if options.concept_ids:
-        allowed = backend.get_concept_db_ids(options.concept_ids)
-        records = [r for r in records if r.db_id in allowed]
-
-    return records
+    allowed_collections = (
+        backend.get_collection_db_ids(options.collection_ids) if options.collection_ids else None
+    )
+    allowed_concepts = (
+        backend.get_concept_db_ids(options.concept_ids) if options.concept_ids else None
+    )
+    allowed_extensions = (
+        VIDEO_EXTENSIONS
+        if options.media_type == "video"
+        else IMAGE_EXTENSIONS
+        if options.media_type == "image"
+        else None
+    )
+    filtered: list[int] = []
+    for index in record_indices:
+        record = backend.get_record(index)
+        if record is None:
+            continue
+        if allowed_extensions and os.path.splitext(record.arquivo)[1].lower() not in allowed_extensions:
+            continue
+        if allowed_collections is not None and record.db_id not in allowed_collections:
+            continue
+        if allowed_concepts is not None and record.db_id not in allowed_concepts:
+            continue
+        filtered.append(index)
+    return filtered
 
 
 @app.get("/api/records", response_model=RecordsPageOut)
@@ -2146,16 +2204,19 @@ async def get_records(
 
         # Sort once (cached); filtering after sort preserves order and stays live
         # so collection/concept membership changes are never served stale.
-        records = _sorted_records(backend, sort_by, sort_asc)
+        record_indices = _sorted_records(backend, sort_by, sort_asc)
 
-        records = _filter_records(records, backend, options)
+        record_indices = _filter_records(record_indices, backend, options)
 
-        records_sorted = records
-        total = len(records_sorted)
+        total = len(record_indices)
         total_pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, total_pages)
         start = (page - 1) * per_page
-        page_records = records_sorted[start : start + per_page]
+        page_records = [
+            record
+            for index in record_indices[start : start + per_page]
+            if (record := backend.get_record(index)) is not None
+        ]
 
         return {
             "page": page,
@@ -2200,13 +2261,17 @@ async def get_records_timeline(
             concept_ids=concept_ids,
         )
         # Mesma ordenação que a galeria usa, senão os offsets não correspondem.
-        records = _sorted_records(backend, "data", 0)
-        records = _filter_records(records, backend, options)
+        record_indices = _sorted_records(backend, "data", 0)
+        record_indices = _filter_records(record_indices, backend, options)
 
         def _build() -> list[dict[str, Any]]:
             buckets: list[dict[str, Any]] = []
             current: str | None = None
-            for position, record in enumerate(records):
+            visible_position = 0
+            for index in record_indices:
+                record = backend.get_record(index)
+                if record is None:
+                    continue
                 mtime = record.file_mtime or 0.0
                 month = (
                     dt.datetime.fromtimestamp(mtime).strftime("%Y-%m")
@@ -2214,12 +2279,17 @@ async def get_records_timeline(
                     else "desconhecido"
                 )
                 if month != current:
-                    buckets.append({"month": month, "count": 0, "offset": position})
+                    buckets.append({"month": month, "count": 0, "offset": visible_position})
                     current = month
                 buckets[-1]["count"] += 1
+                visible_position += 1
             return buckets
 
-        return {"total": len(records), "buckets": await run_in_threadpool(_build)}
+        buckets = await run_in_threadpool(_build)
+        return {
+            "total": sum(bucket["count"] for bucket in buckets),
+            "buckets": buckets,
+        }
 
 
 # ── Single record detail ─────────────────────────────────────────────────────
@@ -2442,7 +2512,28 @@ async def search_filename(
             collection_ids=collection_ids,
             concept_ids=concept_ids,
         )
-        records = await _run_search(_filter_records, backend.get_all_records(), backend, options)
+        # Filename search necessarily inspects every filename.  Keep this
+        # separate from gallery filtering, whose compact cache stores positions
+        # rather than records.
+        records = list(backend.get_all_records())
+        if options.media_type == "video":
+            records = [
+                record
+                for record in records
+                if os.path.splitext(record.arquivo)[1].lower() in VIDEO_EXTENSIONS
+            ]
+        elif options.media_type == "image":
+            records = [
+                record
+                for record in records
+                if os.path.splitext(record.arquivo)[1].lower() in IMAGE_EXTENSIONS
+            ]
+        if options.collection_ids:
+            allowed = backend.get_collection_db_ids(options.collection_ids)
+            records = [record for record in records if record.db_id in allowed]
+        if options.concept_ids:
+            allowed = backend.get_concept_db_ids(options.concept_ids)
+            records = [record for record in records if record.db_id in allowed]
         scored = [
             (score, record)
             for record in records
@@ -3008,10 +3099,6 @@ async def face_thumb(face_id: int):
 # ── Web enrichment ───────────────────────────────────────────────────────────
 
 
-def _record_by_db_id(db_id: int) -> IndexRecord | None:
-    return _records_by_db_id().get(db_id)
-
-
 def _run_web_enrichment_job(
     job_id: str,
     db_ids: list[int],
@@ -3027,7 +3114,7 @@ def _run_web_enrichment_job(
         update_job(conn, job_id, status="running", message="Iniciando busca web")
         done = 0
         for db_id in db_ids:
-            record = _record_by_db_id(db_id)
+            record = _record_for_db_id(db_id)
             label = record.arquivo if record else f"DB {db_id}"
             if not force and find_existing_suggestion(conn, db_id) is not None:
                 done += 1
@@ -3232,11 +3319,10 @@ async def trash_records(db_ids: str = Form(...)):
     await run_in_threadpool(maybe_auto_snapshot, "pre-trash")
     with trace("api.trash"):
         ids = [int(x) for x in db_ids.split(",") if x.strip().isdigit()]
-        by_db_id = _records_by_db_id()
         paths = []
         doomed: dict[str, IndexRecord] = {}
         for db_id in ids:
-            record = by_db_id.get(db_id)
+            record = _record_for_db_id(db_id)
             if record and record.resolved_path and os.path.exists(record.resolved_path):
                 paths.append(record.resolved_path)
                 if record.content_hash:
@@ -3282,7 +3368,6 @@ def _remember_quarantined_before_removal(items: list[dict]) -> None:
     if getattr(_get_backend(), "engine", None) is None:
         return
     conn = _backend_connection()
-    by_db_id = _records_by_db_id()
     for item in items:
         candidate_hash = item.get("candidate_hash")
         if not candidate_hash:
@@ -3296,7 +3381,7 @@ def _remember_quarantined_before_removal(items: list[dict]) -> None:
             fingerprints=fingerprints,
             original_path=item.get("candidate_path"),
         )
-        matched = by_db_id.get(item.get("match_meme_id") or 0)
+        matched = _record_for_db_id(item.get("match_meme_id") or 0)
         if matched is None or not matched.content_hash:
             continue
         counterpart = equivalence_graph.record_member(
@@ -3437,3 +3522,4 @@ async def serve_media(file_path: str):
     if not resolved.exists():
         raise HTTPException(404, f"File not found: {file_path}")
     return FileResponse(resolved, media_type=_guess_mime(str(resolved)))
+

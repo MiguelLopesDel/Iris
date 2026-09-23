@@ -4,10 +4,18 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
+import torch
 
-from core.search_engine import IrisEngine, SearchOptions, normalize_text, parse_query_terms
+from core.search_engine import (
+    IrisEngine,
+    SearchOptions,
+    _torch_cosine_similarity,
+    normalize_text,
+    parse_query_terms,
+)
 
 
 def make_db(path: Path, media_root: Path) -> None:
@@ -88,8 +96,29 @@ def make_db(path: Path, media_root: Path) -> None:
 
 
 class SearchEngineTests(unittest.TestCase):
+    def test_local_torch_cosine_similarity_matches_expected_scores(self) -> None:
+        query = torch.tensor([[3.0, 4.0]], dtype=torch.float32)
+        candidates = torch.tensor([[3.0, 4.0], [4.0, -3.0]], dtype=torch.float32)
+
+        scores = _torch_cosine_similarity(query, candidates)
+
+        np.testing.assert_allclose(scores.numpy(), [[1.0, 0.0]], atol=1e-6)
+
+    def test_device_detection_is_cached_for_multiple_library_engines(self) -> None:
+        IrisEngine._detect_device.cache_clear()
+        try:
+            with patch("core.search_engine.torch.cuda.is_available", return_value=True) as available:
+                self.assertEqual(IrisEngine._detect_device(), "cuda")
+                self.assertEqual(IrisEngine._detect_device(), "cuda")
+                available.assert_called_once_with()
+        finally:
+            IrisEngine._detect_device.cache_clear()
+
     def test_normalize_text_removes_accents_and_punctuation(self) -> None:
         self.assertEqual(normalize_text("Cachorro, NÃO!"), "cachorro nao")
+
+    def test_normalize_text_preserves_existing_nonspacing_mark_behaviour(self) -> None:
+        self.assertEqual(normalize_text("Café が 🤓☝️"), "cafe か 🤓☝")
 
     def test_parse_query_terms_splits_negative_terms(self) -> None:
         positive, negative = parse_query_terms("gato bravo -preto -ruim")
@@ -188,8 +217,12 @@ class DescriptionMatrixGapTests(unittest.TestCase):
 
     def test_records_share_memory_with_the_matrix(self) -> None:
         """A second copy per record doubled what an open catalogue costs."""
+        from core.record_catalog import RecordCatalog
+
         engine = self._engine(with_gap=False)
 
+        self.assertIsInstance(engine.records, RecordCatalog)
+        self.assertIsNot(engine.records[0], engine.records[0])
         for position, record in enumerate(engine.records):
             self.assertIs(record.embedding.base, engine.image_matrix)
             self.assertTrue((record.embedding == engine.image_matrix[position]).all())

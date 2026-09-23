@@ -8,6 +8,20 @@ from typing import Any
 
 import numpy as np
 
+# ``normalize_text`` is called for every lexical-search candidate.  Asking
+# ``unicodedata.category`` once per character made a cold query spend most of
+# its time crossing the Python/C boundary.  ``str.translate`` performs the
+# same removal in C.  Build the map from the interpreter's own Unicode table so
+# its behaviour stays exactly aligned with the previous category-based rule.
+_NORMALIZATION_TRANSLATION = {ord(char): None for char in string.punctuation}
+_NORMALIZATION_TRANSLATION.update(
+    {
+        codepoint: None
+        for codepoint in range(0x110000)
+        if unicodedata.category(chr(codepoint)) == "Mn"
+    }
+)
+
 
 @dataclass
 class SearchOptions:
@@ -233,11 +247,7 @@ STOP_WORDS = {
 def normalize_text(text: str | None) -> str:
     if not text:
         return ""
-    text = text.lower()
-    text = "".join(
-        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
-    )
-    return text.translate(str.maketrans("", "", string.punctuation)).strip()
+    return unicodedata.normalize("NFD", text.lower()).translate(_NORMALIZATION_TRANSLATION).strip()
 
 
 def parse_query_terms(query: str) -> tuple[str, list[str]]:

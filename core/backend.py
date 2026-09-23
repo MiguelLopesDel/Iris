@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
 from PIL import Image
@@ -41,7 +42,7 @@ class SearchBackend(ABC):
     def get_record(self, idx: int) -> IndexRecord | None: pass
 
     @abstractmethod
-    def get_all_records(self) -> list[IndexRecord]: pass
+    def get_all_records(self) -> Sequence[IndexRecord]: pass
 
     @abstractmethod
     def get_total_records(self) -> int: pass
@@ -206,7 +207,7 @@ class LocalBackend(SearchBackend):
             return self.engine.records[idx]
         return None
 
-    def get_all_records(self) -> list[IndexRecord]:
+    def get_all_records(self) -> Sequence[IndexRecord]:
         return self.engine.records
 
     def get_total_records(self) -> int:

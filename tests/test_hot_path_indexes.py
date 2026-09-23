@@ -45,6 +45,9 @@ class _CountingBackend:
         self.scans += 1
         return self._records
 
+    def get_record(self, index: int) -> IndexRecord | None:
+        return self._records[index] if 0 <= index < len(self._records) else None
+
 
 @pytest.fixture
 def backend(tmp_path, monkeypatch):
@@ -68,8 +71,8 @@ def test_looking_up_many_ids_walks_the_library_once(backend):
     assert backend.scans == 1
 
 
-def test_the_two_lookup_helpers_share_one_index(backend):
-    assert server._record_by_db_id(2) is server._record_for_db_id(2)
+def test_repeated_lookup_uses_the_cached_position(backend):
+    assert server._record_for_db_id(2) is server._record_for_db_id(2)
 
     assert backend.scans == 1
 
