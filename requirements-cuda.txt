@@ -1,6 +1,7 @@
-# Optional NVIDIA CUDA 12.6 runtime. Install requirements.txt first, then run
-# ``pip install --force-reinstall -r requirements-cuda.txt`` to replace CPU PyTorch.
+# Optional NVIDIA CUDA 12.6 runtime. Install requirements.txt first, uninstall
+# onnxruntime, then install this profile to replace the CPU inference runtimes.
 --extra-index-url https://download.pytorch.org/whl/cu126
+-c constraints-common.txt
 torch==2.7.1+cu126
 torchvision==0.22.1+cu126
 torchaudio==2.7.1+cu126

@@ -42,7 +42,7 @@ Iris grew out of a meme search tool and became something bigger: a self-hosted A
 
 ### Requirements
 
-- Python 3.10 or newer
+- Python 3.11 or 3.12
 - Linux (primary platform) — macOS works with CPU; Windows untested
 - NVIDIA GPU with CUDA 12.6 recommended (RTX 3060+ for comfortable speed)
 - 16 GB RAM or more
@@ -70,8 +70,10 @@ pip install -r requirements.txt
 ```
 
 This installs CPU PyTorch by default, so an NVIDIA GPU is not required. On
-NVIDIA/CUDA 12.6 machines, use `pip install --force-reinstall -r requirements-cuda.txt`
-afterwards to replace the CPU runtime.
+NVIDIA/CUDA 12.6 machines, run `pip uninstall -y onnxruntime` and then
+`pip install --force-reinstall -r requirements-cuda.txt` to replace the CPU runtimes. Confirm the
+installation with `python -m pip check` and
+`python -c "import torch, torchvision, torchaudio, onnxruntime"`.
 
 ### Run
 

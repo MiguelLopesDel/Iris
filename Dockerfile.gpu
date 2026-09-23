@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.0-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.0-cudnn-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG IRIS_UID=1000
@@ -8,7 +8,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-dev \
-    python3-pip \
+    python3.12-venv \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
@@ -18,16 +18,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     git \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf python3.12 /usr/bin/python3 \
-    && ln -sf python3 /usr/bin/python
+    && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+RUN python3.12 -m venv /opt/iris-venv
+ENV PATH="/opt/iris-venv/bin:${PATH}"
+
+COPY requirements.txt requirements-cuda.txt constraints-common.txt ./
 
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Replace the CPU inference runtimes with their CUDA variants for this image.
-RUN pip install --no-cache-dir --force-reinstall -r requirements-cuda.txt
+RUN pip uninstall -y onnxruntime \
+    && pip install --no-cache-dir --force-reinstall -r requirements-cuda.txt \
+    && python -m pip check \
+    && python -c "import torch, torchvision, torchaudio, onnxruntime"
 
 RUN groupadd --gid "$IRIS_GID" iris \
     && useradd --uid "$IRIS_UID" --gid iris --create-home --shell /usr/sbin/nologin iris

@@ -16,9 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements.txt constraints-common.txt ./
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -m pip check \
+    && python -c "import torch, torchvision, torchaudio, onnxruntime"
 
 RUN groupadd --gid "$IRIS_GID" iris \
     && useradd --uid "$IRIS_UID" --gid iris --create-home --shell /usr/sbin/nologin iris

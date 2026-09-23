@@ -10,7 +10,8 @@ git clone https://github.com/MiguelLopesDel/Iris.git
 cd Iris
 python3 -m venv venv
 source venv/bin/activate
-pip install -e '.[dev]'
+pip install -r requirements.txt
+pip install --no-deps -e '.[dev]'
 ./scripts/install_git_hooks.sh
 python scripts/dev.py start
 ```
@@ -28,6 +29,8 @@ galeria, permissões e isolamento em duas abas anônimas/incógnitas, sem tocar 
 `data/`, `media/` ou qualquer biblioteca real.
 
 O modo padrão usa `IRIS_LOAD_MODEL=0` para iniciar rapidamente e sem baixar modelos.
+O `requirements.txt` instala a combinação CPU testada; o `--no-deps` no editable
+impede que o PyPI substitua essas wheels por variantes CUDA incompatíveis.
 Para testar busca semântica, busca por imagem ou indexação real, pare o processo e
 rode:
 
