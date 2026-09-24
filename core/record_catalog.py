@@ -44,6 +44,7 @@ class RecordColumns:
     perceptual_hash: tuple[str, ...]
     thumb_hash: tuple[str, ...]
     eager_text: tuple[tuple[str, ...] | None, ...]
+    image_present: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.arquivo)
@@ -61,13 +62,13 @@ class RecordCatalog(Sequence[IndexRecord]):
         self,
         columns: RecordColumns,
         *,
-        image_matrix: np.ndarray,
+        image_matrix: np.ndarray | None,
         desc_matrix: np.ndarray | None,
         desc_present: np.ndarray | None,
         text_store: TextStore | None,
     ) -> None:
         size = len(columns)
-        if image_matrix.shape[0] != size:
+        if image_matrix is not None and image_matrix.shape[0] != size:
             raise ValueError("Image matrix and record columns must stay aligned.")
         if desc_matrix is not None and desc_matrix.shape[0] != size:
             raise ValueError("Description matrix and record columns must stay aligned.")
@@ -78,6 +79,12 @@ class RecordCatalog(Sequence[IndexRecord]):
         self._desc_matrix = desc_matrix
         self._desc_present = desc_present
         self._text_store = text_store
+        if columns.image_present is None:
+            self._image_present = np.full(size, image_matrix is not None, dtype=bool)
+        else:
+            if len(columns.image_present) != size:
+                raise ValueError("Image presence and record columns must stay aligned.")
+            self._image_present = columns.image_present
 
     def __len__(self) -> int:
         return len(self.columns)
@@ -109,12 +116,17 @@ class RecordCatalog(Sequence[IndexRecord]):
         if eager_text is not None:
             text_values = dict(zip(TEXT_COLUMNS, eager_text, strict=True))
         has_desc = self._desc_present is None or bool(self._desc_present[index])
+        has_image = bool(self._image_present[index])
         return IndexRecord(
             index=index,
             arquivo=self.columns.arquivo[index],
             caminho=self.columns.caminho[index],
             resolved_path=self.columns.resolved_path[index],
-            embedding=self._image_matrix[index],
+            embedding=(
+                self._image_matrix[index]
+                if has_image and self._image_matrix is not None
+                else np.empty(0, dtype=np.float32)
+            ),
             desc_embedding=self._desc_matrix[index] if has_desc and self._desc_matrix is not None else None,
             text_store=self._text_store,
             **text_values,
@@ -140,6 +152,9 @@ class RecordCatalog(Sequence[IndexRecord]):
 
     def resolved_path_at(self, index: int) -> str | None:
         return self.columns.resolved_path[index]
+
+    def has_image_embedding(self, index: int) -> bool:
+        return bool(self._image_present[index])
 
 
 def _optional_int(value: np.integer[Any]) -> int | None:

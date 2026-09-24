@@ -9,17 +9,25 @@ from pathlib import Path
 
 def test_device_can_upload_and_read_incremental_changes(tmp_path: Path):
     script = r'''
+import io
 import hashlib
+import sqlite3
 from pathlib import Path
 from fastapi.testclient import TestClient
+from PIL import Image
 from core.auth import hash_password
+from core.backend_registry import BackendRegistry
 from core.users_db import create_user
 
 data = Path("data")
 create_user(data / "users.db", data, username="alice", password_hash=hash_password("senha segura 123"), is_admin=True)
 
 import server
-body = b"iris sync payload"
+server.app.state.backend_registry = BackendRegistry(data / "users.db", load_model=False)
+image = Image.new("RGB", (8, 8), (30, 90, 150))
+buffer = io.BytesIO()
+image.save(buffer, format="JPEG")
+body = buffer.getvalue()
 with TestClient(server.app) as client:
     login = client.post("/api/auth/devices/login", data={
         "username": "alice", "password": "senha segura 123",
@@ -50,7 +58,8 @@ with TestClient(server.app) as client:
     assert chunk.status_code == 200, chunk.text
     completed = client.post("/api/sync/uploads/" + upload_id + "/complete", headers=headers)
     assert completed.status_code == 200, completed.text
-    assert completed.json()["state"] == "pending_processing"
+    assert completed.json()["state"] == "ready"
+    assert isinstance(completed.json()["media_id"], int)
     completed_path = Path(completed.json()["path"])
     assert completed_path.read_bytes() == body
     assert "must-not-be-used" not in str(completed_path)
@@ -58,14 +67,31 @@ with TestClient(server.app) as client:
     sources = client.get("/api/sync/sources", headers=headers).json()["sources"]
     assert sources[0]["name"] == "Camera"
     assert sources[0]["relative_path"] == "../../must-not-be-used"
-    assert sources[0]["item_count"] == 0
+    assert sources[0]["item_count"] == 1
+    page = client.get("/api/records", headers=headers)
+    assert page.status_code == 200, page.text
+    assert page.json()["total"] == 1
+    record = page.json()["records"][0]
+    assert record["arquivo"] == "photo.jpg"
+    assert record["thumbnail_url"].startswith("/thumbs/0/")
+    assert client.get(record["thumbnail_url"], headers=headers).status_code == 200
+    db = sqlite3.connect(data / "users" / "1" / "iris.db")
+    row = db.execute("SELECT embedding, desc_embedding FROM memes").fetchone()
+    assert row == (None, None), row
+    db.close()
     changes = client.get("/api/sync/changes", headers=headers).json()
     assert changes["changes"][0]["operation"] == "created"
     assert changes["changes"][0]["payload"]["state"] == "pending_processing"
+    assert changes["changes"][-1]["payload"]["state"] == "ready"
     assert client.delete("/api/sync/devices/" + session["device_id"], headers=headers).status_code == 200
     assert client.get("/api/sync/devices", headers=headers).status_code == 401
 '''
-    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]), IRIS_LOAD_MODEL="0")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).resolve().parents[1]),
+        IRIS_LOAD_MODEL="1",
+        IRIS_SYNC_AI_PROCESSING="0",
+    )
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=tmp_path, env=env, text=True,
         capture_output=True, check=False,

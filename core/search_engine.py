@@ -308,23 +308,35 @@ class IrisEngine:
         perceptual_hashes: list[str] = []
         thumb_hashes: list[str] = []
         eager_text_values: list[tuple[str, ...] | None] = []
+        image_present: list[bool] = []
         # Written straight into the matrices as rows stream past. Collecting the
         # vectors in a list first would have kept a second copy of every
         # embedding alive until the stacking finished, and a peak is not undone
         # by freeing it: the allocator keeps the arena.
-        expected = self._embedding_count(conn)
-        # Mapped from a sidecar when one agrees with the catalogue, so the bytes
-        # belong to the page cache instead of to this process. Falls back to
-        # reading the column when it does not: a stale file must cost a slower
-        # load, never a wrong vector.
-        image_matrix = self._mapped_column(conn, "embedding", expected)
-        desc_matrix = self._mapped_column(conn, "desc_embedding", None)
-        mapped = image_matrix is not None
+        record_count = int(conn.execute("SELECT COUNT(*) FROM memes").fetchone()[0])
+        embedded_count = self._embedding_count(conn)
+        described_count = int(
+            conn.execute("SELECT COUNT(*) FROM memes WHERE desc_embedding IS NOT NULL").fetchone()[0]
+        )
+        # A sidecar only maps the dense case. When some media has not been
+        # embedded yet, build aligned zero-filled matrices for the vector-bearing
+        # rows while keeping every media row in the gallery catalog.
+        image_matrix = (
+            self._mapped_column(conn, "embedding", record_count)
+            if record_count and embedded_count == record_count
+            else None
+        )
+        desc_matrix = (
+            self._mapped_column(conn, "desc_embedding", record_count)
+            if record_count and described_count == record_count
+            else None
+        )
+        mapped_image = image_matrix is not None
+        mapped_desc = desc_matrix is not None
         has_desc: list[bool] = []
-        for _idx, row in enumerate(rows):
+        for row in rows:
+            position = len(arquivos)
             embedding_blob = row["embedding"]
-            if not embedding_blob:
-                continue
             relative_path = row["relative_path"] if "relative_path" in row.keys() else None
             caminho = row["caminho"] or ""
             resolved_path = self.resolve_media_path(
@@ -334,24 +346,27 @@ class IrisEngine:
                 library_id=row["library_id"] if "library_id" in row.keys() else None,
             )
             desc_blob = row["desc_embedding"]
-            position = len(arquivos)
-            if not mapped:
+            has_image = False
+            if embedding_blob:
                 vector = np.frombuffer(embedding_blob, dtype=np.float32)
                 if image_matrix is None:
-                    image_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
-                    desc_matrix = np.zeros((expected, vector.shape[0]), dtype=np.float32)
-                if position < expected and vector.shape[0] == image_matrix.shape[1]:
-                    image_matrix[position] = vector
-                desc_vector = (
-                    np.frombuffer(desc_blob, dtype=np.float32) if desc_blob else None
-                )
-                if (
-                    desc_vector is not None
-                    and position < expected
-                    and desc_vector.shape[0] == desc_matrix.shape[1]
-                ):
-                    desc_matrix[position] = desc_vector
-            has_desc.append(desc_blob is not None)
+                    image_matrix = np.zeros((record_count, vector.shape[0]), dtype=np.float32)
+                if vector.shape[0] == image_matrix.shape[1]:
+                    if not mapped_image:
+                        image_matrix[position] = vector
+                    has_image = True
+            image_present.append(has_image)
+
+            has_description = False
+            if desc_blob:
+                desc_vector = np.frombuffer(desc_blob, dtype=np.float32)
+                if desc_matrix is None:
+                    desc_matrix = np.zeros((record_count, desc_vector.shape[0]), dtype=np.float32)
+                if desc_vector.shape[0] == desc_matrix.shape[1]:
+                    if not mapped_desc:
+                        desc_matrix[position] = desc_vector
+                    has_description = True
+            has_desc.append(has_description)
             keys = row.keys()
             arquivos.append(row["arquivo"] or "")
             caminhos.append(caminho)
@@ -377,13 +392,8 @@ class IrisEngine:
                 if eager_text
                 else None
             )
-        if image_matrix is None or not arquivos:
+        if not arquivos:
             return []
-        # A row can be skipped after the matrices are sized, so trim to what was
-        # actually written rather than leaving zero rows the engine would search.
-        if not mapped and len(arquivos) < expected:
-            image_matrix = image_matrix[: len(arquivos)].copy()
-            desc_matrix = desc_matrix[: len(arquivos)].copy()
         self._image_matrix = image_matrix
         # Kept even when some rows have no description embedding. Returning None
         # for the whole matrix, as this used to, silently switched off
@@ -408,6 +418,7 @@ class IrisEngine:
             perceptual_hash=tuple(perceptual_hashes),
             thumb_hash=tuple(thumb_hashes),
             eager_text=tuple(eager_text_values),
+            image_present=np.asarray(image_present, dtype=bool),
         )
         return RecordCatalog(
             columns,
@@ -657,6 +668,12 @@ class IrisEngine:
         if self._desc_present is None:
             return True
         return bool(self._desc_present[record_index])
+
+    def _has_image_embedding(self, record_index: int) -> bool:
+        if isinstance(self.records, RecordCatalog):
+            return self.records.has_image_embedding(record_index)
+        embedding = self.records[record_index].embedding
+        return embedding is not None and np.size(embedding) > 0
 
     def _stack_embeddings(self, field_name: str) -> np.ndarray | None:
         """Matrix built while loading; this only hands it over."""
@@ -968,6 +985,8 @@ class IrisEngine:
     ) -> list[SearchResult]:
         if record_index < 0 or record_index >= len(self.records):
             return []
+        if not self._has_image_embedding(record_index):
+            return []
         embedding = self._normalize_vector(self.records[record_index].embedding)
         return self.search_by_embedding(embedding, options or SearchOptions())
 
@@ -979,7 +998,9 @@ class IrisEngine:
         translated_query: str = "",
         negative_terms: Iterable[str] = (),
     ) -> list[SearchResult]:
-        if not self.records or self.image_matrix is None:
+        if not self.records:
+            return []
+        if self.image_matrix is None and not text_query:
             return []
 
         query_embedding = self._normalize_vector(query_embedding)
@@ -1095,6 +1116,8 @@ class IrisEngine:
         self._catalog_model_checked = True
 
     def _candidate_indices(self, query_embedding: np.ndarray, candidate_pool: int) -> list[int]:
+        if self.image_matrix is None:
+            return list(range(len(self.records)))
         use_faiss = (
             self.image_index is not None
             and self.image_index.d == query_embedding.shape[1]
@@ -1126,8 +1149,13 @@ class IrisEngine:
         translated_query: str,
         negative_terms: list[str],
     ) -> tuple[dict[int, float], dict[int, dict[str, float | str]]]:
-        candidate_image_matrix = self.image_matrix[candidate_indices]
-        if self.device == "cpu":
+        candidate_image_matrix = (
+            self.image_matrix[candidate_indices] if self.image_matrix is not None else None
+        )
+        if candidate_image_matrix is None:
+            image_scores = np.zeros(len(candidate_indices), dtype=np.float32)
+            desc_scores: np.ndarray | None = None
+        elif self.device == "cpu":
             # FAISS already runs on CPU. Avoiding Torch allocations here keeps
             # ranking responsive on low-end APUs.
             query_norm = np.linalg.norm(query_embedding[0])
@@ -1174,24 +1202,26 @@ class IrisEngine:
             image_score = float(image_scores[local_idx])
             has_description = desc_scores is not None and self._has_description(record_idx)
             desc_score = float(desc_scores[local_idx]) if has_description else 0.0
+            has_image = self._has_image_embedding(record_idx)
             semantic_score = _weighted_mean(
                 [
-                    (options.balance, True, image_score),
+                    (options.balance, has_image, image_score),
                     (1.0 - options.balance, has_description, desc_score),
                 ]
             )
+            lexical_score = self._lexical_score(record, query_text) if text_query else 0.0
             if semantic_score is None:
-                # Nothing this query asked for exists on this item: the weights
-                # it does have are zero and the ones it would have are absent.
-                # Falling back to the other signal would answer a question the
-                # user did not ask.
-                continue
-
-            lexical_score = 0.0
-            score = semantic_score
+                # Media accepted while AI indexing is paused still participates
+                # in filename/metadata search, but never receives a fabricated
+                # zero-vector semantic score.
+                if not text_query or lexical_score <= 0.0:
+                    continue
+                score = lexical_score * options.lexical_weight
+            else:
+                score = semantic_score
             if text_query:
-                lexical_score = self._lexical_score(record, query_text)
-                score += lexical_score * options.lexical_weight
+                if semantic_score is not None:
+                    score += lexical_score * options.lexical_weight
                 score *= self._text_multiplier(record, query_text, options.text_bonus)
             scores[record_idx] = score
             details[record_idx] = {
@@ -1199,6 +1229,7 @@ class IrisEngine:
                 "description": desc_score,
                 "semantic": semantic_score,
                 "lexical": lexical_score,
+                "image_available": has_image,
                 "balance": options.balance,
                 "lexical_weight": options.lexical_weight,
                 "style": record.style,

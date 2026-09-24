@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
+from core.media_ingest import ingest_upload_without_ai
 from core.sync_db import append_change, changes_after, ensure_tables, now_iso, record_origin
 from core.sync_processor import process_upload
 from core.users_db import list_devices, revoke_device
@@ -254,7 +255,7 @@ async def complete_upload(request: Request, upload_id: str):
             "upload_id": upload_id, "filename": row[0], "path": str(destination),
             "captured_at": row[7], "state": "pending_processing",
         })
-    if request.app.state.load_model:
+    if request.app.state.sync_ai_processing and request.app.state.load_model:
         threading.Thread(
             target=process_upload,
             kwargs={
@@ -265,4 +266,41 @@ async def complete_upload(request: Request, upload_id: str):
             },
             name=f"iris-sync-{upload_id[:8]}", daemon=True,
         ).start()
-    return {"upload_id": upload_id, "state": "pending_processing", "cursor": sequence, "path": str(destination)}
+        return {
+            "upload_id": upload_id,
+            "state": "pending_processing",
+            "cursor": sequence,
+            "path": str(destination),
+        }
+
+    try:
+        return await run_in_threadpool(
+            ingest_upload_without_ai,
+            db_path=user.db_path,
+            media_root=user.media_root,
+            upload_id=upload_id,
+            file_path=destination,
+            on_finished=lambda: request.app.state.backend_registry.invalidate(user.id),
+        )
+    except Exception as exc:
+        # The original has already been moved into the account library. Record
+        # the terminal error instead of leaving the phone's upload pending
+        # forever; the file remains on disk for recovery.
+        with _connection(request) as conn:
+            conn.execute(
+                "UPDATE sync_uploads SET state = 'failed_processing', updated_at = ? WHERE id = ?",
+                (now_iso(), upload_id),
+            )
+            append_change(
+                conn,
+                "media",
+                upload_id,
+                "updated",
+                3,
+                {
+                    "upload_id": upload_id,
+                    "state": "failed_processing",
+                    "error": str(exc)[:500],
+                },
+            )
+        raise HTTPException(500, "Não foi possível registrar a mídia na biblioteca") from exc

@@ -117,7 +117,12 @@ copies = list((carol_user.media_root / "shared").rglob("*.jpg"))
 assert len(copies) == 1
 assert hashlib.sha256(copies[0].read_bytes()).hexdigest() == bob_item["sha256"]
 again = carol.post(save)
-assert again.status_code == 200 and again.json()["upload_id"] == saved.json()["upload_id"]
+assert again.status_code == 200, again.text
+again_payload = again.json()
+assert (
+    again_payload["upload_id"] == saved.json()["upload_id"]
+    or (again_payload["state"] == "duplicate" and isinstance(again_payload["media_id"], int))
+)
 changes = carol.get("/api/sync/changes").json()["changes"]
 assert any(c["payload"].get("upload_id") == saved.json()["upload_id"] for c in changes)
 # The copy is Carol's: Bob's library did not change, the space item is intact.

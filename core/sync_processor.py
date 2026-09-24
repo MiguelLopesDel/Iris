@@ -11,11 +11,23 @@ from core.sync_db import append_change, ensure_tables, now_iso, record_origin
 _locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 
 
-def process_upload(*, db_path: Path, media_root: Path, model_name: str, upload_id: str, file_path: Path, on_finished) -> None:
-    """Index one accepted upload and emit its terminal sync state.
+def process_upload(
+    *,
+    db_path: Path,
+    media_root: Path,
+    model_name: str,
+    upload_id: str,
+    file_path: Path,
+    on_finished,
+    use_ai: bool = True,
+) -> None:
+    """Catalog one accepted upload and emit its terminal sync state.
 
     Work is deliberately serialized per library because FAISS rebuilds and SQLite
     writes are not safe to run concurrently for the same account.
+
+    With ``use_ai=False``, the original is registered in the ordinary gallery
+    catalog without embeddings, face extraction, or FAISS work.
     """
     lock = _locks[str(db_path.resolve())]
     with lock:
@@ -26,6 +38,18 @@ def process_upload(*, db_path: Path, media_root: Path, model_name: str, upload_i
         conn.commit()
         conn.close()
         try:
+            if not use_ai:
+                from core.media_ingest import ingest_upload_without_ai
+
+                ingest_upload_without_ai(
+                    db_path=db_path,
+                    media_root=media_root,
+                    upload_id=upload_id,
+                    file_path=file_path,
+                    on_finished=on_finished,
+                )
+                return
+
             from core.indexer import (
                 IndexerConfig,
                 create_faiss_indices,

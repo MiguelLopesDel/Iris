@@ -109,8 +109,8 @@ def save_copy(
         conn.close()
 
 
-def start_processing(user: IrisUser, intake: Intake, on_finished) -> None:
-    """Index a queued intake in the background, like a completed device upload."""
+def start_processing(user: IrisUser, intake: Intake, on_finished, *, use_ai: bool) -> None:
+    """Catalog a queued intake in the background, optionally computing AI data."""
     if not intake.created or intake.upload_id is None or intake.path is None:
         return
     threading.Thread(
@@ -118,7 +118,7 @@ def start_processing(user: IrisUser, intake: Intake, on_finished) -> None:
         kwargs={
             "db_path": user.db_path, "media_root": user.media_root,
             "model_name": user.model_name, "upload_id": intake.upload_id,
-            "file_path": intake.path, "on_finished": on_finished,
+            "file_path": intake.path, "on_finished": on_finished, "use_ai": use_ai,
         },
         name=f"iris-intake-{intake.upload_id[:8]}", daemon=True,
     ).start()

@@ -149,6 +149,9 @@ def _default_db_path() -> str:
 _DEFAULT_DB = _default_db_path()
 _MEDIA_ROOT = os.environ.get("IRIS_MEDIA_ROOT", "media")
 _LOAD_MODEL = os.environ.get("IRIS_LOAD_MODEL", "1").lower() not in {"0", "false", "no"}
+_SYNC_AI_PROCESSING = os.environ.get("IRIS_SYNC_AI_PROCESSING", "0").lower() not in {
+    "0", "false", "no", "off",
+}
 _USERS_DB = _DATA_DIR / "users.db"
 
 
@@ -626,6 +629,7 @@ app.state.users_db_path = _USERS_DB
 app.state.auth_secret = load_or_create_secret(_DATA_DIR / "secret_key")
 app.state.account_quota_bytes = _ACCOUNT_QUOTA_BYTES
 app.state.load_model = _LOAD_MODEL
+app.state.sync_ai_processing = _SYNC_AI_PROCESSING
 _server_mode = os.environ.get("IRIS_SERVER_MODE", "legacy").lower()
 _private_server_requested = _server_mode in {"private", "multiuser"}
 _has_users = has_users(_USERS_DB)

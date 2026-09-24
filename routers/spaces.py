@@ -319,9 +319,14 @@ def save_to_library(request: Request, response: Response, space_id: int, item_id
         )
     except LibraryQuotaExceeded as exc:
         raise HTTPException(507, "Cota da biblioteca excedida") from exc
-    if intake.created and request.app.state.load_model:
+    if intake.created:
         registry = request.app.state.backend_registry
-        start_processing(actor, intake, lambda: registry.invalidate(actor.id))
+        start_processing(
+            actor,
+            intake,
+            lambda: registry.invalidate(actor.id),
+            use_ai=request.app.state.sync_ai_processing and request.app.state.load_model,
+        )
     response.status_code = 201 if intake.created else 200
     return {"state": intake.state, "upload_id": intake.upload_id, "media_id": intake.media_id}
 
