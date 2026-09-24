@@ -2,4 +2,4 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-exec python3 "$repo_root/scripts/security/pre_push_check.py"
+exec python3 "$repo_root/scripts/security/pre_push_check.py" "$@"

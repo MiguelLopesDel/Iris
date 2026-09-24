@@ -54,8 +54,13 @@ def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL)
 
 
-def pushed_commits(lines: Iterable[str]) -> list[str]:
+def pushed_commits(lines: Iterable[str], remote_name: str | None = None) -> list[str]:
     commits: set[str] = set()
+    remote_refs = (
+        git("for-each-ref", "--format=%(refname)", f"refs/remotes/{remote_name}").splitlines()
+        if remote_name
+        else []
+    )
     for line in lines:
         parts = line.strip().split()
         if len(parts) != 4:
@@ -67,8 +72,18 @@ def pushed_commits(lines: Iterable[str]) -> list[str]:
         local_ref, local_sha, _remote_ref, remote_sha = parts
         if local_sha == ZERO_SHA or local_ref == "(delete)":
             continue
-        revision = local_sha if remote_sha == ZERO_SHA else f"{remote_sha}..{local_sha}"
-        commits.update(git("rev-list", revision).splitlines())
+        if remote_sha == ZERO_SHA:
+            # A newly published branch has no remote branch tip to use as a
+            # range. Exclude commits already reachable from this remote's
+            # fetched refs so we inspect only objects this push introduces.
+            # If no remote-tracking refs exist, keep the conservative full
+            # history scan rather than silently omitting commits.
+            revisions = [local_sha]
+            if remote_refs:
+                revisions.extend(("--not", *remote_refs))
+            commits.update(git("rev-list", *revisions).splitlines())
+        else:
+            commits.update(git("rev-list", f"{remote_sha}..{local_sha}").splitlines())
     return sorted(commits)
 
 
@@ -103,7 +118,8 @@ def inspect_blob(commit: str, path: str) -> list[str]:
 
 def main() -> int:
     findings: list[str] = []
-    for commit in pushed_commits(sys.stdin):
+    remote_name = sys.argv[1] if len(sys.argv) > 1 else None
+    for commit in pushed_commits(sys.stdin, remote_name):
         paths = git("diff-tree", "--no-commit-id", "--name-only", "-r", commit).splitlines()
         for path in paths:
             findings.extend(inspect_blob(commit, path))
