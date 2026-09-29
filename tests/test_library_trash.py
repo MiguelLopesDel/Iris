@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -14,7 +14,7 @@ from core.faces import create_face_tables, create_person
 from core.indexer_db import init_db
 from core.library_trash import TrashItemNotFound, TrashRestoreConflict
 
-T0 = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture

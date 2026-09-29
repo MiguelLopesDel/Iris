@@ -22,7 +22,7 @@ import sqlite3
 import tarfile
 import tempfile
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from core.file_digest import FileDigest
@@ -32,11 +32,11 @@ _ALLOWED_RESTORE_MEMBERS = {"catalog.db", "best_weights.json", "manifest.json", 
 
 
 def _now_stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 # ── Consistent SQLite copy ──────────────────────────────────────────────────────

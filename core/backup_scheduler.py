@@ -17,7 +17,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -103,7 +103,7 @@ class BackupService:
         self.users_db = users_db
         self.roots = roots
         self.dest = dest
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._running = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -157,7 +157,7 @@ class BackupService:
         local = now.astimezone(settings.zone)
         hours, minutes = (int(part) for part in settings.at.split(":"))
         moment = local.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        return moment.astimezone(timezone.utc)
+        return moment.astimezone(UTC)
 
     def next_run(self, now: datetime | None = None) -> datetime | None:
         settings = self.settings()

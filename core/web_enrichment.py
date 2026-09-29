@@ -12,7 +12,7 @@ import sqlite3
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib import parse, request
@@ -26,7 +26,7 @@ from core.browser_session import (
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def create_web_enrichment_tables(conn: sqlite3.Connection) -> None:
@@ -181,7 +181,7 @@ class S3TemporaryImagePublisher:
         encoded_key = "/".join(parse.quote(part) for part in key.split("/"))
         canonical_uri = f"/{parse.quote(cfg.bucket)}/{encoded_key}"
         endpoint = cfg.endpoint_url + canonical_uri
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         amz_date = now.strftime("%Y%m%dT%H%M%SZ")
         date_stamp = now.strftime("%Y%m%d")
         payload_hash = hashlib.sha256(data).hexdigest()

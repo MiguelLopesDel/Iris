@@ -25,7 +25,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
@@ -1239,7 +1239,7 @@ def _run_import_job(
             quarantined=0,
             current="",
             message="Carregando modelos e preparando importação.",
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=datetime.now(dt.UTC).isoformat(),
             finished_at=None,
         )
         with _import_db() as conn:
@@ -1286,7 +1286,7 @@ def _run_import_job(
             f"Importação concluída: {total_imported} nova(s), "
             f"{total_quarantined} em revisão."
         )
-        finished = datetime.now(timezone.utc).isoformat()
+        finished = datetime.now(dt.UTC).isoformat()
         _import_job.update(
             status="completed",
             imported=total_imported,
@@ -1300,7 +1300,7 @@ def _run_import_job(
                 quarantined=total_quarantined, message=done_msg, finished_at=finished,
             )
     except BaseException as exc:
-        finished = datetime.now(timezone.utc).isoformat()
+        finished = datetime.now(dt.UTC).isoformat()
         # An unavailable source (folder unmounted / disappeared) is *pausable*, not a
         # failure: keep the job resumable so it picks up where it stopped once the
         # folder is back (on restart, or when the user re-imports it).
@@ -1354,7 +1354,7 @@ def _resume_unfinished_imports() -> None:
                 import_review.update_job(
                     conn, job["id"], status="failed",
                     error_message="Sem origem/configuração para retomar.",
-                    finished_at=datetime.now(timezone.utc).isoformat(),
+                    finished_at=datetime.now(dt.UTC).isoformat(),
                 )
             continue
         if not present:

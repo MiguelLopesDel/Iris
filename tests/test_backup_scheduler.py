@@ -7,7 +7,7 @@ import os
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,7 +25,7 @@ SP = ZoneInfo("America/Sao_Paulo")  # UTC-3, no daylight saving since 2019
 
 class Clock:
     def __init__(self, local: datetime) -> None:
-        self.now = local.astimezone(timezone.utc)
+        self.now = local.astimezone(UTC)
 
     def __call__(self) -> datetime:
         return self.now

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -218,7 +218,7 @@ def test_trashed_bytes_still_count_until_purged(tmp_path: Path) -> None:
     space_catalog.remove_item(root, item.id, 1, "manager")
     with pytest.raises(SpaceQuotaExceeded):
         space_catalog.add_item(root, _file(tmp_path, "b", b"abcdefgh"), "b.jpg", 1, storage)
-    space_catalog.purge_expired(root, 30, now=datetime.now(timezone.utc) + timedelta(days=31))
+    space_catalog.purge_expired(root, 30, now=datetime.now(UTC) + timedelta(days=31))
     space_catalog.add_item(root, _file(tmp_path, "b", b"abcdefgh"), "b.jpg", 1, storage)
 
 
@@ -255,7 +255,7 @@ def test_restore_conflicts_with_the_same_content_added_again(tmp_path: Path) -> 
 
 def test_purge_waits_for_retention_and_keeps_shared_bytes(tmp_path: Path) -> None:
     root = tmp_path / "space"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     gone, _ = space_catalog.add_item(root, _file(tmp_path, "g", b"gone"), "g.jpg", 1)
     old, _ = space_catalog.add_item(root, _file(tmp_path, "s", b"shared"), "s.jpg", 1)
     _, gone_path = space_catalog.item_original(root, gone.id)

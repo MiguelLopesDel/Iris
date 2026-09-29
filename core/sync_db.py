@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from core.library_quota import ensure_tables as ensure_library_quota_tables
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def ensure_tables(conn: sqlite3.Connection) -> None:

@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -511,7 +511,7 @@ def purge_expired(root: Path, trash_days: int, now: datetime | None = None) -> i
     """
     if not (root / "space.db").exists():
         return 0
-    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=trash_days)).isoformat()
+    cutoff = ((now or datetime.now(UTC)) - timedelta(days=trash_days)).isoformat()
     connection = _connect(root)
     freed: list[tuple[str, str]] = []
     try:

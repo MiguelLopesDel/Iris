@@ -28,7 +28,7 @@ import shutil
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.deleted_registry import register_deleted_hashes
@@ -177,7 +177,7 @@ def move_to_trash(
     the rows are deleted inside a transaction that is committed only after the
     file is in the trash folder, and the move is undone if the commit fails.
     """
-    stamp = (now or datetime.now(timezone.utc)).isoformat()
+    stamp = (now or datetime.now(UTC)).isoformat()
     root = trash_root(db_path)
     moved: list[int] = []
     connection = _connect(db_path)
@@ -343,7 +343,7 @@ def purge_expired(db_path: Path, days: int, now: datetime | None = None) -> int:
     """Definitively delete items trashed more than ``days`` ago."""
     if not db_path.exists():
         return 0
-    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=days)).isoformat()
+    cutoff = ((now or datetime.now(UTC)) - timedelta(days=days)).isoformat()
     connection = _connect(db_path)
     try:
         # A plain read first: this runs for every library on a timer.

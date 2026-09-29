@@ -8,7 +8,7 @@ import os
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,7 +24,7 @@ from core.space_catalog import add_item, space_root
 from core.users_db import create_user
 
 PASSWORD = "synthetic backup password"
-T0 = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
 
 
 def _image(path: Path, colour: tuple[int, int, int]) -> Path:
@@ -540,7 +540,7 @@ def test_every_snapshot_records_the_iris_version_that_wrote_it(
 
 def test_policy_keeps_days_weeks_and_months_and_nothing_else(tmp_path: Path) -> None:
     dest = tmp_path / "b"
-    start = datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, 3, 0, tzinfo=UTC)
     daily = [_fake_snapshot(dest, start + timedelta(days=n), "policy") for n in range(120)]
     policy = instance_backup.RetentionPolicy(daily=3, weekly=2, monthly=3)
 
@@ -558,7 +558,7 @@ def test_policy_keeps_days_weeks_and_months_and_nothing_else(tmp_path: Path) -> 
 
 def test_only_policy_snapshots_are_ever_pruned(tmp_path: Path) -> None:
     dest = tmp_path / "b"
-    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2025, 1, 1, tzinfo=UTC)
     legacy = [_fake_snapshot(dest, start + timedelta(days=n), None) for n in range(5)]
     pinned = _fake_snapshot(dest, start + timedelta(days=10), "pinned")
     managed = [_fake_snapshot(dest, start + timedelta(days=20 + n), "policy") for n in range(5)]

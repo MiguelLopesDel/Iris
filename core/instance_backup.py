@@ -54,7 +54,7 @@ import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone, tzinfo
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 
 from core.file_digest import FileDigest
@@ -419,7 +419,7 @@ def create(
 def _create(
     roots: dict[str, Path], dest: Path, now: datetime | None, retention: str
 ) -> Summary:
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+    stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
     # Two backups in the same second (a manual one right after the scheduled
     # one) must not collide.
     suffix = 0
@@ -438,7 +438,7 @@ def _create(
         )
         manifest = Manifest(
             format=FORMAT_VERSION,
-            created_at=(now or datetime.now(timezone.utc)).isoformat(),
+            created_at=(now or datetime.now(UTC)).isoformat(),
             roots={name: str(root.resolve()) for name, root in roots.items()},
             iris_version=iris_version(),
             iris_commit=iris_commit(),
@@ -677,7 +677,7 @@ def prune(
     dest: Path,
     policy: RetentionPolicy,
     *,
-    zone: tzinfo = timezone.utc,
+    zone: tzinfo = UTC,
     dry_run: bool = False,
 ) -> list[Path]:
     """Delete the policy snapshots the retention policy no longer keeps.
@@ -717,7 +717,7 @@ def restore(snapshot: Path, targets: dict[str, Path], *, now: datetime | None = 
     missing = set(manifest.roots) - set(targets)
     if missing:
         raise BackupError(f"informe o destino para as raízes: {', '.join(sorted(missing))}")
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+    stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
 
     staged: dict[str, Path] = {}
     for name in sorted(manifest.roots):

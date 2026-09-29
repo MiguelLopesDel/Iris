@@ -4,7 +4,7 @@ import io
 import json
 import shutil
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
@@ -54,7 +54,7 @@ def _write_backup(archive_target: BinaryIO | Path, data_dir: Path, include_libra
             json.dumps(
                 {
                     "version": "1.0",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     "software": "iris",
                     "library_included": library_included,
                 },

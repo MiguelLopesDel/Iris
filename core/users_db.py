@@ -10,7 +10,7 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from core.embedding_models import DEFAULT_MODEL, resolve_embedding_model
@@ -43,7 +43,7 @@ class IrisDevice:
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _connect(path: Path) -> sqlite3.Connection:
