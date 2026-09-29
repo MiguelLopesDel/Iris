@@ -54,6 +54,7 @@ class GalleryViewModel(
 
     private val _uiState = MutableStateFlow(GalleryUiState())
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
+    private val recordMerger = GalleryRecordMerger()
     private var firstContentFinish: (() -> Unit)? = null
     private var initialLoadJob: Job? = null
     private var firstPageLoadJob: Job? = null
@@ -153,7 +154,7 @@ class GalleryViewModel(
             _uiState.update {
                 it.copy(
                     origins = originIndex,
-                    records = mergeGalleryRecords(serverRecords, deviceRecords),
+                    records = recordMerger.merge(serverRecords, deviceRecords),
                     totalRecords = totalRecordEstimate(originIndex)
                 )
             }
@@ -188,7 +189,7 @@ class GalleryViewModel(
                     serverRecords = cached
                     serverTotalRecords = cachedTotal
                     current.copy(
-                        records = mergeGalleryRecords(serverRecords, deviceRecords),
+                        records = recordMerger.merge(serverRecords, deviceRecords),
                         totalRecords = totalRecordEstimate(),
                         totalPages = maxOf(current.deviceTotalPages, pagesFor(cachedTotal))
                     )
@@ -211,7 +212,7 @@ class GalleryViewModel(
                     deviceTotalRecords = 0
                     _uiState.update {
                         it.copy(
-                            records = mergeGalleryRecords(serverRecords, deviceRecords),
+                            records = recordMerger.merge(serverRecords, deviceRecords),
                             deviceMediaPermissionGranted = false,
                             deviceTotalRecords = 0,
                             deviceTotalPages = 1,
@@ -231,7 +232,7 @@ class GalleryViewModel(
             _uiState.update { current ->
                 val devicePages = devicePage.totalPages.coerceAtLeast(1)
                 current.copy(
-                    records = mergeGalleryRecords(serverRecords, deviceRecords),
+                    records = recordMerger.merge(serverRecords, deviceRecords),
                     deviceMediaPermissionGranted = true,
                     deviceTotalRecords = devicePage.total,
                     deviceTotalPages = devicePages,
@@ -399,7 +400,7 @@ class GalleryViewModel(
                 serverTotalRecords = response.total
                 _uiState.update { current ->
                     current.copy(
-                        records = mergeGalleryRecords(serverRecords, deviceRecords),
+                        records = recordMerger.merge(serverRecords, deviceRecords),
                         isLoading = false,
                         isRefreshing = false,
                         page = response.page,
@@ -478,17 +479,6 @@ class GalleryViewModel(
     private fun currentSessionKey(): String? {
         return repository.credentialsStore.sessionIdentity.value
             ?.takeIf { repository.credentialsStore.hasValidCredentials() }
-    }
-
-    private fun mergeGalleryRecords(server: List<MediaRecord>, device: List<MediaRecord>): List<MediaRecord> {
-        val serverHashes = server.mapNotNull { it.contentHash?.lowercase()?.takeIf(String::isNotBlank) }.toSet()
-        return (server + device.filter { local ->
-            val hash = local.contentHash?.lowercase()
-            // Do not hide an accepted upload until its server row is actually
-            // in the pages loaded into this gallery. Otherwise an older local
-            // photo can disappear while its matching remote page is still ahead.
-            hash.isNullOrBlank() || hash !in serverHashes
-        }).sortedByDescending { it.fileMtime ?: 0.0 }
     }
 
     private fun totalRecordEstimate(origins: MediaOriginIndex = _uiState.value.origins): Int {
