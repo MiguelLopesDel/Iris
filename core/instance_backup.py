@@ -50,13 +50,12 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
-
-import tomllib
 
 from core.file_digest import FileDigest
 

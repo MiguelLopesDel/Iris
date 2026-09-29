@@ -5,47 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "iris-media"
 version = "0.3.0"
-description = "Local multimodal AI media intelligence — index, search, and organize your media library with AI."
+description = "Self-hosted multi-account photo and video library."
 requires-python = ">=3.11,<3.13"
-dependencies = [
-    "torch==2.7.1",
-    "torchvision==0.22.1",
-    "torchaudio==2.7.1",
-    "transformers==5.17.0",
-    "sentence-transformers==5.5.1",
-    "easyocr==1.7.2",
-    "pillow==12.3.0",
-    "imagehash==4.3.2",
-    "tqdm==4.67.3",
-    "faiss-cpu==1.13.2",
-    "numpy==2.4.3",
-    "opencv-python-headless==4.13.0.92",
-    "openai-whisper==20250625",
-    "piexif==1.1.3",
-    "timm==1.0.26",
-    "einops==0.8.2",
-    "psutil==7.1.3",
-    "fastapi==0.141.1",
-    "python-multipart==0.0.32",
-    "pwdlib[argon2]==0.3.1",
-    "uvicorn==0.53.0",
-    "itsdangerous==2.2.0",
-    "deep-translator==1.11.4",
-    "Send2Trash==1.8.3",
-    "pyacoustid==1.3.0",
-    "insightface==0.7.3",
-    "cairosvg==2.9.1",
-    "reverse_geocoder==1.5.1",
-]
-
-[project.optional-dependencies]
-cpu-runtime = ["onnxruntime==1.20.1"]
-nvidia-runtime = ["onnxruntime-gpu==1.20.2"]
-dev = [
-    "pytest==9.1.1",
-    "httpx==0.28.1",
-    "ruff==0.14.9",
-]
+# This repository is an application, not a portable Python library. Runtime
+# dependencies are installed from requirements.txt (CPU) or
+# requirements-cuda.txt (NVIDIA); development tools are in requirements-dev.txt.
+# Keeping package metadata dependency-free prevents PyPI's generic torch wheel
+# from overriding the explicitly selected CPU/CUDA runtime profile.
 
 [project.scripts]
 iris-app = "scripts.run_server:main"
@@ -69,7 +35,7 @@ py-modules = ["server"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 extend-exclude = [
     "scripts/test_playground.py",
     "scripts/test_queries.py",

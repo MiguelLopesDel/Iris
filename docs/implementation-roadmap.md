@@ -168,6 +168,12 @@ espaco compartilhado. O fluxo de copiar para um espaco e sempre explicito.
   Python global continua com uma extensao
   torchvision CUDA 13 incompatível com seu torch CUDA 12.8; nao e o ambiente
   de validacao do projeto.
+- Em 2026-09-29, os pins diretos foram separados em `requirements-common.txt`,
+  `requirements.txt` (CPU), `requirements-cuda.txt` e `requirements-dev.txt`;
+  `constraints-common.txt` passou a conter somente dependencias transitivas.
+  A duplicacao de pins em `pyproject.toml` foi removida, e os ambientes de
+  desenvolvimento/CI passaram a instalar o perfil CPU isolado. O ambiente
+  global ainda pode conter outras wheels e nao deve ser usado para validar Iris.
 - O perfil CUDA tambem foi resolvido em modo `pip --dry-run` com as mesmas
   restricoes, usando PyTorch 2.7.1/cu126 e ONNX Runtime GPU 1.20.2. A imagem
   base NVIDIA CUDA 12.6 + Ubuntu 24.04 foi confirmada no registry, mas a

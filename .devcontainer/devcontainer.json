@@ -18,6 +18,9 @@
 	},
 	"customizations": {
 		"vscode": {
+			"settings": {
+				"python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+			},
 			"extensions": [
 				"ms-python.python",
 				"ms-python.vscode-pylance",
@@ -26,6 +29,6 @@
 			]
 		}
 	},
-	"postCreateCommand": "sudo chown -R vscode:vscode . && pip install --user -r requirements.txt",
+	"postCreateCommand": "sudo chown -R vscode:vscode . && python3 -m venv .venv && .venv/bin/python -m pip install -r requirements-dev.txt && .venv/bin/python -m pip install --no-deps -e .",
 	"remoteUser": "vscode"
 }

@@ -69,10 +69,11 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-This installs CPU PyTorch by default, so an NVIDIA GPU is not required. On
-NVIDIA/CUDA 12.6 machines, run `pip uninstall -y onnxruntime` and then
-`pip install --force-reinstall -r requirements-cuda.txt` to replace the CPU runtimes. Confirm the
-installation with `python -m pip check` and
+This installs the production CPU profile, so an NVIDIA GPU is not required. For
+development and tests, create an isolated environment and install
+`requirements-dev.txt` instead. On NVIDIA/CUDA 12.6 machines, create a separate
+clean virtualenv and install `requirements-cuda.txt` directly; do not layer it
+over the CPU profile. Confirm the installation with `python -m pip check` and
 `python -c "import torch, torchvision, torchaudio, onnxruntime"`.
 
 ### Run

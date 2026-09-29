@@ -7,11 +7,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _requirements() -> set[str]:
-    return {
-        line.split("=", 1)[0].split(">", 1)[0].split("<", 1)[0].split("[", 1)[0].strip().lower()
-        for line in (ROOT / "requirements.txt").read_text().splitlines()
-        if line and not line.startswith("#")
-    }
+    requirements = set()
+    for filename in ("requirements.txt", "requirements-common.txt"):
+        for line in (ROOT / filename).read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith(("#", "-")):
+                continue
+            requirements.add(
+                line.split("=", 1)[0]
+                .split(">", 1)[0]
+                .split("<", 1)[0]
+                .split("[", 1)[0]
+                .strip()
+                .lower()
+            )
+    return requirements
 
 
 def test_private_server_runtime_dependencies_are_declared():

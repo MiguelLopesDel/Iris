@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt constraints-common.txt ./
+COPY requirements.txt requirements-common.txt constraints-common.txt ./
 
 RUN pip install --no-cache-dir -r requirements.txt \
     && python -m pip check \

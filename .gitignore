@@ -175,6 +175,8 @@ MAPA.md
 /.ai-memory.toml
 /.android-sdk/
 /.android-avd/
+/.venv/
+/.venv-cuda/
 /backups/
 # Native/emulator crash dumps and Kotlin's local compiler cache.
 /core.[0-9]*
