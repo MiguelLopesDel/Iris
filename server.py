@@ -622,6 +622,7 @@ async def lifespan(app: FastAPI):
             sync_ai_processing=app.state.sync_ai_processing,
             load_model=app.state.load_model,
             on_finished=app.state.backend_registry.invalidate,
+            processing_workers=processing_workers,
         )
         app.state.sync_recovery_stop_event = stop_event
         app.state.sync_recovery_worker = worker

@@ -65,3 +65,48 @@ def test_worker_rejects_jobs_after_shutdown(tmp_path: Path):
         use_ai=True,
         on_finished=lambda _user_id: None,
     )
+
+
+def test_worker_coalesces_duplicate_jobs_and_bounds_queue(monkeypatch, tmp_path: Path):
+    import core.upload_processing_workers as module
+
+    entered = threading.Event()
+    release = threading.Event()
+    two_finished = threading.Event()
+    finished_count = 0
+    finish_lock = threading.Lock()
+
+    def fake_process_upload(**kwargs):
+        if kwargs["upload_id"] == "active":
+            entered.set()
+            assert release.wait(timeout=2)
+        kwargs["on_finished"]()
+
+    def finished(_user_id):
+        nonlocal finished_count
+        with finish_lock:
+            finished_count += 1
+            if finished_count == 2:
+                two_finished.set()
+
+    monkeypatch.setattr(module, "process_upload", fake_process_upload)
+    workers = UploadProcessingWorkers(max_pending=1)
+    user = _user(7, tmp_path)
+    def submit(upload_id: str) -> bool:
+        return workers.submit(
+            user,
+            upload_id,
+            user.media_root / f"{upload_id}.jpg",
+            use_ai=False,
+            on_finished=finished,
+        )
+
+    assert submit("active")
+    assert entered.wait(timeout=2)
+    assert submit("queued")
+    assert submit("queued")  # same durable job is already running/queued
+    assert not submit("rejected")  # a distinct job cannot exceed the bound
+
+    release.set()
+    assert two_finished.wait(timeout=2)
+    workers.stop(timeout=2)

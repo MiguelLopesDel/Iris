@@ -40,6 +40,8 @@ class UploadProcessingWorkers:
             raise ValueError("max_pending must be positive")
         self._jobs: queue.Queue[_ProcessingJob | object] = queue.Queue(maxsize=max_pending)
         self._stopping = threading.Event()
+        self._keys_lock = threading.Lock()
+        self._accepted_keys: set[tuple[str, str]] = set()
         self._thread = threading.Thread(
             target=self._run, name="iris-upload-processing", daemon=True
         )
@@ -56,6 +58,7 @@ class UploadProcessingWorkers:
     ) -> bool:
         if self._stopping.is_set():
             return False
+        key = (str(user.db_path), upload_id)
         job = _ProcessingJob(
             db_path=user.db_path,
             media_root=user.media_root,
@@ -66,10 +69,14 @@ class UploadProcessingWorkers:
             use_ai=use_ai,
             on_finished=on_finished,
         )
-        try:
-            self._jobs.put_nowait(job)
-        except queue.Full:
-            return False
+        with self._keys_lock:
+            if key in self._accepted_keys:
+                return True
+            try:
+                self._jobs.put_nowait(job)
+            except queue.Full:
+                return False
+            self._accepted_keys.add(key)
         return True
 
     def stop(self, *, timeout: float = 10.0) -> None:
@@ -80,9 +87,12 @@ class UploadProcessingWorkers:
         # Pending jobs are durable and will be rediscovered at next startup.
         while True:
             try:
-                self._jobs.get_nowait()
+                job = self._jobs.get_nowait()
             except queue.Empty:
                 break
+            if isinstance(job, _ProcessingJob):
+                with self._keys_lock:
+                    self._accepted_keys.discard((str(job.db_path), job.upload_id))
         try:
             self._jobs.put_nowait(_STOP)
         except queue.Full:  # defensive; queue was drained above
@@ -111,3 +121,6 @@ class UploadProcessingWorkers:
                     job.user_id,
                     type(exc).__name__,
                 )
+            finally:
+                with self._keys_lock:
+                    self._accepted_keys.discard((str(job.db_path), job.upload_id))
