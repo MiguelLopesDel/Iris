@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.sync_db import append_change, now_iso
+from core.upload_catalog_writer import UploadCatalogWriter
 
 _PROCESSING_LOCK_NAME = "library-processing"
 _PROCESSING_LEASE_SECONDS = 90
@@ -193,22 +194,15 @@ class UploadProcessingStore:
         result: dict[str, int | str] = {"upload_id": upload_id, "state": state}
         connection = sqlite3.connect(self._db_path)
         try:
+            catalog = UploadCatalogWriter(connection)
             row = connection.execute(
                 "SELECT expected_hash FROM sync_uploads WHERE id = ?", (upload_id,)
             ).fetchone()
             if row is not None and state in {"ready", "duplicate"}:
-                media = connection.execute(
-                    "SELECT id FROM memes WHERE content_hash = ? ORDER BY id DESC LIMIT 1",
-                    (row[0],),
-                ).fetchone()
-                cursor = connection.execute(
-                    "SELECT MAX(sequence) FROM sync_changes "
-                    "WHERE entity_type = 'media' AND entity_id = ?",
-                    (upload_id,),
-                ).fetchone()
-                result["cursor"] = int(cursor[0] or 0)
-                if media is not None:
-                    result["media_id"] = int(media[0])
+                result["cursor"] = catalog.latest_change_cursor(upload_id)
+                media_id = catalog.find_media_id_by_hash(row[0], latest_first=True)
+                if media_id is not None:
+                    result["media_id"] = media_id
         finally:
             connection.close()
         return result

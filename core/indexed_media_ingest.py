@@ -5,9 +5,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from core.sync_db import record_origin
-from core.upload_processing_state import record_upload_processing_result
-from core.upload_source import source_from_upload_row
+from core.upload_catalog_writer import UploadCatalogWriter
 
 
 def ingest_upload_with_ai(
@@ -57,6 +55,7 @@ def ingest_upload_with_ai(
     connection.row_factory = sqlite3.Row
     try:
         with connection:
+            catalog = UploadCatalogWriter(connection)
             upload = connection.execute(
                 """SELECT device_id, expected_hash, source_id, source_name,
                           source_relative_path, source_volume, source_media_store_id,
@@ -66,20 +65,11 @@ def ingest_upload_with_ai(
             ).fetchone()
             if upload is None:
                 raise RuntimeError("Processing lease was lost before catalog commit")
-            media = connection.execute(
-                "SELECT id FROM memes WHERE content_hash = ? ORDER BY id DESC LIMIT 1",
-                (upload["expected_hash"],),
-            ).fetchone()
-            media_id = int(media[0]) if media is not None else None
-            if media_id is not None:
-                record_origin(
-                    connection,
-                    media_id,
-                    upload["device_id"],
-                    source_from_upload_row(upload),
-                )
-            record_upload_processing_result(
-                connection,
+            media_id = catalog.find_media_id_by_hash(
+                upload["expected_hash"], latest_first=True
+            )
+            catalog.complete_upload(
+                upload=upload,
                 upload_id=upload_id,
                 lease_token=processing_lease_token,
                 media_id=media_id,
@@ -99,11 +89,6 @@ def ingest_upload_with_ai(
 def _latest_change_cursor(db_path: Path, upload_id: str) -> int:
     connection = sqlite3.connect(db_path)
     try:
-        row = connection.execute(
-            "SELECT MAX(sequence) FROM sync_changes "
-            "WHERE entity_type = 'media' AND entity_id = ?",
-            (upload_id,),
-        ).fetchone()
-        return int(row[0] or 0)
+        return UploadCatalogWriter(connection).latest_change_cursor(upload_id)
     finally:
         connection.close()

@@ -6,9 +6,8 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from core.sync_db import now_iso, record_origin
-from core.upload_processing_state import record_upload_processing_result
-from core.upload_source import source_from_upload_row
+from core.sync_db import now_iso
+from core.upload_catalog_writer import UploadCatalogWriter
 
 
 def ingest_upload_without_ai(
@@ -36,6 +35,7 @@ def ingest_upload_without_ai(
     delete_duplicate_original = False
     try:
         with connection:
+            catalog = UploadCatalogWriter(connection)
             upload = connection.execute(
                 """SELECT filename, expected_hash, captured_at, device_id,
                           source_id, source_name, source_relative_path, source_volume,
@@ -46,18 +46,10 @@ def ingest_upload_without_ai(
             if upload is None:
                 raise RuntimeError("Processing lease was lost before catalog commit")
 
-            duplicate = connection.execute(
-                "SELECT id FROM memes WHERE content_hash = ? LIMIT 1",
-                (upload["expected_hash"],),
-            ).fetchone()
-            if duplicate is not None:
-                media_id = int(duplicate["id"])
-                record_origin(
-                    connection, media_id, upload["device_id"],
-                    source_from_upload_row(upload),
-                )
-                sequence = record_upload_processing_result(
-                    connection,
+            media_id = catalog.find_media_id_by_hash(upload["expected_hash"])
+            if media_id is not None:
+                sequence = catalog.complete_upload(
+                    upload=upload,
                     upload_id=upload_id,
                     lease_token=processing_lease_token,
                     media_id=media_id,
@@ -114,12 +106,8 @@ def ingest_upload_without_ai(
                     ),
                 )
                 media_id = int(cursor.lastrowid)
-                record_origin(
-                    connection, media_id, upload["device_id"],
-                    source_from_upload_row(upload),
-                )
-                sequence = record_upload_processing_result(
-                    connection,
+                sequence = catalog.complete_upload(
+                    upload=upload,
                     upload_id=upload_id,
                     lease_token=processing_lease_token,
                     media_id=media_id,
