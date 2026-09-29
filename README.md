@@ -1,12 +1,12 @@
 # Iris
 
-**Local multimodal AI media intelligence.** Index, search, and organize your entire media collection with AI — the models run on your own machine and your media never leaves it.
+**A private, self-hosted photo and video library for people, families, and teams.** Host Iris on your own computer or server, give each person an isolated account and library, and connect from the browser or Android app. AI-assisted search and media processing are optional capabilities, not requirements for receiving and browsing a library.
 
 > One exception, stated plainly: semantic search translates your query to English > before encoding it, because the embedding model is English-trained, and that > translation call goes to an external service. Your files stay put; the words you > type in the search box do not. Set `IRIS_TRANSLATE_QUERIES=0` to keep everything > local, at the cost of weaker results for non-English queries.
 
 🌐 **[Project page → miguellopesdel.github.io/Iris](https://miguellopesdel.github.io/Iris/)**
 
-Iris grew out of a meme search tool and became something bigger: a self-hosted AI librarian for images, videos, GIFs, audio, and SVGs. It transcribes speech, reads text in images, describes scenes, and lets you find any file in seconds using natural language, visual queries, or named visual concepts.
+Iris is designed as a familiar gallery backed by a server you control. Accounts keep private libraries separate, while shared spaces let invited people contribute to a group gallery. The server is the durable home for originals; clients can browse and synchronize without requiring a GPU or running AI work on the upload path. See the [product vision](docs/product-vision.md) for confirmed behavior and the [implementation roadmap](docs/implementation-roadmap.md) for what remains planned or unvalidated.
 
 ---
 

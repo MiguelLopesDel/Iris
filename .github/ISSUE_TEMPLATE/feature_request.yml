@@ -1,0 +1,26 @@
+name: Sugerir uma melhoria
+description: Descreva uma necessidade de usuário antes de propor uma implementação.
+title: "feature: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Que problema isso resolve?
+      description: Quem encontra o problema e em que situação?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Resultado desejado
+      description: Descreva o comportamento do ponto de vista de quem usa.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas e limites
+      description: Inclua casos que devem continuar funcionando e impactos em privacidade/dados.
+    validations:
+      required: false

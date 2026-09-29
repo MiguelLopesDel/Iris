@@ -1,0 +1,49 @@
+name: Relatar um bug
+description: Relate um comportamento reproduzível do Iris.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Não publique fotos, vídeos, senhas, tokens, URLs privadas ou logs com caminhos pessoais.
+  - type: textarea
+    id: expected
+    attributes:
+      label: O que você esperava?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: O que aconteceu?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Como reproduzir
+      description: Use uma conta e arquivos de teste descartáveis; remova dados privados.
+      placeholder: "1. ...\n2. ...\n3. ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      options:
+        - Android
+        - Web
+        - Servidor/API
+        - Instalação/atualização
+        - Busca/indexação
+        - Outra
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versão/commit e ambiente
+      description: Inclua SO, dispositivo/emulador e versão do app, sem dados de acesso.
+    validations:
+      required: true

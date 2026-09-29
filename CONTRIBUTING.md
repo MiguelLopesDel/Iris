@@ -42,6 +42,25 @@ python scripts/dev.py start --with-model
 Esse modo pode baixar pesos de IA e usar CPU/GPU, mas ainda mantém contas e mídia
 dentro de `.iris-dev/`.
 
+## Trabalhar em uma mudança
+
+1. Atualize `main` e crie uma branch curta para uma tarefa. Use nomes como
+   `fix/android-gallery-scroll`, `feat/server-invites` ou
+   `docs/deployment-guide`.
+2. Antes de editar, procure o contrato e os testes da área em `docs/` e
+   `tests/` (ou `android/app/src/test`). Preserve os limites de conta e dispositivo
+   descritos em `AGENTS.md`.
+3. Faça commits pequenos, cada um com uma intenção, usando
+   [Conventional Commits](https://www.conventionalcommits.org/):
+   `fix(sync): retry interrupted uploads` ou `docs(server): clarify backup flow`.
+4. Rebase/atualize sua branch com `main` antes de abrir o PR; não force push em
+   branches compartilhadas. Abra um PR para `main` e aguarde CI e revisão.
+
+Não trabalhe diretamente em `main`. Não inclua no PR dados reais, credenciais,
+arquivos gerados ou mudanças sem relação com a tarefa. Se a mudança de
+comportamento não estiver especificada, registre a dúvida no PR antes de ampliar
+o escopo.
+
 ## Verificar uma alteração
 
 ```bash
@@ -65,10 +84,16 @@ aceita apagar a raiz do repositório ou uma pasta sem esse marcador.
 ## Antes de abrir um PR
 
 - Execute `python scripts/dev.py test`.
+- Rode as verificações específicas da área alterada; por exemplo, testes Android
+  em `android/` ou `./scripts/test_release.sh` para mudanças em instalação,
+  dependências, autenticação ou bootstrap. Consulte [docs/README.md](docs/README.md)
+  para escolher o conjunto correto.
 - Teste a mudança na UI localmente, em uma conta comum e, quando fizer sentido, em
   uma conta administradora.
 - Não inclua `.iris-dev/`, `data/`, mídia, bancos, relatórios pessoais ou segredos.
 - Descreva no PR como a mudança foi testada e se exige reindexação/migração.
+- Inclua screenshots para mudanças visuais e notas de compatibilidade/rollback
+  para mudanças de banco, API, dependências ou implantação.
 
 O gancho `pre-push` verifica os commits enviados por segredos comuns, bancos,
 índices, arquivos de mídia fora das pastas de assets aprovadas e `.env`. Ele não
