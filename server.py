@@ -77,11 +77,9 @@ from core.api_models import (
     RecordDetailOut,
     RecordFacesOut,
     RecordMetadataOut,
-    RecordsPageOut,
     SearchResponseOut,
     ServerInfoOut,
     SourceSearchResponseOut,
-    TimelineOut,
     TrashOut,
     UploadSearchResponseOut,
 )
@@ -122,6 +120,8 @@ from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.backup import BackupRouteOperations
 from routers.backup import router as backup_router
+from routers.records import GalleryReadOperations
+from routers.records import router as records_router
 from routers.spaces import router as spaces_router
 from routers.sync import router as sync_router
 
@@ -840,6 +840,7 @@ app.include_router(sync_router)
 app.include_router(spaces_router)
 app.include_router(admin_router)
 app.include_router(backup_router)
+app.include_router(records_router)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -2170,112 +2171,14 @@ def _filter_records(
     return filtered
 
 
-@app.get("/api/records", response_model=RecordsPageOut)
-async def get_records(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(24, ge=12, le=500),
-    sort_by: str = Query("importacao"),
-    sort_asc: int = Query(0),
-    media_type: str = Query("all"),
-    collection_ids: str = Query(""),
-    concept_ids: str = Query(""),
-):
-    backend = _get_backend()
-    with trace("api.records"):
-        options = _options_from_params(
-            media_type=media_type,
-            collection_ids=collection_ids,
-            concept_ids=concept_ids,
-        )
-
-        # Sort once (cached); filtering after sort preserves order and stays live
-        # so collection/concept membership changes are never served stale.
-        record_indices = _sorted_records(backend, sort_by, sort_asc)
-
-        record_indices = _filter_records(record_indices, backend, options)
-
-        total = len(record_indices)
-        total_pages = max(1, (total + per_page - 1) // per_page)
-        page = min(page, total_pages)
-        start = (page - 1) * per_page
-        page_records = [
-            record
-            for index in record_indices[start : start + per_page]
-            if (record := backend.get_record(index)) is not None
-        ]
-
-        return {
-            "page": page,
-            "per_page": per_page,
-            "total": total,
-            "total_pages": total_pages,
-            "missing_count": sum(
-                1 for r in page_records
-                if not r.resolved_path or not os.path.exists(r.resolved_path)
-            ),
-            # Thumbnail-cache misses decode/resize the source file (PIL, or cv2
-            # frame extraction for video) inside _record_to_json. Left inline,
-            # that CPU-bound work runs straight on the event loop and stalls
-            # every other in-flight request — including every other thumbnail
-            # already cached — until it finishes.
-            "records": await run_in_threadpool(
-                lambda: _attach_persons([_record_to_json(r) for r in page_records])
-            ),
-        }
-
-
-# ── Timeline ─────────────────────────────────────────────────────────────────
-
-
-@app.get("/api/records/timeline", response_model=TimelineOut)
-async def get_records_timeline(
-    media_type: str = Query("all"),
-    collection_ids: str = Query(""),
-    concept_ids: str = Query(""),
-):
-    """Quantos itens há por mês, e onde cada mês começa.
-
-    Um scrubber de galeria precisa saber a forma do acervo inteiro para
-    atravessar anos; sem isto ele só consegue percorrer o que já foi baixado.
-    Uma requisição responde por todo o catálogo, contra uma por página.
-    """
-    backend = _get_backend()
-    with trace("api.records.timeline"):
-        options = _options_from_params(
-            media_type=media_type,
-            collection_ids=collection_ids,
-            concept_ids=concept_ids,
-        )
-        # Mesma ordenação que a galeria usa, senão os offsets não correspondem.
-        record_indices = _sorted_records(backend, "data", 0)
-        record_indices = _filter_records(record_indices, backend, options)
-
-        def _build() -> list[dict[str, Any]]:
-            buckets: list[dict[str, Any]] = []
-            current: str | None = None
-            visible_position = 0
-            for index in record_indices:
-                record = backend.get_record(index)
-                if record is None:
-                    continue
-                mtime = record.file_mtime or 0.0
-                month = (
-                    dt.datetime.fromtimestamp(mtime).strftime("%Y-%m")
-                    if mtime
-                    else "desconhecido"
-                )
-                if month != current:
-                    buckets.append({"month": month, "count": 0, "offset": visible_position})
-                    current = month
-                buckets[-1]["count"] += 1
-                visible_position += 1
-            return buckets
-
-        buckets = await run_in_threadpool(_build)
-        return {
-            "total": sum(bucket["count"] for bucket in buckets),
-            "buckets": buckets,
-        }
+app.state.gallery_read_operations = GalleryReadOperations(
+    get_backend=_get_backend,
+    options_from_params=_options_from_params,
+    sorted_records=_sorted_records,
+    filter_records=_filter_records,
+    record_to_json=_record_to_json,
+    attach_persons=_attach_persons,
+)
 
 
 # ── Single record detail ─────────────────────────────────────────────────────

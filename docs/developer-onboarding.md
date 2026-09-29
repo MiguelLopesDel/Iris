@@ -51,9 +51,11 @@ background work.
 ### Browser gallery
 
 `static/app.js` composes the web application; `static/api.js` is the shared API
-transport. Gallery and search modules call the corresponding HTTP routes. Many
-legacy endpoints, including `/api/records` and `/api/search`, are still declared
-in `server.py`; their domain helpers may delegate into `core/`. Start at the UI
+transport. Gallery and search modules call the corresponding HTTP routes. The
+paginated gallery and timeline routes (`/api/records` and
+`/api/records/timeline`) are in `routers/records.py`; their existing catalog,
+sorting, filtering and serialization operations are wired from `server.py`.
+Record detail/edit and search endpoints remain in `server.py`. Start at the UI
 event, find the API call, then follow that exact route rather than searching
 only by a similarly named core function.
 
