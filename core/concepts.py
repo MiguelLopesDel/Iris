@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import io
 import sqlite3
-from datetime import datetime
 from typing import Any
 
 import numpy as np
 from PIL import Image
 
-
-def _now_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+from core.timestamps import UtcTimestamp
 
 
 def make_thumbnail(pil_image: Image.Image, size: int = 128) -> bytes:
@@ -94,7 +91,7 @@ def create_concept(
 ) -> int:
     cursor = conn.execute(
         "INSERT INTO concepts (name, description, category, search_terms, auto_threshold, created_at) VALUES (?,?,?,?,?,?)",
-        (name.strip(), description.strip(), category, search_terms.strip(), auto_threshold, _now_iso()),
+        (name.strip(), description.strip(), category, search_terms.strip(), auto_threshold, UtcTimestamp.now_iso_seconds()),
     )
     conn.commit()
     return int(cursor.lastrowid)
@@ -129,7 +126,7 @@ def add_reference(
 ) -> int:
     cursor = conn.execute(
         "INSERT INTO concept_references (concept_id, embedding, thumbnail, label, added_at) VALUES (?,?,?,?,?)",
-        (concept_id, embedding_bytes, thumbnail_bytes, label.strip(), _now_iso()),
+        (concept_id, embedding_bytes, thumbnail_bytes, label.strip(), UtcTimestamp.now_iso_seconds()),
     )
     conn.commit()
     return int(cursor.lastrowid)
@@ -152,7 +149,7 @@ def get_references(conn: sqlite3.Connection, concept_id: int) -> list[dict[str, 
 def set_media_confirmed(
     conn: sqlite3.Connection, concept_id: int, meme_ids: list[int], confirmed: int = 1
 ) -> None:
-    now = _now_iso()
+    now = UtcTimestamp.now_iso_seconds()
     conn.executemany(
         "INSERT OR REPLACE INTO concept_media (concept_id, meme_id, confirmed, added_at) VALUES (?,?,?,?)",
         [(concept_id, mid, confirmed, now) for mid in meme_ids],

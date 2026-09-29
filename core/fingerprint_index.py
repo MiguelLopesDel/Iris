@@ -103,16 +103,20 @@ def _slice_values(value: int, bits: int, slices: int) -> list[int]:
     return out
 
 
-def probe_masks(width: int, radius: int) -> list[int]:
-    """XOR masks flipping up to ``radius`` bits of a slice of ``width`` bits."""
-    masks = [0]
-    for flips in range(1, radius + 1):
-        for positions in combinations(range(width), flips):
-            mask = 0
-            for position in positions:
-                mask ^= 1 << position
-            masks.append(mask)
-    return masks
+class FingerprintProbeMasks:
+    """Generate the exact probe masks used by every fingerprint index."""
+
+    @staticmethod
+    def generate(width: int, radius: int) -> list[int]:
+        """Return XOR masks flipping no more than ``radius`` of ``width`` bits."""
+        masks = [0]
+        for flips in range(1, radius + 1):
+            for positions in combinations(range(width), flips):
+                mask = 0
+                for position in positions:
+                    mask ^= 1 << position
+                masks.append(mask)
+        return masks
 
 
 def index_fingerprints(
@@ -194,7 +198,10 @@ def find_neighbours(
 
     for slice_no, slice_value in enumerate(_slice_values(numeric, bits, slices)):
         width = edges[slice_no + 1] - edges[slice_no]
-        wanted = [slice_value ^ mask for mask in probe_masks(width, radius)]
+        wanted = [
+            slice_value ^ mask
+            for mask in FingerprintProbeMasks.generate(width, radius)
+        ]
         # One statement per slice instead of one per probe: 232 round trips
         # through the SQLite layer per slice was the dominant cost, and the
         # planner handles the IN list against the covering index.

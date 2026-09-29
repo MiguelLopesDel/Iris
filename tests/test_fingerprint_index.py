@@ -17,12 +17,12 @@ import numpy as np
 import pytest
 
 from core.fingerprint_index import (
+    FingerprintProbeMasks,
     Neighbour,
     find_neighbours,
     forget,
     index_fingerprints,
     indexed_count,
-    probe_masks,
     slice_count,
 )
 
@@ -161,7 +161,7 @@ def test_the_slice_plan_is_what_the_pigeonhole_needs():
 
     # Some slice must carry at most `radius` of the differences.
     assert (radius + 1) * slices > 8
-    masks = probe_masks(21, radius)
+    masks = FingerprintProbeMasks.generate(21, radius)
     assert len(masks) == comb(21, 0) + comb(21, 1) + comb(21, 2)
     assert all(bin(mask).count("1") <= radius for mask in masks)
 

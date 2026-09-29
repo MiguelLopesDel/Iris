@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import random
 from dataclasses import asdict, dataclass
@@ -8,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image
+
+from core.file_digest import FileDigest
 
 SUPPORTED_MEDIA_EXTS = (
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",   # images / vector
@@ -40,11 +41,8 @@ def iter_media_files(media_dir: Path, recursive: bool = False) -> list[Path]:
 
 
 def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(chunk_size), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """Compatibility entry point for callers that inventory one media file."""
+    return FileDigest.sha256(path, chunk_size)
 
 
 def image_dimensions(path: Path) -> tuple[int | None, int | None]:

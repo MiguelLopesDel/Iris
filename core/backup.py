@@ -25,6 +25,8 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.file_digest import FileDigest
+
 SNAPSHOT_SUFFIX = ".tar.gz"
 _ALLOWED_RESTORE_MEMBERS = {"catalog.db", "best_weights.json", "manifest.json", "media_manifest.json"}
 
@@ -310,13 +312,7 @@ def _library_path(library_root: Path, item: dict) -> Path | None:
 
 
 def _sha256(path: Path, chunk: int = 1 << 16) -> str:
-    import hashlib
-
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for block in iter(lambda: fh.read(chunk), b""):
-            h.update(block)
-    return h.hexdigest()
+    return FileDigest.sha256(path, chunk)
 
 
 def reconcile_media(

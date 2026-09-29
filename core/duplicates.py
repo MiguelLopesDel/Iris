@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from itertools import combinations
 
 import faiss
 import numpy as np
 
+from core.fingerprint_index import FingerprintProbeMasks
 from core.search_engine import IndexRecord, IrisEngine
 
 _VIDEO_EXTS_DUP = frozenset({".mp4", ".webm", ".mkv", ".mov", ".avi", ".flv"})
@@ -575,24 +575,8 @@ def chromaprint_groups(records: list[IndexRecord]) -> dict[str, list[int]]:
 _PHASH_MAX_DISTANCE = 8
 _PHASH_BITS = 64
 # Number of bit slices the hash is split into for indexing. Three is what makes
-# the index sparse: see _phash_probe_masks.
+# the index sparse: see FingerprintProbeMasks.
 _PHASH_SLICES = 3
-
-
-def _phash_probe_masks(width: int, radius: int) -> list[int]:
-    """XOR masks that flip up to ``radius`` bits of a slice.
-
-    Precomputed per slice width because the offsets are the same for every hash;
-    building them inside the scan made them the dominant cost.
-    """
-    masks = [0]
-    for flips in range(1, radius + 1):
-        for positions in combinations(range(width), flips):
-            mask = 0
-            for position in positions:
-                mask ^= 1 << position
-            masks.append(mask)
-    return masks
 
 
 def _phash_linking_pairs(hashes: list[str], max_distance: int) -> list[tuple[int, int]]:
@@ -683,7 +667,7 @@ def _phash_linking_pairs(hashes: list[str], max_distance: int) -> list[tuple[int
 
         # Hoisted: the masks depend only on the slice width, and rebuilding them
         # per bucket cost more than the rest of the scan put together.
-        probes = _phash_probe_masks(end - start, radius)
+        probes = FingerprintProbeMasks.generate(end - start, radius)
         for key, members in table.items():
             for probe in probes:
                 neighbours = table.get(key ^ probe)

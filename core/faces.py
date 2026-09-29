@@ -10,13 +10,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Protocol
 
 import numpy as np
 from PIL import Image
 
 from core.concepts import make_thumbnail
+from core.timestamps import UtcTimestamp
 
 FACE_EMBED_DIM = 512
 # Detecções abaixo deste score são descartadas (ruído / falsos positivos).
@@ -25,10 +25,6 @@ MIN_DET_SCORE = 0.50
 SAME_FACE_COSINE = 0.92
 # Rostos com cosseno >= isto pertencem à mesma pessoa (ArcFace ~0.45–0.55 típico).
 CLUSTER_COSINE = 0.50
-
-
-def _now_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
@@ -220,7 +216,7 @@ def extract_faces_for_record(
     unique = _dedup_faces(detected)
     if replace:
         conn.execute("DELETE FROM faces WHERE meme_id = ?", (meme_id,))
-    now = _now_iso()
+    now = UtcTimestamp.now_iso_seconds()
     conn.executemany(
         "INSERT INTO faces (meme_id, person_id, bbox, det_score, frame_time, embedding, thumbnail, created_at)"
         " VALUES (?,?,?,?,?,?,?,?)",
@@ -274,7 +270,7 @@ def cluster_faces(
         slot[0] += emb
         slot[1] += 1
 
-    now = _now_iso()
+    now = UtcTimestamp.now_iso_seconds()
     assignments: list[tuple[int, int]] = []
     for r in rows:
         if r["person_id"] is not None:
@@ -354,7 +350,7 @@ def get_person_meme_ids(conn: sqlite3.Connection, person_id: int) -> list[int]:
 def rename_person(conn: sqlite3.Connection, person_id: int, name: str) -> None:
     clean = name.strip() or None
     conn.execute(
-        "UPDATE persons SET name = ?, updated_at = ? WHERE id = ?", (clean, _now_iso(), person_id)
+        "UPDATE persons SET name = ?, updated_at = ? WHERE id = ?", (clean, UtcTimestamp.now_iso_seconds(), person_id)
     )
     conn.commit()
 
@@ -364,7 +360,7 @@ def merge_persons(conn: sqlite3.Connection, source_id: int, target_id: int) -> N
         return
     conn.execute("UPDATE faces SET person_id = ? WHERE person_id = ?", (target_id, source_id))
     conn.execute("DELETE FROM persons WHERE id = ?", (source_id,))
-    conn.execute("UPDATE persons SET updated_at = ? WHERE id = ?", (_now_iso(), target_id))
+    conn.execute("UPDATE persons SET updated_at = ? WHERE id = ?", (UtcTimestamp.now_iso_seconds(), target_id))
     _refresh_persons(conn)
     conn.commit()
 
@@ -382,7 +378,7 @@ def create_person(conn: sqlite3.Connection, name: str) -> int:
     Note: persons without faces are garbage-collected by ``_refresh_persons`` during
     cluster/merge, so callers should assign a face right after creating.
     """
-    now = _now_iso()
+    now = UtcTimestamp.now_iso_seconds()
     cur = conn.execute(
         "INSERT INTO persons (name, cover_face_id, created_at, updated_at) VALUES (?, NULL, ?, ?)",
         (name.strip() or None, now, now),
@@ -407,7 +403,7 @@ def set_face_person(conn: sqlite3.Connection, face_id: int, person_id: int | Non
     conn.execute("UPDATE faces SET person_id = ? WHERE id = ?", (person_id, face_id))
     if person_id is not None:
         conn.execute(
-            "UPDATE persons SET updated_at = ? WHERE id = ?", (_now_iso(), person_id)
+            "UPDATE persons SET updated_at = ? WHERE id = ?", (UtcTimestamp.now_iso_seconds(), person_id)
         )
     _refresh_persons(conn)
     conn.commit()

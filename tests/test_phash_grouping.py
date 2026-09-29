@@ -188,9 +188,9 @@ def test_probe_masks_flip_no_more_than_the_radius():
     """
     from math import comb
 
-    from core.duplicates import _phash_probe_masks
+    from core.fingerprint_index import FingerprintProbeMasks
 
-    masks = _phash_probe_masks(width=21, radius=2)
+    masks = FingerprintProbeMasks.generate(width=21, radius=2)
 
     assert len(masks) == comb(21, 0) + comb(21, 1) + comb(21, 2)
     assert len(set(masks)) == len(masks)
