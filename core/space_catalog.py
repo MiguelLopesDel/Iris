@@ -19,7 +19,6 @@ depends on the item's author.
 
 from __future__ import annotations
 
-import hashlib
 import mimetypes
 import os
 import re
@@ -31,10 +30,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
+
+from core.file_digest import FileDigest
 from core.fs_clone import clone_file
 from core.users_db import now_iso
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_PAGE = 200
 DEFAULT_QUOTA_BYTES = 10 * 1024**4
 DEFAULT_TRASH_DAYS = 30
@@ -88,6 +90,15 @@ class SpaceItem:
         return "video" if self.mime_type.startswith("video/") else "image"
 
 
+@dataclass(frozen=True)
+class ItemMetadata:
+    """What the item already carried in its author's library, if anything."""
+
+    description: str = ""
+    embedding: bytes | None = None
+    embedding_model: str | None = None
+
+
 def space_root(data_dir: Path, space_id: int) -> Path:
     return data_dir / "spaces" / str(int(space_id))
 
@@ -103,6 +114,7 @@ def _connect(root: Path) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA busy_timeout=5000")
+    connection.execute("PRAGMA foreign_keys=ON")
     try:
         _migrate(connection)
     except BaseException:
@@ -171,7 +183,37 @@ def _v1_to_v2(connection: sqlite3.Connection) -> None:
     )
 
 
-_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _v1_to_v2}
+def _v2_to_v3(connection: sqlite3.Connection) -> None:
+    # What the photo already had in its author's library, carried along so a
+    # space can be searched without reprocessing anything.
+    connection.execute("ALTER TABLE items ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    connection.execute("ALTER TABLE items ADD COLUMN embedding BLOB")
+    connection.execute("ALTER TABLE items ADD COLUMN embedding_model TEXT")
+    connection.execute(
+        """
+        CREATE TABLE albums (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_by INTEGER,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE album_items (
+            album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+            item_id INTEGER NOT NULL REFERENCES items(id),
+            added_by INTEGER,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (album_id, item_id)
+        )
+        """
+    )
+    connection.execute("CREATE INDEX idx_album_items_item ON album_items(item_id)")
+
+
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _v1_to_v2, 2: _v2_to_v3}
 
 
 def _migrate(connection: sqlite3.Connection) -> None:
@@ -233,13 +275,7 @@ def _storage_name(sha256: str, original_name: str) -> str:
 
 
 def _sha256(path: Path) -> tuple[str, int]:
-    digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as reader:
-        while chunk := reader.read(_HASH_CHUNK):
-            digest.update(chunk)
-            size += len(chunk)
-    return digest.hexdigest(), size
+    return FileDigest.sha256_with_size(path, _HASH_CHUNK)
 
 
 def _usage(connection: sqlite3.Connection) -> int:
@@ -270,9 +306,11 @@ def add_item(
     original_name: str,
     added_by: int,
     storage: SpaceStorage | None = None,
+    metadata: ItemMetadata | None = None,
 ) -> tuple[SpaceItem, bool]:
     """Clone one original into the space. Returns the item and whether it is new."""
     storage = storage or SpaceStorage()
+    metadata = metadata or ItemMetadata()
     name = Path(original_name).name.strip() or source.name
     connection = _connect(root)
     incoming = root / "incoming"
@@ -306,8 +344,9 @@ def add_item(
             cursor = connection.execute(
                 """
                 INSERT INTO items (sha256, storage_name, original_name, mime_type,
-                                   size_bytes, added_by, added_at, storage_method)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                   size_bytes, added_by, added_at, storage_method,
+                                   description, embedding, embedding_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sha256,
@@ -318,6 +357,9 @@ def add_item(
                     added_by,
                     now_iso(),
                     method,
+                    metadata.description,
+                    metadata.embedding,
+                    metadata.embedding_model,
                 ),
             )
             connection.execute("UPDATE usage SET bytes = bytes + ? WHERE id = 1", (growth,))
@@ -515,3 +557,229 @@ def purge_expired(root: Path, trash_days: int, now: datetime | None = None) -> i
         (root / "media" / storage_name).unlink(missing_ok=True)
         (root / "thumbnails" / f"{sha256}.jpg").unlink(missing_ok=True)
     return len(rows)
+
+
+# -- search -------------------------------------------------------------------
+
+
+def search_items(
+    root: Path,
+    terms: list[str],
+    query_vector: np.ndarray | None = None,
+    model: str | None = None,
+    limit: int = 60,
+    min_similarity: float = 0.2,
+) -> list[SpaceItem]:
+    """Visible items matching ``terms`` (already folded) or close to the query.
+
+    Text matches the file name and the description carried from the author's
+    library. Similarity compares only vectors of the same model: two accounts
+    may use different ones, and their vectors live in unrelated spaces.
+    Without a query vector, only text counts.
+
+    Scans the space's rows: a family space is small, and this is a bounded
+    per-space cost, not a library-wide one.
+    """
+    from core.search_types import normalize_text
+
+    connection = _connect(root)
+    try:
+        rows = connection.execute(
+            f"SELECT {_COLUMNS}, description, embedding, embedding_model FROM items"
+            " WHERE removed_at IS NULL ORDER BY id DESC"
+        ).fetchall()
+    finally:
+        connection.close()
+    query = None
+    if query_vector is not None and model:
+        query = np.asarray(query_vector, dtype=np.float32)
+        norm = float(np.linalg.norm(query))
+        query = query / norm if norm else None
+    scored: list[tuple[float, int, SpaceItem]] = []
+    for row in rows:
+        haystack = normalize_text(f"{row['original_name']} {row['description']}")
+        text = sum(1 for term in terms if term in haystack) / len(terms) if terms else 0.0
+        similarity = 0.0
+        blob = row["embedding"]
+        if query is not None and blob and row["embedding_model"] == model:
+            vector = np.frombuffer(blob, dtype=np.float32)
+            norm = float(np.linalg.norm(vector))
+            if vector.shape == query.shape and norm:
+                similarity = float(vector @ query) / norm
+        if text > 0 or similarity >= min_similarity:
+            scored.append((similarity + text, int(row["id"]), _item_from_row(row)))
+    scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+    return [item for _, _, item in scored[: max(1, min(limit, MAX_PAGE))]]
+
+
+# -- albums -------------------------------------------------------------------
+
+
+class AlbumNotFound(Exception):
+    """No album with this id in this space."""
+
+
+@dataclass(frozen=True)
+class Album:
+    id: int
+    name: str
+    created_by: int | None
+    created_at: str
+    count: int
+    cover_item_id: int | None
+
+
+def _clean_name(name: str) -> str:
+    cleaned = " ".join(name.split())
+    if not 1 <= len(cleaned) <= 120:
+        raise ValueError("O nome do álbum precisa ter de 1 a 120 caracteres")
+    return cleaned
+
+
+def _album(connection: sqlite3.Connection, album_id: int) -> Album:
+    row = connection.execute(
+        """
+        SELECT a.id, a.name, a.created_by, a.created_at,
+               COUNT(i.id) AS count, MAX(i.id) AS cover
+        FROM albums a
+        LEFT JOIN album_items ai ON ai.album_id = a.id
+        LEFT JOIN items i ON i.id = ai.item_id AND i.removed_at IS NULL
+        WHERE a.id = ? GROUP BY a.id
+        """,
+        (album_id,),
+    ).fetchone()
+    if row is None:
+        raise AlbumNotFound
+    return Album(
+        id=int(row["id"]), name=str(row["name"]),
+        created_by=int(row["created_by"]) if row["created_by"] is not None else None,
+        created_at=str(row["created_at"]), count=int(row["count"]),
+        cover_item_id=int(row["cover"]) if row["cover"] is not None else None,
+    )
+
+
+def can_edit_album(role: str, actor_id: int, album: Album) -> bool:
+    return role == "manager" or (role == "contributor" and album.created_by == actor_id)
+
+
+def create_album(root: Path, name: str, actor_id: int, role: str) -> Album:
+    if role not in {"manager", "contributor"}:
+        raise SpaceItemPermissionDenied
+    cleaned = _clean_name(name)
+    connection = _connect(root)
+    try:
+        with _write(connection):
+            cursor = connection.execute(
+                "INSERT INTO albums (name, created_by, created_at) VALUES (?, ?, ?)",
+                (cleaned, actor_id, now_iso()),
+            )
+            return _album(connection, int(cursor.lastrowid))
+    finally:
+        connection.close()
+
+
+def list_albums(root: Path) -> list[Album]:
+    connection = _connect(root)
+    try:
+        ids = [int(r[0]) for r in connection.execute("SELECT id FROM albums ORDER BY name COLLATE NOCASE, id")]
+        return [_album(connection, album_id) for album_id in ids]
+    finally:
+        connection.close()
+
+
+def get_album(root: Path, album_id: int) -> Album:
+    connection = _connect(root)
+    try:
+        return _album(connection, album_id)
+    finally:
+        connection.close()
+
+
+def rename_album(root: Path, album_id: int, name: str, actor_id: int, role: str) -> Album:
+    cleaned = _clean_name(name)
+    connection = _connect(root)
+    try:
+        with _write(connection):
+            if not can_edit_album(role, actor_id, _album(connection, album_id)):
+                raise SpaceItemPermissionDenied
+            connection.execute("UPDATE albums SET name = ? WHERE id = ?", (cleaned, album_id))
+            return _album(connection, album_id)
+    finally:
+        connection.close()
+
+
+def delete_album(root: Path, album_id: int, actor_id: int, role: str) -> None:
+    """Remove the album only; its photos stay in the space."""
+    connection = _connect(root)
+    try:
+        with _write(connection):
+            if not can_edit_album(role, actor_id, _album(connection, album_id)):
+                raise SpaceItemPermissionDenied
+            connection.execute("DELETE FROM albums WHERE id = ?", (album_id,))
+    finally:
+        connection.close()
+
+
+def album_items(root: Path, album_id: int, limit: int, before: int | None = None) -> list[SpaceItem]:
+    limit = max(1, min(int(limit), MAX_PAGE))
+    connection = _connect(root)
+    try:
+        _album(connection, album_id)
+        rows = connection.execute(
+            f"""
+            SELECT {', '.join('i.' + c.strip() for c in _COLUMNS.split(','))}
+            FROM album_items ai JOIN items i ON i.id = ai.item_id
+            WHERE ai.album_id = ? AND i.removed_at IS NULL AND (? IS NULL OR i.id < ?)
+            ORDER BY i.id DESC LIMIT ?
+            """,
+            (album_id, before, before, limit),
+        ).fetchall()
+    finally:
+        connection.close()
+    return [_item_from_row(row) for row in rows]
+
+
+def add_to_album(root: Path, album_id: int, item_ids: list[int], actor_id: int, role: str) -> int:
+    """Add visible items of this space to the album; returns how many were new."""
+    if role not in {"manager", "contributor"}:
+        raise SpaceItemPermissionDenied
+    connection = _connect(root)
+    added = 0
+    try:
+        with _write(connection):
+            _album(connection, album_id)
+            for item_id in item_ids:
+                _row(connection, item_id, removed=False)  # only this space's own items
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO album_items (album_id, item_id, added_by, added_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (album_id, item_id, actor_id, now_iso()),
+                )
+                added += cursor.rowcount
+    finally:
+        connection.close()
+    return added
+
+
+def remove_from_album(root: Path, album_id: int, item_id: int, actor_id: int, role: str) -> None:
+    """Take an item out of an album; the item stays in the space."""
+    connection = _connect(root)
+    try:
+        with _write(connection):
+            album = _album(connection, album_id)
+            row = connection.execute(
+                "SELECT added_by FROM album_items WHERE album_id = ? AND item_id = ?",
+                (album_id, item_id),
+            ).fetchone()
+            if row is None:
+                raise SpaceItemNotFound
+            allowed = can_edit_album(role, actor_id, album) or (
+                role == "contributor" and row["added_by"] == actor_id
+            )
+            if not allowed:
+                raise SpaceItemPermissionDenied
+            connection.execute(
+                "DELETE FROM album_items WHERE album_id = ? AND item_id = ?", (album_id, item_id)
+            )
+    finally:
+        connection.close()

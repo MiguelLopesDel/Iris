@@ -24,6 +24,7 @@ import uuid
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
@@ -3755,13 +3756,14 @@ async def serve_media(file_path: str):
     return FileResponse(resolved, media_type=_guess_mime(str(resolved)))
 
 
-def _private_original_for(db_id: int) -> tuple[Path, str] | None:
+def _private_original_for(db_id: int) -> PrivateOriginal | None:
     """The caller's own original for a private record id, or None.
 
     Used by shared spaces to copy an item in. The id is looked up only in the
     authenticated library, and the file must pass the same allow-list as
     /media/, so an id from another library -- or a row pointing outside the
-    catalogue -- names nothing.
+    catalogue -- names nothing. The description and vector the photo already
+    has travel with it, so the space can be searched without reprocessing.
     """
     record = _record_for_db_id(db_id)
     if record is None or not record.resolved_path:
@@ -3769,7 +3771,32 @@ def _private_original_for(db_id: int) -> tuple[Path, str] | None:
     resolved = Path(record.resolved_path).resolve()
     if str(resolved) not in _allowed_media_paths() or not resolved.is_file():
         return None
-    return resolved, record.arquivo or resolved.name
+    words = (record.descricao_ia, record.tags, record.objects, record.texto_extraido,
+             record.source_work, record.context)
+    embedding = getattr(record, "embedding", None)
+    user = _current_user()
+    return PrivateOriginal(
+        path=resolved,
+        name=record.arquivo or resolved.name,
+        metadata=space_catalog.ItemMetadata(
+            description=" ".join(w for w in words if w).strip(),
+            embedding=_vector_bytes(embedding),
+            embedding_model=user.model_name if user is not None else None,
+        ),
+    )
+
+
+def _vector_bytes(embedding: object) -> bytes | None:
+    if embedding is None or np.size(embedding) <= 1:
+        return None
+    return np.asarray(embedding, dtype=np.float32).tobytes()
+
+
+@dataclass(frozen=True)
+class PrivateOriginal:
+    path: Path
+    name: str
+    metadata: space_catalog.ItemMetadata
 
 
 # Seams for routers/spaces.py, which must not import this module.

@@ -20,8 +20,8 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=45';
-import { confirmModal } from './ui.js?v=4';
+} from './api.js?v=46';
+import { confirmModal } from './ui.js?v=5';
 
 let initialized = false;
 let importPoll = null;

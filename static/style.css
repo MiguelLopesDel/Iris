@@ -4037,3 +4037,43 @@ a.btn {
 .space-leave {
   margin-top: 20px;
 }
+
+.space-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.space-search input {
+  flex: 1;
+  min-width: 0;
+}
+
+.space-albums-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.space-album-card img,
+.space-album-empty {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--surface-hover);
+}
+
+.space-album-empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 28px;
+}
+
+#space-album-view .space-header h4 {
+  flex: 1;
+  margin: 0;
+}

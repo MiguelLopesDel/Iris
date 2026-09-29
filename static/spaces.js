@@ -6,6 +6,14 @@
 
 import {
   addSpaceItem,
+  addToSpaceAlbum,
+  createSpaceAlbum,
+  deleteSpaceAlbum,
+  listAlbumItems,
+  listSpaceAlbums,
+  removeFromSpaceAlbum,
+  renameSpaceAlbum,
+  searchSpace,
   addSpaceMember,
   changeSpaceMemberRole,
   createSpace,
@@ -20,8 +28,8 @@ import {
   removeSpaceMember,
   restoreSpaceItem,
   saveSpaceItem,
-} from './api.js?v=45';
-import { confirmModal, openModal, promptModal, toast } from './ui.js?v=4';
+} from './api.js?v=46';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
 
 const ROLE_LABELS = { viewer: 'Visualizador', contributor: 'Colaborador', manager: 'Gestor' };
 const CAN_ADD = new Set(['contributor', 'manager']);
@@ -30,6 +38,8 @@ let initialized = false;
 let current = null; // { id, name, role, trashDays }
 let itemsCursor = null;
 let trashCursor = null;
+let album = null; // the album open in the Álbuns tab
+let albumCursor = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -93,6 +103,8 @@ async function openSpace(id) {
     $('spaces-list-view').hidden = true;
     $('space-view').hidden = false;
     $('space-name').textContent = space.name;
+    $('space-search-input').value = '';
+    $('space-search-clear').hidden = true;
     $('space-meta').textContent = `Seu papel: ${ROLE_LABELS[space.role] || space.role}`
       + ` · ${formatBytes(storage.used_bytes)} usados de ${formatBytes(storage.quota_bytes)}`;
     document.querySelector('[data-space-view="trash"]').hidden = !CAN_ADD.has(space.role);
@@ -115,11 +127,12 @@ function showPanel(name) {
     panel.hidden = panel.dataset.spacePanel !== name;
   });
   if (name === 'items') loadItems(true);
+  if (name === 'albums') showAlbums();
   if (name === 'members') loadMembers();
   if (name === 'trash') loadTrash(true);
 }
 
-function itemCard(item) {
+function itemCard(item, { inAlbum = false } = {}) {
   const name = escapeHtml(item.name);
   const media = item.media_type === 'video'
     ? `<a href="${escapeHtml(item.original_url)}" target="_blank" rel="noopener">
@@ -136,7 +149,10 @@ function itemCard(item) {
       <div class="actions">
         <button class="btn" type="button" data-space-save="${item.id}" title="Guardar uma cópia na sua biblioteca">Salvar</button>
         <a class="btn" href="${escapeHtml(item.original_url)}" download="${name}">Baixar</a>
-        ${item.can_remove ? `<button class="btn" type="button" data-space-remove="${item.id}">Remover</button>` : ''}
+        ${inAlbum
+          ? `<button class="btn" type="button" data-album-drop="${item.id}">Tirar do álbum</button>`
+          : `${CAN_ADD.has(current?.role) ? `<button class="btn" type="button" data-album-pick="${item.id}">Álbum</button>` : ''}
+             ${item.can_remove ? `<button class="btn" type="button" data-space-remove="${item.id}">Remover</button>` : ''}`}
       </div>
     </div>
   </div>`;
@@ -152,7 +168,7 @@ async function loadItems(reset) {
   try {
     const page = await listSpaceItems(current.id, { before: itemsCursor });
     if (reset) grid.innerHTML = '';
-    grid.insertAdjacentHTML('beforeend', page.items.map(itemCard).join(''));
+    grid.insertAdjacentHTML('beforeend', page.items.map((item) => itemCard(item)).join(''));
     if (reset && !page.items.length) {
       grid.innerHTML = `<div class="empty-state"><span class="empty-state-icon">◎</span>
         <p>Este espaço ainda não tem fotos.</p></div>`;
@@ -192,6 +208,170 @@ async function removeItem(itemId) {
   } catch (error) {
     toast(`Erro: ${error.message}`, 'error');
   }
+}
+
+// ── Search ──────────────────────────────────────────────────────────────
+
+async function search(event) {
+  event.preventDefault();
+  const q = $('space-search-input').value.trim();
+  if (!q) return loadItems(true);
+  const grid = $('space-items');
+  grid.innerHTML = '<p class="filter-empty">Buscando...</p>';
+  $('space-more').hidden = true;
+  $('space-search-clear').hidden = false;
+  try {
+    const result = await searchSpace(current.id, q);
+    grid.innerHTML = result.items.length
+      ? result.items.map((item) => itemCard(item)).join('')
+      : `<div class="empty-state"><span class="empty-state-icon">⌕</span>
+           <p>Nada encontrado neste espaço.</p></div>`;
+    $('space-items-hint').textContent = result.semantic
+      ? 'Resultados pelo nome, pela descrição e pelo significado da busca.'
+      : 'Resultados pelo nome e pela descrição de cada foto.';
+  } catch (error) {
+    grid.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+  return null;
+}
+
+function clearSearch() {
+  $('space-search-input').value = '';
+  $('space-search-clear').hidden = true;
+  loadItems(true);
+}
+
+// ── Albums ──────────────────────────────────────────────────────────────
+
+async function showAlbums() {
+  album = null;
+  $('space-album-view').hidden = true;
+  $('space-albums-list-view').hidden = false;
+  const container = $('space-albums');
+  container.innerHTML = '<p class="filter-empty">Carregando...</p>';
+  try {
+    const { albums, can_create: canCreate } = await listSpaceAlbums(current.id);
+    $('space-album-new').hidden = !canCreate;
+    container.innerHTML = albums.length
+      ? albums.map((entry) => `
+          <button class="space-card space-album-card" type="button" data-open-album="${entry.id}">
+            ${entry.cover_url ? `<img src="${escapeHtml(entry.cover_url)}" alt="" loading="lazy">` : '<span class="space-album-empty">◇</span>'}
+            <b>${escapeHtml(entry.name)}</b>
+            <span>${entry.count} foto(s)</span>
+          </button>`).join('')
+      : '<p class="filter-empty">Nenhum álbum neste espaço ainda.</p>';
+    container.dataset.albums = JSON.stringify(albums);
+  } catch (error) {
+    container.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function newAlbum() {
+  const name = await promptModal({ kicker: current.name, title: 'Novo álbum', label: 'Nome', confirmLabel: 'Criar' });
+  if (!name || !name.trim()) return null;
+  try {
+    const { album: created } = await createSpaceAlbum(current.id, name.trim());
+    toast(`Álbum ${created.name} criado.`, 'success');
+    return created;
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+    return null;
+  }
+}
+
+function openAlbum(entry) {
+  album = entry;
+  $('space-albums-list-view').hidden = true;
+  $('space-album-view').hidden = false;
+  $('space-album-name').textContent = entry.name;
+  $('space-album-rename').hidden = !entry.can_edit;
+  $('space-album-delete').hidden = !entry.can_edit;
+  loadAlbumItems(true);
+}
+
+async function loadAlbumItems(reset) {
+  const grid = $('space-album-items');
+  if (reset) {
+    albumCursor = null;
+    grid.innerHTML = '<p class="filter-empty">Carregando...</p>';
+  }
+  try {
+    const page = await listAlbumItems(current.id, album.id, { before: albumCursor });
+    if (reset) grid.innerHTML = '';
+    grid.insertAdjacentHTML('beforeend', page.items.map((item) => itemCard(item, { inAlbum: true })).join(''));
+    if (reset && !page.items.length) {
+      grid.innerHTML = '<p class="filter-empty">Álbum vazio. Em Fotos, use o botão Álbum de cada foto.</p>';
+    }
+    albumCursor = page.next_before;
+    $('space-album-more').hidden = !albumCursor;
+  } catch (error) {
+    grid.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function renameAlbum() {
+  const name = await promptModal({ kicker: current.name, title: 'Renomear álbum', label: 'Nome', value: album.name });
+  if (!name || !name.trim()) return;
+  try {
+    const { album: renamed } = await renameSpaceAlbum(current.id, album.id, name.trim());
+    album = renamed;
+    $('space-album-name').textContent = renamed.name;
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+}
+
+async function deleteAlbum() {
+  const ok = await confirmModal('As fotos continuam no espaço; só o álbum deixa de existir.',
+    { kicker: current.name, title: `Apagar o álbum ${album.name}?`, confirmLabel: 'Apagar', danger: true });
+  if (!ok) return;
+  try {
+    await deleteSpaceAlbum(current.id, album.id);
+    toast('Álbum apagado.', 'success');
+    showAlbums();
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+}
+
+async function dropFromAlbum(itemId) {
+  try {
+    await removeFromSpaceAlbum(current.id, album.id, itemId);
+    document.querySelector(`#space-album-items [data-space-item="${itemId}"]`)?.remove();
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+  }
+}
+
+/** Put one photo of the space into an album, creating one if needed. */
+async function pickAlbum(itemId) {
+  let albums;
+  try {
+    albums = (await listSpaceAlbums(current.id)).albums;
+  } catch (error) {
+    toast(`Erro: ${error.message}`, 'error');
+    return;
+  }
+  const modal = openModal({
+    kicker: current.name,
+    title: 'Colocar em um álbum',
+    body: albums.map((entry) => `<button class="collection-choice" type="button" data-choose-album="${entry.id}">
+        <strong>${escapeHtml(entry.name)}</strong><span>${entry.count} foto(s)</span></button>`).join('')
+      + '<button class="btn btn-subtle" type="button" data-choose-album="new">+ Novo álbum</button>',
+  });
+  modal.body.addEventListener('click', async (event) => {
+    const choice = event.target.closest('[data-choose-album]')?.dataset.chooseAlbum;
+    if (!choice) return;
+    modal.close();
+    const target = choice === 'new' ? await newAlbum() : albums.find((a) => String(a.id) === choice);
+    if (!target) return;
+    try {
+      const { added } = await addToSpaceAlbum(current.id, target.id, [Number(itemId)]);
+      toast(added ? `Colocada em ${target.name}.` : `Já estava em ${target.name}.`, 'success');
+    } catch (error) {
+      toast(`Erro: ${error.message}`, 'error');
+    }
+  });
 }
 
 // ── Members ─────────────────────────────────────────────────────────────
@@ -390,6 +570,13 @@ export function initSpaces() {
     $('space-trash-more').addEventListener('click', () => loadTrash(false));
     $('space-invite').addEventListener('submit', invite);
     $('space-leave').addEventListener('click', leave);
+    $('space-search').addEventListener('submit', search);
+    $('space-search-clear').addEventListener('click', clearSearch);
+    $('space-album-new').addEventListener('click', async () => { if (await newAlbum()) showAlbums(); });
+    $('space-album-back').addEventListener('click', showAlbums);
+    $('space-album-rename').addEventListener('click', renameAlbum);
+    $('space-album-delete').addEventListener('click', deleteAlbum);
+    $('space-album-more').addEventListener('click', () => loadAlbumItems(false));
     $('space-members').addEventListener('change', (event) => {
       const select = event.target.closest('[data-member-role]');
       if (select) setRole(select);
@@ -403,6 +590,16 @@ export function initSpaces() {
       if (save) return saveItem(save.dataset.spaceSave, save);
       const remove = event.target.closest('[data-space-remove]');
       if (remove) return removeItem(remove.dataset.spaceRemove);
+      const openA = event.target.closest('[data-open-album]');
+      if (openA) {
+        const albums = JSON.parse($('space-albums').dataset.albums || '[]');
+        const entry = albums.find((a) => String(a.id) === openA.dataset.openAlbum);
+        return entry ? openAlbum(entry) : null;
+      }
+      const pick = event.target.closest('[data-album-pick]');
+      if (pick) return pickAlbum(pick.dataset.albumPick);
+      const dropA = event.target.closest('[data-album-drop]');
+      if (dropA) return dropFromAlbum(dropA.dataset.albumDrop);
       const drop = event.target.closest('[data-member-remove]');
       if (drop) return removeMember(drop);
       const back = event.target.closest('[data-space-restore]');

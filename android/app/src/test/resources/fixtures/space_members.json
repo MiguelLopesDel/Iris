@@ -1,0 +1,18 @@
+{
+  "members": [
+    {
+      "user_id": 1,
+      "username": "ana",
+      "display_name": "Ana",
+      "role": "manager",
+      "is_you": false
+    },
+    {
+      "user_id": 2,
+      "username": "bruno",
+      "display_name": "Bruno",
+      "role": "viewer",
+      "is_you": true
+    }
+  ]
+}

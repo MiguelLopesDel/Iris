@@ -1,7 +1,7 @@
 /* ── Iris Collections module ──────────────────────────────────────────────── */
 
-import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml, mediaUrl } from './api.js?v=45';
-import { confirmModal, promptModal, toast } from './ui.js?v=4';
+import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, addCollectionMembers, removeCollectionMembers, escapeHtml, mediaUrl } from './api.js?v=46';
+import { confirmModal, promptModal, toast } from './ui.js?v=5';
 
 var currentColId = null;
 

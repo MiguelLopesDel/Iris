@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "name": "ana.jpg",
+      "mime_type": "image/jpeg",
+      "media_type": "image",
+      "size_bytes": 0,
+      "sha256": "<masked>",
+      "added_by": 1,
+      "added_by_username": "ana",
+      "added_at": "<masked>",
+      "can_remove": false,
+      "thumbnail_url": "/api/spaces/1/items/1/thumbnail",
+      "original_url": "/api/spaces/1/items/1/original"
+    }
+  ],
+  "semantic": false
+}

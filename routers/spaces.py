@@ -54,6 +54,14 @@ class ChangeRoleIn(BaseModel):
     role: str
 
 
+class AlbumIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class AlbumItemsIn(BaseModel):
+    item_ids: list[int] = Field(min_length=1, max_length=500)
+
+
 class AddItemIn(BaseModel):
     # A database id in the actor's own private library. It is resolved only
     # there, so an id from another library or space names nothing.
@@ -240,10 +248,10 @@ def add_space_item(request: Request, response: Response, space_id: int, payload:
     source = request.app.state.private_original_for(payload.record_id)
     if source is None:
         raise HTTPException(404, _ITEM_NOT_FOUND)
-    path, name = source
     try:
         item, created = space_catalog.add_item(
-            _root(request, space_id), path, name, actor.id, _storage(request)
+            _root(request, space_id), source.path, source.name, actor.id, _storage(request),
+            metadata=source.metadata,
         )
     except SpaceQuotaExceeded as exc:
         raise HTTPException(507, "Cota do espaço excedida") from exc
@@ -409,4 +417,158 @@ def drop_member(request: Request, space_id: int, user_id: int):
         raise HTTPException(404, "Conta não participa do espaço") from exc
     except SpaceLastManager as exc:
         raise HTTPException(409, _LAST_MANAGER) from exc
+    return Response(status_code=204)
+
+
+# -- search -------------------------------------------------------------------
+
+
+def _query_vector(request: Request, query: str) -> tuple[Any, str | None]:
+    """The query as a vector of the caller's model, when one is loaded here."""
+    engine = getattr(getattr(request.state, "backend", None), "engine", None)
+    if engine is None or getattr(engine, "model", None) is None:
+        return None, None
+    try:
+        vector, _ = engine.encode_text(query)
+    except Exception:
+        return None, None  # text search still answers
+    return vector, engine.model_name
+
+
+@router.get("/{space_id}/search")
+def search_space(
+    request: Request,
+    space_id: int,
+    q: str = Query(..., min_length=1, max_length=300),
+    limit: int = Query(60, ge=1, le=space_catalog.MAX_PAGE),
+):
+    """Search one space by name, carried description and, if possible, meaning."""
+    from core.search_types import STOP_WORDS, normalize_text
+
+    actor, role = _member(request, space_id)
+    terms = [t for t in (normalize_text(w) for w in q.split()) if t and t not in STOP_WORDS]
+    vector, model = _query_vector(request, q)
+    items = space_catalog.search_items(
+        _root(request, space_id), terms, query_vector=vector, model=model, limit=limit
+    )
+    authors = _authors(request, items)
+    return {
+        "items": [_item_json(request, space_id, i, actor.id, role, authors) for i in items],
+        "semantic": vector is not None,
+    }
+
+
+# -- albums -------------------------------------------------------------------
+
+
+def _album_json(space_id: int, album: space_catalog.Album, actor_id: int, role: str) -> dict[str, Any]:
+    return {
+        "id": album.id,
+        "name": album.name,
+        "count": album.count,
+        "created_by": album.created_by,
+        "can_edit": space_catalog.can_edit_album(role, actor_id, album),
+        "cover_url": (
+            f"/api/spaces/{space_id}/items/{album.cover_item_id}/thumbnail"
+            if album.cover_item_id else None
+        ),
+    }
+
+
+_ALBUM_NOT_FOUND = "Álbum não encontrado"
+
+
+@router.get("/{space_id}/albums")
+def list_space_albums(request: Request, space_id: int):
+    actor, role = _member(request, space_id)
+    albums = space_catalog.list_albums(_root(request, space_id))
+    return {
+        "albums": [_album_json(space_id, a, actor.id, role) for a in albums],
+        "can_create": role in {"contributor", "manager"},
+    }
+
+
+@router.post("/{space_id}/albums", status_code=201)
+def create_space_album(request: Request, space_id: int, payload: AlbumIn):
+    actor, role = _member(request, space_id)
+    try:
+        album = space_catalog.create_album(_root(request, space_id), payload.name, actor.id, role)
+    except SpaceItemPermissionDenied as exc:
+        raise HTTPException(403, "Visualizadores não criam álbuns") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"album": _album_json(space_id, album, actor.id, role)}
+
+
+@router.patch("/{space_id}/albums/{album_id}")
+def rename_space_album(request: Request, space_id: int, album_id: int, payload: AlbumIn):
+    actor, role = _member(request, space_id)
+    try:
+        album = space_catalog.rename_album(
+            _root(request, space_id), album_id, payload.name, actor.id, role
+        )
+    except space_catalog.AlbumNotFound as exc:
+        raise HTTPException(404, _ALBUM_NOT_FOUND) from exc
+    except SpaceItemPermissionDenied as exc:
+        raise HTTPException(403, "Só quem criou o álbum ou um gestor o altera") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"album": _album_json(space_id, album, actor.id, role)}
+
+
+@router.delete("/{space_id}/albums/{album_id}", status_code=204)
+def delete_space_album(request: Request, space_id: int, album_id: int):
+    actor, role = _member(request, space_id)
+    try:
+        space_catalog.delete_album(_root(request, space_id), album_id, actor.id, role)
+    except space_catalog.AlbumNotFound as exc:
+        raise HTTPException(404, _ALBUM_NOT_FOUND) from exc
+    except SpaceItemPermissionDenied as exc:
+        raise HTTPException(403, "Só quem criou o álbum ou um gestor o apaga") from exc
+    return Response(status_code=204)
+
+
+@router.get("/{space_id}/albums/{album_id}/items")
+def list_album_items(
+    request: Request,
+    space_id: int,
+    album_id: int,
+    limit: int = Query(60, ge=1, le=space_catalog.MAX_PAGE),
+    before: int | None = Query(None, gt=0),
+):
+    actor, role = _member(request, space_id)
+    try:
+        items = space_catalog.album_items(_root(request, space_id), album_id, limit, before)
+    except space_catalog.AlbumNotFound as exc:
+        raise HTTPException(404, _ALBUM_NOT_FOUND) from exc
+    return _page(request, space_id, items, actor.id, role, limit)
+
+
+@router.post("/{space_id}/albums/{album_id}/items")
+def add_album_items(request: Request, space_id: int, album_id: int, payload: AlbumItemsIn):
+    actor, role = _member(request, space_id)
+    try:
+        added = space_catalog.add_to_album(
+            _root(request, space_id), album_id, payload.item_ids, actor.id, role
+        )
+    except space_catalog.AlbumNotFound as exc:
+        raise HTTPException(404, _ALBUM_NOT_FOUND) from exc
+    except SpaceItemNotFound as exc:
+        raise HTTPException(404, _ITEM_NOT_FOUND) from exc
+    except SpaceItemPermissionDenied as exc:
+        raise HTTPException(403, "Visualizadores não montam álbuns") from exc
+    return {"added": added}
+
+
+@router.delete("/{space_id}/albums/{album_id}/items/{item_id}", status_code=204)
+def remove_album_item(request: Request, space_id: int, album_id: int, item_id: int):
+    actor, role = _member(request, space_id)
+    try:
+        space_catalog.remove_from_album(_root(request, space_id), album_id, item_id, actor.id, role)
+    except space_catalog.AlbumNotFound as exc:
+        raise HTTPException(404, _ALBUM_NOT_FOUND) from exc
+    except SpaceItemNotFound as exc:
+        raise HTTPException(404, _ITEM_NOT_FOUND) from exc
+    except SpaceItemPermissionDenied as exc:
+        raise HTTPException(403, "Sem permissão para tirar esta foto do álbum") from exc
     return Response(status_code=204)

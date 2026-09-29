@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=53">
+  <link rel="stylesheet" href="/static/style.css?v=54">
 </head>
 <body>
 
@@ -335,14 +335,40 @@
         </div>
         <nav class="space-tabs" aria-label="Seções do espaço">
           <button type="button" class="active" data-space-view="items">Fotos</button>
+          <button type="button" data-space-view="albums">Álbuns</button>
           <button type="button" data-space-view="members">Membros</button>
           <button type="button" data-space-view="trash" hidden>Lixeira</button>
         </nav>
 
         <div data-space-panel="items">
+          <form id="space-search" class="space-search" role="search">
+            <input id="space-search-input" type="search" placeholder="Buscar neste espaço: praia, aniversário, nome do arquivo…" autocomplete="off">
+            <button class="btn btn-subtle" type="submit">Buscar</button>
+            <button id="space-search-clear" class="btn btn-subtle" type="button" hidden>Limpar</button>
+          </form>
           <p id="space-items-hint" class="section-hint"></p>
           <div id="space-items" class="media-grid"></div>
           <button id="space-more" class="btn btn-subtle" type="button" hidden>Carregar mais</button>
+        </div>
+
+        <div data-space-panel="albums" hidden>
+          <div id="space-albums-list-view">
+            <div class="space-albums-head">
+              <p class="section-hint">Álbuns organizam as fotos do espaço; apagar um álbum não apaga fotos.</p>
+              <button id="space-album-new" class="btn btn-primary" type="button" hidden>+ Novo álbum</button>
+            </div>
+            <div id="space-albums" class="space-list"></div>
+          </div>
+          <div id="space-album-view" hidden>
+            <div class="space-header">
+              <button id="space-album-back" class="btn btn-subtle" type="button">← Álbuns</button>
+              <h4 id="space-album-name"></h4>
+              <button id="space-album-rename" class="btn btn-subtle" type="button" hidden>Renomear</button>
+              <button id="space-album-delete" class="btn btn-subtle" type="button" hidden>Apagar álbum</button>
+            </div>
+            <div id="space-album-items" class="media-grid"></div>
+            <button id="space-album-more" class="btn btn-subtle" type="button" hidden>Carregar mais</button>
+          </div>
         </div>
 
         <div data-space-panel="members" hidden>
@@ -781,7 +807,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=69"></script>
+<script type="module" src="/static/app.js?v=70"></script>
 
 </body>
 </html>

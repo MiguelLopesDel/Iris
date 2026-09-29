@@ -13,9 +13,9 @@ import {
   getRecordMetadata,
   listPersons,
   mediaUrl,
-} from './api.js?v=45';
-import { toast } from './ui.js?v=4';
-import { pickPersonModal } from './persons.js?v=8';
+} from './api.js?v=46';
+import { toast } from './ui.js?v=5';
+import { pickPersonModal } from './persons.js?v=9';
 
 const modal = document.getElementById('detail-modal');
 const stageMedia = document.getElementById('detail-media');

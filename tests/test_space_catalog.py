@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from core import fs_clone, space_catalog
@@ -299,4 +300,103 @@ def test_v1_catalogue_is_migrated_in_place(tmp_path: Path) -> None:
     assert [(i.original_name, i.storage_method) for i in items] == [("a.jpg", "copy")]
     assert space_catalog.usage_bytes(root) == 12
     with sqlite3.connect(root / "space.db") as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == space_catalog.SCHEMA_VERSION
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
+        assert {"albums", "album_items"} <= tables
+        assert connection.execute("SELECT description FROM items WHERE id = 1").fetchone() == ("",)
+
+
+# -- search ---------------------------------------------------------------------
+
+def _vector(*values: float) -> bytes:
+    return np.asarray(values, dtype=np.float32).tobytes()
+
+
+def test_search_matches_names_and_carried_descriptions_without_accents(tmp_path: Path) -> None:
+    root = tmp_path / "space"
+    meta = space_catalog.ItemMetadata
+    praia, _ = space_catalog.add_item(
+        root, _file(tmp_path, "p.jpg", b"p"), "IMG_001.jpg", 1,
+        metadata=meta(description="Família na praia ao pôr do sol"),
+    )
+    bolo, _ = space_catalog.add_item(
+        root, _file(tmp_path, "b.jpg", b"b"), "aniversario_bolo.jpg", 1,
+        metadata=meta(description="bolo de chocolate"),
+    )
+    assert [i.id for i in space_catalog.search_items(root, ["praia"])] == [praia.id]
+    assert [i.id for i in space_catalog.search_items(root, ["familia", "sol"])] == [praia.id]
+    assert [i.id for i in space_catalog.search_items(root, ["aniversario"])] == [bolo.id]
+    assert space_catalog.search_items(root, ["neve"]) == []
+
+
+def test_search_uses_similarity_only_between_vectors_of_the_same_model(tmp_path: Path) -> None:
+    root = tmp_path / "space"
+    meta = space_catalog.ItemMetadata
+    close, _ = space_catalog.add_item(
+        root, _file(tmp_path, "c", b"c"), "a.jpg", 1,
+        metadata=meta(embedding=_vector(1, 0, 0), embedding_model="clip"),
+    )
+    space_catalog.add_item(
+        root, _file(tmp_path, "f", b"f"), "b.jpg", 1,
+        metadata=meta(embedding=_vector(0, 1, 0), embedding_model="clip"),
+    )
+    space_catalog.add_item(  # same direction, other model: not comparable
+        root, _file(tmp_path, "o", b"o"), "c.jpg", 1,
+        metadata=meta(embedding=_vector(1, 0, 0), embedding_model="other"),
+    )
+    found = space_catalog.search_items(
+        root, ["cachorro"], query_vector=np.asarray([0.9, 0.1, 0], dtype=np.float32), model="clip"
+    )
+    assert [i.id for i in found] == [close.id]
+
+
+def test_search_hides_removed_items(tmp_path: Path) -> None:
+    root = tmp_path / "space"
+    item, _ = space_catalog.add_item(root, _file(tmp_path, "x", b"x"), "praia.jpg", 1)
+    space_catalog.remove_item(root, item.id, 1, "manager")
+    assert space_catalog.search_items(root, ["praia"]) == []
+
+
+# -- albums -----------------------------------------------------------------------
+
+def test_album_lifecycle_and_permissions(tmp_path: Path) -> None:
+    root = tmp_path / "space"
+    a, _ = space_catalog.add_item(root, _file(tmp_path, "a", b"a"), "a.jpg", added_by=1)
+    b, _ = space_catalog.add_item(root, _file(tmp_path, "b", b"b"), "b.jpg", added_by=2)
+
+    with pytest.raises(SpaceItemPermissionDenied):
+        space_catalog.create_album(root, "Férias", actor_id=3, role="viewer")
+    with pytest.raises(ValueError):
+        space_catalog.create_album(root, "   ", actor_id=2, role="contributor")
+    album = space_catalog.create_album(root, "  Férias  2026 ", actor_id=2, role="contributor")
+    assert (album.name, album.count, album.cover_item_id) == ("Férias 2026", 0, None)
+
+    assert space_catalog.add_to_album(root, album.id, [a.id, b.id], actor_id=2, role="contributor") == 2
+    assert space_catalog.add_to_album(root, album.id, [a.id], actor_id=1, role="manager") == 0
+    album = space_catalog.get_album(root, album.id)
+    assert (album.count, album.cover_item_id) == (2, b.id)
+    assert [i.id for i in space_catalog.album_items(root, album.id, 10)] == [b.id, a.id]
+
+    with pytest.raises(SpaceItemPermissionDenied):  # a contributor edits only their own album
+        space_catalog.rename_album(root, album.id, "Outro", actor_id=1, role="contributor")
+    assert space_catalog.rename_album(root, album.id, "Praia", 1, "manager").name == "Praia"
+
+    with pytest.raises(SpaceItemPermissionDenied):
+        space_catalog.remove_from_album(root, album.id, a.id, actor_id=3, role="viewer")
+    space_catalog.remove_from_album(root, album.id, a.id, actor_id=2, role="contributor")
+    assert [i.id for i in space_catalog.album_items(root, album.id, 10)] == [b.id]
+
+    # A removed item leaves the album's view; deleting the album keeps photos.
+    space_catalog.remove_item(root, b.id, 1, "manager")
+    assert space_catalog.get_album(root, album.id).count == 0
+    space_catalog.delete_album(root, album.id, actor_id=1, role="manager")
+    with pytest.raises(space_catalog.AlbumNotFound):
+        space_catalog.get_album(root, album.id)
+    assert [i.id for i in space_catalog.list_items(root, 10)] == [a.id]
+
+
+def test_items_of_another_space_cannot_enter_an_album(tmp_path: Path) -> None:
+    root = tmp_path / "space"
+    album = space_catalog.create_album(root, "A", actor_id=1, role="manager")
+    with pytest.raises(SpaceItemNotFound):
+        space_catalog.add_to_album(root, album.id, [999], actor_id=1, role="manager")

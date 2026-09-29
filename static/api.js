@@ -142,6 +142,38 @@ export async function saveSpaceItem(id, itemId) {
   return apiJson('POST', spaceUrl(id, `/items/${encodeURIComponent(itemId)}/save`));
 }
 
+export async function searchSpace(id, q, { limit = 60 } = {}) {
+  return apiGet(spaceUrl(id, '/search'), { q, limit });
+}
+
+export async function listSpaceAlbums(id) {
+  return apiGet(spaceUrl(id, '/albums'));
+}
+
+export async function createSpaceAlbum(id, name) {
+  return apiJson('POST', spaceUrl(id, '/albums'), { name });
+}
+
+export async function renameSpaceAlbum(id, albumId, name) {
+  return apiJson('PATCH', spaceUrl(id, `/albums/${encodeURIComponent(albumId)}`), { name });
+}
+
+export async function deleteSpaceAlbum(id, albumId) {
+  return apiJson('DELETE', spaceUrl(id, `/albums/${encodeURIComponent(albumId)}`));
+}
+
+export async function listAlbumItems(id, albumId, { before = null, limit = 60 } = {}) {
+  return apiGet(spaceUrl(id, `/albums/${encodeURIComponent(albumId)}/items`), { before, limit });
+}
+
+export async function addToSpaceAlbum(id, albumId, itemIds) {
+  return apiJson('POST', spaceUrl(id, `/albums/${encodeURIComponent(albumId)}/items`), { item_ids: itemIds });
+}
+
+export async function removeFromSpaceAlbum(id, albumId, itemId) {
+  return apiJson('DELETE', spaceUrl(id, `/albums/${encodeURIComponent(albumId)}/items/${encodeURIComponent(itemId)}`));
+}
+
 export async function listSpaceTrash(id, { before = null, limit = 60 } = {}) {
   return apiGet(spaceUrl(id, '/trash'), { before, limit });
 }
