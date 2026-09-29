@@ -16,6 +16,7 @@ import com.iris.app.data.catalog.MediaCatalog
 import com.iris.app.data.catalog.SqliteCatalogStore
 import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.BackgroundSyncPolicy
+import com.iris.app.data.sync.AccountSyncSession
 import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.SyncUploadManager
@@ -184,10 +185,13 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
 
                 if (sessionIdentity == null) return@collectLatest
                 val accountKey = credentialsStore.accountIdentity.value ?: return@collectLatest
+                val syncSession = AccountSyncSession(sessionIdentity, accountKey)
                 isServerConfigurationReady.first { it }
                 delay(BACKGROUND_START_DELAY_MS)
-                if (credentialsStore.sessionIdentity.value != sessionIdentity ||
-                    credentialsStore.accountIdentity.value != accountKey
+                if (!syncSession.matches(
+                        credentialsStore.sessionIdentity.value,
+                        credentialsStore.accountIdentity.value
+                    )
                 ) return@collectLatest
 
                 try {
@@ -195,18 +199,24 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
                     // scheduling it. Old device-wide settings had no safe owner,
                     // so accounts use independent defaults.
                     val syncSettings = settingsRepository.syncSettingsForAccount(accountKey).first()
-                    if (credentialsStore.sessionIdentity.value != sessionIdentity ||
-                        credentialsStore.accountIdentity.value != accountKey
+                    if (!syncSession.matches(
+                            credentialsStore.sessionIdentity.value,
+                            credentialsStore.accountIdentity.value
+                        )
                     ) return@collectLatest
                     MediaSyncWorker.enqueueBackground(this@IrisApplication, syncSettings)
 
                     // Poll change feed on app open (contract section 38).
                     changeFeedSyncManager.syncChanges(accountKey, sessionIdentity) {
-                        credentialsStore.sessionIdentity.value == sessionIdentity &&
-                            credentialsStore.accountIdentity.value == accountKey
+                        syncSession.matches(
+                            credentialsStore.sessionIdentity.value,
+                            credentialsStore.accountIdentity.value
+                        )
                     }
-                    if (credentialsStore.sessionIdentity.value != sessionIdentity ||
-                        credentialsStore.accountIdentity.value != accountKey
+                    if (!syncSession.matches(
+                            credentialsStore.sessionIdentity.value,
+                            credentialsStore.accountIdentity.value
+                        )
                     ) return@collectLatest
 
                     // Pull recent catalog rows off the UI path so the gallery
@@ -214,7 +224,12 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
                     mediaCatalog.reconcile(
                         maxPages = CATALOG_RECONCILE_PAGES,
                         sessionKey = sessionIdentity,
-                        isSessionCurrent = { credentialsStore.sessionIdentity.value == sessionIdentity },
+                        isSessionCurrent = {
+                            syncSession.matches(
+                                credentialsStore.sessionIdentity.value,
+                                credentialsStore.accountIdentity.value
+                            )
+                        },
                     )
                 } catch (cancelled: CancellationException) {
                     throw cancelled

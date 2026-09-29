@@ -37,6 +37,7 @@ class MediaSyncWorker(
         if (sessionIdentity == null || accountKey == null || !app.credentialsStore.hasValidCredentials()) {
             return Result.success() // Not logged in; nothing to sync
         }
+        val syncSession = AccountSyncSession(sessionIdentity, accountKey)
 
         val syncStartedAtNanos = System.nanoTime()
         val firstUploadMetricRecorded = AtomicBoolean(false)
@@ -96,8 +97,10 @@ class MediaSyncWorker(
                                 accountKey = accountKey,
                                 policy = policy,
                                 isSessionCurrent = {
-                                    !isStopped && app.credentialsStore.sessionIdentity.value == sessionIdentity &&
-                                        app.credentialsStore.accountIdentity.value == accountKey
+                                    !isStopped && syncSession.matches(
+                                        app.credentialsStore.sessionIdentity.value,
+                                        app.credentialsStore.accountIdentity.value
+                                    )
                                 },
                                 onNewJobEnqueued = onNewJobEnqueued,
                             )
@@ -107,8 +110,10 @@ class MediaSyncWorker(
                                 accountKey,
                                 sessionIdentity,
                                 isSessionCurrent = {
-                                    !isStopped && app.credentialsStore.sessionIdentity.value == sessionIdentity &&
-                                        app.credentialsStore.accountIdentity.value == accountKey
+                                    !isStopped && syncSession.matches(
+                                        app.credentialsStore.sessionIdentity.value,
+                                        app.credentialsStore.accountIdentity.value
+                                    )
                                 },
                                 onFirstUploadJobClaimed = onFirstUploadJobClaimed,
                                 workSignal = workSignal,
@@ -122,8 +127,10 @@ class MediaSyncWorker(
                         accountKey,
                         sessionIdentity,
                         isSessionCurrent = {
-                            !isStopped && app.credentialsStore.sessionIdentity.value == sessionIdentity &&
-                                app.credentialsStore.accountIdentity.value == accountKey
+                            !isStopped && syncSession.matches(
+                                app.credentialsStore.sessionIdentity.value,
+                                app.credentialsStore.accountIdentity.value
+                            )
                         },
                         onFirstUploadJobClaimed = onFirstUploadJobClaimed,
                     )
@@ -134,8 +141,10 @@ class MediaSyncWorker(
             // 3. Poll change feed after upload completion
             stage = "change_feed"
             app.changeFeedSyncManager.syncChanges(accountKey, sessionIdentity) {
-                !isStopped && app.credentialsStore.sessionIdentity.value == sessionIdentity &&
-                    app.credentialsStore.accountIdentity.value == accountKey
+                !isStopped && syncSession.matches(
+                    app.credentialsStore.sessionIdentity.value,
+                    app.credentialsStore.accountIdentity.value
+                )
             }
 
             if (queueCompleted) {
@@ -152,8 +161,10 @@ class MediaSyncWorker(
             Log.w(TAG, "Background sync retry stage=$stage error=${e.javaClass.simpleName}")
             // A local file/queue failure is not proof the server is offline.
             // Re-probe to distinguish it from a host that went away mid-sync.
-            if (app.credentialsStore.sessionIdentity.value == sessionIdentity &&
-                app.credentialsStore.accountIdentity.value == accountKey
+            if (syncSession.matches(
+                    app.credentialsStore.sessionIdentity.value,
+                    app.credentialsStore.accountIdentity.value
+                )
             ) {
                 val reachable = app.irisRepository.checkServerHealth().isSuccess
                 if (reachable) app.settingsRepository.markCloudSyncFailed(accountKey)
@@ -170,8 +181,11 @@ class MediaSyncWorker(
         context.getSystemService(BatteryManager::class.java)?.isCharging == true
 
     private fun ensureSession(app: IrisApplication, expectedIdentity: String, expectedAccountKey: String) {
-        if (isStopped || app.credentialsStore.sessionIdentity.value != expectedIdentity ||
-            app.credentialsStore.accountIdentity.value != expectedAccountKey
+        val expectedSession = AccountSyncSession(expectedIdentity, expectedAccountKey)
+        if (isStopped || !expectedSession.matches(
+                app.credentialsStore.sessionIdentity.value,
+                app.credentialsStore.accountIdentity.value
+            )
         ) {
             throw CancellationException("Device session changed during background sync")
         }

@@ -32,6 +32,7 @@ import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.SyncQueueCoordinator
+import com.iris.app.data.sync.AccountSyncSession
 import com.iris.app.data.sync.SyncUploadManager
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
@@ -119,9 +120,12 @@ class IrisRepository(
             ?: error("Faça login antes de sincronizar")
         val accountKey = credentialsStore.accountIdentity.value
             ?: error("A conta não pôde ser identificada; entre novamente antes de sincronizar")
+        val syncSession = AccountSyncSession(sessionIdentity, accountKey)
         val isSessionCurrent = {
-            credentialsStore.sessionIdentity.value == sessionIdentity &&
-                credentialsStore.accountIdentity.value == accountKey
+            syncSession.matches(
+                credentialsStore.sessionIdentity.value,
+                credentialsStore.accountIdentity.value
+            )
         }
         val syncResult = SyncQueueCoordinator.scanAndDrain(
             scanAndEnqueue = { onNewJobEnqueued ->
