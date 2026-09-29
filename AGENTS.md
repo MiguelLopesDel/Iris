@@ -40,13 +40,15 @@ background job, and persisted queue.
   `UploadInitBatcher` and `UploadCompleteBatcher`; do not duplicate the queue,
   coalescing-window, or max-batch loop.
 - Responsibility review (audit on 2026-09-29; implementation notes are current
-  through commits `096ca65` and `bbc493c`):
-  1. Android sync boundaries: `SyncUploadManager.kt` mixes queue orchestration,
-     transport, streaming and hashing; `IrisApplication.kt` owns account-change
-     sync policy, and `IrisRepository.kt` exposes a broad consumer surface.
-     Review extraction of a resumable transfer component, account lifecycle
-     coordinator, and narrow consumer interfaces while preserving account
-     scoping.
+  through commits `096ca65`, `bbc493c`, and `3ebe944`):
+  1. Android sync boundaries: `MediaPayloadSource.kt` owns provider-backed
+     media hashing and bounded chunk streaming; `ResumableUploadTransfer.kt`
+     owns the active per-item resumable protocol and its account-scoped durable
+     state transitions. `SyncUploadManager.kt` owns queue claiming, worker
+     concurrency, progress aggregation and batcher lifecycle. `IrisApplication.kt`
+     owns account-change sync policy, and `IrisRepository.kt` exposes a broad
+     consumer surface. Further candidates are account lifecycle coordination
+     and narrow consumer interfaces, preserving account scoping.
   2. Android gallery composition: `GalleryViewModel.kt` combines MediaStore,
      local catalog, remote paging, session identity and origin merging. Review
      a small gallery data-source/repository seam and pure merge tests.
