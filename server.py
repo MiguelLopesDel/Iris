@@ -94,13 +94,13 @@ from core.backup_scheduler import BackupService
 from core.device_tokens import read_access_token
 from core.embedding_models import resolve_embedding_model
 from core.file_ops import move_to_trash
+from core.index_rebuild import rebuild_indexes_in_background
 from core.media_metadata import extract_full_metadata, extract_metadata
 from core.observability import configure_logging, request_path
 from core.perf import dump, trace
 from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
-from core.sync_processor import rebuild_indexes_in_background
 from core.users_db import IrisUser, get_device, get_user_by_id, has_users, list_users
 from core.web_enrichment import (
     EnrichmentSuggestion,
@@ -608,7 +608,7 @@ async def lifespan(app: FastAPI):
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
         )
-        from core.sync_processor import start_pending_upload_recovery
+        from core.sync_recovery import start_pending_upload_recovery
 
         stop_event, worker = start_pending_upload_recovery(
             users_db_path=app.state.users_db_path,

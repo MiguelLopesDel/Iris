@@ -17,8 +17,14 @@ from starlette.concurrency import run_in_threadpool
 
 from core.file_digest import FileDigest
 from core.sync_db import append_change, changes_after, ensure_tables, now_iso, record_origin
-from core.sync_file_ops import durable_move_upload, fsync_directory
+from core.sync_file_ops import fsync_directory
 from core.sync_processor import process_upload
+from core.sync_upload_metadata import UploadMetadataError, parse_upload_metadata
+from core.upload_finalization import (
+    UnsafeUploadDestinationError,
+    move_upload_into_library,
+    record_upload_finalized,
+)
 from core.upload_reservations import UploadReservationStore
 from core.users_db import list_devices, revoke_device
 
@@ -26,7 +32,6 @@ router = APIRouter(prefix="/api/sync", tags=["sync"])
 _MAX_CHUNK_BYTES = 32 * 1024 * 1024
 _MAX_UPLOAD_INIT_BATCH = 16
 _UPLOAD_DISK_BUFFER_BYTES = 1024 * 1024
-_SOURCE_FIELD_LIMIT = 512
 logger = logging.getLogger("iris")
 
 
@@ -68,31 +73,6 @@ def _connection(request: Request) -> sqlite3.Connection:
 
 def _device_payload(device) -> dict:
     return {"id": device.id, "name": device.name, "platform": device.platform, "revoked": bool(device.revoked_at)}
-
-
-def _upload_source(payload: dict) -> dict[str, str | int]:
-    raw = payload.get("source")
-    if not isinstance(raw, dict):
-        return {
-            "id": "", "name": "", "relative_path": "", "volume": "",
-            "media_store_id": "", "generation": 0, "media_kind": "",
-        }
-    media_kind = str(raw.get("media_kind", ""))[:16]
-    if media_kind not in {"", "image", "video"}:
-        raise HTTPException(400, "Invalid source media kind")
-    try:
-        generation = max(0, int(raw.get("generation", 0)))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, "Invalid source generation") from exc
-    return {
-        "id": str(raw.get("id", ""))[:_SOURCE_FIELD_LIMIT],
-        "name": str(raw.get("name", ""))[:_SOURCE_FIELD_LIMIT],
-        "relative_path": str(raw.get("relative_path", ""))[:_SOURCE_FIELD_LIMIT],
-        "volume": str(raw.get("volume", ""))[:_SOURCE_FIELD_LIMIT],
-        "media_store_id": str(raw.get("media_store_id", ""))[:128],
-        "generation": generation,
-        "media_kind": media_kind,
-    }
 
 
 @router.get("/devices")
@@ -146,12 +126,10 @@ async def start_upload(request: Request):
     if not device_id:
         raise HTTPException(403, "Use uma sessão de dispositivo para sincronizar mídia")
     payload = await request.json()
-    filename = Path(str(payload.get("filename", ""))).name
-    expected_size = payload.get("size")
-    expected_hash = str(payload.get("sha256", "")).lower()
-    source = _upload_source(payload)
-    if not filename or not isinstance(expected_size, int) or expected_size < 0 or len(expected_hash) != 64:
-        raise HTTPException(400, "Metadados de envio inválidos")
+    try:
+        metadata = parse_upload_metadata(payload)
+    except UploadMetadataError as exc:
+        raise HTTPException(400, str(exc)) from exc
     user = getattr(request.state, "iris_user", None)
     if user is None:
         raise HTTPException(401, "Autenticação necessária")
@@ -165,7 +143,7 @@ async def start_upload(request: Request):
         remaining = UploadReservationStore.remaining_bytes(
             conn, request.app.state.account_quota_bytes
         )
-        if expected_size > remaining:
+        if metadata.size > remaining:
             raise HTTPException(413, "Cota da biblioteca excedida")
         root.mkdir(mode=0o700, exist_ok=True)
         created_at = now_iso()
@@ -173,17 +151,17 @@ async def start_upload(request: Request):
             conn,
             upload_id=upload_id,
             device_id=device_id,
-            filename=filename,
-            expected_size=expected_size,
-            expected_hash=expected_hash,
-            captured_at=str(payload.get("captured_at", ""))[:64],
+            filename=metadata.filename,
+            expected_size=metadata.size,
+            expected_hash=metadata.sha256,
+            captured_at=metadata.captured_at,
             temp_path=temp_path,
             created_at=created_at,
             updated_at=created_at,
-            source=source,
+            source=metadata.source,
         )
         UploadReservationStore.record_source(
-            conn, device_id=device_id, source=source, updated_at=now_iso()
+            conn, device_id=device_id, source=metadata.source, updated_at=now_iso()
         )
     return {"upload_id": upload_id, "offset": 0, "chunk_size": _MAX_CHUNK_BYTES}
 
@@ -222,40 +200,22 @@ async def start_upload_batch(request: Request):
     prepared: list[dict] = []
     for raw in items:
         client_upload_id = str(raw.get("client_upload_id", ""))
-        filename = Path(str(raw.get("filename", ""))).name
-        expected_size = raw.get("size")
-        expected_hash = str(raw.get("sha256", "")).lower()
-        captured_at = str(raw.get("captured_at", ""))[:64]
         try:
-            source = _upload_source(raw)
-        except HTTPException as exc:
-            prepared.append({
-                "client_upload_id": client_upload_id,
-                "error_code": exc.status_code,
-                "error_message": str(exc.detail),
-            })
-            continue
-
-        if (
-            not filename
-            or isinstance(expected_size, bool)
-            or not isinstance(expected_size, int)
-            or expected_size < 0
-            or not re.fullmatch(r"[0-9a-f]{64}", expected_hash)
-        ):
+            metadata = parse_upload_metadata(raw)
+        except UploadMetadataError as exc:
             prepared.append({
                 "client_upload_id": client_upload_id,
                 "error_code": 400,
-                "error_message": "Metadados de envio inválidos",
+                "error_message": str(exc),
             })
             continue
         prepared.append({
             "client_upload_id": client_upload_id,
-            "filename": filename,
-            "size": expected_size,
-            "sha256": expected_hash,
-            "captured_at": captured_at,
-            "source": source,
+            "filename": metadata.filename,
+            "size": metadata.size,
+            "sha256": metadata.sha256,
+            "captured_at": metadata.captured_at,
+            "source": metadata.source,
         })
 
     root = user.db_path.parent / "sync_uploads"
@@ -560,32 +520,36 @@ async def _complete_upload_once(request: Request, upload_id: str, device_id: str
         storage_started = time.perf_counter()
         try:
             await run_in_threadpool(
-                durable_move_upload,
+                move_upload_into_library,
                 temporary,
                 destination,
+                media_root=user.media_root,
                 upload_id=upload_id,
                 expected_size=row[1],
                 expected_hash=row[2],
             )
+        except UnsafeUploadDestinationError as exc:
+            logger.error(
+                "sync_upload_destination_invalid user_id=%s upload_id=%s",
+                user.id,
+                upload_id,
+            )
+            raise HTTPException(500, "Destino de mídia inválido; envio preservado para recuperação") from exc
         except ValueError as exc:
             raise HTTPException(422, "Hash do arquivo não confere") from exc
         except FileNotFoundError as exc:
             raise HTTPException(500, "Arquivo temporário/final ausente; envio preservado para recuperação") from exc
         _log_sync_phase(request, "durable_move", storage_started, bytes=row[1], state="ok")
 
-        finalized = conn.execute(
-            "UPDATE sync_uploads SET state = 'pending_processing', updated_at = ? "
-            "WHERE id = ? AND state = 'finalizing'",
-            (now_iso(), upload_id),
+        sequence = record_upload_finalized(
+            conn,
+            upload_id=upload_id,
+            filename=row[0],
+            destination=destination,
+            captured_at=row[7],
         )
-        if finalized.rowcount != 1:
-            conn.commit()
+        if sequence is None:
             return {"upload_id": upload_id, "state": "pending_processing"}
-        sequence = append_change(conn, "media", upload_id, "created", 1, {
-            "upload_id": upload_id, "filename": row[0], "path": str(destination),
-            "captured_at": row[7], "state": "pending_processing",
-        })
-        conn.commit()
     if request.app.state.sync_ai_processing and request.app.state.load_model:
         threading.Thread(
             target=process_upload,

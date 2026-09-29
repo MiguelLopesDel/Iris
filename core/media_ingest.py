@@ -6,7 +6,9 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from core.sync_db import append_change, now_iso, record_origin
+from core.sync_db import now_iso, record_origin
+from core.upload_processing_state import record_upload_processing_result
+from core.upload_source import source_from_upload_row
 
 
 def ingest_upload_without_ai(
@@ -50,21 +52,16 @@ def ingest_upload_without_ai(
             ).fetchone()
             if duplicate is not None:
                 media_id = int(duplicate["id"])
-                record_origin(connection, media_id, upload["device_id"], _source(upload))
-                changed = connection.execute(
-                    """UPDATE sync_uploads SET state = 'duplicate', updated_at = ?
-                       WHERE id = ? AND processing_lease_token = ?""",
-                    (now_iso(), upload_id, processing_lease_token),
+                record_origin(
+                    connection, media_id, upload["device_id"],
+                    source_from_upload_row(upload),
                 )
-                if changed.rowcount != 1:
-                    raise RuntimeError("Processing lease was lost before catalog commit")
-                sequence = append_change(
+                sequence = record_upload_processing_result(
                     connection,
-                    "media",
-                    upload_id,
-                    "updated",
-                    3,
-                    {"upload_id": upload_id, "media_id": media_id, "state": "duplicate"},
+                    upload_id=upload_id,
+                    lease_token=processing_lease_token,
+                    media_id=media_id,
+                    state="duplicate",
                 )
                 state = "duplicate"
                 delete_duplicate_original = True
@@ -117,21 +114,15 @@ def ingest_upload_without_ai(
                     ),
                 )
                 media_id = int(cursor.lastrowid)
-                record_origin(connection, media_id, upload["device_id"], _source(upload))
-                changed = connection.execute(
-                    """UPDATE sync_uploads SET state = 'ready', updated_at = ?
-                       WHERE id = ? AND processing_lease_token = ?""",
-                    (now_iso(), upload_id, processing_lease_token),
+                record_origin(
+                    connection, media_id, upload["device_id"],
+                    source_from_upload_row(upload),
                 )
-                if changed.rowcount != 1:
-                    raise RuntimeError("Processing lease was lost before catalog commit")
-                sequence = append_change(
+                sequence = record_upload_processing_result(
                     connection,
-                    "media",
-                    upload_id,
-                    "updated",
-                    3,
-                    {"upload_id": upload_id, "media_id": media_id, "state": "ready"},
+                    upload_id=upload_id,
+                    lease_token=processing_lease_token,
+                    media_id=media_id,
                 )
                 state = "ready"
     finally:
@@ -148,18 +139,6 @@ def ingest_upload_without_ai(
         "state": state,
         "cursor": sequence,
         "path": str(file_path),
-    }
-
-
-def _source(upload: sqlite3.Row) -> dict[str, str | int]:
-    return {
-        "id": upload["source_id"],
-        "name": upload["source_name"],
-        "relative_path": upload["source_relative_path"],
-        "volume": upload["source_volume"],
-        "media_store_id": upload["source_media_store_id"],
-        "generation": upload["source_generation"],
-        "media_kind": upload["source_media_kind"],
     }
 
 

@@ -97,6 +97,23 @@ with TestClient(server.app) as client:
     for malformed_batch in malformed_batches:
         rejected = client.post("/api/sync/uploads/batch", headers=headers, json=malformed_batch)
         assert rejected.status_code == 400, rejected.text
+
+    # Single and batch reservations must apply the same validation contract.
+    invalid_single = client.post("/api/sync/uploads", headers=headers, json={
+        "filename": "photo.jpg", "size": True, "sha256": "z" * 64,
+    })
+    assert invalid_single.status_code == 400, invalid_single.text
+    invalid_batch = client.post("/api/sync/uploads/batch", headers=headers, json={
+        "uploads": [
+            {**batch_item("bad-size", "photo.jpg", "a" * 64), "size": True},
+            {**batch_item("bad-hash", "photo.jpg", "z" * 64), "size": 0},
+            {**batch_item("bad-source", "photo.jpg", "a" * 64),
+             "source": {"media_kind": "audio"}},
+        ],
+    })
+    assert invalid_batch.status_code == 200, invalid_batch.text
+    assert [item["error_code"] for item in invalid_batch.json()["uploads"]] == [400, 400, 400]
+
     user_db = sqlite3.connect(data / "users" / "1" / "iris.db")
     assert user_db.execute(
         "SELECT COUNT(*) FROM sync_uploads WHERE client_upload_id IN ('duplicate-id', '')"
@@ -173,6 +190,71 @@ with TestClient(server.app) as client:
     assert "must-not-be-used" not in str(completed_path)
     assert completed_path.name.endswith("-photo.jpg")
 
+    # Simulate a crash after the durable filesystem move but before the
+    # database row leaves `finalizing`. Replaying batch reservation must return
+    # the same upload, and completion must recover idempotently from the
+    # already-committed destination.
+    recovery_body = b"recovered after finalizing crash"
+    recovery_hash = hashlib.sha256(recovery_body).hexdigest()
+    recovery_client_id = "phone-job-recovery"
+    recovery_metadata = {
+        **batch_item(recovery_client_id, "recovered.jpg", recovery_hash),
+        "size": len(recovery_body),
+    }
+    recovery_reservation = client.post(
+        "/api/sync/uploads/batch", headers=headers,
+        json={"uploads": [recovery_metadata]},
+    )
+    assert recovery_reservation.status_code == 200, recovery_reservation.text
+    [recovery_upload] = recovery_reservation.json()["uploads"]
+    recovery_upload_id = recovery_upload["upload_id"]
+    recovery_chunk = client.put(
+        f"/api/sync/uploads/{recovery_upload_id}?offset=0",
+        headers=headers,
+        content=recovery_body,
+    )
+    assert recovery_chunk.status_code == 200, recovery_chunk.text
+
+    recovery_user = get_user_by_username(data / "users.db", "alice")
+    recovery_destination = (
+        recovery_user.media_root / "uploads" / "recovery" / "recovered.jpg"
+    )
+    db = sqlite3.connect(recovery_user.db_path)
+    recovery_temp_path = db.execute(
+        "SELECT temp_path FROM sync_uploads WHERE id = ?", (recovery_upload_id,)
+    ).fetchone()[0]
+    db.execute(
+        "UPDATE sync_uploads SET state = 'finalizing', final_path = ? WHERE id = ?",
+        (str(recovery_destination), recovery_upload_id),
+    )
+    db.commit()
+    db.close()
+
+    from core.sync_file_ops import durable_move_upload
+    durable_move_upload(
+        Path(recovery_temp_path),
+        recovery_destination,
+        upload_id=recovery_upload_id,
+        expected_size=len(recovery_body),
+        expected_hash=recovery_hash,
+    )
+    retried_reservation = client.post(
+        "/api/sync/uploads/batch", headers=headers,
+        json={"uploads": [recovery_metadata]},
+    )
+    assert retried_reservation.status_code == 200, retried_reservation.text
+    [recovered_reservation] = retried_reservation.json()["uploads"]
+    assert recovered_reservation["upload_id"] == recovery_upload_id
+    assert recovered_reservation["offset"] == len(recovery_body)
+    assert recovered_reservation["state"] == "uploading"
+
+    recovered_completion = client.post(
+        f"/api/sync/uploads/{recovery_upload_id}/complete", headers=headers,
+    )
+    assert recovered_completion.status_code == 200, recovered_completion.text
+    assert recovered_completion.json()["state"] == "ready"
+    assert Path(recovered_completion.json()["path"]).read_bytes() == recovery_body
+
     # Batch finalization must return one independent result per upload, allow
     # successful siblings when one ID is missing, and safely replay after a
     # lost response without inserting the same media/change twice.
@@ -215,8 +297,8 @@ with TestClient(server.app) as client:
     assert replayed_batch.status_code == 200, replayed_batch.text
     assert [item.get("state") for item in replayed_batch.json()["uploads"][:2]] == ["ready", "ready"]
     db = sqlite3.connect(data / "users" / "1" / "iris.db")
-    assert db.execute("SELECT COUNT(*) FROM memes").fetchone()[0] == 2
-    assert db.execute("SELECT COUNT(*) FROM sync_changes WHERE entity_type = 'media'").fetchone()[0] == 6
+    assert db.execute("SELECT COUNT(*) FROM memes").fetchone()[0] == 3
+    assert db.execute("SELECT COUNT(*) FROM sync_changes WHERE entity_type = 'media'").fetchone()[0] == 9
     db.close()
 
     sources = client.get("/api/sync/sources", headers=headers).json()["sources"]
@@ -229,7 +311,7 @@ with TestClient(server.app) as client:
     page = client.get("/api/records", headers=headers)
     assert page.status_code == 200, page.text
     assert registry.get_calls == 1
-    assert page.json()["total"] == 2
+    assert page.json()["total"] == 3
     record = next(item for item in page.json()["records"] if item["arquivo"] == "photo.jpg")
     assert record["arquivo"] == "photo.jpg"
     assert record["thumbnail_url"].startswith("/thumbs/0/")
@@ -238,12 +320,12 @@ with TestClient(server.app) as client:
     row = db.execute("SELECT embedding, desc_embedding FROM memes").fetchone()
     assert row == (None, None), row
     stored_bytes = db.execute("SELECT SUM(file_size) FROM memes").fetchone()[0]
-    assert stored_bytes == len(body) + len(second_body), stored_bytes
+    assert stored_bytes == len(body) + len(recovery_body) + len(second_body), stored_bytes
     db.close()
 
     # Quota checks must use the catalog, not recursively stat every media file
     # on every upload. Pending uploads also reserve their declared bytes.
-    uploaded_bytes = len(body) + len(second_body)
+    uploaded_bytes = len(body) + len(recovery_body) + len(second_body)
     server.app.state.account_quota_bytes = uploaded_bytes + 1
     from pathlib import Path
     original_rglob = Path.rglob
