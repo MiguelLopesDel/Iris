@@ -51,8 +51,6 @@ from core import (
 )
 from core import backup as backup_mod
 from core.api_models import (
-    BackupConfigOut,
-    BackupSnapshotsOut,
     CollectionFromSuggestionOut,
     CollectionMembersAddedOut,
     CollectionMembersOut,
@@ -122,6 +120,8 @@ from core.web_enrichment import (
 )
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
+from routers.backup import BackupRouteOperations
+from routers.backup import router as backup_router
 from routers.spaces import router as spaces_router
 from routers.sync import router as sync_router
 
@@ -839,6 +839,7 @@ app.include_router(auth_router)
 app.include_router(sync_router)
 app.include_router(spaces_router)
 app.include_router(admin_router)
+app.include_router(backup_router)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -2046,92 +2047,6 @@ def maybe_auto_snapshot(reason: str) -> dict | None:
         return None
 
 
-@app.get("/api/backup/config", response_model=BackupConfigOut)
-async def backup_get_config():
-    cfg = app_config.load()
-    val = (
-        app_config.validate_backup_dir(cfg["backup_dir"], _DATA_DIR)
-        if cfg["backup_dir"] else {"ok": False, "warnings": [], "error": ""}
-    )
-    return {
-        **cfg,
-        "dir_ok": val.get("ok", False),
-        "warnings": val.get("warnings", []),
-        "error": val.get("error", ""),
-    }
-
-
-@app.post("/api/backup/config", response_model=OkOut)
-async def backup_set_config(
-    backup_dir: str = Form(""),
-    backup_auto: bool = Form(True),
-    backup_keep_last: int = Form(10),
-    media_originals_root: str = Form("media"),
-):
-    resolved = backup_dir.strip()
-    warnings: list[str] = []
-    if resolved:
-        val = app_config.validate_backup_dir(resolved, _DATA_DIR)
-        if not val["ok"]:
-            raise HTTPException(400, val.get("error", "Destino de backup inválido"))
-        resolved = val.get("resolved") or resolved
-        warnings = val.get("warnings", [])
-    saved = app_config.save({
-        "backup_dir": resolved,
-        "backup_auto": backup_auto,
-        "backup_keep_last": max(1, backup_keep_last),
-        "media_originals_root": media_originals_root.strip() or "media",
-    })
-    return {"ok": True, **saved, "warnings": warnings}
-
-
-@app.get("/api/backup/snapshots", response_model=BackupSnapshotsOut)
-async def backup_list_snapshots():
-    cfg = app_config.load()
-    if not cfg["backup_dir"]:
-        return {"configured": False, "snapshots": []}
-    snaps = await run_in_threadpool(backup_mod.list_snapshots, cfg["backup_dir"])
-    return {"configured": True, "backup_dir": cfg["backup_dir"], "snapshots": snaps}
-
-
-@app.post("/api/backup/snapshot", response_model=OkOut)
-async def backup_snapshot_now(reason: str = Form("manual")):
-    cfg = app_config.load()
-    if not cfg["backup_dir"]:
-        raise HTTPException(400, "Configure um destino de backup primeiro")
-    try:
-        info = await run_in_threadpool(_do_snapshot, reason, cfg)
-    except Exception as exc:
-        raise HTTPException(500, f"Falha ao criar snapshot: {exc}") from exc
-    return {"ok": True, "snapshot": info}
-
-
-@app.post("/api/backup/restore", response_model=OkOut)
-async def backup_restore(
-    snapshot_id: str = Form(...),
-    mode: str = Form("overlay"),
-    confirm: bool = Form(False),
-):
-    if not confirm:
-        raise HTTPException(400, "A restauração precisa ser confirmada")
-    if mode not in {"overlay", "mirror"}:
-        raise HTTPException(400, "Modo de restauração inválido")
-    cfg = app_config.load()
-    if not cfg["backup_dir"] or not _safe_snapshot_name(snapshot_id):
-        raise HTTPException(404, "Snapshot não encontrado")
-    snap = Path(cfg["backup_dir"]) / snapshot_id
-    if not snap.exists():
-        raise HTTPException(404, "Snapshot não encontrado")
-    # Safety net: snapshot the current state first so the restore is reversible.
-    pre = await run_in_threadpool(maybe_auto_snapshot, "pre-restore")
-    try:
-        result = await run_in_threadpool(_do_restore, snap, mode)
-        await run_in_threadpool(_reload_backend)
-    except Exception as exc:
-        raise HTTPException(400, f"Não foi possível restaurar: {exc}") from exc
-    return {"ok": True, "pre_restore": pre, **result}
-
-
 def _do_restore(snap: Path, mode: str) -> dict:
     return backup_mod.restore_snapshot(
         snap, db_path=_active_db_path(), weights_path=_weights_path(),
@@ -2139,36 +2054,16 @@ def _do_restore(snap: Path, mode: str) -> dict:
     )
 
 
-@app.get("/api/backup/snapshots/{snapshot_id}/download")
-def backup_download_snapshot(snapshot_id: str):
-    cfg = app_config.load()
-    if not cfg["backup_dir"] or not _safe_snapshot_name(snapshot_id):
-        raise HTTPException(404, "Snapshot não encontrado")
-    snap = Path(cfg["backup_dir"]) / snapshot_id
-    if not snap.exists():
-        raise HTTPException(404, "Snapshot não encontrado")
-    return FileResponse(snap, media_type="application/gzip", filename=snapshot_id)
-
-
-@app.post("/api/backup/media/reconcile", response_model=OkOut)
-async def backup_media_reconcile():
-    cfg = app_config.load()
-    res = await run_in_threadpool(
-        backup_mod.reconcile_media, _active_db_path(), _library_root(), cfg["media_originals_root"]
-    )
-    return {"ok": True, **res}
-
-
-@app.post("/api/backup/media/export", response_model=OkOut)
-async def backup_media_export():
-    cfg = app_config.load()
-    if not cfg["backup_dir"]:
-        raise HTTPException(400, "Configure um destino de backup primeiro")
-    try:
-        res = await run_in_threadpool(backup_mod.export_media, _library_root(), cfg["backup_dir"])
-    except Exception as exc:
-        raise HTTPException(400, f"Falha ao exportar biblioteca: {exc}") from exc
-    return {"ok": True, **res}
+app.state.legacy_backup_operations = BackupRouteOperations(
+    data_dir=_DATA_DIR,
+    active_db_path=_active_db_path,
+    library_root=_library_root,
+    safe_snapshot_name=_safe_snapshot_name,
+    do_snapshot=_do_snapshot,
+    maybe_auto_snapshot=maybe_auto_snapshot,
+    do_restore=_do_restore,
+    reload_backend=_reload_backend,
+)
 
 
 # ── Records (paginated gallery) ───────────────────────────────────────────────

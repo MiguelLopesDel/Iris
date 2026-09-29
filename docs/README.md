@@ -20,6 +20,8 @@ exista; confira também os contratos e testes da área antes de alterar código.
 
 ## Desenvolver e validar
 
+- [Mapa para novos contribuidores](developer-onboarding.md) — caminhos atuais
+  de inicialização, galeria, sincronização e backups.
 - [Contribuir e configurar o ambiente](../CONTRIBUTING.md).
 - [Testes e diagnóstico](testing.md) — verificações rápidas, smoke tests e
   release.
