@@ -151,6 +151,7 @@ with TestClient(server.app) as client:
     upload_id = started.json()["upload_id"]
 
     class InterruptedRequest:
+        app = SimpleNamespace(state=server.app.state)
         state = SimpleNamespace(
             iris_device_id=session["device_id"],
             iris_user=get_user_by_username(data / "users.db", "alice"),

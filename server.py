@@ -101,6 +101,8 @@ from core.perf import dump, trace
 from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
+from core.sync_upload_service import SyncUploadService
+from core.upload_processing_workers import UploadProcessingWorkers
 from core.users_db import IrisUser, get_device, get_user_by_id, has_users, list_users
 from core.web_enrichment import (
     EnrichmentSuggestion,
@@ -605,6 +607,11 @@ async def lifespan(app: FastAPI):
     if not app.state.multiuser_enabled:
         _resume_unfinished_imports()
     else:
+        processing_workers = UploadProcessingWorkers()
+        app.state.upload_processing_workers = processing_workers
+        app.state.sync_upload_service = SyncUploadService(
+            processing_workers=processing_workers
+        )
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
         )
@@ -623,6 +630,12 @@ async def lifespan(app: FastAPI):
         stop_event = getattr(app.state, "sync_recovery_stop_event", None)
         if stop_event is not None:
             stop_event.set()
+        recovery_worker = getattr(app.state, "sync_recovery_worker", None)
+        if recovery_worker is not None:
+            recovery_worker.join(timeout=10)
+        processing_workers = getattr(app.state, "upload_processing_workers", None)
+        if processing_workers is not None:
+            processing_workers.stop(timeout=10)
         app.state.backup_service.stop()
     dump()
     try:

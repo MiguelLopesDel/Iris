@@ -334,6 +334,7 @@ def save_to_library(request: Request, response: Response, space_id: int, item_id
             intake,
             lambda: registry.invalidate(actor.id),
             use_ai=request.app.state.sync_ai_processing and request.app.state.load_model,
+            workers=request.app.state.upload_processing_workers,
         )
     response.status_code = 201 if intake.created else 200
     return {"state": intake.state, "upload_id": intake.upload_id, "media_id": intake.media_id}

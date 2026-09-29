@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 import sqlite3
-import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +19,7 @@ from typing import Any
 from core.fs_clone import clone_file
 from core.indexer_db import init_db
 from core.sync_db import append_change, ensure_tables, now_iso
-from core.sync_processor import process_upload
+from core.upload_processing_workers import UploadProcessingWorkers
 from core.users_db import IrisUser
 
 _SAFE_NAME = re.compile(r"[^\w.\- ]+")
@@ -109,16 +108,21 @@ def save_copy(
         conn.close()
 
 
-def start_processing(user: IrisUser, intake: Intake, on_finished, *, use_ai: bool) -> None:
-    """Catalog a queued intake in the background, optionally computing AI data."""
+def start_processing(
+    user: IrisUser,
+    intake: Intake,
+    on_finished,
+    *,
+    use_ai: bool,
+    workers: UploadProcessingWorkers,
+) -> None:
+    """Submit durable intake work to the server-owned processing worker."""
     if not intake.created or intake.upload_id is None or intake.path is None:
         return
-    threading.Thread(
-        target=process_upload,
-        kwargs={
-            "db_path": user.db_path, "media_root": user.media_root,
-            "model_name": user.model_name, "upload_id": intake.upload_id,
-            "file_path": intake.path, "on_finished": on_finished, "use_ai": use_ai,
-        },
-        name=f"iris-intake-{intake.upload_id[:8]}", daemon=True,
-    ).start()
+    workers.submit(
+        user,
+        intake.upload_id,
+        intake.path,
+        use_ai=use_ai,
+        on_finished=lambda _user_id: on_finished(),
+    )
