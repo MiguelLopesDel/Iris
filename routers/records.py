@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Form, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
-from core.api_models import RecordsPageOut, TimelineOut
+from core.api_models import OkOut, RecordDetailOut, RecordMetadataOut, RecordsPageOut, TimelineOut
+from core.media_metadata import extract_full_metadata, extract_metadata
 from core.perf import trace
 
 router = APIRouter(tags=["records"])
 
 
 @dataclass(frozen=True)
-class GalleryReadOperations:
-    """Existing catalog operations used by the gallery HTTP endpoints."""
+class RecordRouteOperations:
+    """Existing catalog operations used by the record HTTP endpoints."""
 
     get_backend: Callable[[], Any]
     options_from_params: Callable[..., Any]
@@ -27,10 +30,13 @@ class GalleryReadOperations:
     filter_records: Callable[[list[int], Any, Any], list[int]]
     record_to_json: Callable[[Any], dict[str, Any]]
     attach_persons: Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
+    backend_connection: Callable[[], Any]
+    invalidate_view_caches: Callable[[], None]
+    refresh_backend_metadata: Callable[[], None]
 
 
-def _operations(request: Request) -> GalleryReadOperations:
-    return request.app.state.gallery_read_operations
+def _operations(request: Request) -> RecordRouteOperations:
+    return request.app.state.record_route_operations
 
 
 @router.get("/api/records", response_model=RecordsPageOut)
@@ -127,3 +133,129 @@ async def get_records_timeline(
 
         buckets = await run_in_threadpool(build_buckets)
         return {"total": sum(bucket["count"] for bucket in buckets), "buckets": buckets}
+
+
+@router.get("/api/records/{idx}", response_model=RecordDetailOut)
+async def get_record_detail(request: Request, idx: int):
+    operations = _operations(request)
+    backend = operations.get_backend()
+    with trace("api.record_detail"):
+        record = backend.get_record(idx)
+        if record is None:
+            raise HTTPException(404, "Record not found")
+        result = await run_in_threadpool(operations.record_to_json, record)
+        operations.attach_persons([result])
+        result["caminho"] = record.caminho
+        result["score_details"] = {}
+        try:
+            result["collections"] = (
+                backend.get_record_collections(record.db_id) if record.db_id else []
+            )
+        except Exception:
+            result["collections"] = []
+        try:
+            result["concepts"] = (
+                backend.get_media_concepts(record.db_id)
+                if backend.has_concept_tables() and record.db_id
+                else []
+            )
+        except Exception:
+            result["concepts"] = []
+        return result
+
+
+@router.get("/api/records/{idx}/metadata", response_model=RecordMetadataOut)
+async def get_record_metadata(request: Request, idx: int):
+    """Return stored metadata and full metadata read from the original."""
+    operations = _operations(request)
+    backend = operations.get_backend()
+    with trace("api.record_metadata"):
+        record = backend.get_record(idx)
+        if record is None:
+            raise HTTPException(404, "Record not found")
+        path = record.resolved_path or ""
+        path_exists = bool(path) and os.path.exists(path)
+
+        curated: dict[str, Any] = {}
+        try:
+            raw = backend.get_record_metadata_json(record.db_id) if record.db_id else ""
+            if raw:
+                curated = json.loads(raw)
+        except Exception:
+            curated = {}
+        if not curated and path_exists:
+            # Legacy rows may predate stored metadata extraction.
+            curated = await run_in_threadpool(extract_metadata, path)
+
+        full = await run_in_threadpool(extract_full_metadata, path) if path_exists else {}
+        return {"curated": curated, "full": full, "path_exists": path_exists}
+
+
+@router.post("/api/records/{idx}/rename", response_model=OkOut)
+async def rename_record(request: Request, idx: int, name: str = Form(...)):
+    """Rename the source file while keeping all catalog path columns in sync."""
+    operations = _operations(request)
+    backend = operations.get_backend()
+    with trace("api.records.rename"):
+        record = backend.get_record(idx)
+        if record is None:
+            raise HTTPException(404, "Record not found")
+
+        requested = name.strip()
+        if not requested:
+            raise HTTPException(400, "Informe um nome")
+        if any(separator in requested for separator in ("/", "\\", "\0")) or requested in (
+            ".",
+            "..",
+        ):
+            raise HTTPException(400, "O nome não pode conter caminho")
+
+        current = Path(record.resolved_path or "")
+        if not current.is_file():
+            raise HTTPException(409, "Arquivo original indisponível")
+
+        stem = Path(requested).stem or requested
+        target = current.with_name(stem + current.suffix)
+        if target == current:
+            return {"ok": True, "arquivo": current.name}
+        if target.exists():
+            raise HTTPException(409, "Já existe um arquivo com esse nome")
+
+        await run_in_threadpool(os.rename, current, target)
+
+        def update_rows() -> None:
+            # Reuse the engine connection; closing it would invalidate the backend.
+            connection = operations.backend_connection()
+            row = connection.execute(
+                "SELECT arquivo, caminho, relative_path, storage_path FROM memes WHERE id = ?",
+                (record.db_id,),
+            ).fetchone()
+            if row is None:
+                return
+
+            def swap_name(value: str | None) -> str | None:
+                return str(PurePosixPath(value).with_name(target.name)) if value else value
+
+            connection.execute(
+                "UPDATE memes SET arquivo = ?, caminho = ?, relative_path = ?, "
+                "storage_path = ? WHERE id = ?",
+                (
+                    target.name,
+                    str(target),
+                    swap_name(row["relative_path"]),
+                    swap_name(row["storage_path"]),
+                    record.db_id,
+                ),
+            )
+            connection.commit()
+
+        try:
+            await run_in_threadpool(update_rows)
+        except Exception:
+            # Keep the database and filesystem consistent if the update fails.
+            await run_in_threadpool(os.rename, target, current)
+            raise
+
+        operations.invalidate_view_caches()
+        await run_in_threadpool(operations.refresh_backend_metadata)
+        return {"ok": True, "arquivo": target.name}

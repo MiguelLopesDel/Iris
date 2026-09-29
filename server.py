@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Annotated, Any
 
 import numpy as np
@@ -74,9 +74,7 @@ from core.api_models import (
     OkOut,
     PersonMediaOut,
     PersonsOut,
-    RecordDetailOut,
     RecordFacesOut,
-    RecordMetadataOut,
     SearchResponseOut,
     ServerInfoOut,
     SourceSearchResponseOut,
@@ -91,7 +89,6 @@ from core.device_tokens import read_access_token
 from core.embedding_models import resolve_embedding_model
 from core.file_ops import move_to_trash
 from core.index_rebuild import rebuild_indexes_in_background
-from core.media_metadata import extract_full_metadata, extract_metadata
 from core.observability import configure_logging, request_path
 from core.perf import dump, trace
 from core.record_catalog import RecordCatalog
@@ -120,7 +117,7 @@ from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.backup import BackupRouteOperations
 from routers.backup import router as backup_router
-from routers.records import GalleryReadOperations
+from routers.records import RecordRouteOperations
 from routers.records import router as records_router
 from routers.spaces import router as spaces_router
 from routers.sync import router as sync_router
@@ -2171,152 +2168,17 @@ def _filter_records(
     return filtered
 
 
-app.state.gallery_read_operations = GalleryReadOperations(
+app.state.record_route_operations = RecordRouteOperations(
     get_backend=_get_backend,
     options_from_params=_options_from_params,
     sorted_records=_sorted_records,
     filter_records=_filter_records,
     record_to_json=_record_to_json,
     attach_persons=_attach_persons,
+    backend_connection=_backend_connection,
+    invalidate_view_caches=_invalidate_view_caches,
+    refresh_backend_metadata=_refresh_backend_metadata,
 )
-
-
-# ── Single record detail ─────────────────────────────────────────────────────
-
-
-@app.get("/api/records/{idx}", response_model=RecordDetailOut)
-async def get_record_detail(idx: int):
-    backend = _get_backend()
-    with trace("api.record_detail"):
-        r = backend.get_record(idx)
-        if r is None:
-            raise HTTPException(404, "Record not found")
-        d = await run_in_threadpool(_record_to_json, r)
-        _attach_persons([d])
-        # Add extra detail fields
-        d["caminho"] = r.caminho
-        d["score_details"] = {}
-        # Add collection memberships
-        try:
-            d["collections"] = backend.get_record_collections(r.db_id) if r.db_id else []
-        except Exception:
-            d["collections"] = []
-        # Add concept memberships
-        try:
-            if backend.has_concept_tables() and r.db_id:
-                d["concepts"] = backend.get_media_concepts(r.db_id)
-            else:
-                d["concepts"] = []
-        except Exception:
-            d["concepts"] = []
-        return d
-
-
-@app.get("/api/records/{idx}/metadata", response_model=RecordMetadataOut)
-async def get_record_metadata(idx: int):
-    """Curated (stored) + full (read on demand from the original file) metadata."""
-    backend = _get_backend()
-    with trace("api.record_metadata"):
-        r = backend.get_record(idx)
-        if r is None:
-            raise HTTPException(404, "Record not found")
-        path = r.resolved_path or ""
-        path_exists = bool(path) and os.path.exists(path)
-
-        curated: dict = {}
-        try:
-            raw = backend.get_record_metadata_json(r.db_id) if r.db_id else ""
-            if raw:
-                curated = json.loads(raw)
-        except Exception:
-            curated = {}
-        if not curated and path_exists:
-            # Legacy rows indexed before metadata extraction existed.
-            curated = await run_in_threadpool(extract_metadata, path)
-
-        full: dict = {}
-        if path_exists:
-            full = await run_in_threadpool(extract_full_metadata, path)
-        return {"curated": curated, "full": full, "path_exists": path_exists}
-
-
-@app.post("/api/records/{idx}/rename", response_model=OkOut)
-async def rename_record(idx: int, name: str = Form(...)):
-    """Renomeia o arquivo em disco e as colunas que embutem o nome.
-
-    O caminho é resolvido por várias colunas (``storage_path``,
-    ``relative_path``, ``caminho``), então renomear só uma delas deixaria a
-    mídia inalcançável. A extensão original é preservada: o tipo da mídia é
-    derivado dela, e deixar o usuário removê-la transformaria um vídeo em algo
-    que a galeria não sabe abrir.
-    """
-    backend = _get_backend()
-    with trace("api.records.rename"):
-        record = backend.get_record(idx)
-        if record is None:
-            raise HTTPException(404, "Record not found")
-
-        requested = name.strip()
-        if not requested:
-            raise HTTPException(400, "Informe um nome")
-        if any(sep in requested for sep in ("/", "\\", "\0")) or requested in (".", ".."):
-            raise HTTPException(400, "O nome não pode conter caminho")
-
-        current = Path(record.resolved_path or "")
-        if not current.is_file():
-            raise HTTPException(409, "Arquivo original indisponível")
-
-        # A extensão manda no tipo da mídia; o usuário renomeia só o nome.
-        stem = Path(requested).stem or requested
-        target = current.with_name(stem + current.suffix)
-        if target == current:
-            return {"ok": True, "arquivo": current.name}
-        if target.exists():
-            raise HTTPException(409, "Já existe um arquivo com esse nome")
-
-        await run_in_threadpool(os.rename, current, target)
-
-        def _update_rows() -> None:
-            # Conexão do engine, compartilhada: usar e NÃO fechar. Fechá-la
-            # derruba o backend inteiro na próxima consulta.
-            conn = _backend_connection()
-            if True:
-                row = conn.execute(
-                    "SELECT arquivo, caminho, relative_path, storage_path FROM memes WHERE id = ?",
-                    (record.db_id,),
-                ).fetchone()
-                if row is None:
-                    return
-
-                def _swap(value: str | None) -> str | None:
-                    # Troca só o último segmento, preservando a pasta.
-                    if not value:
-                        return value
-                    return str(PurePosixPath(value).with_name(target.name))
-
-                conn.execute(
-                    "UPDATE memes SET arquivo = ?, caminho = ?, relative_path = ?, "
-                    "storage_path = ? WHERE id = ?",
-                    (
-                        target.name,
-                        str(target),
-                        _swap(row["relative_path"]),
-                        _swap(row["storage_path"]),
-                        record.db_id,
-                    ),
-                )
-                conn.commit()
-
-        try:
-            await run_in_threadpool(_update_rows)
-        except Exception:
-            # Banco e disco não podem divergir: desfaz o rename e propaga.
-            await run_in_threadpool(os.rename, target, current)
-            raise
-
-        _invalidate_view_caches()
-        await run_in_threadpool(_refresh_backend_metadata)
-        return {"ok": True, "arquivo": target.name}
 
 
 # ── Search ────────────────────────────────────────────────────────────────────

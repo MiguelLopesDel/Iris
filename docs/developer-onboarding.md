@@ -33,8 +33,9 @@ it is application wiring; trace its callers and tests before moving it.
 ### Two server modes matter
 
 - **Legacy single-library mode:** existing `/api/...` gallery, search, import,
-  and catalog-backup routes in `server.py` use the process-wide backend and
-  configuration. The catalog backup endpoints are `/api/backup/*`.
+  and catalog-backup routes use the process-wide backend and configuration.
+  Their adapters are split between `server.py` and routers such as
+  `routers/backup.py`. The catalog backup endpoints are `/api/backup/*`.
 - **Private multi-account mode:** authentication middleware binds requests to a
   user and that user's backend. Auth, device sync, shared spaces, and admin
   routes live in `routers/auth.py`, `routers/sync.py`, `routers/spaces.py`, and
@@ -55,9 +56,10 @@ transport. Gallery and search modules call the corresponding HTTP routes. The
 paginated gallery and timeline routes (`/api/records` and
 `/api/records/timeline`) are in `routers/records.py`; their existing catalog,
 sorting, filtering and serialization operations are wired from `server.py`.
-Record detail/edit and search endpoints remain in `server.py`. Start at the UI
-event, find the API call, then follow that exact route rather than searching
-only by a similarly named core function.
+Record detail, metadata and rename routes are also in `routers/records.py`;
+their backend and cache callbacks are wired from `server.py`. Search endpoints
+remain in `server.py`. Start at the UI event, find the API call, then follow
+that exact route rather than searching only by a similarly named core function.
 
 ### Android gallery and server connection
 
