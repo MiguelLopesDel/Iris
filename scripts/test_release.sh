@@ -27,7 +27,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-git diff --quiet || { echo "Commit or stash tracked changes before testing." >&2; exit 2; }
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    echo "Commit or stash all changes before release testing; this test builds HEAD only." >&2
+    exit 2
+fi
 
 echo "Creating clean source archive..."
 git archive HEAD | tar -x -C "$release_dir"

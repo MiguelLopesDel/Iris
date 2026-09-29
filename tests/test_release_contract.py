@@ -27,13 +27,40 @@ def test_cpu_image_has_the_packages_needed_for_insightface_build():
     assert "onnxruntime==" in requirements
 
 
+def test_docker_context_excludes_android_sdk_and_emulator_data():
+    dockerignore = (ROOT / ".dockerignore").read_text()
+    assert ".android-sdk/" in dockerignore
+    assert ".android-avd/" in dockerignore
+
+
 def test_release_test_exercises_clean_compose_startup_and_authentication():
     script = (ROOT / "scripts" / "test_release.sh").read_text()
     assert "git archive HEAD" in script
+    assert "git status --porcelain --untracked-files=all" in script
+    assert "builds HEAD only" in script
     assert "build iris" in script
     assert "/healthz" in script
     assert "bootstrap_admin.py" in script
     assert "verify_server.py" in script
+
+
+def test_upgrade_recovery_test_uses_isolated_synthetic_data_and_real_restore():
+    script = (ROOT / "scripts" / "test_upgrade_recovery.sh").read_text()
+    assert "git archive HEAD" in script
+    assert "git diff --binary HEAD" in script
+    assert 'git apply --binary --directory="$relative_dir/current"' in script
+    assert ".iris-upgrade-test." in script
+    assert "synthetic recovery password" in script
+    assert "core.backup_scheduler run --pin" in script
+    assert "core.instance_backup verify" in script
+    assert "core.instance_backup restore" in script
+    assert "verify_server 1" in script
+    assert "docker buildx build --load" in script
+
+
+def test_restore_recreates_container_after_atomic_root_swap():
+    script = (ROOT / "scripts" / "server.sh").read_text()
+    assert "docker compose up -d --force-recreate iris" in script
 
 
 def test_server_port_is_configurable_without_exposing_the_container():

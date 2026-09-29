@@ -155,6 +155,7 @@ tmp_test_images/
 # AI assistant context files
 CLAUDE.md
 AGENTS.md
+!/AGENTS.md
 GEMINI.md
 
 # Guia interno de engenharia & boas práticas (não versionado)
@@ -175,3 +176,7 @@ MAPA.md
 /.android-sdk/
 /.android-avd/
 /backups/
+# Native/emulator crash dumps and Kotlin's local compiler cache.
+/core.[0-9]*
+/android/core.[0-9]*
+/android/.kotlin/

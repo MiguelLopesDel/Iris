@@ -64,6 +64,8 @@ altera ou remove a biblioteca real: constrói a imagem CPU, verifica que visitan
 não acessam a API privada, cria uma primeira conta descartável e valida login. Docker
 e curl são necessários; o teste costuma demorar alguns minutos na primeira execução.
 
+Para liberar o piloto familiar, veja também os [critérios de aceite e recuperação](pilot-readiness.md).
+
 ## 4. Logs e diagnóstico
 
 No Docker, use `IRIS_LOG_FORMAT=json` (padrão no Compose). Cada linha de requisição

@@ -130,7 +130,9 @@ restore_snapshot() {
         docker compose up -d iris
         exit 1
     fi
-    docker compose up -d iris
+    # Restore swaps the host data/media directories atomically. Recreate the
+    # stopped service so Docker binds the newly restored directory inodes.
+    docker compose up -d --force-recreate iris
     wait_for_health
     echo "Restored. Indexes and thumbnails are rebuilt as they are used."
 }

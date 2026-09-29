@@ -43,6 +43,69 @@ protegem a CPU/RAM sem restringir a busca normal da galeria.
 
 Use `./scripts/server.sh status` e `./scripts/server.sh logs` para acompanhar o serviço.
 
+### Uploads do celular sem inferência de IA
+
+Por padrão, o servidor recebe o original, verifica o hash, registra a mídia no
+catálogo da conta e a deixa visível na galeria sem calcular embeddings, descrições
+ou dados faciais. Miniaturas são geradas quando solicitadas pela interface. Isso
+mantém o backup e a navegação básicos disponíveis em servidores modestos; busca
+semântica e recursos que dependem de embeddings só funcionam para itens já
+indexados.
+
+`IRIS_SYNC_AI_PROCESSING=0` é o padrão. Para também indexar uploads no servidor,
+ative `IRIS_SYNC_AI_PROCESSING=1`; essa opção só tem efeito quando
+`IRIS_LOAD_MODEL=1`. A indexação de upload pode usar CPU/RAM e, quando habilitada,
+extrai embeddings e dados de rostos. Reinicie o serviço após alterar essas opções:
+
+```bash
+docker compose up -d --force-recreate iris
+```
+
+### Armazenamento dos espaços compartilhados
+
+Um item adicionado a um espaço compartilhado ganha uma cópia própria, para que
+apagar a foto da biblioteca pessoal não quebre o espaço (e vice-versa). O modo
+dessa cópia é escolhido em `IRIS_SPACE_STORAGE`:
+
+| Valor | Efeito | Quando usar |
+| --- | --- | --- |
+| `auto` (padrão) | reflink se o sistema de arquivos de `data/` suportar; senão cópia comum | quase sempre |
+| `reflink` | exige reflink; o servidor não inicia sem suporte | para garantir que nada seja duplicado |
+| `hardlink` | não ocupa espaço em nenhum sistema de arquivos, mas os dois nomes são o mesmo arquivo: editar um no lugar altera o outro | só se você entende o risco |
+| `copy` | sempre cópia byte a byte | discos que não suportam nada melhor, ou por preferência |
+
+Reflink é uma cópia independente que compartilha os blocos no disco até que um
+dos lados mude: em btrfs, XFS formatado com `reflink=1`, bcachefs e ZFS 2.2+ com
+block cloning, compartilhar uma foto não ocupa espaço extra. Em ext4 o modo
+`auto` usa cópia comum. O Iris não confia no nome do sistema de arquivos: ele
+testa a operação de verdade em `data/spaces/`. Para ver o resultado:
+
+```bash
+./scripts/server.sh storage
+```
+
+O mesmo relatório aparece ao fim do `install` e no log de início do servidor.
+Arquivos de uma biblioteca antiga fora de `data/` (outro disco) são copiados
+normalmente, mesmo no modo `reflink`, porque reflink não atravessa sistemas de
+arquivos. Mantenha `data/` inteiro no mesmo volume para aproveitar o recurso.
+
+`IRIS_SPACE_QUOTA_BYTES` limita cada espaço (padrão 10 TiB; cada arquivo distinto
+conta uma vez, inclusive o que está na lixeira). `IRIS_SPACE_TRASH_DAYS` (padrão
+30) é o prazo em que um item removido do espaço pode ser restaurado; depois disso
+o Iris libera os bytes.
+
+As três opções também podem ser alteradas pela interface, por uma conta
+administradora, em **Sistema → Instalação**. O valor salvo ali vale na hora, sem
+reiniciar, e tem prioridade sobre o `.env`; cada campo mostra de onde vem o valor
+atual (definido na interface, `.env` ou padrão) e permite voltar ao do instalador.
+A tela só oferece reflink ou hard link se o disco os suportar, e o servidor testa
+de novo antes de salvar. Se o disco mudar depois (por exemplo, `data/` movido
+para ext4 com reflink escolhido na interface), o servidor inicia no modo
+automático e a tela avisa o motivo; um `.env` inválido, ao contrário, impede o
+início, porque é erro de instalação. Administrar essas opções não dá acesso às
+fotos de nenhuma conta ou espaço.
+
+
 ## Ativar contas
 
 Em uma instalação nova, crie a primeira conta — o comando cria uma biblioteca privada
@@ -103,21 +166,88 @@ Seja qual for o caminho, **não** troque o mapeamento do Docker para `0.0.0.0`
 sem antes decidir conscientemente por exposição pública, TLS e recuperação de
 incidentes — isso abre a porta para toda a rede local de uma vez.
 
-## Atualização e recuperação
+## Backup, restauração e atualização
 
-Antes de atualizar, faça uma cópia consistente de `data/` e de `media/` para outro
-disco. Preserve `data/secret_key` ou defina `IRIS_SECRET_KEY` estável: perder ambos
-encerra todas as sessões e pode exigir novo login.
+O Iris faz backup da instalação inteira sozinho, todo dia às 03:00 no fuso do
+servidor (o `install` detecta o fuso do host). O destino é `IRIS_BACKUP_DIR` no
+`.env`, por padrão `./backups`. Aponte para outro disco sempre que possível:
+no mesmo disco, o backup protege contra exclusões por engano, mas não contra a
+perda do disco, e o painel avisa disso.
+
+Tudo pode ser ajustado por uma conta administradora em **Sistema → Backup**:
+ligar ou desligar, horário, fuso e retenção. A mesma tela faz um backup na hora
+(com a opção de guardá-lo para sempre) e lista os backups existentes com a data,
+a versão do Iris e o commit que os gravou, o tamanho e a regra de retenção.
+
+Pela linha de comando:
+
+```bash
+./scripts/server.sh backup              # agora, com a mesma retenção do agendado
+./scripts/server.sh backup --pin        # agora, e nunca apagar este
+./scripts/server.sh backups             # lista com versão e retenção
+./scripts/server.sh verify-backup backups/iris-backup-20260923T060000Z
+```
+
+Um backup contém contas e dispositivos (`users.db`), o segredo das sessões
+(`secret_key`), a biblioteca de cada conta, os espaços compartilhados e os
+originais de `data/` e `media/`. Os bancos SQLite são copiados pela API de
+backup do SQLite, então o Iris continua funcionando durante o backup. Fica de
+fora só o que ele reconstrói sozinho: índices FAISS, vetores, miniaturas e
+envios pela metade.
+
+O Iris só publica o backup depois de conferir os arquivos, a integridade dos
+bancos e os originais referenciados pelos catálogos. Se algum original estiver
+fora das raízes configuradas, estiver ausente, ou se bancos/arquivos mudarem
+durante a captura, a execução aparece como **falha** no painel e não aciona a
+retenção. Corrija o caminho ou tente novamente quando os envios terminarem.
+Se `IRIS_SECRET_KEY` vier do ambiente, o backup guarda o valor efetivo como
+`data/secret_key`; após restaurar, confira se o `.env` não o substitui por
+outro valor. Proteja o destino do backup como protegeria as fotos e senhas.
+O `.env` e os arquivos Compose do host não entram no snapshot; guarde uma cópia
+separada dessas configurações para reconstruir a instalação após perda do host.
+
+Cada backup é uma pasta completa, que dá para abrir sem o Iris, com um
+`manifest.json` que registra o hash de cada arquivo e a versão do Iris que o
+gravou. Uma foto que não mudou desde o backup anterior vira um hard link para
+ele: ocupa o disco uma vez só. Em discos sem hard link (exFAT, FAT) o arquivo é
+copiado. Um backup interrompido fica como `.incomplete-*` e nunca é usado.
+
+### Retenção
+
+Depois de cada backup, o Iris mantém o mais recente de cada um dos últimos 7
+dias, 4 semanas e 6 meses (`IRIS_BACKUP_KEEP_DAILY`, `_WEEKLY`, `_MONTHLY`) e
+apaga os demais. Zero nos três guarda todos. A limpeza só alcança backups
+feitos sob essa política: os marcados para guardar para sempre e os feitos
+antes de a política existir nunca são apagados. Apagar um backup não afeta os
+outros, mesmo que compartilhem fotos por hard link.
+
+Para restaurar:
+
+```bash
+./scripts/server.sh restore /destino/iris-backup-20260923T140000Z
+```
+
+A restauração confere todos os hashes antes de mexer em qualquer coisa, pede
+confirmação, para o container, monta a cópia ao lado da atual e só então troca
+os diretórios. O estado anterior não é apagado: fica em
+`data.before-restore-*` e `media.before-restore-*` até você decidir. Índices e
+miniaturas são reconstruídos conforme o uso. `verify-backup` e `restore` rodam no
+host com `python3`, sem as dependências do Iris. Depois da troca, o serviço é
+recriado para montar os diretórios restaurados, em vez de reutilizar os mounts
+dos diretórios anteriores.
+
+Os backups antigos não são apagados automaticamente; remova-os quando quiser.
 
 ```bash
 ./scripts/server.sh update
 ./scripts/server.sh status
 ```
 
-O update exige uma árvore Git limpa e usa `git pull --ff-only`, evitando merges
-surpresa. Antes de atualizar, guarde o commit atual (`git rev-parse HEAD`) e uma cópia
-de `data/` e `media/`; se for necessário voltar, retorne ao commit guardado e execute
-`docker compose up -d --build` novamente.
+Com `IRIS_BACKUP_DIR` definido, o update faz um backup antes de atualizar. Ele
+exige uma árvore Git limpa e usa `git pull --ff-only`, evitando merges surpresa.
+Guarde o commit atual (`git rev-parse HEAD`); se for preciso voltar, retorne a
+ele, execute `docker compose up -d --build` e, se o esquema dos dados tiver
+mudado, restaure o backup feito antes do update.
 
 O Iris mantém fotos em texto claro no servidor para gerar busca, pessoas e
 duplicatas. Contas isolam pessoas entre si, mas quem controla o host/Docker pode
