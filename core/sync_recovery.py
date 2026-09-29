@@ -8,7 +8,6 @@ from pathlib import Path
 
 from core.library_operation_lock import serialize_library_operations
 from core.sync_db import append_change, now_iso
-from core.sync_processor import process_upload
 from core.upload_finalization import move_upload_into_library, record_upload_finalized
 from core.upload_processing_workers import UploadProcessingWorkers
 
@@ -23,8 +22,8 @@ def recover_pending_uploads(
     load_model: bool,
     on_finished,
     stop_event: threading.Event,
+    processing_workers: UploadProcessingWorkers,
     users=None,
-    processing_workers: UploadProcessingWorkers | None = None,
 ) -> None:
     """Resume persisted finalization and catalog work for each account.
 
@@ -93,24 +92,13 @@ def recover_pending_uploads(
                 )
                 continue
             try:
-                if processing_workers is not None:
-                    processing_workers.submit(
-                        user,
-                        str(upload_id),
-                        candidate,
-                        use_ai=use_ai,
-                        on_finished=on_finished,
-                    )
-                else:
-                    process_upload(
-                        db_path=user.db_path,
-                        media_root=user.media_root,
-                        model_name=user.model_name,
-                        upload_id=str(upload_id),
-                        file_path=candidate,
-                        on_finished=lambda user_id=user.id: on_finished(user_id),
-                        use_ai=use_ai,
-                    )
+                processing_workers.submit(
+                    user,
+                    str(upload_id),
+                    candidate,
+                    use_ai=use_ai,
+                    on_finished=on_finished,
+                )
             except Exception as exc:
                 _logger.error(
                     "sync_recovery_job_failed user_id=%s upload_id=%s error_type=%s",
@@ -191,7 +179,7 @@ def start_pending_upload_recovery(
     sync_ai_processing: bool,
     load_model: bool,
     on_finished,
-    processing_workers: UploadProcessingWorkers | None = None,
+    processing_workers: UploadProcessingWorkers,
 ) -> tuple[threading.Event, threading.Thread]:
     """Start the periodic recovery worker and return its shutdown handles."""
     stop_event = threading.Event()
@@ -219,7 +207,7 @@ def _run_pending_upload_recovery(
     load_model: bool,
     on_finished,
     stop_event: threading.Event,
-    processing_workers: UploadProcessingWorkers | None = None,
+    processing_workers: UploadProcessingWorkers,
 ) -> None:
     from core.users_db import list_users
 

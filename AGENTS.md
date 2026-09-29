@@ -24,15 +24,23 @@ background job, and persisted queue.
   - `UploadReservationStore` (`core/upload_reservations.py`) centralizes
     account quota calculation, upload-row insertion, and device-source
     registration for single and batched sync reservations. Batch idempotency
-    and per-item API responses remain in the route layer.
+    and per-item outcomes are owned by `SyncUploadService`
+    (`core/sync_upload_service.py`); HTTP status translation remains in the
+    router.
+  - `SyncUploadService` owns the account-scoped resumable-upload workflow;
+    `routers/sync.py` is its authenticated HTTP adapter.
+  - `UploadProcessingWorkers` (`core/upload_processing_workers.py`) is the one
+    bounded in-process queue for post-acceptance processing, save-to-library
+    jobs, and recovery submissions. Its queue is volatile; `sync_uploads` and
+    processing leases in each account database are the durable source of
+    truth, so unstarted work must remain eligible for recovery after shutdown.
 - Android sync batching is shared through `CoalescingBatcher`
   (`android/app/src/main/java/com/iris/app/data/sync/CoalescingBatcher.kt`).
   Keep endpoint-specific request/response mapping and per-item semantics in
   `UploadInitBatcher` and `UploadCompleteBatcher`; do not duplicate the queue,
   coalescing-window, or max-batch loop.
-- Responsibility review deferred for a later focused refactor (audit on
-  2026-09-29; findings describe the then-current working tree, not necessarily
-  committed code):
+- Responsibility review (audit on 2026-09-29; implementation notes are current
+  through commits `096ca65` and `bbc493c`):
   1. Android sync boundaries: `SyncUploadManager.kt` mixes queue orchestration,
      transport, streaming and hashing; `IrisApplication.kt` owns account-change
      sync policy, and `IrisRepository.kt` exposes a broad consumer surface.
@@ -42,14 +50,15 @@ background job, and persisted queue.
   2. Android gallery composition: `GalleryViewModel.kt` combines MediaStore,
      local catalog, remote paging, session identity and origin merging. Review
      a small gallery data-source/repository seam and pure merge tests.
-  3. Backend HTTP/upload boundary: `routers/sync.py` owns much of upload
-     reservation, chunking, durability and finalization. Review a focused
-     upload application service, retaining HTTP validation and response
-     translation in the router.
-  4. Backend processing/recovery: `core/sync_processor.py` coordinates
-     processing, leases, catalog state and restart recovery. Review separating
-     recovery policy from execution; keep AI/index work distinct from durable
-     upload acceptance and catalog registration.
+  3. Backend HTTP/upload boundary: extracted to `SyncUploadService`; the router
+     retains authentication, request handling and HTTP error translation.
+  4. Backend processing/recovery: the scanner now submits work to the same
+     bounded `UploadProcessingWorkers` queue used by live uploads and
+     save-to-library. Keep recovery state database-backed and preserve the
+     separation between durable acceptance, catalog registration and optional
+     AI/index work. Regression tests cover queue saturation/retry, duplicate
+     submissions, and recovery after the volatile worker queue is drained at
+     shutdown; shutdown timeout is logged for operations.
   5. Server composition and route ownership: `server.py` still combines
      application wiring, mutable global state, middleware and several domain
      routes. Continue domain-by-domain using existing routers; do not rewrite

@@ -43,9 +43,8 @@ def test_worker_preserves_account_context_and_stops_cleanly(monkeypatch, tmp_pat
     )
 
     assert completed.wait(timeout=2)
-    workers.stop(timeout=2)
+    assert workers.stop(timeout=2)
 
-    assert not workers._thread.is_alive()
     assert seen[0]["db_path"] == user.db_path
     assert seen[0]["media_root"] == user.media_root
     assert seen[0]["upload_id"] == "upload-1"
@@ -55,7 +54,7 @@ def test_worker_preserves_account_context_and_stops_cleanly(monkeypatch, tmp_pat
 
 def test_worker_rejects_jobs_after_shutdown(tmp_path: Path):
     workers = UploadProcessingWorkers()
-    workers.stop(timeout=2)
+    assert workers.stop(timeout=2)
     user = _user(1, tmp_path)
 
     assert not workers.submit(
@@ -110,3 +109,52 @@ def test_worker_coalesces_duplicate_jobs_and_bounds_queue(monkeypatch, tmp_path:
     release.set()
     assert two_finished.wait(timeout=2)
     workers.stop(timeout=2)
+
+
+def test_shutdown_discards_only_volatile_queued_work_and_allows_requeue(
+    monkeypatch, tmp_path: Path
+):
+    import core.upload_processing_workers as module
+
+    active_started = threading.Event()
+    release_active = threading.Event()
+    durable_processed = threading.Event()
+    processed = []
+    processed_lock = threading.Lock()
+
+    def fake_process_upload(**kwargs):
+        if kwargs["upload_id"] == "active":
+            active_started.set()
+            assert release_active.wait(timeout=2)
+        with processed_lock:
+            processed.append(kwargs["upload_id"])
+        if kwargs["upload_id"] == "durable-pending":
+            durable_processed.set()
+
+    monkeypatch.setattr(module, "process_upload", fake_process_upload)
+    user = _user(23, tmp_path)
+    workers = UploadProcessingWorkers(max_pending=1)
+
+    def submit(workers_instance, upload_id):
+        return workers_instance.submit(
+            user,
+            upload_id,
+            user.media_root / f"{upload_id}.jpg",
+            use_ai=False,
+            on_finished=lambda _user_id: None,
+        )
+
+    assert submit(workers, "active")
+    assert active_started.wait(timeout=2)
+    assert submit(workers, "durable-pending")
+    assert not workers.stop(timeout=0.01)
+    assert "durable-pending" not in processed
+
+    release_active.set()
+    assert workers.stop(timeout=2)
+
+    replacement = UploadProcessingWorkers(max_pending=1)
+    assert submit(replacement, "durable-pending")
+    assert durable_processed.wait(timeout=2)
+    assert replacement.stop(timeout=2)
+    assert processed.count("durable-pending") == 1

@@ -56,8 +56,6 @@ class UploadProcessingWorkers:
         use_ai: bool,
         on_finished: Callable[[int], None],
     ) -> bool:
-        if self._stopping.is_set():
-            return False
         key = (str(user.db_path), upload_id)
         job = _ProcessingJob(
             db_path=user.db_path,
@@ -70,6 +68,8 @@ class UploadProcessingWorkers:
             on_finished=on_finished,
         )
         with self._keys_lock:
+            if self._stopping.is_set():
+                return False
             if key in self._accepted_keys:
                 return True
             try:
@@ -79,25 +79,31 @@ class UploadProcessingWorkers:
             self._accepted_keys.add(key)
         return True
 
-    def stop(self, *, timeout: float = 10.0) -> None:
-        """Stop accepting work, then give the active job a bounded grace period."""
-        if self._stopping.is_set():
-            return
-        self._stopping.set()
-        # Pending jobs are durable and will be rediscovered at next startup.
-        while True:
+    def stop(self, *, timeout: float = 10.0) -> bool:
+        """Stop accepting work and wait up to ``timeout`` for the active job.
+
+        Returns whether the worker thread stopped within the grace period. A
+        repeated call continues waiting after an earlier timeout.
+        """
+        with self._keys_lock:
+            first_stop = not self._stopping.is_set()
+            self._stopping.set()
+        if first_stop:
+            # Pending jobs are durable and will be rediscovered at next startup.
+            while True:
+                try:
+                    job = self._jobs.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(job, _ProcessingJob):
+                    with self._keys_lock:
+                        self._accepted_keys.discard((str(job.db_path), job.upload_id))
             try:
-                job = self._jobs.get_nowait()
-            except queue.Empty:
-                break
-            if isinstance(job, _ProcessingJob):
-                with self._keys_lock:
-                    self._accepted_keys.discard((str(job.db_path), job.upload_id))
-        try:
-            self._jobs.put_nowait(_STOP)
-        except queue.Full:  # defensive; queue was drained above
-            pass
+                self._jobs.put_nowait(_STOP)
+            except queue.Full:  # defensive; queue was drained above
+                pass
         self._thread.join(timeout=timeout)
+        return not self._thread.is_alive()
 
     def _run(self) -> None:
         while True:

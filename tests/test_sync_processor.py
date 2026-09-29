@@ -419,6 +419,7 @@ def test_recovery_scanner_does_not_migrate_an_old_library_database(
         load_model=False,
         on_finished=lambda _user_id: None,
         stop_event=threading.Event(),
+        processing_workers=SimpleNamespace(submit=lambda *_args, **_kwargs: True),
     )
 
     conn = sqlite3.connect(database)
@@ -428,3 +429,142 @@ def test_recovery_scanner_does_not_migrate_an_old_library_database(
     }
     conn.close()
     assert tables == set()
+
+
+def test_recovery_retries_a_durable_job_after_worker_queue_is_full(tmp_path) -> None:
+    database = tmp_path / "library.db"
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    accepted_file = media_root / "accepted.jpg"
+    accepted_file.write_bytes(b"original")
+    _database_with_jobs(database, "upload-one")
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "UPDATE sync_uploads SET temp_path = ? WHERE id = 'upload-one'",
+        (str(accepted_file),),
+    )
+    connection.commit()
+    connection.close()
+    user = SimpleNamespace(
+        id=12, db_path=database, media_root=media_root, model_name="test-model"
+    )
+
+    class QueueAdapter:
+        def __init__(self):
+            self.accept = False
+            self.submitted = []
+
+        def submit(self, *args, **kwargs):
+            self.submitted.append((args, kwargs))
+            return self.accept
+
+    workers = QueueAdapter()
+    for accepted in (False, True):
+        workers.accept = accepted
+        recover_pending_uploads(
+            users_db_path=tmp_path / "users.db",
+            sync_ai_processing=True,
+            load_model=True,
+            on_finished=lambda _user_id: None,
+            stop_event=threading.Event(),
+            users=[user],
+            processing_workers=workers,
+        )
+        connection = sqlite3.connect(database)
+        state = connection.execute(
+            "SELECT state FROM sync_uploads WHERE id = 'upload-one'"
+        ).fetchone()[0]
+        connection.close()
+        assert state == "pending_processing"
+
+    assert len(workers.submitted) == 2
+    args, kwargs = workers.submitted[-1]
+    assert args[:3] == (user, "upload-one", accepted_file)
+    assert kwargs["use_ai"] is True
+
+
+def test_recovery_requeues_persisted_job_after_worker_shutdown(
+    tmp_path, monkeypatch
+) -> None:
+    from core.upload_processing_workers import UploadProcessingWorkers
+
+    database = tmp_path / "library.db"
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    accepted_file = media_root / "accepted.jpg"
+    accepted_file.write_bytes(b"original")
+    _database_with_jobs(database, "upload-one")
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "UPDATE sync_uploads SET temp_path = ? WHERE id = 'upload-one'",
+        (str(accepted_file),),
+    )
+    connection.commit()
+    connection.close()
+    user = SimpleNamespace(
+        id=19, db_path=database, media_root=media_root, model_name="test-model"
+    )
+
+    active_started = threading.Event()
+    release_active = threading.Event()
+    recovered = threading.Event()
+    completed_ids = []
+
+    def process(**kwargs):
+        if kwargs["upload_id"] == "blocker":
+            active_started.set()
+            assert release_active.wait(timeout=2)
+            return
+        completed_ids.append(kwargs["upload_id"])
+        kwargs["on_finished"]()
+        recovered.set()
+
+    monkeypatch.setattr("core.upload_processing_workers.process_upload", process)
+    stop_event = threading.Event()
+    workers = UploadProcessingWorkers(max_pending=1)
+    assert workers.submit(
+        user,
+        "blocker",
+        media_root / "blocker.jpg",
+        use_ai=False,
+        on_finished=lambda _user_id: None,
+    )
+    assert active_started.wait(timeout=2)
+
+    recovery_args = {
+        "users_db_path": tmp_path / "users.db",
+        "sync_ai_processing": False,
+        "load_model": False,
+        "on_finished": lambda _user_id: None,
+        "stop_event": stop_event,
+        "users": [user],
+        "processing_workers": workers,
+    }
+    recover_pending_uploads(**recovery_args)
+    assert not workers.stop(timeout=0.01)
+
+    connection = sqlite3.connect(database)
+    state_before_restart = connection.execute(
+        "SELECT state FROM sync_uploads WHERE id = 'upload-one'"
+    ).fetchone()[0]
+    connection.close()
+    assert state_before_restart == "pending_processing"
+
+    release_active.set()
+    assert workers.stop(timeout=2)
+
+    replacement = UploadProcessingWorkers(max_pending=1)
+    recovery_args["processing_workers"] = replacement
+    recover_pending_uploads(**recovery_args)
+    assert recovered.wait(timeout=2)
+    assert replacement.stop(timeout=2)
+    assert completed_ids == ["upload-one"]
+
+    connection = sqlite3.connect(database)
+    state_after_processing = connection.execute(
+        "SELECT state FROM sync_uploads WHERE id = 'upload-one'"
+    ).fetchone()[0]
+    connection.close()
+    # The fake processor does not mutate database state; recovery itself must
+    # neither mark the row complete nor lose it when the volatile queue drains.
+    assert state_after_processing == "pending_processing"

@@ -634,9 +634,11 @@ async def lifespan(app: FastAPI):
         recovery_worker = getattr(app.state, "sync_recovery_worker", None)
         if recovery_worker is not None:
             recovery_worker.join(timeout=10)
+            if recovery_worker.is_alive():
+                logger.warning("sync_recovery_shutdown_timeout")
         processing_workers = getattr(app.state, "upload_processing_workers", None)
-        if processing_workers is not None:
-            processing_workers.stop(timeout=10)
+        if processing_workers is not None and not processing_workers.stop(timeout=10):
+            logger.warning("upload_processing_shutdown_timeout")
         app.state.backup_service.stop()
     dump()
     try:
