@@ -18,6 +18,7 @@ from core import instance_backup
 from core.auth import hash_password
 from core.indexer_db import init_db
 from core.instance_backup import BackupError
+from core.library_trash import move_to_trash
 from core.shared_spaces import add_member, create_space
 from core.space_catalog import add_item, space_root
 from core.users_db import create_user
@@ -77,11 +78,71 @@ def _manifest(snapshot: Path) -> dict:
     return json.loads((snapshot / "manifest.json").read_text())
 
 
+def _downgrade_space_catalogue_to_v2(root: Path) -> None:
+    """Write the prior on-disk schema, preserving the space's catalogued items."""
+    database = root / "space.db"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        items = connection.execute(
+            "SELECT id, sha256, storage_name, original_name, mime_type, size_bytes, "
+            "added_by, added_at, removed_at, removed_by, storage_method, purged_at "
+            "FROM items"
+        ).fetchall()
+        usage = connection.execute("SELECT bytes FROM usage WHERE id = 1").fetchone()[0]
+    finally:
+        connection.close()
+    Path(f"{database}-wal").unlink(missing_ok=True)
+    Path(f"{database}-shm").unlink(missing_ok=True)
+
+    old_database = root / "space-v2.db"
+    connection = sqlite3.connect(old_database)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sha256 TEXT NOT NULL,
+                storage_name TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                added_by INTEGER,
+                added_at TEXT NOT NULL,
+                removed_at TEXT,
+                removed_by INTEGER,
+                storage_method TEXT NOT NULL DEFAULT 'copy',
+                purged_at TEXT
+            );
+            CREATE UNIQUE INDEX idx_items_visible_sha256 ON items(sha256)
+                WHERE removed_at IS NULL;
+            CREATE INDEX idx_items_sha256 ON items(sha256);
+            CREATE INDEX idx_items_trash ON items(removed_at)
+                WHERE removed_at IS NOT NULL AND purged_at IS NULL;
+            CREATE TABLE usage (id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL);
+            PRAGMA user_version = 2;
+            """
+        )
+        connection.executemany(
+            "INSERT INTO items (id, sha256, storage_name, original_name, mime_type, "
+            "size_bytes, added_by, added_at, removed_at, removed_by, storage_method, purged_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            items,
+        )
+        connection.execute("INSERT INTO usage (id, bytes) VALUES (1, ?)", (usage,))
+        connection.commit()
+    finally:
+        connection.close()
+    database.unlink()
+    old_database.rename(database)
+
+
 def test_snapshot_holds_the_recovery_unit_and_nothing_rebuildable(
     instance: dict[str, Path], tmp_path: Path
 ) -> None:
     summary = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0)
     assert summary.snapshot.name == "iris-backup-20260923T120000Z"
+    assert summary.snapshot.stat().st_mode & 0o077 == 0
     paths = {f"{e['root']}/{e['path']}" for e in _manifest(summary.snapshot)["files"]}
     space = instance["space_id"]
     for expected in (
@@ -95,6 +156,30 @@ def test_snapshot_holds_the_recovery_unit_and_nothing_rebuildable(
         assert not any(rebuildable in p for p in paths), rebuildable
     assert summary.warnings == []
     assert instance_backup.verify(summary.snapshot) == []
+
+
+def test_verify_and_restore_support_a_read_only_snapshot(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+    paths_before = sorted(path.relative_to(snapshot) for path in snapshot.rglob("*"))
+    paths = [snapshot, *snapshot.rglob("*")]
+    try:
+        for path in paths:
+            path.chmod(0o555 if path.is_dir() else 0o444)
+
+        assert instance_backup.verify(snapshot) == []
+        restored = instance_backup.restore(snapshot, {
+            "data": tmp_path / "restored-data",
+            "media": tmp_path / "restored-media",
+        })
+        assert restored == {}
+        assert (tmp_path / "restored-data/users.db").is_file()
+        assert (tmp_path / "restored-media/old/legacy.jpg").is_file()
+        assert sorted(path.relative_to(snapshot) for path in snapshot.rglob("*")) == paths_before
+    finally:
+        for path in reversed(paths):
+            path.chmod(0o755 if path.is_dir() else 0o644)
 
 
 def test_second_snapshot_links_unchanged_files_and_copies_new_ones(
@@ -164,10 +249,155 @@ def test_uncommitted_writes_are_not_captured(instance: dict[str, Path], tmp_path
 def test_originals_outside_the_backed_up_roots_are_reported(
     instance: dict[str, Path], tmp_path: Path
 ) -> None:
-    summary = instance_backup.create(
-        {"data": instance["data"]}, tmp_path / "backups", now=T0
-    )
-    assert any("legacy.jpg" in warning for warning in summary.warnings)
+    dest = tmp_path / "backups"
+    with pytest.raises(BackupError, match="legacy.jpg"):
+        instance_backup.create({"data": instance["data"]}, dest, now=T0)
+    assert list(dest.glob("iris-backup-*")) == []
+
+
+def test_missing_media_root_does_not_publish_a_partial_snapshot(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    dest = tmp_path / "backups"
+    with pytest.raises(BackupError, match="media"):
+        instance_backup.create(
+            {"data": instance["data"], "media": tmp_path / "missing"}, dest, now=T0
+        )
+    assert list(dest.glob("iris-backup-*")) == []
+
+
+def test_missing_referenced_original_does_not_publish_snapshot(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    missing = instance["data"] / "users" / "1" / "media" / "gone.jpg"
+    with sqlite3.connect(instance["data"] / "users" / "1" / "iris.db") as connection:
+        connection.execute("UPDATE memes SET caminho = ? WHERE arquivo = 'alice.jpg'", (str(missing),))
+    dest = tmp_path / "backups"
+    with pytest.raises(BackupError, match="gone.jpg"):
+        instance_backup.create(_roots(instance), dest, now=T0)
+    assert list(dest.glob("iris-backup-*")) == []
+
+
+def test_relinked_library_path_takes_precedence_over_stale_legacy_path(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    library = instance["data"] / "users" / "1" / "library" / "default"
+    photo = _image(library / "relinked.jpg", (3, 4, 5))
+    database = instance["data"] / "users" / "1" / "iris.db"
+    with sqlite3.connect(database) as connection:
+        library_id = connection.execute(
+            "INSERT INTO media_libraries (name, root_path) VALUES (?, ?)",
+            ("default", str(library)),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO memes (arquivo, caminho, library_id, storage_path, embedding) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (photo.name, "/old/not/there/relinked.jpg", library_id, photo.name, b"\0" * 16),
+        )
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+    assert instance_backup.verify(snapshot) == []
+
+
+def test_missing_trashed_original_does_not_publish_snapshot(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    database = instance["data"] / "users" / "2" / "iris.db"
+    photo = instance["data"] / "users" / "2" / "media" / "bob.jpg"
+    with sqlite3.connect(database) as connection:
+        item_id = connection.execute("SELECT id FROM memes WHERE arquivo = 'bob.jpg'").fetchone()[0]
+    move_to_trash(database, {item_id: photo})
+    held = database.parent / "trash" / str(item_id) / photo.name
+    held.unlink()
+    with pytest.raises(BackupError, match="bob.jpg"):
+        instance_backup.create(_roots(instance), tmp_path / "backups", now=T0)
+
+
+def test_missing_session_secret_does_not_publish_snapshot(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    (instance["data"] / "secret_key").unlink()
+    with pytest.raises(BackupError, match="secret_key"):
+        instance_backup.create(_roots(instance), tmp_path / "backups", now=T0)
+
+
+def test_effective_environment_secret_is_captured(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("IRIS_SECRET_KEY", "effective synthetic secret")
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+    assert (snapshot / "data" / "secret_key").read_text() == "effective synthetic secret"
+    assert instance_backup.verify(snapshot) == []
+
+
+def test_database_change_during_media_copy_does_not_publish_snapshot(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_copy = instance_backup._copy_hashing
+    changed = False
+
+    def copy_while_account_changes(source: Path, target: Path) -> str:
+        nonlocal changed
+        result = original_copy(source, target)
+        if source.suffix == ".jpg" and not changed:
+            changed = True
+            with sqlite3.connect(instance["data"] / "users.db") as connection:
+                connection.execute(
+                    "UPDATE users SET display_name = 'changed' WHERE username = 'bob'"
+                )
+        return result
+
+    monkeypatch.setattr(instance_backup, "_copy_hashing", copy_while_account_changes)
+    dest = tmp_path / "backups"
+    with pytest.raises(BackupError, match="mudou durante"):
+        instance_backup.create(_roots(instance), dest, now=T0)
+    assert changed
+    assert list(dest.glob("iris-backup-*")) == []
+
+
+def test_original_change_during_copy_does_not_publish_snapshot(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_copy = instance_backup._copy_hashing
+    changed = False
+
+    def copy_while_photo_changes(source: Path, target: Path) -> str:
+        nonlocal changed
+        result = original_copy(source, target)
+        if source.suffix == ".jpg" and not changed:
+            changed = True
+            source.write_bytes(source.read_bytes() + b"changed")
+        return result
+
+    monkeypatch.setattr(instance_backup, "_copy_hashing", copy_while_photo_changes)
+    dest = tmp_path / "backups"
+    with pytest.raises(BackupError, match="mudou durante"):
+        instance_backup.create(_roots(instance), dest, now=T0)
+    assert changed
+    assert list(dest.glob("iris-backup-*")) == []
+
+
+def test_verify_rejects_manifest_that_omits_a_catalogued_photo(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+    manifest_path = snapshot / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["files"] = [
+        entry for entry in manifest["files"]
+        if entry["path"] != "users/1/media/alice.jpg"
+    ]
+    os.chmod(manifest_path, 0o644)
+    manifest_path.write_text(json.dumps(manifest))
+    assert any("alice.jpg" in problem for problem in instance_backup.verify(snapshot))
+
+
+def test_verify_works_after_the_original_disk_is_lost(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+    instance["data"].rename(tmp_path / "lost-data")
+    instance["media"].rename(tmp_path / "lost-media")
+    assert instance_backup.verify(snapshot) == []
 
 
 def test_verify_finds_corruption_and_interrupted_snapshots(
@@ -212,6 +442,9 @@ def test_restored_instance_boots_with_accounts_libraries_and_spaces(
     instance: dict[str, Path], tmp_path: Path
 ) -> None:
     data = instance["data"]
+    space_id = int(instance["space_id"].name)
+    # Simulate the prior release's space database before taking a real snapshot.
+    _downgrade_space_catalogue_to_v2(space_root(data, space_id))
     snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
     alice_photo = data / "users" / "1" / "media" / "alice.jpg"
     expected = hashlib.sha256(alice_photo.read_bytes()).hexdigest()
@@ -242,6 +475,9 @@ with TestClient(server.app) as alice, TestClient(server.app) as bob:
     items = bob.get("/api/spaces/{instance["space_id"]}/items").json()["items"]
     original = bob.get(items[0]["original_url"])
     assert hashlib.sha256(original.content).hexdigest() == "{expected}"
+    albums = bob.get("/api/spaces/{instance["space_id"]}/albums")
+    assert albums.status_code == 200, albums.text
+    assert albums.json()["albums"] == []
 '''
     env = dict(
         os.environ,
@@ -255,6 +491,8 @@ with TestClient(server.app) as alice, TestClient(server.app) as bob:
         text=True, capture_output=True, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    with sqlite3.connect(data / "spaces" / str(space_id) / "space.db") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 def test_command_line_round_trip(instance: dict[str, Path], tmp_path: Path) -> None:

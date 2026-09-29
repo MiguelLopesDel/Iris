@@ -16,6 +16,7 @@ from PIL import Image
 
 from core import instance_settings
 from core.backup_scheduler import BackupService
+from core.indexer_db import init_db
 from core.instance_backup import BackupError
 from core.users_db import create_user
 
@@ -39,6 +40,7 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv(setting.env, raising=False)
     data = tmp_path / "data"
     user = create_user(data / "users.db", data, username="ana", password_hash="x")
+    (data / "secret_key").write_text("synthetic session secret")
     Image.new("RGB", (8, 8), (1, 2, 3)).save(user.media_root / "a.jpg")
     instance_settings.save(
         data / "users.db",
@@ -88,6 +90,27 @@ def test_failures_retry_hourly_up_to_three_times(setup, tmp_path: Path) -> None:
         assert not service.due()
         clock.advance(minutes=30)
     assert not service.due()  # three strikes: wait for tomorrow
+
+
+def test_missing_original_marks_run_failed_and_keeps_previous_snapshot(setup) -> None:
+    service, clock, data = setup
+    first = service.run("manual")
+    assert first.status == "ok"
+    previous = {path.name for path in service.dest.glob("iris-backup-*")}
+    database = data / "users" / "1" / "iris.db"
+    init_db(database).close()
+    missing = data / "users" / "1" / "media" / "missing.jpg"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO memes (arquivo, caminho, embedding) VALUES (?, ?, ?)",
+            (missing.name, str(missing), b"\0" * 16),
+        )
+
+    clock.advance(minutes=1)
+    failed = service.run("manual")
+    assert failed.status == "failed" and "missing.jpg" in failed.message
+    assert failed.pruned == 0
+    assert {path.name for path in service.dest.glob("iris-backup-*")} == previous
 
 
 def test_schedule_can_be_turned_off(setup) -> None:

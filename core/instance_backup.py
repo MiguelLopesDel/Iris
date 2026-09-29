@@ -11,13 +11,14 @@ A snapshot is a plain directory tree, readable without Iris::
         data/...               the data/ root
         media/...              the media/ root, when there is one
 
-SQLite files are copied with the online backup API, so a snapshot of a
-running server is consistent per database. Everything Iris can rebuild
+SQLite files are copied with the online backup API and copied again at the
+end to reject a run whose databases changed. Catalogued originals, trash and
+copied bytes are checked before publication. Everything Iris can rebuild
 (FAISS indexes, vector sidecars, thumbnails, half-received uploads) is left
 out: it would double the size and be stale on restore anyway.
 
-Snapshots are incremental the way ``rsync --link-dest`` is: a file whose size
-and mtime match the previous snapshot is hard-linked to it instead of copied,
+Snapshots are incremental the way ``rsync --link-dest`` is: a file whose size,
+mtime, ctime and inode match the previous snapshot is hard-linked instead of copied,
 so each snapshot is complete and browsable while an unchanged photo occupies
 the destination disk once. Backup files are made read-only because a hard
 link shared by several snapshots must never be edited in place.
@@ -49,13 +50,15 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
 
 import tomllib
+
+from core.file_digest import FileDigest
 
 FORMAT_VERSION = 1
 SNAPSHOT_PREFIX = "iris-backup-"
@@ -85,6 +88,9 @@ class Entry:
     mtime_ns: int
     sha256: str
     kind: str  # "sqlite" | "file"
+    source_ctime_ns: int | None = None
+    source_inode: int | None = None
+    source_device: int | None = None
 
 
 @dataclass
@@ -155,11 +161,7 @@ def _is_sqlite(path: Path) -> bool:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(_CHUNK):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return FileDigest.sha256(path, _CHUNK)
 
 
 def _copy_hashing(source: Path, destination: Path) -> str:
@@ -175,7 +177,7 @@ def _copy_hashing(source: Path, destination: Path) -> str:
 
 def _sqlite_copy(source: Path, destination: Path) -> None:
     # Read-only URI: the backup must never create or migrate anything.
-    reader = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    reader = sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)
     try:
         writer = sqlite3.connect(destination)
         try:
@@ -186,20 +188,135 @@ def _sqlite_copy(source: Path, destination: Path) -> None:
         reader.close()
 
 
-def _referenced_originals(data_root: Path) -> Iterable[tuple[Path, str]]:
-    """Absolute media paths the private catalogues point to, per library."""
+def _identity(path: Path) -> tuple[int, int, int, int, int] | None:
+    """A cheap change detector for a source file, including same-size rewrites."""
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _snapshot_file(
+    source: Path, manifest: Manifest, snapshot: Path, *, resolve_source: bool = True
+) -> Path | None:
+    """Map an original to snapshot bytes; offline verify never reads the old host."""
+    absolute = source if source.is_absolute() else Path.cwd() / source
+    resolved = absolute.resolve() if resolve_source else Path(os.path.normpath(absolute))
+    for name, original_root in sorted(manifest.roots.items(), key=lambda pair: -len(pair[1])):
+        try:
+            relative = resolved.relative_to(Path(original_root))
+        except ValueError:
+            continue
+        return snapshot / name / relative
+    return None
+
+
+def _check_references(manifest: Manifest, snapshot: Path, *, check_source: bool = True) -> None:
+    """Refuse a snapshot whose copied catalogues cannot find their originals."""
+    data_root = snapshot / "data"
+    sqlite_options = "mode=ro" if check_source else "mode=ro&immutable=1"
+    registered = {entry.root + "/" + entry.path for entry in manifest.files}
+    users_db = data_root / "users.db"
+    media_roots: dict[int, Path] = {}
+    if users_db.is_file():
+        with sqlite3.connect(users_db.resolve().as_uri() + f"?{sqlite_options}", uri=True) as connection:
+            if connection.execute("SELECT 1 FROM users LIMIT 1").fetchone() and (
+                "data/secret_key" not in registered
+            ):
+                raise BackupError("secret_key ausente no backup")
+            for user_id, db_path, root in connection.execute(
+                "SELECT id, db_path, media_root FROM users"
+            ):
+                media_roots[int(user_id)] = Path(root)
+                for label, source in (("banco", Path(db_path)), ("mídia", Path(root))):
+                    if check_source and label == "banco" and not source.exists():
+                        # An account may have been created without opening its catalogue yet.
+                        continue
+                    copied = _snapshot_file(source, manifest, snapshot, resolve_source=check_source)
+                    if copied is None:
+                        raise BackupError(f"{label} da conta {user_id} fora do backup: {source}")
+                    if label == "banco" and source.exists() and (
+                        copied.relative_to(snapshot).as_posix() not in registered
+                    ):
+                        raise BackupError(f"{label} da conta {user_id} ausente no backup: {source}")
+
     for database in sorted(data_root.glob("users/*/iris.db")):
         try:
-            connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
-            try:
-                rows = connection.execute("SELECT caminho FROM memes").fetchall()
-            finally:
-                connection.close()
-        except sqlite3.Error:
+            user_id = int(database.parent.name)
+        except ValueError:
             continue
-        for (caminho,) in rows:
-            if caminho and os.path.isabs(caminho):
-                yield Path(caminho), str(database.relative_to(data_root))
+        media_root = media_roots.get(user_id, Path(manifest.roots["data"]) / "users" / str(user_id) / "media")
+        with sqlite3.connect(database.resolve().as_uri() + f"?{sqlite_options}", uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(memes)")}
+            if not columns:
+                continue
+            selected = [name for name in ("caminho", "relative_path", "storage_path", "library_id") if name in columns]
+            if not selected:
+                continue
+            roots = {}
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_libraries'"
+            ).fetchone():
+                roots = {
+                    int(lib_id): Path(root)
+                    for lib_id, root in connection.execute("SELECT id, root_path FROM media_libraries")
+                    if root
+                }
+            for row in connection.execute(f"SELECT {', '.join(selected)} FROM memes"):
+                candidates: list[Path] = []
+                if "storage_path" in columns and "library_id" in columns and row["storage_path"] and row["library_id"] in roots:
+                    candidates.append(roots[row["library_id"]] / row["storage_path"])
+                if "relative_path" in columns and row["relative_path"]:
+                    candidates.append(media_root / row["relative_path"])
+                caminho = row["caminho"] if "caminho" in columns else None
+                if caminho:
+                    path = Path(caminho)
+                    candidates.append(path if path.is_absolute() else Path.cwd() / path)
+                    candidates.append(media_root / path.name)
+                source = next(
+                    (
+                        candidate for candidate in candidates
+                        if (candidate.is_file() if check_source else (
+                            (copied := _snapshot_file(
+                                candidate, manifest, snapshot, resolve_source=False
+                            )) is not None
+                            and copied.relative_to(snapshot).as_posix() in registered
+                        ))
+                    ),
+                    None,
+                )
+                if source is None:
+                    raise BackupError(f"original indisponível em {database.relative_to(data_root)}: {caminho or candidates}")
+                copied = _snapshot_file(source, manifest, snapshot, resolve_source=check_source)
+                if (copied is None or not copied.is_file()
+                        or copied.relative_to(snapshot).as_posix() not in registered):
+                    raise BackupError(f"original fora do backup em {database.relative_to(data_root)}: {source}")
+
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='library_trash'"
+            ).fetchone():
+                for (held_path,) in connection.execute(
+                    "SELECT trash_path FROM library_trash WHERE trash_path IS NOT NULL"
+                ):
+                    held = Path(held_path)
+                    copied = _snapshot_file(held, manifest, snapshot, resolve_source=check_source)
+                    if (check_source and not held.is_file()) or copied is None or (
+                        copied.relative_to(snapshot).as_posix() not in registered
+                    ):
+                        raise BackupError(f"original na lixeira ausente no backup: {held}")
+
+    for database in sorted(data_root.glob("spaces/*/space.db")):
+        with sqlite3.connect(database.resolve().as_uri() + f"?{sqlite_options}", uri=True) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(items)")}
+            if not columns:
+                continue
+            active = "WHERE purged_at IS NULL" if "purged_at" in columns else ""
+            for (name,) in connection.execute(f"SELECT storage_name FROM items {active}"):
+                relative = database.parent.relative_to(data_root) / "media" / name
+                if f"data/{relative.as_posix()}" not in registered:
+                    raise BackupError(f"original do espaço ausente no backup: {relative}")
 
 
 # -- version --------------------------------------------------------------------
@@ -274,6 +391,9 @@ def _check_roots(roots: dict[str, Path], dest: Path) -> None:
         raise BackupError("a raiz 'data' é obrigatória")
     if not (roots["data"] / "users.db").is_file():
         raise BackupError(f"{roots['data']} não parece uma instalação Iris (falta users.db)")
+    for name, root in roots.items():
+        if not root.is_dir():
+            raise BackupError(f"raiz '{name}' ausente: {root}")
     resolved_dest = dest.resolve()
     for name, root in roots.items():
         resolved = root.resolve()
@@ -310,40 +430,49 @@ def _create(
         stamp = f"{stamp}-{suffix}"
     final = dest / f"{SNAPSHOT_PREFIX}{stamp}"
     work = dest / f"{INCOMPLETE_PREFIX}{stamp}"
-    work.mkdir()
-    previous = _latest(dest)
-    base: dict[tuple[str, str], Entry] = (
-        {(e.root, e.path): e for e in previous[1].files} if previous else {}
-    )
-    manifest = Manifest(
-        format=FORMAT_VERSION,
-        created_at=(now or datetime.now(timezone.utc)).isoformat(),
-        roots={name: str(root.resolve()) for name, root in roots.items()},
-        iris_version=iris_version(),
-        iris_commit=iris_commit(),
-        retention=retention,
-    )
-    copied = linked = 0
-    for name, root in sorted(roots.items()):
-        if not root.is_dir():
-            manifest.warnings.append(f"raiz '{name}' ausente: {root}")
-            continue
-        for relative in _walk(root):
-            source = root / relative
-            target = work / name / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            try:
+    # The tree contains originals and possibly the effective session secret.
+    work.mkdir(mode=0o700)
+    try:
+        previous = _latest(dest)
+        base: dict[tuple[str, str], Entry] = (
+            {(e.root, e.path): e for e in previous[1].files} if previous else {}
+        )
+        manifest = Manifest(
+            format=FORMAT_VERSION,
+            created_at=(now or datetime.now(timezone.utc)).isoformat(),
+            roots={name: str(root.resolve()) for name, root in roots.items()},
+            iris_version=iris_version(),
+            iris_commit=iris_commit(),
+            retention=retention,
+        )
+        copied = linked = 0
+        observed: dict[Path, tuple[int, int, int, int, int]] = {}
+        copied_databases: list[tuple[Path, str]] = []
+        scanned: set[Path] = set()
+        for name, root in sorted(roots.items()):
+            for relative in _walk(root):
+                source = root / relative
+                scanned.add(source)
+                target = work / name / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                before = _identity(source)
+                if before is None:
+                    raise BackupError(f"arquivo mudou durante o backup: {source}")
                 stat = source.stat()
                 if _is_sqlite(source):
                     _sqlite_copy(source, target)
                     entry = Entry(name, relative.as_posix(), target.stat().st_size,
                                   stat.st_mtime_ns, _sha256(target), "sqlite")
+                    copied_databases.append((source, entry.sha256))
                     copied += 1
                 else:
                     known = base.get((name, relative.as_posix()))
                     unchanged = (
                         previous is not None and known is not None and known.kind == "file"
                         and known.size == stat.st_size and known.mtime_ns == stat.st_mtime_ns
+                        and known.source_ctime_ns == stat.st_ctime_ns
+                        and known.source_inode == stat.st_ino
+                        and known.source_device == stat.st_dev
                     )
                     if unchanged and _link(previous[0] / name / relative, target):
                         entry = known
@@ -351,50 +480,73 @@ def _create(
                     else:
                         digest = _copy_hashing(source, target)
                         entry = Entry(name, relative.as_posix(), target.stat().st_size,
-                                      stat.st_mtime_ns, digest, "file")
+                                      stat.st_mtime_ns, digest, "file", stat.st_ctime_ns,
+                                      stat.st_ino, stat.st_dev)
                         copied += 1
-            except FileNotFoundError:
-                # Moved to the trash or renamed while the backup ran.
-                manifest.warnings.append(f"sumiu durante o backup: {name}/{relative}")
-                target.unlink(missing_ok=True)
-                continue
-            os.chmod(target, 0o444)
-            manifest.files.append(entry)
+                    state = _identity(source)
+                    if state != before:
+                        raise BackupError(f"arquivo mudou durante o backup: {source}")
+                    observed[source] = state
+                os.chmod(target, 0o444)
+                manifest.files.append(entry)
 
-    covered = [root.resolve() for root in roots.values()]
-    for original, library in _referenced_originals(roots["data"]):
-        resolved = Path(os.path.normpath(original))
-        if not any(resolved.is_relative_to(root) for root in covered):
-            manifest.warnings.append(
-                f"{library} usa um original fora das raízes do backup: {resolved}"
-            )
+        configured_secret = os.environ.get("IRIS_SECRET_KEY")
+        if configured_secret:
+            # The environment takes precedence over data/secret_key at startup.
+            # Capture the effective secret, detaching a previously linked file.
+            secret_target = work / "data" / "secret_key"
+            secret_target.unlink(missing_ok=True)
+            secret_target.write_text(configured_secret)
+            os.chmod(secret_target, 0o400)
+            manifest.files = [
+                entry for entry in manifest.files
+                if not (entry.root == "data" and entry.path == "secret_key")
+            ]
+            manifest.files.append(Entry(
+                "data", "secret_key", secret_target.stat().st_size, 0,
+                _sha256(secret_target), "file",
+            ))
+        _check_references(manifest, work)
+        for source, state in observed.items():
+            if _identity(source) != state:
+                raise BackupError(f"arquivo ou banco mudou durante o backup: {source}")
+        for source, digest in copied_databases:
+            audit = work / ".audit.db"
+            _sqlite_copy(source, audit)
+            if _sha256(audit) != digest:
+                raise BackupError(f"banco mudou durante o backup: {source}")
+            audit.unlink()
+        for name, root in roots.items():
+            now_present = {root / relative for relative in _walk(root)}
+            copied_sources = {path for path in scanned if path.is_relative_to(root)}
+            if now_present != copied_sources:
+                raise BackupError(f"arquivos mudaram durante o backup na raiz '{name}'")
 
-    manifest.dump(work / "manifest.json")
-    os.chmod(work / "manifest.json", 0o444)
-    os.rename(work, final)
-    return Summary(
-        snapshot=final,
-        files=len(manifest.files),
-        bytes_total=sum(entry.size for entry in manifest.files),
-        copied=copied,
-        linked=linked,
-        warnings=manifest.warnings,
-    )
+        manifest.dump(work / "manifest.json")
+        os.chmod(work / "manifest.json", 0o444)
+        problems = _verify_tree(work, manifest)
+        if problems:
+            raise BackupError("backup incompleto: " + "; ".join(problems[:10]))
+        os.rename(work, final)
+        return Summary(
+            snapshot=final,
+            files=len(manifest.files),
+            bytes_total=sum(entry.size for entry in manifest.files),
+            copied=copied,
+            linked=linked,
+            warnings=manifest.warnings,
+        )
+    except BaseException:
+        # A failed run must not consume space or look like a recoverable backup.
+        if work.exists():
+            shutil.rmtree(work)
+        raise
 
 
 # -- verify -----------------------------------------------------------------------
 
 
-def verify(snapshot: Path) -> list[str]:
-    """Every problem found in ``snapshot``; an empty list means it is sound."""
-    if snapshot.name.startswith(INCOMPLETE_PREFIX):
-        return ["backup incompleto: foi interrompido antes de terminar"]
-    try:
-        manifest = Manifest.load(snapshot / "manifest.json")
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        return [f"manifesto ilegível: {exc}"]
-    except BackupError as exc:
-        return [str(exc)]
+def _verify_tree(snapshot: Path, manifest: Manifest) -> list[str]:
     problems: list[str] = []
     if not any(e.root == "data" and e.path == "users.db" for e in manifest.files):
         problems.append("o backup não contém data/users.db")
@@ -416,7 +568,25 @@ def verify(snapshot: Path) -> list[str]:
                 result = str(exc)
             if result != "ok":
                 problems.append(f"banco corrompido: {label}: {result}")
+    if not problems:
+        try:
+            _check_references(manifest, snapshot, check_source=False)
+        except (BackupError, sqlite3.Error) as exc:
+            problems.append(str(exc))
     return problems
+
+
+def verify(snapshot: Path) -> list[str]:
+    """Every problem found in ``snapshot``; an empty list means it is sound."""
+    if snapshot.name.startswith(INCOMPLETE_PREFIX):
+        return ["backup incompleto: foi interrompido antes de terminar"]
+    try:
+        manifest = Manifest.load(snapshot / "manifest.json")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return [f"manifesto ilegível: {exc}"]
+    except BackupError as exc:
+        return [str(exc)]
+    return _verify_tree(snapshot, manifest)
 
 
 # -- listing and retention -------------------------------------------------------
