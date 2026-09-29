@@ -15,6 +15,7 @@ import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.data.catalog.MediaCatalog
 import com.iris.app.data.catalog.SqliteCatalogStore
 import com.iris.app.data.sync.ChangeFeedSyncManager
+import com.iris.app.data.sync.BackgroundSyncPolicy
 import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.SyncUploadManager
@@ -24,9 +25,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import java.security.MessageDigest
 
 class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provider {
 
@@ -74,8 +78,8 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
         super.onCreate()
         instance = this
 
-        settingsRepository = ServerSettingsRepository(this)
         credentialsStore = DeviceCredentialsStore(this)
+        settingsRepository = ServerSettingsRepository(this)
         dbHelper = UploadDatabaseHelper(this)
 
         val catalogStore = SqliteCatalogStore(this)
@@ -88,17 +92,19 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
         syncUploadManager = SyncUploadManager(
             contentResolver = contentResolver,
             dbHelper = dbHelper,
-            apiServiceProvider = { apiClient.apiService }
+            apiServiceProvider = { sessionIdentity -> apiClient.apiServiceForSession(sessionIdentity) },
+            performanceMonitor = performanceMonitor
         )
 
         mediaStoreScanner = MediaStoreScanner(
             contentResolver = contentResolver,
-            uploadManager = syncUploadManager
+            uploadManager = syncUploadManager,
+            performanceMonitor = performanceMonitor
         )
 
         changeFeedSyncManager = ChangeFeedSyncManager(
             dbHelper = dbHelper,
-            apiServiceProvider = { apiClient.apiService }
+            apiServiceProvider = { sessionIdentity -> apiClient.apiServiceForSession(sessionIdentity) }
         )
 
         irisRepository = IrisRepository(
@@ -107,7 +113,8 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
             dbHelper = dbHelper,
             uploadManager = syncUploadManager,
             mediaScanner = mediaStoreScanner,
-            changeFeedSync = changeFeedSyncManager
+            changeFeedSync = changeFeedSyncManager,
+            performanceMonitor = performanceMonitor,
         )
 
         // A galeria lê daqui antes de qualquer rede; a reconciliação alimenta
@@ -123,6 +130,10 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
                 total = response.total,
             )
         }
+
+        // Coil's default URI-based cache keys do not distinguish two Iris
+        // accounts on the same server. Bind the cache to the current account.
+        updatePrivateImageCacheOwner(credentialsStore.sessionIdentity.value)
 
         // Observe server URL changes from DataStore
         applicationScope.launch {
@@ -140,44 +151,76 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
         applicationScope.launch {
             delay(BACKGROUND_START_DELAY_MS)
             combine(
-                settingsRepository.syncWifiOnly,
-                settingsRepository.syncChargingOnly,
-                settingsRepository.autoBackupEnabled
-            ) { wifiOnly, chargingOnly, autoBackup ->
-                Triple(wifiOnly, chargingOnly, autoBackup)
-            }.collect { (wifiOnly, chargingOnly, autoBackup) ->
-                if (autoBackup) {
-                    MediaSyncWorker.schedulePeriodic(
-                        context = this@IrisApplication,
-                        wifiOnly = wifiOnly,
-                        requiresCharging = chargingOnly
-                    )
+                credentialsStore.sessionIdentity,
+                credentialsStore.accountIdentity,
+            ) { sessionIdentity, accountKey ->
+                sessionIdentity != null && accountKey != null
+            }.collect { loggedIn ->
+                if (BackgroundSyncPolicy.shouldSchedulePeriodicSync(isLoggedIn = loggedIn)) {
+                    MediaSyncWorker.schedulePeriodic(context = this@IrisApplication)
                 } else {
                     MediaSyncWorker.cancelPeriodic(this@IrisApplication)
+                    if (!loggedIn) MediaSyncWorker.cancelImmediate(this@IrisApplication)
                 }
             }
         }
 
-        // Poll change feed on app open (contract section 38)
+        // Background work belongs to one credential session. collectLatest
+        // cancels and joins the prior session's work before the next one can
+        // touch the private mirror or image cache.
         applicationScope.launch(Dispatchers.IO) {
-            isServerConfigurationReady.first { it }
-            delay(BACKGROUND_START_DELAY_MS)
-            if (credentialsStore.hasValidCredentials()) {
-                changeFeedSyncManager.syncChanges()
-            }
-        }
+            var previousSession = credentialsStore.sessionIdentity.value
+            credentialsStore.sessionIdentity.collectLatest { sessionIdentity ->
+                val priorSession = previousSession
+                val changed = sessionIdentity != previousSession
+                previousSession = sessionIdentity
 
-        // Pull the recent catalog into the local mirror so the gallery opens
-        // from disk and keeps scrolling when the server is slow or unreachable.
-        // Bounded per launch: newest-first in coarse pages, so a few requests
-        // cover far more than a user scrolls in one sitting. Runs after the
-        // first frame and off the UI path, and browsing keeps warming the
-        // mirror on its own.
-        applicationScope.launch(Dispatchers.IO) {
-            isServerConfigurationReady.first { it }
-            delay(BACKGROUND_START_DELAY_MS)
-            if (credentialsStore.hasValidCredentials()) {
-                runCatching { mediaCatalog.reconcile(maxPages = CATALOG_RECONCILE_PAGES) }
+                if (changed || sessionIdentity == null) {
+                    if (priorSession != sessionIdentity) MediaSyncWorker.cancelAll(this@IrisApplication)
+                    updatePrivateImageCacheOwner(sessionIdentity)
+                    if (sessionIdentity == null) mediaCatalog.clear()
+                    else mediaCatalog.activateSession(sessionIdentity)
+                }
+
+                if (sessionIdentity == null) return@collectLatest
+                val accountKey = credentialsStore.accountIdentity.value ?: return@collectLatest
+                isServerConfigurationReady.first { it }
+                delay(BACKGROUND_START_DELAY_MS)
+                if (credentialsStore.sessionIdentity.value != sessionIdentity ||
+                    credentialsStore.accountIdentity.value != accountKey
+                ) return@collectLatest
+
+                try {
+                    // Materialize this account's preference namespace before
+                    // scheduling it. Old device-wide settings had no safe owner,
+                    // so accounts use independent defaults.
+                    val syncSettings = settingsRepository.syncSettingsForAccount(accountKey).first()
+                    if (credentialsStore.sessionIdentity.value != sessionIdentity ||
+                        credentialsStore.accountIdentity.value != accountKey
+                    ) return@collectLatest
+                    MediaSyncWorker.enqueueBackground(this@IrisApplication, syncSettings)
+
+                    // Poll change feed on app open (contract section 38).
+                    changeFeedSyncManager.syncChanges(accountKey, sessionIdentity) {
+                        credentialsStore.sessionIdentity.value == sessionIdentity &&
+                            credentialsStore.accountIdentity.value == accountKey
+                    }
+                    if (credentialsStore.sessionIdentity.value != sessionIdentity ||
+                        credentialsStore.accountIdentity.value != accountKey
+                    ) return@collectLatest
+
+                    // Pull recent catalog rows off the UI path so the gallery
+                    // opens from disk and stays useful on a slow connection.
+                    mediaCatalog.reconcile(
+                        maxPages = CATALOG_RECONCILE_PAGES,
+                        sessionKey = sessionIdentity,
+                        isSessionCurrent = { credentialsStore.sessionIdentity.value == sessionIdentity },
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    android.util.Log.w("IrisApplication", "Background library refresh failed", error)
+                }
             }
         }
     }
@@ -214,6 +257,22 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
             .build()
     }
 
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
+    private fun updatePrivateImageCacheOwner(sessionIdentity: String?) {
+        val fingerprint = sessionIdentity?.let { identity ->
+            MessageDigest.getInstance("SHA-256")
+                .digest(identity.toByteArray())
+                .joinToString("") { byte -> "%02x".format(byte) }
+        } ?: LOGGED_OUT_CACHE_OWNER
+        val preferences = getSharedPreferences(IMAGE_CACHE_PREFERENCES, MODE_PRIVATE)
+        if (preferences.getString(IMAGE_CACHE_OWNER_KEY, null) == fingerprint) return
+
+        val imageLoader = coil.Coil.imageLoader(this)
+        imageLoader.memoryCache?.clear()
+        imageLoader.diskCache?.clear()
+        preferences.edit().putString(IMAGE_CACHE_OWNER_KEY, fingerprint).apply()
+    }
+
     @Suppress("DEPRECATION")
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
@@ -233,6 +292,9 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
          * covers the recent end rather than pretending to be a full sync.
          */
         private const val CATALOG_RECONCILE_PAGES = 10
+        private const val IMAGE_CACHE_PREFERENCES = "iris_private_image_cache"
+        private const val IMAGE_CACHE_OWNER_KEY = "owner_fingerprint"
+        private const val LOGGED_OUT_CACHE_OWNER = "logged-out"
 
         lateinit var instance: IrisApplication
             private set

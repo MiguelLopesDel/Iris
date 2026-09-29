@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.HourglassEmpty
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -54,8 +55,8 @@ fun MediaCard(
     val context = LocalContext.current
     val apiClient = (context.applicationContext as IrisApplication).apiClient
 
-    val imageRequest = remember(record.index, record.thumbnailUrl, record.resolvedPath, record.caminho) {
-        val resolvedThumbUrl = if (!record.thumbnailUrl.isNullOrBlank()) {
+    val imageRequest = remember(record.index, record.deviceUri, record.thumbnailUrl, record.resolvedPath, record.caminho) {
+        val resolvedThumbUrl = record.deviceUri ?: if (!record.thumbnailUrl.isNullOrBlank()) {
             apiClient.resolveThumbnailUrl(record.thumbnailUrl)
         } else {
             apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
@@ -65,10 +66,10 @@ fun MediaCard(
             .crossfade(false)
             .build()
     }
-    val finishPreview = remember(record.index, record.thumbnailUrl, record.resolvedPath, record.caminho) {
+    val finishPreview = remember(record.index, record.deviceUri, record.thumbnailUrl, record.resolvedPath, record.caminho) {
         performanceMonitor?.begin(if (record.isVideo) Metric.PreviewVideo else Metric.PreviewImage)
     }
-    var previewState by remember(record.index) { mutableStateOf(PreviewState.Loading) }
+    var previewState by remember(record.index, record.deviceUri) { mutableStateOf(PreviewState.Loading) }
     val placeholder = remember(record.thumbHash) { decodeThumbHash(record.thumbHash) }
 
     Box(
@@ -158,6 +159,7 @@ private fun OriginBadge(origin: MediaOrigin, modifier: Modifier = Modifier) {
     if (origin == MediaOrigin.ON_DEVICE) return
 
     val (icon, description) = when (origin) {
+        MediaOrigin.DEVICE_ONLY -> Icons.Outlined.PhoneAndroid to stringResource(R.string.origin_device_only)
         MediaOrigin.IRIS_ONLY -> Icons.Outlined.Cloud to stringResource(R.string.origin_iris_only)
         MediaOrigin.UPLOADING -> Icons.Outlined.CloudUpload to stringResource(R.string.origin_uploading)
         MediaOrigin.PROCESSING -> Icons.Outlined.Sync to stringResource(R.string.origin_processing)

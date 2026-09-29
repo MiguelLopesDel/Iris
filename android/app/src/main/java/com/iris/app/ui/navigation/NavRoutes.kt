@@ -1,5 +1,7 @@
 package com.iris.app.ui.navigation
 
+import android.net.Uri
+
 sealed class NavRoute(val route: String) {
     object Gallery : NavRoute("gallery")
     object Search : NavRoute("search")
@@ -19,6 +21,16 @@ sealed class NavRoute(val route: String) {
     }
     object Detail : NavRoute("detail/{recordIndex}") {
         fun createRoute(recordIndex: Int): String = "detail/$recordIndex"
+    }
+    object LocalMediaDetail : NavRoute("local_media/{mediaUri}") {
+        fun createRoute(mediaUri: String): String = "local_media/${Uri.encode(mediaUri)}"
+    }
+    object Spaces : NavRoute("spaces")
+    object Space : NavRoute("space/{spaceId}?name={spaceName}") {
+        fun createRoute(spaceId: Int, spaceName: String): String {
+            val encodedName = java.net.URLEncoder.encode(spaceName, "UTF-8")
+            return "space/$spaceId?name=$encodedName"
+        }
     }
     object Sync : NavRoute("sync")
     object Settings : NavRoute("settings")

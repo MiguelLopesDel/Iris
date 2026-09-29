@@ -51,12 +51,15 @@ class SqliteCatalogStore(
         // The gallery's only ordering: newest capture first, like Google Photos.
         db.execSQL("CREATE INDEX idx_catalog_recent ON catalog_media(file_mtime DESC)")
         db.execSQL("CREATE INDEX idx_catalog_type ON catalog_media(media_type, file_mtime DESC)")
+        db.execSQL("CREATE TABLE catalog_meta (id INTEGER PRIMARY KEY CHECK (id = 1), owner_session_key TEXT)")
+        db.execSQL("INSERT INTO catalog_meta (id, owner_session_key) VALUES (1, NULL)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // The mirror is a cache: it is always rebuildable from the server, so a
         // schema change drops it rather than carrying migration logic forever.
         db.execSQL("DROP TABLE IF EXISTS catalog_media")
+        db.execSQL("DROP TABLE IF EXISTS catalog_meta")
         onCreate(db)
     }
 
@@ -121,6 +124,23 @@ class SqliteCatalogStore(
         }
     }
 
+    override suspend fun ownerSessionKey(): String? = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery(
+            "SELECT owner_session_key FROM catalog_meta WHERE id = 1",
+            null
+        ).use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+        }
+    }
+
+    override suspend fun setOwnerSessionKey(sessionKey: String?) = withContext(Dispatchers.IO) {
+        writeMutex.withLock {
+            val values = ContentValues().apply { put("owner_session_key", sessionKey) }
+            writableDatabase.update("catalog_meta", values, "id = 1", null)
+            Unit
+        }
+    }
+
     override suspend fun clear() = withContext(Dispatchers.IO) {
         writeMutex.withLock {
             writableDatabase.execSQL("DELETE FROM catalog_media")
@@ -129,6 +149,6 @@ class SqliteCatalogStore(
 
     companion object {
         const val DATABASE_NAME = "iris_catalog.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
     }
 }

@@ -5,6 +5,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val configuredIrisServerUrl = providers.gradleProperty("irisServerUrl")
+    .orElse(providers.environmentVariable("IRIS_SERVER_URL"))
+    .orNull
+    .orEmpty()
+
+fun escapeBuildConfigString(value: String): String = value
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+
 android {
     namespace = "com.iris.app"
     compileSdk = 35
@@ -16,6 +25,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -23,7 +33,20 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            val defaultUrl = configuredIrisServerUrl.ifBlank { "http://10.0.2.2:8000/" }
+            buildConfigField(
+                "String",
+                "IRIS_DEFAULT_SERVER_URL",
+                "\"${escapeBuildConfigString(defaultUrl)}\""
+            )
+        }
         release {
+            buildConfigField(
+                "String",
+                "IRIS_DEFAULT_SERVER_URL",
+                "\"${escapeBuildConfigString(configuredIrisServerUrl)}\""
+            )
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -44,6 +67,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -110,5 +134,7 @@ dependencies {
 
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

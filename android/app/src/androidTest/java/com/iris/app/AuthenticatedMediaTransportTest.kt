@@ -11,6 +11,7 @@ import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.MockResponse
@@ -42,6 +43,12 @@ class AuthenticatedMediaTransportTest {
         // a stale port, which then (correctly) withholds the token.
         runBlocking { withTimeout(10_000) { app.isServerConfigurationReady.first { it } } }
         val serverUrl = server.url("/").toString()
+        runBlocking {
+            app.settingsRepository.updateServerUrl(serverUrl)
+            withTimeout(10_000) {
+                while (app.apiClient.baseUrl != IrisApiClient.normalizeBaseUrl(serverUrl)) delay(10)
+            }
+        }
         app.apiClient.updateBaseUrl(serverUrl)
         app.credentialsStore.saveSession(
             deviceId = "instrumentation-device",

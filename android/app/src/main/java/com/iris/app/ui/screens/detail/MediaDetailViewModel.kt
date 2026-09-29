@@ -35,17 +35,36 @@ class MediaDetailViewModel(
     val uiState: StateFlow<MediaDetailUiState> = _uiState.asStateFlow()
 
     init {
-        loadDetail()
+        val initialSession = repository.credentialsStore.sessionIdentity.value
+        if (initialSession != null) loadDetail()
+        viewModelScope.launch {
+            var previousSession = initialSession
+            repository.credentialsStore.sessionIdentity.collect { identity ->
+                if (identity == previousSession) return@collect
+                previousSession = identity
+                _uiState.value = MediaDetailUiState(
+                    recordIndex = recordIndex,
+                    isLoading = false,
+                    error = if (identity == null) "AUTH_REQUIRED" else null,
+                )
+            }
+        }
     }
 
     fun loadDetail() {
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: run {
+            clearPrivateState()
+            return
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             repository.getRecordDetail(recordIndex).onSuccess { rec ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update { it.copy(record = rec, isLoading = false, error = null) }
-                loadMetadata()
-                loadSimilars()
+                loadMetadata(requestedSession)
+                loadSimilars(requestedSession)
             }.onFailure { ex ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 val rawMessage = ex.localizedMessage.orEmpty()
                 val userMessage = if (rawMessage.contains("Unexpected JSON token", ignoreCase = true)) {
                     "O servidor enviou um formato de detalhes incompatível. Atualize o Iris e tente novamente."
@@ -61,16 +80,19 @@ class MediaDetailViewModel(
 
     fun rename(newName: String) {
         val record = _uiState.value.record ?: return
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isRenaming = true, notice = null) }
             repository.renameRecord(record.index, newName)
                 .onSuccess {
+                    if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                     // O nome vem do servidor (extensão preservada, colisão
                     // resolvida), então recarrega em vez de adivinhar.
                     loadDetail()
                     _uiState.update { it.copy(isRenaming = false, notice = "Renomeado") }
                 }
                 .onFailure { ex ->
+                    if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                     val motivo = when {
                         ex.localizedMessage?.contains("409") == true -> "Já existe um arquivo com esse nome"
                         ex.localizedMessage?.contains("400") == true -> "Nome inválido"
@@ -89,10 +111,11 @@ class MediaDetailViewModel(
         _uiState.update { it.copy(notice = null) }
     }
 
-    private fun loadMetadata() {
+    private fun loadMetadata(requestedSession: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingMetadata = true) }
             repository.getRecordMetadata(recordIndex).onSuccess { meta ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update { it.copy(metadata = meta, isLoadingMetadata = false) }
             }.onFailure {
                 _uiState.update { it.copy(isLoadingMetadata = false) }
@@ -100,15 +123,24 @@ class MediaDetailViewModel(
         }
     }
 
-    private fun loadSimilars() {
+    private fun loadSimilars(requestedSession: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingSimilars = true) }
             repository.searchSimilar(recordIndex, topK = 15).onSuccess { resp ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update { it.copy(similarRecords = resp.results, isLoadingSimilars = false) }
             }.onFailure {
                 _uiState.update { it.copy(isLoadingSimilars = false) }
             }
         }
+    }
+
+    private fun clearPrivateState() {
+        _uiState.value = MediaDetailUiState(
+            recordIndex = recordIndex,
+            isLoading = false,
+            error = "AUTH_REQUIRED",
+        )
     }
 
     class Factory(

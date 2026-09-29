@@ -8,6 +8,12 @@
     <string name="sync_all_folders">Todas as pastas</string>
     <string name="sync_all_folders_on">Inclui todas as fontes visíveis no aparelho</string>
     <string name="sync_all_folders_off">Inclui somente as pastas escolhidas abaixo</string>
+    <string name="sync_backup_setup_title">Quer configurar o backup automático?</string>
+    <string name="sync_backup_setup_message">Escolha enviar todas as pastas ou selecionar apenas algumas. Assim você pode excluir pastas de downloads e arquivos sem interesse. As mídias serão enviadas para a biblioteca privada desta conta.</string>
+    <string name="sync_backup_all_folders_action">Todas as pastas</string>
+    <string name="sync_backup_choose_folders_action">Escolher pastas</string>
+    <string name="sync_backup_not_now_action">Agora não</string>
+    <string name="sync_backup_choose_scope_hint">Selecione ao menos uma pasta para iniciar o backup automático.</string>
     <string name="sync_photos">Fotos</string>
     <string name="sync_photos_description">Inclui imagens das pastas selecionadas</string>
     <string name="sync_videos">Vídeos</string>
@@ -18,6 +24,7 @@
     <string name="sync_photos_lowercase">fotos</string>
     <string name="sync_media_permission_required">Permita acesso às fotos e vídeos para listar as pastas</string>
     <string name="origin_iris_only">Só no Iris, não está neste aparelho</string>
+    <string name="origin_device_only">Só neste aparelho</string>
     <string name="origin_uploading">Enviando para o Iris</string>
     <string name="origin_processing">No Iris, ainda processando</string>
     <string name="origin_failed">Falha no envio, só neste aparelho</string>
@@ -34,4 +41,7 @@
     <string name="queue_state_processing">Processando no servidor</string>
     <string name="queue_state_done">Concluídos</string>
     <string name="queue_state_failed">Com falha</string>
+    <string name="cloud_connection_unavailable">Sem conexão com a nuvem. Suas mídias locais continuam no aparelho; o Iris tentará reconectar e sincronizar automaticamente em segundo plano.</string>
+    <string name="cloud_sync_retrying">Servidor acessível, mas a sincronização não terminou. O Iris tentará novamente em segundo plano.</string>
+    <string name="cloud_queue_numbers_stale">Não foi possível atualizar os números da fila. Mantive os últimos valores e vou tentar novamente.</string>
 </resources>

@@ -9,6 +9,9 @@ package com.iris.app.data.model
  * local record that survives the app being killed mid-upload.
  */
 enum class MediaOrigin {
+    /** Exists only in the phone's gallery and has not been sent to Iris. */
+    DEVICE_ONLY,
+
     /** On the server, with no trace of it in this device's upload history. */
     IRIS_ONLY,
 
@@ -34,22 +37,41 @@ enum class MediaOrigin {
  * finished upload, so matching by id would require a schema change and a
  * migration for information the hash already carries.
  */
-class MediaOriginIndex(private val stateByHash: Map<String, MediaOrigin>) {
+class MediaOriginIndex(
+    private val stateByHash: Map<String, MediaOrigin>,
+    private val stateByLocalUri: Map<String, MediaOrigin>
+) {
 
     fun originOf(contentHash: String?): MediaOrigin {
         if (contentHash.isNullOrBlank()) return MediaOrigin.IRIS_ONLY
         return stateByHash[contentHash.lowercase()] ?: MediaOrigin.IRIS_ONLY
     }
 
+    fun originOf(record: MediaRecord): MediaOrigin = record.deviceUri?.let { uri ->
+        stateByLocalUri[uri] ?: MediaOrigin.DEVICE_ONLY
+    } ?: originOf(record.contentHash)
+
+    /** Processing and finished jobs mean the server has already accepted the bytes. */
+    fun hasServerCopy(contentHash: String?): Boolean = when (originOf(contentHash)) {
+        MediaOrigin.ON_DEVICE, MediaOrigin.PROCESSING -> true
+        else -> false
+    }
+
     companion object {
-        val EMPTY = MediaOriginIndex(emptyMap())
+        val EMPTY = MediaOriginIndex(emptyMap(), emptyMap())
 
         fun from(jobs: List<LocalUploadJob>): MediaOriginIndex {
             val stateByHash = mutableMapOf<String, MediaOrigin>()
+            val stateByLocalUri = mutableMapOf<String, MediaOrigin>()
             for (job in jobs) {
+                val candidate = job.state.toOrigin()
+                val localUri = job.localUri
+                val localCurrent = stateByLocalUri[localUri]
+                if (localUri.isNotBlank() && (localCurrent == null || candidate.rank() > localCurrent.rank())) {
+                    stateByLocalUri[localUri] = candidate
+                }
                 val hash = job.sha256.lowercase()
                 if (hash.isBlank()) continue
-                val candidate = job.state.toOrigin()
                 val current = stateByHash[hash]
                 // The same file can be queued more than once across rescans, so
                 // one hash can carry several job rows. A later failed retry of a
@@ -60,14 +82,15 @@ class MediaOriginIndex(private val stateByHash: Map<String, MediaOrigin>) {
                     stateByHash[hash] = candidate
                 }
             }
-            return MediaOriginIndex(stateByHash)
+            return MediaOriginIndex(stateByHash, stateByLocalUri)
         }
 
         private fun MediaOrigin.rank(): Int = when (this) {
-            MediaOrigin.ON_DEVICE -> 4
-            MediaOrigin.PROCESSING -> 3
-            MediaOrigin.UPLOADING -> 2
-            MediaOrigin.FAILED -> 1
+            MediaOrigin.ON_DEVICE -> 5
+            MediaOrigin.PROCESSING -> 4
+            MediaOrigin.UPLOADING -> 3
+            MediaOrigin.FAILED -> 2
+            MediaOrigin.DEVICE_ONLY -> 1
             MediaOrigin.IRIS_ONLY -> 0
         }
 

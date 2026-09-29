@@ -36,13 +36,28 @@ class PersonsViewModel(
     val uiState: StateFlow<PersonsUiState> = _uiState.asStateFlow()
 
     init {
-        loadPersons()
+        val initialSession = repository.credentialsStore.sessionIdentity.value
+        if (initialSession != null) loadPersons()
+        viewModelScope.launch {
+            var previousSession = initialSession
+            repository.credentialsStore.sessionIdentity.collect { identity ->
+                if (identity == previousSession) return@collect
+                previousSession = identity
+                if (identity == null) _uiState.value = PersonsUiState(error = "AUTH_REQUIRED")
+                else {
+                    _uiState.value = PersonsUiState()
+                    loadPersons()
+                }
+            }
+        }
     }
 
     fun loadPersons(isRefresh: Boolean = false) {
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = !isRefresh, isRefreshing = isRefresh, error = null) }
             repository.getPersons().onSuccess { list ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update {
                     it.copy(
                         persons = list,
@@ -52,6 +67,7 @@ class PersonsViewModel(
                     )
                 }
             }.onFailure { ex ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -83,13 +99,31 @@ class PersonMediaViewModel(
     val uiState: StateFlow<PersonMediaUiState> = _uiState.asStateFlow()
 
     init {
-        loadMedia()
+        val initialSession = repository.credentialsStore.sessionIdentity.value
+        if (initialSession != null) loadMedia()
+        viewModelScope.launch {
+            var previousSession = initialSession
+            repository.credentialsStore.sessionIdentity.collect { identity ->
+                if (identity == previousSession) return@collect
+                previousSession = identity
+                if (identity == null) clearPrivateState()
+                else {
+                    _uiState.value = PersonMediaUiState(personId, initialPersonName)
+                    loadMedia()
+                }
+            }
+        }
     }
 
     fun loadMedia() {
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: run {
+            clearPrivateState()
+            return
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             repository.getPersonMedia(personId).onSuccess { resp ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update {
                     it.copy(
                         personName = resp.personName.ifBlank { initialPersonName },
@@ -100,6 +134,7 @@ class PersonMediaViewModel(
                     )
                 }
             }.onFailure { ex ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -108,6 +143,10 @@ class PersonMediaViewModel(
                 }
             }
         }
+    }
+
+    private fun clearPrivateState() {
+        _uiState.value = PersonMediaUiState(personId = personId, personName = "", error = "AUTH_REQUIRED")
     }
 
     class Factory(

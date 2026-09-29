@@ -4,10 +4,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
@@ -19,8 +21,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -32,6 +37,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import com.iris.app.IrisApplication
+import com.iris.app.data.local.DeviceGalleryReader
 import com.iris.app.ui.screens.collections.CollectionMediaScreen
 import com.iris.app.ui.screens.collections.CollectionMediaViewModel
 import com.iris.app.ui.screens.collections.CollectionsScreen
@@ -40,12 +46,17 @@ import com.iris.app.ui.screens.detail.MediaDetailScreen
 import com.iris.app.ui.screens.detail.MediaDetailViewModel
 import com.iris.app.ui.screens.gallery.GalleryScreen
 import com.iris.app.ui.screens.gallery.GalleryViewModel
+import com.iris.app.ui.screens.gallery.LocalMediaViewerScreen
 import com.iris.app.ui.screens.persons.PersonMediaScreen
 import com.iris.app.ui.screens.persons.PersonMediaViewModel
 import com.iris.app.ui.screens.persons.PersonsScreen
 import com.iris.app.ui.screens.persons.PersonsViewModel
 import com.iris.app.ui.screens.search.SearchScreen
 import com.iris.app.ui.screens.search.SearchViewModel
+import com.iris.app.ui.screens.spaces.SpaceScreen
+import com.iris.app.ui.screens.spaces.SpaceViewModel
+import com.iris.app.ui.screens.spaces.SpacesScreen
+import com.iris.app.ui.screens.spaces.SpacesViewModel
 import com.iris.app.ui.screens.sync.SyncScreen
 import com.iris.app.ui.screens.sync.SyncViewModel
 import androidx.compose.material.icons.filled.CloudUpload
@@ -75,6 +86,36 @@ fun IrisNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
     val navigationFinishes = remember { mutableMapOf<String, () -> Unit>() }
+    val previousSession = remember(application.credentialsStore) {
+        mutableStateOf(application.credentialsStore.sessionIdentity.value)
+    }
+
+    // Leaving a private screen immediately on logout prevents an already-open
+    // viewer/detail route from continuing to display authenticated media.
+    LaunchedEffect(application.credentialsStore) {
+        application.credentialsStore.sessionIdentity.collect { identity ->
+            val changed = identity != previousSession.value
+            previousSession.value = identity
+            val route = navController.currentDestination?.route
+            if ((changed || identity == null) && route != null && route !in setOf(
+                    NavRoute.Gallery.route,
+                    NavRoute.Sync.route,
+                    NavRoute.Settings.route,
+            )
+            ) {
+                withContext(Dispatchers.Main.immediate) {
+                    navController.navigate(NavRoute.Gallery.route) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            inclusive = false
+                            saveState = false
+                        }
+                        launchSingleTop = true
+                        restoreState = false
+                    }
+                }
+            }
+        }
+    }
 
     val bottomNavItems = listOf(
         BottomNavItem(
@@ -94,6 +135,12 @@ fun IrisNavGraph(
             label = "Álbuns",
             selectedIcon = Icons.Filled.Folder,
             unselectedIcon = Icons.Outlined.Folder
+        ),
+        BottomNavItem(
+            route = NavRoute.Spaces.route,
+            label = "Espaços",
+            selectedIcon = Icons.Filled.Group,
+            unselectedIcon = Icons.Outlined.Group
         ),
         BottomNavItem(
             route = NavRoute.Sync.route,
@@ -167,7 +214,9 @@ fun IrisNavGraph(
                     factory = GalleryViewModel.Factory(
                         application.irisRepository,
                         application.performanceMonitor,
-                        application.mediaCatalog
+                        application.mediaCatalog,
+                        DeviceGalleryReader(application, application.contentResolver),
+                        application.settingsRepository
                     )
                 )
                 GalleryScreen(
@@ -175,12 +224,25 @@ fun IrisNavGraph(
                     onMediaClick = { index ->
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     },
+                    onDeviceMediaClick = { uri ->
+                        navController.navigate(NavRoute.LocalMediaDetail.createRoute(uri))
+                    },
                     onSettingsClick = {
                         navController.navigate(NavRoute.Settings.route)
                     },
                     onLoginClick = {
                         navController.navigate(NavRoute.Sync.route)
                     }
+                )
+            }
+
+            composable(
+                route = NavRoute.LocalMediaDetail.route,
+                arguments = listOf(navArgument("mediaUri") { type = NavType.StringType })
+            ) { backStackEntry ->
+                LocalMediaViewerScreen(
+                    mediaUri = backStackEntry.arguments?.getString("mediaUri").orEmpty(),
+                    onBack = { navController.popBackStack() }
                 )
             }
 
@@ -297,6 +359,37 @@ fun IrisNavGraph(
                 )
             }
 
+            composable(NavRoute.Spaces.route) {
+                val viewModel: SpacesViewModel = viewModel(
+                    factory = SpacesViewModel.Factory(application.irisRepository)
+                )
+                SpacesScreen(
+                    viewModel = viewModel,
+                    onSpaceClick = { spaceId, spaceName ->
+                        navController.navigate(NavRoute.Space.createRoute(spaceId, spaceName))
+                    }
+                )
+            }
+
+            composable(
+                route = NavRoute.Space.route,
+                arguments = listOf(
+                    navArgument("spaceId") { type = NavType.IntType },
+                    navArgument("spaceName") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
+            ) { backStackEntry ->
+                val spaceId = backStackEntry.arguments?.getInt("spaceId") ?: 0
+                val spaceName = backStackEntry.arguments?.getString("spaceName") ?: ""
+                val viewModel: SpaceViewModel = viewModel(
+                    key = "space_$spaceId",
+                    factory = SpaceViewModel.Factory(spaceId, spaceName, application.irisRepository)
+                )
+                SpaceScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+            }
+
             composable(NavRoute.Sync.route) {
                 val viewModel: SyncViewModel = viewModel(
                     factory = SyncViewModel.Factory(
@@ -305,7 +398,10 @@ fun IrisNavGraph(
                         application.credentialsStore
                     )
                 )
-                SyncScreen(viewModel = viewModel)
+                SyncScreen(
+                    viewModel = viewModel,
+                    onConfigureServer = { navController.navigate(NavRoute.Settings.route) }
+                )
             }
 
             composable(NavRoute.Settings.route) {
@@ -330,5 +426,6 @@ private fun BottomNavItem.navigationMetric(): Metric = when (route) {
     NavRoute.Search.route -> Metric.NavigationSearch
     NavRoute.Collections.route -> Metric.NavigationAlbums
     NavRoute.Sync.route -> Metric.NavigationSync
+    NavRoute.Spaces.route -> Metric.NavigationSpaces
     else -> Metric.NavigationGallery
 }

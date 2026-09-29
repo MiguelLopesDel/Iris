@@ -1,6 +1,10 @@
 package com.iris.app.data.catalog
 
 import com.iris.app.data.model.MediaRecord
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The gallery's source of truth.
@@ -27,6 +31,10 @@ class MediaCatalog(
     private val fetchPage: suspend (page: Int, perPage: Int, mediaType: String) -> FetchedPage,
 ) {
 
+    /** Serializes writes with clear so an old request can never restore a session's rows. */
+    private val mutationMutex = Mutex()
+    private val generation = AtomicLong(0L)
+
     /** One page as the server returned it. */
     data class FetchedPage(
         val records: List<MediaRecord>,
@@ -48,13 +56,47 @@ class MediaCatalog(
 
     suspend fun cachedCount(mediaType: String = "all"): Int = store.count(mediaType)
 
+    /** Removes the private library mirror when its device session is revoked. */
+    suspend fun clear() {
+        mutationMutex.withLock {
+            // Advance before deleting. Any page fetched before this point is stale.
+            generation.incrementAndGet()
+            store.clear()
+            store.setOwnerSessionKey(null)
+        }
+    }
+
+    /** Binds the singleton mirror to one signed-in account before it is read or written. */
+    suspend fun activateSession(sessionKey: String) {
+        mutationMutex.withLock { activateSessionLocked(sessionKey) }
+    }
+
+    private suspend fun activateSessionLocked(sessionKey: String) {
+        if (store.ownerSessionKey() == sessionKey) return
+        // A cache left by a different account (or an older unbound version) is
+        // never shown to the newly active session.
+        generation.incrementAndGet()
+        store.clear()
+        store.setOwnerSessionKey(sessionKey)
+    }
+
     /**
      * Mirrors records the app fetched for another reason — a gallery page the
      * user scrolled to, say. Costs one transaction, and means ordinary browsing
      * warms the mirror instead of reconciliation being the only thing that does.
      */
-    suspend fun remember(records: List<MediaRecord>) {
-        store.upsertBatch(records)
+    suspend fun remember(
+        records: List<MediaRecord>,
+        sessionKey: String,
+        isSessionCurrent: () -> Boolean = { true },
+    ) {
+        val requestedGeneration = generation.get()
+        mutationMutex.withLock {
+            if (requestedGeneration != generation.get() || !isSessionCurrent()) return
+            activateSessionLocked(sessionKey)
+            if (!isSessionCurrent()) return
+            store.upsertBatch(records)
+        }
     }
 
     /**
@@ -70,7 +112,11 @@ class MediaCatalog(
     suspend fun reconcile(
         mediaType: String = "all",
         maxPages: Int = Int.MAX_VALUE,
+        sessionKey: String? = null,
+        isSessionCurrent: () -> Boolean = { true },
     ): ReconcileResult {
+        if (sessionKey != null) activateSession(sessionKey)
+        val requestedGeneration = generation.get()
         var written = 0
         var pagesFetched = 0
         var serverTotal = 0
@@ -80,6 +126,8 @@ class MediaCatalog(
         while (pagesFetched < maxPages) {
             val fetched = try {
                 fetchPage(page, RECONCILE_PAGE_SIZE, mediaType)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 break
             }
@@ -91,7 +139,16 @@ class MediaCatalog(
                 break
             }
 
-            store.upsertBatch(fetched.records)
+            val stillCurrent = mutationMutex.withLock {
+                if (requestedGeneration != generation.get() || !isSessionCurrent()) {
+                    false
+                } else {
+                    if (sessionKey != null && store.ownerSessionKey() != sessionKey) return@withLock false
+                    store.upsertBatch(fetched.records)
+                    true
+                }
+            }
+            if (!stillCurrent) break
             written += fetched.records.count { it.dbId != null }
 
             if (fetched.page >= fetched.totalPages) {

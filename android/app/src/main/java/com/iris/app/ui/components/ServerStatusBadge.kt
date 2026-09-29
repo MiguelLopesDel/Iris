@@ -32,11 +32,11 @@ fun ServerStatusBadge(
     isConnecting: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    isServerOnline: Boolean = false,
+    isServerOnline: Boolean? = null,
     totalRecords: Int = 0,
     isDeviceLoggedIn: Boolean = true
 ) {
-    val isOnline = isServerOnline || serverInfo != null
+    val isOnline = isServerOnline ?: (serverInfo != null)
     val effectiveRecords = if (totalRecords > 0) totalRecords else (serverInfo?.records ?: 0)
 
     val dotColor = when {

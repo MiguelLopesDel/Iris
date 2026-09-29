@@ -358,7 +358,7 @@ fun SettingsScreen(
             ) {
                 Text(if (performanceReport.enabled) "Parar diagnóstico" else "Iniciar diagnóstico")
             }
-            if (performanceReport.metrics.isNotEmpty()) {
+            if (performanceReport.metrics.isNotEmpty() || performanceReport.upload != null) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Card(
                     shape = RoundedCornerShape(14.dp),
@@ -370,6 +370,30 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text("Mediana / P90 / máximo", fontSize = 12.sp, color = IrisTextMuted)
+                        performanceReport.upload?.let { upload ->
+                            InfoRow(
+                                label = "sync.upload_throughput",
+                                value = String.format(
+                                    java.util.Locale.US,
+                                    "%.1f MB/s durante chamadas PUT • %.1f MiB/s média da fila • %.1f MiB em %.1f s (%d execuções)",
+                                    upload.activeMibPerSecond * 1.048576,
+                                    upload.mibPerSecond,
+                                    upload.bytes / 1_048_576.0,
+                                    upload.elapsedMillis / 1_000.0,
+                                    upload.runs
+                                )
+                            )
+                            InfoRow(
+                                label = "sync.confirmed_items",
+                                value = String.format(
+                                    java.util.Locale.US,
+                                    "%.2f itens/s • %d confirmados em %d execuções",
+                                    upload.itemsPerSecond,
+                                    upload.confirmedItems,
+                                    upload.runs
+                                )
+                            )
+                        }
                         performanceReport.metrics.sortedBy { it.name }.forEach { metric ->
                             InfoRow(
                                 label = metric.name,

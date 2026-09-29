@@ -41,6 +41,62 @@ data class UploadInitRequest(
 )
 
 @Serializable
+data class UploadInitBatchItemRequest(
+    @SerialName("client_upload_id") val clientUploadId: String,
+    @SerialName("filename") val filename: String,
+    @SerialName("size") val size: Long,
+    @SerialName("sha256") val sha256: String,
+    @SerialName("captured_at") val capturedAt: String,
+    @SerialName("source") val source: UploadSource? = null
+)
+
+@Serializable
+data class UploadInitBatchRequest(
+    @SerialName("uploads") val uploads: List<UploadInitBatchItemRequest>
+)
+
+@Serializable
+data class UploadInitBatchItemResponse(
+    @SerialName("client_upload_id") val clientUploadId: String,
+    @SerialName("upload_id") val uploadId: String? = null,
+    @SerialName("offset") val offset: Long = 0L,
+    @SerialName("chunk_size") val chunkSize: Int = 32 * 1024 * 1024,
+    @SerialName("state") val state: String = "uploading",
+    @SerialName("error_code") val errorCode: Int? = null,
+    @SerialName("error_message") val errorMessage: String? = null
+)
+
+@Serializable
+data class UploadInitBatchResponse(
+    @SerialName("uploads") val uploads: List<UploadInitBatchItemResponse>
+)
+
+@Serializable
+data class UploadCompleteBatchItemRequest(
+    @SerialName("upload_id") val uploadId: String,
+)
+
+@Serializable
+data class UploadCompleteBatchRequest(
+    @SerialName("uploads") val uploads: List<UploadCompleteBatchItemRequest>,
+)
+
+@Serializable
+data class UploadCompleteBatchItemResponse(
+    @SerialName("upload_id") val uploadId: String,
+    @SerialName("state") val state: String? = null,
+    @SerialName("media_id") val mediaId: Int? = null,
+    @SerialName("cursor") val cursor: Long? = null,
+    @SerialName("error_code") val errorCode: Int? = null,
+    @SerialName("error_message") val errorMessage: String? = null,
+)
+
+@Serializable
+data class UploadCompleteBatchResponse(
+    @SerialName("uploads") val uploads: List<UploadCompleteBatchItemResponse>,
+)
+
+@Serializable
 data class UploadSource(
     @SerialName("id") val id: String,
     @SerialName("name") val name: String,
@@ -76,7 +132,8 @@ data class MediaScanPolicy(
 data class UploadInitResponse(
     @SerialName("upload_id") val uploadId: String,
     @SerialName("offset") val offset: Long = 0L,
-    @SerialName("chunk_size") val chunkSize: Int = 32 * 1024 * 1024
+    @SerialName("chunk_size") val chunkSize: Int = 32 * 1024 * 1024,
+    @SerialName("state") val state: String = "uploading"
 )
 
 @Serializable

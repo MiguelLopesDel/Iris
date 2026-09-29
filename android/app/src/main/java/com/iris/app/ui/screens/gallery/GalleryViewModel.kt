@@ -4,15 +4,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.catalog.MediaCatalog
+import com.iris.app.data.local.DeviceGalleryReader
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
+import com.iris.app.data.model.CloudConnectionState
+import com.iris.app.data.model.CloudSyncStatus
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -30,13 +35,21 @@ data class GalleryUiState(
     val mediaType: String = "all",
     val serverInfo: ServerInfo? = null,
     val isServerChecking: Boolean = false,
-    val origins: MediaOriginIndex = MediaOriginIndex.EMPTY
+    val cloudSyncStatus: CloudSyncStatus = CloudSyncStatus(),
+    val origins: MediaOriginIndex = MediaOriginIndex.EMPTY,
+    val deviceMediaPermissionGranted: Boolean = false,
+    val deviceTotalRecords: Int = 0,
+    val deviceTotalPages: Int = 1,
+    val devicePage: Int = 0,
+    val serverTotalPages: Int = 1
 )
 
 class GalleryViewModel(
     private val repository: IrisRepository,
     val performanceMonitor: PerformanceMonitor,
-    private val catalog: MediaCatalog? = null
+    private val catalog: MediaCatalog? = null,
+    private val deviceGalleryReader: DeviceGalleryReader? = null,
+    private val settingsRepository: ServerSettingsRepository? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GalleryUiState())
@@ -44,11 +57,71 @@ class GalleryViewModel(
     private var firstContentFinish: (() -> Unit)? = null
     private var initialLoadJob: Job? = null
     private var firstPageLoadJob: Job? = null
+    private var devicePageLoadJob: Job? = null
+    private var serverRecords: List<MediaRecord> = emptyList()
+    private var deviceRecords: List<MediaRecord> = emptyList()
+    private var serverTotalRecords: Int = 0
+    private var deviceTotalRecords: Int = 0
 
     init {
-        showMirroredCatalog()
+        val initialSessionKey = currentSessionKey()
+        if (initialSessionKey != null) {
+            showMirroredCatalog()
+        } else {
+            // A device can be logged out after process death before the prior
+            // logout finished clearing disk. Never hydrate that private mirror.
+            viewModelScope.launch { runCatching { catalog?.clear() } }
+        }
+        refreshDeviceMedia()
         refreshOrigins()
         checkServerAndLoad()
+        settingsRepository?.let { settings ->
+            viewModelScope.launch {
+                repository.credentialsStore.accountIdentity.collectLatest { accountKey ->
+                    var previousSuccessfulSyncAt: Long? = null
+                    settings.cloudSyncStatusForAccount(accountKey).collect { status ->
+                        val syncCompletedInBackground = previousSuccessfulSyncAt != null &&
+                            status.lastSuccessfulSyncAtMillis != null &&
+                            status.lastSuccessfulSyncAtMillis != previousSuccessfulSyncAt
+                        previousSuccessfulSyncAt = status.lastSuccessfulSyncAtMillis
+                        _uiState.update { current ->
+                            current.copy(
+                                cloudSyncStatus = status,
+                                isServerOnline = when (status.connectionState) {
+                                    CloudConnectionState.OFFLINE -> false
+                                    CloudConnectionState.CONNECTED -> true
+                                    else -> current.isServerOnline
+                                },
+                                error = if (status.connectionState == CloudConnectionState.CONNECTED &&
+                                    current.error == "SERVER_OFFLINE"
+                                ) null else current.error,
+                            )
+                        }
+                        // Queue changes and server totals may have moved while
+                        // this screen was open. Refresh once per successful
+                        // background cycle, not on every health probe.
+                        if (syncCompletedInBackground && !_uiState.value.isServerChecking) refresh()
+                    }
+                }
+            }
+        }
+        // A lost session must immediately hide private rows and clear their
+        // rebuildable mirror; a new session starts with a fresh server read.
+        viewModelScope.launch {
+            var previousSessionKey = initialSessionKey
+            repository.credentialsStore.sessionIdentity.collect { sessionIdentity ->
+                if (sessionIdentity == previousSessionKey) return@collect
+                previousSessionKey = sessionIdentity
+                if (sessionIdentity != null) {
+                    showMirroredCatalog()
+                    refresh()
+                } else {
+                    clearPrivateRecords()
+                    runCatching { catalog?.clear() }
+                    checkServerAndLoad()
+                }
+            }
+        }
     }
 
     /**
@@ -58,9 +131,32 @@ class GalleryViewModel(
      * a cell can be marked before the server answers anything.
      */
     fun refreshOrigins() {
+        val requestedSessionKey = currentSessionKey() ?: run {
+            _uiState.update { it.copy(origins = MediaOriginIndex.EMPTY) }
+            return
+        }
         viewModelScope.launch {
-            val jobs = runCatching { repository.getUploadQueue() }.getOrNull() ?: return@launch
-            _uiState.update { it.copy(origins = MediaOriginIndex.from(jobs)) }
+            val jobs = try {
+                repository.getUploadQueue()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                return@launch
+            }
+            if (currentSessionKey() != requestedSessionKey) return@launch
+            val originIndex = MediaOriginIndex.from(jobs)
+            val hashesByUri = jobs.filter { it.sha256.isNotBlank() }
+                .associate { it.localUri to it.sha256 }
+            deviceRecords = deviceRecords.map { record ->
+                record.copy(contentHash = hashesByUri[record.deviceUri].orEmpty().ifBlank { null })
+            }
+            _uiState.update {
+                it.copy(
+                    origins = originIndex,
+                    records = mergeGalleryRecords(serverRecords, deviceRecords),
+                    totalRecords = totalRecordEstimate(originIndex)
+                )
+            }
         }
     }
 
@@ -74,37 +170,110 @@ class GalleryViewModel(
      */
     private fun showMirroredCatalog() {
         val catalog = catalog ?: return
+        val sessionKey = currentSessionKey() ?: return
         viewModelScope.launch {
+            if (currentSessionKey() != sessionKey) return@launch
+            runCatching { catalog.activateSession(sessionKey) }
+            if (currentSessionKey() != sessionKey) return@launch
             val cached = runCatching {
                 catalog.cached(offset = 0, limit = MIRROR_FIRST_PAINT, mediaType = _uiState.value.mediaType)
             }.getOrNull().orEmpty()
-            if (cached.isEmpty()) return@launch
+            if (cached.isEmpty() || currentSessionKey() != sessionKey) return@launch
             val cachedTotal = runCatching { catalog.cachedCount(_uiState.value.mediaType) }.getOrDefault(0)
+            if (currentSessionKey() != sessionKey) return@launch
             _uiState.update { current ->
                 // Never paint over a network result that already arrived.
-                if (current.records.isNotEmpty()) current
-                else current.copy(records = cached, totalRecords = cachedTotal)
+                if (currentSessionKey() != sessionKey || serverRecords.isNotEmpty()) current
+                else {
+                    serverRecords = cached
+                    serverTotalRecords = cachedTotal
+                    current.copy(
+                        records = mergeGalleryRecords(serverRecords, deviceRecords),
+                        totalRecords = totalRecordEstimate(),
+                        totalPages = maxOf(current.deviceTotalPages, pagesFor(cachedTotal))
+                    )
+                }
+            }
+        }
+    }
+
+    /** Reads a small MediaStore page independently from account/server state. */
+    fun refreshDeviceMedia(page: Int = 1) {
+        val reader = deviceGalleryReader ?: return
+        devicePageLoadJob?.cancel()
+        devicePageLoadJob = viewModelScope.launch {
+            val devicePage = runCatching {
+                reader.page(page, PAGE_SIZE, _uiState.value.mediaType)
+            }.getOrNull() ?: return@launch
+            if (!devicePage.permissionGranted) {
+                if (page == 1) {
+                    deviceRecords = emptyList()
+                    deviceTotalRecords = 0
+                    _uiState.update {
+                        it.copy(
+                            records = mergeGalleryRecords(serverRecords, deviceRecords),
+                            deviceMediaPermissionGranted = false,
+                            deviceTotalRecords = 0,
+                            deviceTotalPages = 1,
+                            devicePage = 0,
+                            totalRecords = totalRecordEstimate()
+                        )
+                    }
+                }
+                return@launch
+            }
+            deviceRecords = if (page == 1) {
+                devicePage.records
+            } else {
+                (deviceRecords + devicePage.records).distinctBy { it.deviceUri }
+            }
+            deviceTotalRecords = devicePage.total
+            _uiState.update { current ->
+                val devicePages = devicePage.totalPages.coerceAtLeast(1)
+                current.copy(
+                    records = mergeGalleryRecords(serverRecords, deviceRecords),
+                    deviceMediaPermissionGranted = true,
+                    deviceTotalRecords = devicePage.total,
+                    deviceTotalPages = devicePages,
+                    devicePage = maxOf(current.devicePage, page),
+                    page = maxOf(current.page, page),
+                    totalPages = maxOf(current.serverTotalPages, devicePages),
+                    totalRecords = totalRecordEstimate()
+                )
             }
         }
     }
 
     fun checkServerAndLoad() {
+        val requestedSessionKey = currentSessionKey()
+        val requestedAccountKey = repository.credentialsStore.accountIdentity.value
+        if (requestedSessionKey == null) clearPrivateRecords()
         if (_uiState.value.records.isEmpty()) {
             firstContentFinish = performanceMonitor.begin(Metric.GalleryFirstContent)
         }
         initialLoadJob?.cancel()
         initialLoadJob = viewModelScope.launch {
             _uiState.update { it.copy(isServerChecking = true) }
-            val isLoggedIn = repository.credentialsStore.hasValidCredentials()
 
             // 1. Probe server with unauthenticated /healthz
             val healthResult = repository.checkServerHealth()
+            if (currentSessionKey() != requestedSessionKey) {
+                if (currentSessionKey() == null) {
+                    requireLoginAndClearCatalog()
+                } else {
+                    checkServerAndLoad()
+                }
+                return@launch
+            }
             if (healthResult.isFailure) {
+                if (requestedAccountKey != null) {
+                    settingsRepository?.markCloudUnavailable(requestedAccountKey)
+                }
                 _uiState.update {
                     it.copy(
                         isServerChecking = false,
                         isServerOnline = false,
-                        isDeviceLoggedIn = isLoggedIn,
+                        isDeviceLoggedIn = requestedSessionKey != null,
                         serverInfo = null,
                         error = "SERVER_OFFLINE"
                     )
@@ -113,10 +282,13 @@ class GalleryViewModel(
             }
 
             // Server is reachable!
+            if (requestedAccountKey != null) {
+                settingsRepository?.markCloudConnected(requestedAccountKey)
+            }
             _uiState.update {
                 it.copy(
                     isServerOnline = true,
-                    isDeviceLoggedIn = isLoggedIn,
+                    isDeviceLoggedIn = requestedSessionKey != null,
                     // Health is the connection decision. Library information is
                     // optional decoration and must never keep the gallery in a
                     // permanent "connecting" state.
@@ -125,14 +297,8 @@ class GalleryViewModel(
             }
 
             // 2. Check if logged in to access the private library
-            if (!isLoggedIn) {
-                _uiState.update {
-                    it.copy(
-                        isServerChecking = false,
-                        serverInfo = null,
-                        error = "AUTH_REQUIRED"
-                    )
-                }
+            if (requestedSessionKey == null) {
+                requireLoginAndClearCatalog()
                 return@launch
             }
 
@@ -153,26 +319,36 @@ class GalleryViewModel(
         // Uploads progress while the grid is open, so the badges are only
         // truthful if they are re-read whenever the user asks for fresh data.
         refreshOrigins()
+        refreshDeviceMedia()
         _uiState.update { it.copy(isRefreshing = true) }
         checkServerAndLoad()
     }
 
     fun setMediaType(type: String) {
         if (_uiState.value.mediaType != type) {
+            serverRecords = emptyList()
+            deviceRecords = emptyList()
+            serverTotalRecords = 0
+            deviceTotalRecords = 0
             _uiState.update { it.copy(mediaType = type) }
-            if (_uiState.value.isDeviceLoggedIn) {
-                loadPage(page = 1, isRefresh = false)
-            }
+            refreshDeviceMedia()
+            loadPage(page = 1, isRefresh = false)
         }
     }
 
     fun loadNextPage() {
         val current = _uiState.value
-        if (current.isLoading || current.isRefreshing || current.page >= current.totalPages || !current.isDeviceLoggedIn) return
+        if (current.isLoading || current.isRefreshing || current.page >= current.totalPages) return
         loadPage(page = current.page + 1, isRefresh = false)
     }
 
     private fun loadPage(page: Int, isRefresh: Boolean) {
+        val requestedSessionKey = currentSessionKey() ?: run {
+            if (page == 1 || page <= _uiState.value.deviceTotalPages) refreshDeviceMedia(page)
+            return
+        }
+        if (page == 1 || page <= _uiState.value.deviceTotalPages) refreshDeviceMedia(page)
+        if (page > 1 && page > _uiState.value.serverTotalPages) return
         val finishPage = performanceMonitor.begin(
             if (page == 1) Metric.GalleryFirstPage else Metric.GalleryPage
         )
@@ -198,24 +374,46 @@ class GalleryViewModel(
                 mediaType = _uiState.value.mediaType
             ).onSuccess { response ->
                 finishPage()
+                if (currentSessionKey() != requestedSessionKey) {
+                    if (currentSessionKey() == null) requireLoginAndClearCatalog()
+                    return@onSuccess
+                }
                 // One transaction per page, so ordinary scrolling warms the
                 // mirror for the next cold start.
                 catalog?.let { mirror ->
-                    launch { runCatching { mirror.remember(response.records) } }
+                    launch {
+                        if (currentSessionKey() == requestedSessionKey) {
+                            runCatching {
+                                mirror.remember(response.records, requestedSessionKey) {
+                                    currentSessionKey() == requestedSessionKey
+                                }
+                            }
+                        }
+                    }
                 }
+                serverRecords = if (page == 1) {
+                    response.records
+                } else {
+                    (serverRecords + response.records).distinctBy { it.index }
+                }
+                serverTotalRecords = response.total
                 _uiState.update { current ->
-                    val combined = if (page == 1) response.records else current.records + response.records
                     current.copy(
-                        records = combined,
+                        records = mergeGalleryRecords(serverRecords, deviceRecords),
                         isLoading = false,
                         isRefreshing = false,
                         page = response.page,
-                        totalPages = response.totalPages,
-                        totalRecords = response.total,
+                        serverTotalPages = response.totalPages.coerceAtLeast(1),
+                        totalPages = maxOf(response.totalPages.coerceAtLeast(1), current.deviceTotalPages),
+                        totalRecords = totalRecordEstimate(),
                         error = null
                     )
                 }
             }.onFailure { ex ->
+                if (currentSessionKey() != requestedSessionKey) {
+                    if (currentSessionKey() == null) requireLoginAndClearCatalog()
+                    return@onFailure
+                }
                 val rawMsg = ex.localizedMessage ?: ex.message ?: ""
                 val errorMsg = when {
                     rawMsg.contains("401") -> "AUTH_REQUIRED"
@@ -224,6 +422,11 @@ class GalleryViewModel(
                     rawMsg.contains("Connection refused", ignoreCase = true) || rawMsg.contains("ConnectException", ignoreCase = true) ->
                         "SERVER_OFFLINE"
                     else -> rawMsg.ifBlank { "Erro ao carregar mídias da biblioteca" }
+                }
+                if (errorMsg == "AUTH_REQUIRED") {
+                    repository.logoutDevice()
+                    requireLoginAndClearCatalog()
+                    return@onFailure
                 }
                 _uiState.update {
                     it.copy(
@@ -237,6 +440,67 @@ class GalleryViewModel(
         if (page == 1) firstPageLoadJob = job
     }
 
+    /** Clears both the in-memory view and its rebuildable private-library cache. */
+    private suspend fun requireLoginAndClearCatalog() {
+        clearPrivateRecords()
+        _uiState.update {
+            it.copy(
+                isServerChecking = false,
+                isDeviceLoggedIn = false,
+                serverInfo = null,
+                error = "AUTH_REQUIRED"
+            )
+        }
+        runCatching { catalog?.clear() }
+    }
+
+    private fun clearPrivateRecords() {
+        serverRecords = emptyList()
+        serverTotalRecords = 0
+        _uiState.update {
+            it.copy(
+                records = deviceRecords,
+                origins = MediaOriginIndex.EMPTY,
+                isLoading = false,
+                isRefreshing = false,
+                isDeviceLoggedIn = false,
+                error = null,
+                page = it.devicePage.coerceAtLeast(1),
+                totalPages = it.deviceTotalPages,
+                totalRecords = deviceTotalRecords,
+                serverTotalPages = 1,
+                serverInfo = null
+            )
+        }
+    }
+
+    /** A response or mirror read belongs only to the session that started it. */
+    private fun currentSessionKey(): String? {
+        return repository.credentialsStore.sessionIdentity.value
+            ?.takeIf { repository.credentialsStore.hasValidCredentials() }
+    }
+
+    private fun mergeGalleryRecords(server: List<MediaRecord>, device: List<MediaRecord>): List<MediaRecord> {
+        val serverHashes = server.mapNotNull { it.contentHash?.lowercase()?.takeIf(String::isNotBlank) }.toSet()
+        return (server + device.filter { local ->
+            val hash = local.contentHash?.lowercase()
+            // Do not hide an accepted upload until its server row is actually
+            // in the pages loaded into this gallery. Otherwise an older local
+            // photo can disappear while its matching remote page is still ahead.
+            hash.isNullOrBlank() || hash !in serverHashes
+        }).sortedByDescending { it.fileMtime ?: 0.0 }
+    }
+
+    private fun totalRecordEstimate(origins: MediaOriginIndex = _uiState.value.origins): Int {
+        val knownCopies = deviceRecords.mapNotNull { it.contentHash }
+            .distinct()
+            .count(origins::hasServerCopy)
+        return (serverTotalRecords + deviceTotalRecords - knownCopies)
+            .coerceAtLeast(_uiState.value.records.size)
+    }
+
+    private fun pagesFor(total: Int): Int = ((total + PAGE_SIZE - 1) / PAGE_SIZE).coerceAtLeast(1)
+
     /** Called only after Compose has received a frame with real gallery content. */
     fun onFirstContentDrawn() {
         firstContentFinish?.invoke()
@@ -246,16 +510,19 @@ class GalleryViewModel(
     private companion object {
         /** Enough to fill the first screens while the network catches up. */
         const val MIRROR_FIRST_PAINT = 60
+        const val PAGE_SIZE = 24
     }
 
     class Factory(
         private val repository: IrisRepository,
         private val performanceMonitor: PerformanceMonitor,
-        private val catalog: MediaCatalog? = null
+        private val catalog: MediaCatalog? = null,
+        private val deviceGalleryReader: DeviceGalleryReader? = null,
+        private val settingsRepository: ServerSettingsRepository? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return GalleryViewModel(repository, performanceMonitor, catalog) as T
+            return GalleryViewModel(repository, performanceMonitor, catalog, deviceGalleryReader, settingsRepository) as T
         }
     }
 }

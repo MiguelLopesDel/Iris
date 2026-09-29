@@ -14,13 +14,28 @@ import com.iris.app.data.model.RecordsResponse
 import com.iris.app.data.model.SearchResponse
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.model.UploadChunkResponse
+import com.iris.app.data.model.UploadCompleteBatchRequest
+import com.iris.app.data.model.UploadCompleteBatchResponse
 import com.iris.app.data.model.UploadCompleteResponse
 import com.iris.app.data.model.UploadInitRequest
 import com.iris.app.data.model.UploadInitResponse
+import com.iris.app.data.model.UploadInitBatchRequest
+import com.iris.app.data.model.UploadInitBatchResponse
 import com.iris.app.data.model.UploadStatusResponse
+import com.iris.app.data.model.AddSpaceItemRequest
+import com.iris.app.data.model.AddSpaceItemResponse
+import com.iris.app.data.model.CreateSpaceRequest
+import com.iris.app.data.model.SaveSpaceItemResponse
+import com.iris.app.data.model.SpaceAlbumsResponse
+import com.iris.app.data.model.SpaceItemsResponse
+import com.iris.app.data.model.SpaceSearchResponse
+import com.iris.app.data.model.SpaceMembersResponse
+import com.iris.app.data.model.SpaceResponse
+import com.iris.app.data.model.SpacesResponse
 import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
@@ -54,6 +69,11 @@ interface IrisApiService {
         @Body request: UploadInitRequest
     ): UploadInitResponse
 
+    @POST("api/sync/uploads/batch")
+    suspend fun initUploadBatch(
+        @Body request: UploadInitBatchRequest
+    ): UploadInitBatchResponse
+
     @GET("api/sync/uploads/{upload_id}")
     suspend fun getUploadStatus(
         @Path("upload_id") uploadId: String
@@ -70,6 +90,11 @@ interface IrisApiService {
     suspend fun completeUpload(
         @Path("upload_id") uploadId: String
     ): UploadCompleteResponse
+
+    @POST("api/sync/uploads/complete-batch")
+    suspend fun completeUploadBatch(
+        @Body request: UploadCompleteBatchRequest
+    ): UploadCompleteBatchResponse
 
     // ── Change Feed Sync ────────────────────────────────────────────────────
     @GET("api/sync/changes")
@@ -170,4 +195,67 @@ interface IrisApiService {
 
     @GET("api/concepts")
     suspend fun getConcepts(): ConceptsResponse
+
+    // ── Shared spaces ────────────────────────────────────────────────────
+
+    @GET("api/spaces")
+    suspend fun getSpaces(): SpacesResponse
+
+    @POST("api/spaces")
+    suspend fun createSpace(@Body request: CreateSpaceRequest): SpaceResponse
+
+    @GET("api/spaces/{space_id}")
+    suspend fun getSpace(@Path("space_id") spaceId: Int): SpaceResponse
+
+    @GET("api/spaces/{space_id}/items")
+    suspend fun getSpaceItems(
+        @Path("space_id") spaceId: Int,
+        @Query("limit") limit: Int = 60,
+        @Query("before") before: Int? = null
+    ): SpaceItemsResponse
+
+    @POST("api/spaces/{space_id}/items")
+    suspend fun addSpaceItem(
+        @Path("space_id") spaceId: Int,
+        @Body request: AddSpaceItemRequest
+    ): AddSpaceItemResponse
+
+    @POST("api/spaces/{space_id}/items/{item_id}/save")
+    suspend fun saveSpaceItem(
+        @Path("space_id") spaceId: Int,
+        @Path("item_id") itemId: Int
+    ): SaveSpaceItemResponse
+
+    @DELETE("api/spaces/{space_id}/items/{item_id}")
+    suspend fun removeSpaceItem(
+        @Path("space_id") spaceId: Int,
+        @Path("item_id") itemId: Int
+    ): Response<Unit>
+
+    @GET("api/spaces/{space_id}/search")
+    suspend fun searchSpace(
+        @Path("space_id") spaceId: Int,
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 60
+    ): SpaceSearchResponse
+
+    @GET("api/spaces/{space_id}/albums")
+    suspend fun getSpaceAlbums(@Path("space_id") spaceId: Int): SpaceAlbumsResponse
+
+    @GET("api/spaces/{space_id}/albums/{album_id}/items")
+    suspend fun getSpaceAlbumItems(
+        @Path("space_id") spaceId: Int,
+        @Path("album_id") albumId: Int,
+        @Query("limit") limit: Int = 60,
+        @Query("before") before: Int? = null
+    ): SpaceItemsResponse
+
+    @GET("api/spaces/{space_id}/members")
+    suspend fun getSpaceMembers(@Path("space_id") spaceId: Int): SpaceMembersResponse
+
+    @DELETE("api/spaces/{space_id}/members/{user_id}")
+    suspend fun removeSpaceMember(
+        @Path("space_id") spaceId: Int,
+        @Path("user_id") userId: Int
+    ): Response<Unit>
 }

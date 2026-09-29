@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Lock
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,6 +56,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -74,10 +77,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.data.model.LocalUploadJob
+import com.iris.app.data.model.CloudConnectionState
 import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.model.UploadQueueSummary
 import com.iris.app.R
 import com.iris.app.ui.components.EmptyState
+import com.iris.app.ui.components.CloudSyncNotice
 import com.iris.app.ui.theme.IrisAccentInk
 import com.iris.app.ui.theme.IrisAccentLime
 import com.iris.app.ui.theme.IrisDanger
@@ -88,31 +93,82 @@ import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import com.iris.app.ui.theme.IrisViolet
 
+private enum class MediaPermissionFollowUp {
+    DiscoverFolders,
+    EnableAutoBackup,
+    EnableAllFolders
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SyncScreen(
-    viewModel: SyncViewModel
+    viewModel: SyncViewModel,
+    onConfigureServer: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    var enableAfterPermission by remember { mutableStateOf(false) }
+    var permissionFollowUp by remember { mutableStateOf(MediaPermissionFollowUp.DiscoverFolders) }
     val mediaPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
         if (grants.values.any { it }) {
             viewModel.discoverSources()
-            if (enableAfterPermission) viewModel.setAutoBackupEnabled(true)
+            when (permissionFollowUp) {
+                MediaPermissionFollowUp.DiscoverFolders ->
+                    viewModel.finishPendingBackupSetupIfScopeChosen(context)
+                MediaPermissionFollowUp.EnableAutoBackup ->
+                    viewModel.setAutoBackupEnabled(true, context)
+                MediaPermissionFollowUp.EnableAllFolders ->
+                    viewModel.enableBackupForAllFolders(context)
+            }
+        } else {
+            viewModel.showMediaPermissionRequired()
         }
-        enableAfterPermission = false
     }
-    val requestMediaPermission: (Boolean) -> Unit = { enableAfterGrant ->
-        enableAfterPermission = enableAfterGrant
+    val requestMediaPermission: (MediaPermissionFollowUp) -> Unit = { followUp ->
+        permissionFollowUp = followUp
         val permissions = if (Build.VERSION.SDK_INT >= 33) {
             arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
         } else {
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
         mediaPermissionLauncher.launch(permissions)
+    }
+
+    if (uiState.isLoggedIn && uiState.backupSetupPromptReady &&
+        !uiState.backupSetupPromptAnswered && !uiState.autoBackupEnabled
+    ) {
+        AlertDialog(
+            onDismissRequest = { viewModel.answerBackupSetupPrompt(configureFolders = false) },
+            title = { Text(stringResource(R.string.sync_backup_setup_title)) },
+            text = { Text(stringResource(R.string.sync_backup_setup_message)) },
+            confirmButton = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.End
+                ) {
+                    TextButton(onClick = {
+                        viewModel.answerBackupSetupPrompt(configureFolders = false) {
+                            requestMediaPermission(MediaPermissionFollowUp.EnableAllFolders)
+                        }
+                    }) {
+                        Text(stringResource(R.string.sync_backup_all_folders_action))
+                    }
+                    TextButton(onClick = {
+                        viewModel.answerBackupSetupPrompt(configureFolders = true) {
+                            requestMediaPermission(MediaPermissionFollowUp.DiscoverFolders)
+                        }
+                    }) {
+                        Text(stringResource(R.string.sync_backup_choose_folders_action))
+                    }
+                    TextButton(onClick = {
+                        viewModel.answerBackupSetupPrompt(configureFolders = false)
+                    }) {
+                        Text(stringResource(R.string.sync_backup_not_now_action))
+                    }
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -126,6 +182,9 @@ fun SyncScreen(
                     )
                 },
                 actions = {
+                    IconButton(onClick = onConfigureServer) {
+                        Icon(imageVector = Icons.Default.Dns, contentDescription = "Configurar servidor")
+                    }
                     IconButton(onClick = { viewModel.loadQueue() }) {
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar fila")
                     }
@@ -142,6 +201,19 @@ fun SyncScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (uiState.isLoggedIn && (
+                    uiState.cloudSyncStatus.connectionState == CloudConnectionState.OFFLINE ||
+                        uiState.cloudSyncStatus.syncError != null || uiState.queueRefreshFailed
+                    )
+            ) {
+                item {
+                    CloudSyncNotice(
+                        status = uiState.cloudSyncStatus,
+                        queueRefreshFailed = uiState.queueRefreshFailed,
+                    )
+                }
+            }
+
             // ── Section 1: Authentication / Device Identity ──────────────────────
             item {
                 if (!uiState.isLoggedIn) {
@@ -170,6 +242,26 @@ fun SyncScreen(
                                 fontSize = 13.sp,
                                 color = IrisTextSoft
                             )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Servidor", fontSize = 12.sp, color = IrisTextMuted)
+                                    Text(
+                                        text = uiState.serverUrl.ifBlank { "Endereço não configurado" },
+                                        fontSize = 13.sp,
+                                        color = IrisTextSoft,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                TextButton(onClick = onConfigureServer) {
+                                    Text(if (uiState.serverUrl.isBlank()) "Configurar" else "Trocar")
+                                }
+                            }
 
                             Spacer(modifier = Modifier.height(14.dp))
 
@@ -236,7 +328,8 @@ fun SyncScreen(
 
                             Button(
                                 onClick = { viewModel.loginDevice() },
-                                enabled = !uiState.isLoggingIn && uiState.loginUsernameInput.isNotBlank() && uiState.loginPasswordInput.isNotBlank(),
+                                enabled = !uiState.isLoggingIn && uiState.serverUrl.isNotBlank() &&
+                                    uiState.loginUsernameInput.isNotBlank() && uiState.loginPasswordInput.isNotBlank(),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = IrisAccentLime,
@@ -396,8 +489,8 @@ fun SyncScreen(
                             subtitle = "Descobre novas fotos e vídeos via MediaStore",
                             checked = uiState.autoBackupEnabled,
                             onCheckedChange = { enabled ->
-                                if (enabled) requestMediaPermission(true)
-                                else viewModel.setAutoBackupEnabled(false)
+                                if (enabled) requestMediaPermission(MediaPermissionFollowUp.EnableAutoBackup)
+                                else viewModel.setAutoBackupEnabled(false, context)
                             }
                         )
 
@@ -411,8 +504,12 @@ fun SyncScreen(
                                 stringResource(R.string.sync_all_folders_off)
                             },
                             checked = uiState.sourceMode == "all",
-                            onCheckedChange = {
-                                viewModel.setSourceMode(if (it) "all" else "selected")
+                            onCheckedChange = { enabled ->
+                                if (enabled && uiState.backupSetupPending) {
+                                    requestMediaPermission(MediaPermissionFollowUp.EnableAllFolders)
+                                } else {
+                                    viewModel.setSourceMode(if (enabled) "all" else "selected", context)
+                                }
                             }
                         )
 
@@ -436,7 +533,7 @@ fun SyncScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OutlinedButton(
-                            onClick = { requestMediaPermission(false) },
+                            onClick = { requestMediaPermission(MediaPermissionFollowUp.DiscoverFolders) },
                             enabled = !uiState.isDiscoveringSources
                         ) {
                             if (uiState.isDiscoveringSources) {
@@ -455,6 +552,15 @@ fun SyncScreen(
                                     message
                                 },
                                 color = IrisDanger,
+                                fontSize = 12.sp
+                            )
+                        }
+
+                        if (uiState.backupSetupPending) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.sync_backup_choose_scope_hint),
+                                color = IrisTextSoft,
                                 fontSize = 12.sp
                             )
                         }
@@ -502,7 +608,7 @@ fun SyncScreen(
                                             summary
                                         },
                                         checked = source.id in uiState.selectedSourceIds,
-                                        onCheckedChange = { viewModel.toggleSource(source.id, it) }
+                                        onCheckedChange = { viewModel.toggleSource(source.id, it, context) }
                                     )
                                 }
                             }

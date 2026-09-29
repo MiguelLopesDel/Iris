@@ -36,7 +36,10 @@ data class MediaRecord(
     @SerialName("persons") val persons: List<MediaPersonRef> = emptyList(),
     @SerialName("score") val score: Float? = null,
     @SerialName("collections") val collections: List<IrisCollection> = emptyList(),
-    @SerialName("concepts") val concepts: List<MediaConceptRef> = emptyList()
+    @SerialName("concepts") val concepts: List<MediaConceptRef> = emptyList(),
+    /** Device-only gallery data; these fields never cross the server JSON boundary. */
+    @kotlinx.serialization.Transient val deviceUri: String? = null,
+    @kotlinx.serialization.Transient val mimeType: String? = null
 ) {
     val isVideo: Boolean
         get() = mediaType.equals("video", ignoreCase = true)

@@ -3,6 +3,9 @@ package com.iris.app
 import com.iris.app.data.catalog.CatalogStore
 import com.iris.app.data.catalog.MediaCatalog
 import com.iris.app.data.model.MediaRecord
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +24,7 @@ class MediaCatalogTest {
 
     private class InMemoryStore : CatalogStore {
         val rows = linkedMapOf<Int, MediaRecord>()
+        private var owner: String? = null
         var writeCalls = 0
             private set
 
@@ -38,6 +42,12 @@ class MediaCatalogTest {
 
         override suspend fun count(mediaType: String): Int =
             rows.values.count { mediaType == "all" || it.mediaType == mediaType }
+
+        override suspend fun ownerSessionKey(): String? = owner
+
+        override suspend fun setOwnerSessionKey(sessionKey: String?) {
+            owner = sessionKey
+        }
 
         override suspend fun clear() = rows.clear()
     }
@@ -181,5 +191,55 @@ class MediaCatalogTest {
         assertEquals(2, catalog.cachedCount("image"))
         assertEquals(1, catalog.cachedCount("video"))
         assertEquals(listOf(2), catalog.cached(0, 10, "video").map { it.dbId })
+    }
+
+    @Test
+    fun `clearing the mirror prevents an in-flight reconciliation from restoring private rows`() = runTest {
+        val store = InMemoryStore()
+        val fetchStarted = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<MediaCatalog.FetchedPage>()
+        val catalog = MediaCatalog(store) { _, _, _ ->
+            fetchStarted.complete(Unit)
+            response.await()
+        }
+
+        val reconciliation = launch { catalog.reconcile() }
+        fetchStarted.await()
+        catalog.clear()
+        response.complete(pageOf(listOf(record(17)), page = 1, totalPages = 1, total = 1))
+        reconciliation.join()
+
+        assertEquals("A stale response repopulated the logged-out catalog", 0, catalog.cachedCount())
+    }
+
+    @Test
+    fun `reconciliation propagates cancellation from its fetch instead of returning partial success`() = runTest {
+        val catalog = MediaCatalog(InMemoryStore()) { _, _, _ ->
+            throw CancellationException("request cancelled")
+        }
+
+        var propagated = false
+        try {
+            catalog.reconcile()
+        } catch (_: CancellationException) {
+            propagated = true
+        }
+
+        assertTrue("Cancellation must reach the caller so logout can await it", propagated)
+    }
+
+    @Test
+    fun `activating another account clears the previous account mirror`() = runTest {
+        val store = InMemoryStore()
+        val catalog = MediaCatalog(store) { page, _, _ ->
+            pageOf(listOf(record(23)), page, 1, 1)
+        }
+        catalog.activateSession("server|alice|device-a")
+        catalog.reconcile()
+
+        catalog.activateSession("server|bob|device-b")
+
+        assertEquals(0, catalog.cachedCount())
+        assertEquals("server|bob|device-b", store.ownerSessionKey())
     }
 }

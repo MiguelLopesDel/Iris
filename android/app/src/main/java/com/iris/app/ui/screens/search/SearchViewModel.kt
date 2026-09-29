@@ -42,6 +42,18 @@ class SearchViewModel(
 
     private var searchJob: Job? = null
 
+    init {
+        var previousSession = repository.credentialsStore.sessionIdentity.value
+        viewModelScope.launch {
+            repository.credentialsStore.sessionIdentity.collect { identity ->
+                if (identity == previousSession) return@collect
+                previousSession = identity
+                searchJob?.cancel()
+                _uiState.value = SearchUiState()
+            }
+        }
+    }
+
     fun onQueryChange(newQuery: String) {
         _uiState.update { it.copy(query = newQuery) }
         searchJob?.cancel()
@@ -78,9 +90,11 @@ class SearchViewModel(
     }
 
     fun searchRandom() {
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isSearching = true, error = null, query = "") }
             repository.searchRandom(count = 30).onSuccess { resp ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update {
                     it.copy(
                         results = resp.results,
@@ -91,6 +105,7 @@ class SearchViewModel(
                     )
                 }
             }.onFailure { ex ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 _uiState.update {
                     it.copy(
                         isSearching = false,
@@ -105,6 +120,7 @@ class SearchViewModel(
     fun performSearch() {
         val q = _uiState.value.query.trim()
         if (q.isBlank()) return
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
 
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
@@ -125,6 +141,7 @@ class SearchViewModel(
             }
 
             result.onSuccess { resp ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update {
                     it.copy(
                         results = resp.results,
@@ -135,6 +152,7 @@ class SearchViewModel(
                     )
                 }
             }.onFailure { ex ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 val rawMsg = ex.localizedMessage ?: ex.message ?: ""
                 val errorMsg = when {
                     rawMsg.contains("401") -> "Autenticação necessária (faça login na aba Backup)"

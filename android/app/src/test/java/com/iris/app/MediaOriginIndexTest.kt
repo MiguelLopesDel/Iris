@@ -3,6 +3,7 @@ package com.iris.app
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.MediaOrigin
 import com.iris.app.data.model.MediaOriginIndex
+import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.UploadJobState
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -98,5 +99,31 @@ class MediaOriginIndexTest {
     fun `an empty queue leaves every item server only`() {
         assertEquals(MediaOrigin.IRIS_ONLY, MediaOriginIndex.EMPTY.originOf("aaa"))
         assertEquals(MediaOrigin.IRIS_ONLY, MediaOriginIndex.from(emptyList()).originOf("aaa"))
+    }
+
+    @Test
+    fun `device gallery media defaults to device only`() {
+        val record = MediaRecord(index = -42, arquivo = "photo.jpg", deviceUri = "content://media/photo/42")
+
+        assertEquals(MediaOrigin.DEVICE_ONLY, MediaOriginIndex.EMPTY.originOf(record))
+    }
+
+    @Test
+    fun `device gallery origin follows the upload row for the exact local URI`() {
+        val queued = job("", UploadJobState.UPLOADING, id = 42L)
+            .copy(localUri = "content://media/photo/42")
+        val record = MediaRecord(index = -42, arquivo = "photo.jpg", deviceUri = queued.localUri)
+
+        assertEquals(MediaOrigin.UPLOADING, MediaOriginIndex.from(listOf(queued)).originOf(record))
+    }
+
+    @Test
+    fun `processing and finished hashes indicate that Iris has a copy`() {
+        val processing = MediaOriginIndex.from(listOf(job("abc", UploadJobState.PROCESSING)))
+        val finished = MediaOriginIndex.from(listOf(job("def", UploadJobState.READY)))
+
+        assertEquals(true, processing.hasServerCopy("abc"))
+        assertEquals(true, finished.hasServerCopy("def"))
+        assertEquals(false, MediaOriginIndex.EMPTY.hasServerCopy("abc"))
     }
 }

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.local.DeviceCredentialsStore
+import com.iris.app.data.model.CloudSyncStatus
 import com.iris.app.data.model.DeviceMediaSource
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.UploadJobState
@@ -12,14 +13,20 @@ import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.data.sync.MediaSyncWorker
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class SyncUiState(
     val isLoggedIn: Boolean = false,
+    val serverUrl: String = "",
     val username: String = "",
     val deviceId: String = "",
     val loginUsernameInput: String = "",
@@ -33,11 +40,17 @@ data class SyncUiState(
     val uploadQueue: List<LocalUploadJob> = emptyList(),
     val queueCounts: Map<UploadJobState, Int> = emptyMap(),
     val queueTotal: Int = 0,
+    val queueRefreshFailed: Boolean = false,
+    val cloudSyncStatus: CloudSyncStatus = CloudSyncStatus(),
     val isSyncing: Boolean = false,
     val currentProgress: Float = 0f,
     val syncWifiOnly: Boolean = false,
     val syncChargingOnly: Boolean = false,
     val autoBackupEnabled: Boolean = false,
+    val backupSetupPromptAnswered: Boolean = false,
+    val backupSetupPending: Boolean = false,
+    val backupSetupPromptReady: Boolean = false,
+    val syncSettingsAccountKey: String? = null,
     val sourceMode: String = "selected",
     val selectedSourceIds: Set<String> = emptySet(),
     val syncImagesEnabled: Boolean = true,
@@ -66,56 +79,115 @@ class SyncViewModel(
 
     init {
         observeSettings()
+        viewModelScope.launch {
+            settingsRepository.serverUrl.collect { url ->
+                _uiState.update { it.copy(serverUrl = url) }
+            }
+        }
         loadQueue()
         startPeriodicQueuePoller()
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeSettings() {
         viewModelScope.launch {
-            credentialsStore.isLoggedIn.collect { loggedIn ->
-                _uiState.update {
-                    it.copy(
-                        isLoggedIn = loggedIn,
-                        username = credentialsStore.getUsername(),
-                        deviceId = credentialsStore.getDeviceId() ?: ""
-                    )
+            var previousSession = credentialsStore.sessionIdentity.value
+            var previousAccount = credentialsStore.accountIdentity.value
+            credentialsStore.sessionIdentity.collect { identity ->
+                val accountKey = credentialsStore.accountIdentity.value
+                val accountChanged = identity != previousSession || accountKey != previousAccount
+                val accountSettingsChanged = accountKey != previousAccount
+                previousSession = identity
+                previousAccount = accountKey
+                if (identity == null) {
+                    _uiState.update {
+                        it.copy(
+                            isLoggedIn = false,
+                            username = "",
+                            deviceId = "",
+                            uploadQueue = emptyList(),
+                            queueCounts = emptyMap(),
+                            queueTotal = 0,
+                            queueRefreshFailed = false,
+                            cloudSyncStatus = CloudSyncStatus(),
+                            isSyncing = false,
+                            currentProgress = 0f,
+                            syncWifiOnly = false,
+                            syncChargingOnly = false,
+                            autoBackupEnabled = false,
+                            backupSetupPromptAnswered = false,
+                            backupSetupPending = false,
+                            backupSetupPromptReady = false,
+                            syncSettingsAccountKey = null,
+                            sourceMode = "selected",
+                            selectedSourceIds = emptySet(),
+                            syncImagesEnabled = true,
+                            syncVideosEnabled = true,
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        val settingsNeedLoading = accountSettingsChanged &&
+                            it.syncSettingsAccountKey != accountKey
+                        it.copy(
+                            isLoggedIn = true,
+                            username = credentialsStore.getUsername(),
+                            deviceId = credentialsStore.getDeviceId() ?: "",
+                            uploadQueue = if (accountChanged) emptyList() else it.uploadQueue,
+                            queueCounts = if (accountChanged) emptyMap() else it.queueCounts,
+                            queueTotal = if (accountChanged) 0 else it.queueTotal,
+                            queueRefreshFailed = if (accountChanged) false else it.queueRefreshFailed,
+                            cloudSyncStatus = if (accountChanged) CloudSyncStatus() else it.cloudSyncStatus,
+                            syncWifiOnly = if (settingsNeedLoading) false else it.syncWifiOnly,
+                            syncChargingOnly = if (settingsNeedLoading) false else it.syncChargingOnly,
+                            autoBackupEnabled = if (settingsNeedLoading) false else it.autoBackupEnabled,
+                            backupSetupPromptAnswered = if (settingsNeedLoading) false else it.backupSetupPromptAnswered,
+                            backupSetupPending = if (settingsNeedLoading) false else it.backupSetupPending,
+                            backupSetupPromptReady = if (settingsNeedLoading) false else it.backupSetupPromptReady,
+                            syncSettingsAccountKey = if (settingsNeedLoading) null else it.syncSettingsAccountKey,
+                            sourceMode = if (settingsNeedLoading) "selected" else it.sourceMode,
+                            selectedSourceIds = if (settingsNeedLoading) emptySet() else it.selectedSourceIds,
+                            syncImagesEnabled = if (settingsNeedLoading) true else it.syncImagesEnabled,
+                            syncVideosEnabled = if (settingsNeedLoading) true else it.syncVideosEnabled,
+                        )
+                    }
+                    loadQueue()
                 }
             }
         }
         viewModelScope.launch {
-            settingsRepository.syncWifiOnly.collect { wifiOnly ->
-                _uiState.update { it.copy(syncWifiOnly = wifiOnly) }
-            }
+            credentialsStore.accountIdentity
+                .flatMapLatest { accountKey ->
+                    settingsRepository.syncSettingsForAccount(accountKey).map { accountKey to it }
+                }
+                .collect { (accountKey, settings) ->
+                    if (credentialsStore.accountIdentity.value != accountKey) return@collect
+                    _uiState.update {
+                        it.copy(
+                            syncWifiOnly = settings.wifiOnly,
+                            syncChargingOnly = settings.chargingOnly,
+                            autoBackupEnabled = settings.autoBackupEnabled,
+                            backupSetupPromptAnswered = settings.backupSetupPromptAnswered,
+                            backupSetupPending = settings.backupSetupPending,
+                            backupSetupPromptReady = true,
+                            syncSettingsAccountKey = accountKey,
+                            sourceMode = settings.sourceMode,
+                            selectedSourceIds = settings.selectedSourceIds,
+                            syncImagesEnabled = settings.imagesEnabled,
+                            syncVideosEnabled = settings.videosEnabled
+                        )
+                    }
+                }
         }
         viewModelScope.launch {
-            settingsRepository.syncChargingOnly.collect { chargingOnly ->
-                _uiState.update { it.copy(syncChargingOnly = chargingOnly) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.autoBackupEnabled.collect { autoBackup ->
-                _uiState.update { it.copy(autoBackupEnabled = autoBackup) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.syncSourceMode.collect { mode ->
-                _uiState.update { it.copy(sourceMode = mode) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.syncSelectedSourceIds.collect { sourceIds ->
-                _uiState.update { it.copy(selectedSourceIds = sourceIds) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.syncImagesEnabled.collect { enabled ->
-                _uiState.update { it.copy(syncImagesEnabled = enabled) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.syncVideosEnabled.collect { enabled ->
-                _uiState.update { it.copy(syncVideosEnabled = enabled) }
-            }
+            credentialsStore.accountIdentity
+                .flatMapLatest { accountKey ->
+                    settingsRepository.cloudSyncStatusForAccount(accountKey).map { accountKey to it }
+                }
+                .collect { (accountKey, status) ->
+                    if (credentialsStore.accountIdentity.value != accountKey) return@collect
+                    _uiState.update { it.copy(cloudSyncStatus = status) }
+                }
         }
         viewModelScope.launch {
             repository.uploadManager.isUploading.collect { uploading ->
@@ -174,40 +246,93 @@ class SyncViewModel(
     }
 
     fun setSyncWifiOnly(wifiOnly: Boolean) {
-        viewModelScope.launch { settingsRepository.updateSyncWifiOnly(wifiOnly) }
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch { settingsRepository.updateSyncWifiOnly(accountKey, wifiOnly) }
     }
 
     fun setSyncChargingOnly(chargingOnly: Boolean) {
-        viewModelScope.launch { settingsRepository.updateSyncChargingOnly(chargingOnly) }
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch { settingsRepository.updateSyncChargingOnly(accountKey, chargingOnly) }
     }
 
-    fun setAutoBackupEnabled(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.updateAutoBackupEnabled(enabled) }
+    fun setAutoBackupEnabled(enabled: Boolean, context: Context) {
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch {
+            settingsRepository.updateAutoBackupEnabled(accountKey, enabled)
+            if (enabled) enqueueBackgroundIfEnabled(context, accountKey)
+        }
     }
 
-    fun setSourceMode(mode: String) {
-        viewModelScope.launch { settingsRepository.updateSyncSourceMode(mode) }
+    fun answerBackupSetupPrompt(configureFolders: Boolean, onSaved: () -> Unit = {}) {
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        _uiState.update {
+            it.copy(
+                backupSetupPromptAnswered = true,
+                backupSetupPending = configureFolders
+            )
+        }
+        viewModelScope.launch {
+            settingsRepository.answerBackupSetupPrompt(accountKey, configureFolders)
+            onSaved()
+        }
     }
 
-    fun toggleSource(sourceId: String, enabled: Boolean) {
+    fun enableBackupForAllFolders(context: Context) {
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch {
+            settingsRepository.enableBackupForAllFolders(accountKey)
+            enqueueBackgroundIfEnabled(context, accountKey)
+        }
+    }
+
+    fun finishPendingBackupSetupIfScopeChosen(context: Context) {
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch {
+            if (settingsRepository.completePendingBackupSetupIfScopeChosen(accountKey)) {
+                enqueueBackgroundIfEnabled(context, accountKey)
+            }
+        }
+    }
+
+    fun showMediaPermissionRequired() {
+        _uiState.update { it.copy(sourceDiscoveryError = "MEDIA_PERMISSION_REQUIRED") }
+    }
+
+    fun setSourceMode(mode: String, context: Context) {
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch {
+            settingsRepository.updateSyncSourceMode(accountKey, mode)
+            enqueueBackgroundIfEnabled(context, accountKey)
+        }
+    }
+
+    fun toggleSource(sourceId: String, enabled: Boolean, context: Context) {
         val selected = _uiState.value.selectedSourceIds.toMutableSet()
         if (enabled) selected += sourceId else selected -= sourceId
-        viewModelScope.launch { settingsRepository.updateSelectedSourceIds(selected) }
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch {
+            settingsRepository.updateSelectedSourceIds(accountKey, selected)
+            enqueueBackgroundIfEnabled(context, accountKey)
+        }
     }
 
     fun setSyncImagesEnabled(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.updateSyncImagesEnabled(enabled) }
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch { settingsRepository.updateSyncImagesEnabled(accountKey, enabled) }
     }
 
     fun setSyncVideosEnabled(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.updateSyncVideosEnabled(enabled) }
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        viewModelScope.launch { settingsRepository.updateSyncVideosEnabled(accountKey, enabled) }
     }
 
     fun discoverSources() {
+        val requestedSession = credentialsStore.sessionIdentity.value ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isDiscoveringSources = true, sourceDiscoveryError = null) }
-            runCatching { repository.mediaScanner.discoverSources() }
-                .onSuccess { sources ->
+            try {
+                val sources = repository.mediaScanner.discoverSources()
+                if (credentialsStore.sessionIdentity.value != requestedSession) return@launch
                     _uiState.update {
                         it.copy(
                             availableSources = sources,
@@ -217,30 +342,82 @@ class SyncViewModel(
                             isFolderPickerExpanded = sources.isNotEmpty()
                         )
                     }
-                }
-                .onFailure {
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (credentialsStore.sessionIdentity.value != requestedSession) return@launch
                     _uiState.update {
                         it.copy(
                             isDiscoveringSources = false,
                             sourceDiscoveryError = "MEDIA_PERMISSION_REQUIRED"
                         )
                     }
-                }
+            }
+        }
+    }
+
+    private suspend fun enqueueBackgroundIfEnabled(context: Context, accountKey: String) {
+        if (credentialsStore.accountIdentity.value != accountKey) return
+        val settings = settingsRepository.syncSettingsForAccount(accountKey).first()
+        if (credentialsStore.accountIdentity.value == accountKey && settings.autoBackupEnabled) {
+            MediaSyncWorker.enqueueBackground(context, settings)
         }
     }
 
     fun loadQueue() {
+        val requestedSession = credentialsStore.sessionIdentity.value
+        val requestedAccount = credentialsStore.accountIdentity.value
+        if (requestedSession == null || requestedAccount == null) {
+            _uiState.update {
+                it.copy(
+                    uploadQueue = emptyList(),
+                    queueCounts = emptyMap(),
+                    queueTotal = 0,
+                )
+            }
+            return
+        }
         viewModelScope.launch {
-            val counts = runCatching { repository.getUploadQueueCounts() }.getOrNull() ?: return@launch
+            val counts = try {
+                repository.getUploadQueueCounts()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (credentialsStore.sessionIdentity.value == requestedSession &&
+                    credentialsStore.accountIdentity.value == requestedAccount
+                ) {
+                    _uiState.update { it.copy(queueRefreshFailed = true) }
+                }
+                return@launch
+            }
+            if (credentialsStore.sessionIdentity.value != requestedSession ||
+                credentialsStore.accountIdentity.value != requestedAccount
+            ) return@launch
             val total = counts.values.sum()
             // A janela só é lida quando a lista está aberta: fechada, os números
             // do resumo já respondem o que o usuário quer saber.
             val window = if (_uiState.value.isQueueExpanded) {
-                runCatching { repository.getRecentUploadJobs(QUEUE_WINDOW) }.getOrNull().orEmpty()
+                try {
+                    repository.getRecentUploadJobs(QUEUE_WINDOW)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    emptyList()
+                }
             } else {
                 emptyList()
             }
-            _uiState.update { it.copy(uploadQueue = window, queueCounts = counts, queueTotal = total) }
+            if (credentialsStore.sessionIdentity.value != requestedSession ||
+                credentialsStore.accountIdentity.value != requestedAccount
+            ) return@launch
+            _uiState.update {
+                it.copy(
+                    uploadQueue = window,
+                    queueCounts = counts,
+                    queueTotal = total,
+                    queueRefreshFailed = false
+                )
+            }
         }
     }
 

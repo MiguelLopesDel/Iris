@@ -2,8 +2,6 @@ package com.iris.app.ui.screens.detail
 
 import android.content.Intent
 import android.graphics.Color as AndroidColor
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Share
@@ -75,14 +74,15 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.iris.app.IrisApplication
-import com.iris.app.data.MediaDownloader
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import com.iris.app.ui.components.EmptyState
+import com.iris.app.ui.components.rememberMediaDownload
+import com.iris.app.ui.screens.spaces.SpacePickerDialog
+import kotlinx.coroutines.launch
 import com.iris.app.ui.components.decodeThumbHash
 import com.iris.app.ui.theme.IrisAccentLime
 import com.iris.app.ui.theme.IrisDarkBg
-import kotlinx.coroutines.launch
 
 /**
  * Full-bleed media viewer.
@@ -104,7 +104,9 @@ fun MediaDetailScreen(
     val context = LocalContext.current
     val application = context.applicationContext as IrisApplication
     val apiClient = application.apiClient
+    val download = rememberMediaDownload { viewModel.showNotice(it) }
     val scope = rememberCoroutineScope()
+    var pickingSpace by remember { mutableStateOf(false) }
 
     // Opens immersive; the controls are one tap away.
     var chromeVisible by remember { mutableStateOf(false) }
@@ -159,43 +161,49 @@ fun MediaDetailScreen(
                     exit = fadeOut() + slideOutVertically { it },
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
-                    val startDownload = {
-                        val url = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
-                        viewModel.showNotice("Baixando…")
-                        scope.launch {
-                            val result = MediaDownloader(context, apiClient)
-                                .download(url, record.cleanFilename)
-                            viewModel.showNotice(
-                                when (result) {
-                                    is MediaDownloader.Result.Saved ->
-                                        "Salvo em Downloads: ${result.displayName}"
-                                    is MediaDownloader.Result.Failed ->
-                                        "Falha ao baixar: ${result.reason}"
-                                }
-                            )
-                        }
-                        Unit
-                    }
-                    // Android 8-9 need a runtime grant to write to Downloads.
-                    val storagePermission = rememberLauncherForActivityResult(
-                        ActivityResultContracts.RequestMultiplePermissions()
-                    ) { grants ->
-                        if (grants.values.all { it }) startDownload()
-                        else viewModel.showNotice("Sem permissão de armazenamento, não dá para baixar")
-                    }
                     ViewerActionBar(
                         onDownload = {
-                            val missing = MediaDownloader.missingPermissions(context)
-                            if (missing.isEmpty()) startDownload()
-                            else storagePermission.launch(missing.toTypedArray())
+                            download(
+                                apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho),
+                                record.cleanFilename
+                            )
                         },
                         onDetails = { showDetails = true },
                         onShare = { shareRecord(context, record, apiClient) },
+                        onSpace = { pickingSpace = true },
                         onRename = { renaming = true }
                     )
                 }
             }
         }
+    }
+
+    val sharing = uiState.record
+    if (pickingSpace && sharing != null) {
+        SpacePickerDialog(
+            repository = application.irisRepository,
+            onDismiss = { pickingSpace = false },
+            onPick = { space ->
+                pickingSpace = false
+                val dbId = sharing.dbId
+                if (dbId == null) {
+                    viewModel.showNotice("Esta mídia ainda não pode ser enviada")
+                } else {
+                    scope.launch {
+                        application.irisRepository.addToSpace(space.id, dbId)
+                            .onSuccess { added ->
+                                viewModel.showNotice(
+                                    if (added.created) "Enviada para ${space.name}"
+                                    else "Já estava em ${space.name}"
+                                )
+                            }
+                            .onFailure { e ->
+                                viewModel.showNotice(e.localizedMessage ?: "Não foi possível enviar")
+                            }
+                    }
+                }
+            }
+        )
     }
 
     if (showDetails && uiState.record != null) {
@@ -388,6 +396,7 @@ private fun ViewerActionBar(
     onDownload: () -> Unit,
     onDetails: () -> Unit,
     onShare: () -> Unit,
+    onSpace: () -> Unit,
     onRename: () -> Unit,
 ) {
     Row(
@@ -404,6 +413,7 @@ private fun ViewerActionBar(
     ) {
         ActionItem(Icons.Default.Download, "Baixar", onDownload)
         ActionItem(Icons.Default.Share, "Compartilhar", onShare)
+        ActionItem(Icons.Default.Group, "Espaço", onSpace)
         ActionItem(Icons.Default.DriveFileRenameOutline, "Renomear", onRename)
         ActionItem(Icons.Default.Info, "Detalhes", onDetails)
     }

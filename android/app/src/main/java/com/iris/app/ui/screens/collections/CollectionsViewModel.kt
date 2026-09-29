@@ -44,7 +44,21 @@ class CollectionsViewModel(
     val uiState: StateFlow<CollectionsUiState> = _uiState.asStateFlow()
 
     init {
-        loadData()
+        val initialSession = repository.credentialsStore.sessionIdentity.value
+        if (initialSession != null) loadData()
+        viewModelScope.launch {
+            var previousSession = initialSession
+            repository.credentialsStore.sessionIdentity.collect { identity ->
+                if (identity == previousSession) return@collect
+                previousSession = identity
+                if (identity == null) {
+                    _uiState.value = CollectionsUiState(error = "AUTH_REQUIRED")
+                } else {
+                    _uiState.value = CollectionsUiState()
+                    loadData()
+                }
+            }
+        }
     }
 
     fun setTab(tab: Int) {
@@ -52,10 +66,12 @@ class CollectionsViewModel(
     }
 
     fun loadData(isRefresh: Boolean = false) {
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = !isRefresh, isRefreshing = isRefresh, error = null) }
 
             val collectionsResult = repository.getCollections()
+            if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@launch
             val collections = collectionsResult.getOrDefault(emptyList())
 
             if (collectionsResult.isSuccess) {
@@ -101,7 +117,20 @@ class CollectionMediaViewModel(
     private var firstContentFinish: (() -> Unit)? = null
 
     init {
-        loadMembers()
+        val initialSession = repository.credentialsStore.sessionIdentity.value
+        if (initialSession != null) loadMembers()
+        viewModelScope.launch {
+            var previousSession = initialSession
+            repository.credentialsStore.sessionIdentity.collect { identity ->
+                if (identity == previousSession) return@collect
+                previousSession = identity
+                if (identity == null) clearPrivateState()
+                else {
+                    _uiState.value = CollectionMediaUiState(collectionId, collectionName)
+                    loadMembers()
+                }
+            }
+        }
     }
 
     fun loadMembers() {
@@ -115,6 +144,10 @@ class CollectionMediaViewModel(
     }
 
     private fun loadPage(page: Int) {
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: run {
+            clearPrivateState()
+            return
+        }
         val finishMembers = performanceMonitor.begin(Metric.CollectionMembers)
         if (page == 1 && _uiState.value.members.isEmpty()) {
             firstContentFinish = performanceMonitor.begin(Metric.CollectionFirstContent)
@@ -129,6 +162,7 @@ class CollectionMediaViewModel(
             }
             repository.getCollectionMembersPage(collectionId, page).onSuccess { response ->
                 finishMembers()
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update {
                     it.copy(
                         members = if (page == 1) response.records else it.members + response.records,
@@ -141,6 +175,7 @@ class CollectionMediaViewModel(
                     )
                 }
             }.onFailure { ex ->
+                if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -150,6 +185,14 @@ class CollectionMediaViewModel(
                 }
             }
         }
+    }
+
+    private fun clearPrivateState() {
+        _uiState.value = CollectionMediaUiState(
+            collectionId = collectionId,
+            collectionName = "",
+            error = "AUTH_REQUIRED",
+        )
     }
 
     fun onFirstContentDrawn() {

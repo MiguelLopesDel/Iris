@@ -1,5 +1,9 @@
 package com.iris.app.ui.screens.gallery
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -41,6 +45,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -72,7 +77,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.data.model.MediaRecord
+import com.iris.app.data.model.CloudConnectionState
 import com.iris.app.ui.components.EmptyState
+import com.iris.app.ui.components.CloudSyncNotice
 import com.iris.app.ui.components.MediaCard
 import com.iris.app.ui.components.ServerStatusBadge
 import com.iris.app.ui.theme.IrisAccentInk
@@ -93,11 +100,31 @@ import kotlin.math.roundToInt
 fun GalleryScreen(
     viewModel: GalleryViewModel,
     onMediaClick: (Int) -> Unit,
+    onDeviceMediaClick: (String) -> Unit = {},
     onSettingsClick: () -> Unit,
     onLoginClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val gridState = rememberLazyGridState()
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        viewModel.refreshDeviceMedia()
+    }
+    val requestedMediaPermissions = remember {
+        when {
+            Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO
+            )
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
     // The real cost of a denser grid was the server generating thumbnails
     // synchronously on the FastAPI event loop on a cache miss (fixed
     // server-side: server.py now runs that in a threadpool). 3 is a normal
@@ -160,7 +187,7 @@ fun GalleryScreen(
                         ServerStatusBadge(
                             serverInfo = uiState.serverInfo,
                             isConnecting = uiState.isServerChecking,
-                            isServerOnline = uiState.isServerOnline == true,
+                            isServerOnline = uiState.isServerOnline,
                             totalRecords = if (uiState.totalRecords > 0) uiState.totalRecords else uiState.records.size,
                             isDeviceLoggedIn = uiState.isDeviceLoggedIn,
                             onClick = onSettingsClick
@@ -229,46 +256,79 @@ fun GalleryScreen(
                 )
             }
 
+            if (!uiState.deviceMediaPermissionGranted) {
+                TextButton(onClick = { mediaPermissionLauncher.launch(requestedMediaPermissions) }) {
+                    Text("Mostrar fotos deste aparelho")
+                }
+            }
+
+            if (uiState.error == "AUTH_REQUIRED" && uiState.records.any { it.deviceUri != null }) {
+                Text(
+                    text = "Fotos do aparelho. Entre para ver também as fotos do servidor Iris.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+
+            if (uiState.isServerOnline == false ||
+                uiState.cloudSyncStatus.connectionState == CloudConnectionState.OFFLINE ||
+                uiState.cloudSyncStatus.syncError != null
+            ) {
+                CloudSyncNotice(
+                    status = uiState.cloudSyncStatus,
+                    serverUnavailable = uiState.isServerOnline == false,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
                 onRefresh = { viewModel.refresh() },
                 modifier = Modifier.fillMaxSize()
             ) {
                 when {
+                    uiState.error == "AUTH_REQUIRED" && uiState.records.isEmpty() -> {
+                        EmptyState(
+                            icon = Icons.Default.Lock,
+                            title = "Login Necessário",
+                            message = "Servidor conectado! Para visualizar sua biblioteca privada, autentique este dispositivo.",
+                            actionLabel = "Fazer Login",
+                            onAction = onLoginClick
+                        )
+                    }
+
                     (uiState.isLoading || uiState.isServerChecking) && uiState.records.isEmpty() -> {
                         GalleryLoadingGrid()
                     }
 
                     uiState.error != null && uiState.records.isEmpty() -> {
-                        if (uiState.error == "AUTH_REQUIRED") {
-                            EmptyState(
-                                icon = Icons.Default.Lock,
-                                title = "Login Necessário",
-                                message = "Servidor conectado! Para visualizar sua biblioteca privada de memes, autentique este dispositivo.",
-                                actionLabel = "Fazer Login",
-                                onAction = onLoginClick
-                            )
-                        } else {
-                            EmptyState(
-                                title = "Não foi possível conectar",
-                                message = if (uiState.error == "SERVER_OFFLINE") {
-                                    "Não foi possível alcançar o servidor Iris. Verifique se ele está rodando e a URL em Configurações."
-                                } else {
-                                    uiState.error ?: "Verifique se o servidor Iris está em execução."
-                                },
-                                actionLabel = "Tentar novamente",
-                                onAction = { viewModel.checkServerAndLoad() }
-                            )
-                        }
+                        EmptyState(
+                            title = "Não foi possível conectar",
+                            message = if (uiState.error == "SERVER_OFFLINE") {
+                                "Não foi possível alcançar o servidor Iris. Verifique se ele está rodando e a URL em Configurações."
+                            } else {
+                                uiState.error ?: "Verifique se o servidor Iris está em execução."
+                            },
+                            actionLabel = "Tentar novamente",
+                            onAction = { viewModel.checkServerAndLoad() }
+                        )
                     }
 
                     uiState.records.isEmpty() -> {
                         EmptyState(
                             icon = Icons.Outlined.PhotoLibrary,
-                            title = "Nenhuma mídia encontrada",
-                            message = "Nenhum meme ou mídia indexada no banco de dados.",
-                            actionLabel = "Atualizar",
-                            onAction = { viewModel.refresh() }
+                            title = if (uiState.deviceMediaPermissionGranted) "Nenhuma mídia encontrada" else "Fotos do aparelho não disponíveis",
+                            message = if (uiState.deviceMediaPermissionGranted) {
+                                "Nenhuma foto ou vídeo neste aparelho ou na biblioteca Iris."
+                            } else {
+                                "Permita acesso às fotos e vídeos para mostrá-los junto com a biblioteca Iris."
+                            },
+                            actionLabel = if (uiState.deviceMediaPermissionGranted) "Atualizar" else "Permitir acesso às fotos",
+                            onAction = {
+                                if (uiState.deviceMediaPermissionGranted) viewModel.refresh()
+                                else mediaPermissionLauncher.launch(requestedMediaPermissions)
+                            }
                         )
                     }
 
@@ -306,8 +366,12 @@ fun GalleryScreen(
                                         MediaCard(
                                             record = record,
                                             performanceMonitor = viewModel.performanceMonitor,
-                                            origin = uiState.origins.originOf(record.contentHash),
-                                            onClick = { onMediaClick(record.index) },
+                                            origin = uiState.origins.originOf(record),
+                                            onClick = {
+                                                val localUri = record.deviceUri
+                                                if (localUri != null) onDeviceMediaClick(localUri)
+                                                else onMediaClick(record.index)
+                                            },
                                             // Animates position/size when the pinch
                                             // gesture changes columnCount instead of
                                             // the grid reflowing in a single abrupt

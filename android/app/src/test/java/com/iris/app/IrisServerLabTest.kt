@@ -18,7 +18,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
-import java.net.Socket
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.MessageDigest
 
 /**
@@ -32,15 +33,25 @@ class IrisServerLabTest {
 
     @Before
     fun checkServerAvailable() {
-        var reachable = false
+        var irisServerAvailable = false
+        var connection: HttpURLConnection? = null
         try {
-            Socket("127.0.0.1", 8000).use {
-                reachable = true
-            }
+            connection = URL("${serverBaseUrl}healthz").openConnection() as HttpURLConnection
+            connection.connectTimeout = 500
+            connection.readTimeout = 500
+            connection.requestMethod = "GET"
+            val response = connection.inputStream.bufferedReader().use { it.readText() }
+            irisServerAvailable = connection.responseCode == 200 &&
+                response.contains("\"status\"") && response.contains("\"mode\"")
         } catch (_: Exception) {
-            reachable = false
+            irisServerAvailable = false
+        } finally {
+            connection?.disconnect()
         }
-        assumeTrue("Live Iris server not running on 127.0.0.1:8000, skipping lab test", reachable)
+        assumeTrue(
+            "Live Iris server not running on 127.0.0.1:8000, skipping lab test",
+            irisServerAvailable
+        )
     }
 
     @Test

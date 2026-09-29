@@ -66,7 +66,7 @@ class IrisApiClient(
         }
     }
 
-    private val authInterceptor = Interceptor { chain ->
+    private fun authInterceptor(expectedSessionIdentity: String?) = Interceptor { chain ->
         val original = chain.request()
         val requestUrl = original.url
         val path = requestUrl.encodedPath
@@ -82,11 +82,15 @@ class IrisApiClient(
             requestUrl.host == currentBaseHttpUrl.host &&
             requestUrl.port == currentBaseHttpUrl.port
 
-        val storedOrigin = credentialsStore?.getServerOrigin()
+        val sessionCredentials = if (expectedSessionIdentity == null) null else {
+            credentialsStore?.getSessionCredentials(expectedSessionIdentity)
+                ?: return@Interceptor sessionChangedResponse(original)
+        }
+        val storedOrigin = sessionCredentials?.serverOrigin ?: credentialsStore?.getServerOrigin()
         val isOriginValid = storedOrigin.isNullOrBlank() || storedOrigin == getOrigin(baseUrl)
 
         val token = if (isTargetingCurrentServer && isOriginValid) {
-            credentialsStore?.getAccessToken()
+            sessionCredentials?.accessToken ?: if (expectedSessionIdentity == null) credentialsStore?.getAccessToken() else null
         } else {
             null
         }
@@ -118,6 +122,14 @@ class IrisApiClient(
         response
     }
 
+    private fun sessionChangedResponse(request: Request): Response = Response.Builder()
+        .request(request)
+        .protocol(okhttp3.Protocol.HTTP_1_1)
+        .code(409)
+        .message("Device session changed")
+        .body("{\"detail\":\"Device session changed\"}".toResponseBody("application/json".toMediaType()))
+        .build()
+
     private val bareOkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -139,128 +151,169 @@ class IrisApiClient(
         return count
     }
 
-    private val tokenAuthenticator = Authenticator { _: Route?, response: Response ->
-        if (credentialsStore == null) return@Authenticator null
+    private fun tokenAuthenticator(expectedSessionIdentity: String?): Authenticator = Authenticator { _: Route?, response ->
+        val store = credentialsStore ?: return@Authenticator null
+        if (expectedSessionIdentity != null && store.getSessionIdentity() != expectedSessionIdentity) {
+            return@Authenticator null
+        }
         if (responseCount(response) >= 3) return@Authenticator null
 
-        // Host security check: only refresh if the failing request is for the current server
         val currentBaseHttpUrl = baseUrl.toHttpUrlOrNull()
         if (currentBaseHttpUrl == null ||
             response.request.url.host != currentBaseHttpUrl.host ||
             response.request.url.port != currentBaseHttpUrl.port
-        ) {
-            return@Authenticator null
-        }
+        ) return@Authenticator null
 
-        val storedOrigin = credentialsStore.getServerOrigin()
-        if (!storedOrigin.isNullOrBlank() && storedOrigin != getOrigin(baseUrl)) {
-            return@Authenticator null
+        val initialCredentials = if (expectedSessionIdentity == null) null else {
+            store.getSessionCredentials(expectedSessionIdentity) ?: return@Authenticator null
         }
+        val storedOrigin = initialCredentials?.serverOrigin ?: store.getServerOrigin()
+        if (!storedOrigin.isNullOrBlank() && storedOrigin != getOrigin(baseUrl)) return@Authenticator null
 
-        // Prevent infinite loops if refresh itself fails
         if (response.request.url.encodedPath.contains("/auth/devices/refresh")) {
-            credentialsStore.clearCredentials()
+            if (expectedSessionIdentity == null) store.clearCredentials()
+            else store.clearCredentialsIfSession(expectedSessionIdentity)
             return@Authenticator null
         }
 
         synchronized(tokenRefreshLock) {
-            val deviceId = credentialsStore.getDeviceId() ?: return@Authenticator null
-            val refreshToken = credentialsStore.getRefreshToken() ?: return@Authenticator null
-            val currentToken = credentialsStore.getAccessToken()
+            if (expectedSessionIdentity != null && store.getSessionIdentity() != expectedSessionIdentity) {
+                return@synchronized null
+            }
+            val credentials = if (expectedSessionIdentity == null) null else {
+                store.getSessionCredentials(expectedSessionIdentity) ?: return@synchronized null
+            }
+            val deviceId = credentials?.deviceId ?: store.getDeviceId() ?: return@synchronized null
+            val refreshToken = credentials?.refreshToken ?: store.getRefreshToken() ?: return@synchronized null
+            val currentToken = credentials?.accessToken ?: store.getAccessToken()
             val requestToken = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
 
-            // If token was already rotated by another concurrent request, retry with the fresh token
             if (currentToken != null && currentToken != requestToken) {
-                return@Authenticator response.request.newBuilder()
+                return@synchronized response.request.newBuilder()
                     .header("Authorization", "Bearer $currentToken")
                     .build()
             }
-
-            // Fast-fail if refresh failed in the last 10 seconds to avoid cascading timeouts for 50 concurrent requests
-            if (System.currentTimeMillis() - lastRefreshFailedAt < 10_000L) {
-                return@Authenticator null
-            }
-
-            // Perform synchronous refresh call
-            val refreshUrl = "${baseUrl.removeSuffix("/")}/api/auth/devices/refresh"
-            val formBody = FormBody.Builder()
-                .add("device_id", deviceId)
-                .add("refresh_token", refreshToken)
-                .build()
+            if (System.currentTimeMillis() - lastRefreshFailedAt < 10_000L) return@synchronized null
 
             val refreshRequest = Request.Builder()
-                .url(refreshUrl)
-                .post(formBody)
+                .url("${baseUrl.removeSuffix("/")}/api/auth/devices/refresh")
+                .post(
+                    FormBody.Builder()
+                        .add("device_id", deviceId)
+                        .add("refresh_token", refreshToken)
+                        .build()
+                )
                 .build()
 
             try {
                 val refreshResponse = bareOkHttpClient.newCall(refreshRequest).execute()
                 if (refreshResponse.isSuccessful) {
-                    val responseBody = refreshResponse.body?.string() ?: ""
-                    val jsonElement = json.parseToJsonElement(responseBody)
-                    val newAccess = jsonElement.toString().let {
-                        val parsed = json.decodeFromString<com.iris.app.data.model.DeviceRefreshResponse>(it)
-                        credentialsStore.replaceTokensAtomically(
-                            accessToken = parsed.accessToken,
-                            refreshToken = parsed.refreshToken,
-                            expiresInSeconds = parsed.expiresIn
+                    val body = refreshResponse.body?.string() ?: ""
+                    val parsed = json.decodeFromString<com.iris.app.data.model.DeviceRefreshResponse>(
+                        json.parseToJsonElement(body).toString()
+                    )
+                    val replaced = if (expectedSessionIdentity == null) {
+                        store.replaceTokensAtomically(parsed.accessToken, parsed.refreshToken, parsed.expiresIn)
+                        true
+                    } else {
+                        store.replaceTokensAtomicallyForSession(
+                            expectedSessionIdentity,
+                            parsed.accessToken,
+                            parsed.refreshToken,
+                            parsed.expiresIn
                         )
-                        parsed.accessToken
                     }
+                    if (!replaced) return@synchronized null
                     lastRefreshFailedAt = 0L
-                    return@Authenticator response.request.newBuilder()
-                        .header("Authorization", "Bearer $newAccess")
+                    return@synchronized response.request.newBuilder()
+                        .header("Authorization", "Bearer ${parsed.accessToken}")
                         .build()
-                } else if (refreshResponse.code == 401) {
-                    // Only clear credentials if the refresh token was explicitly rejected / session revoked
-                    credentialsStore.clearCredentials()
-                    return@Authenticator null
+                }
+                if (refreshResponse.code == 401) {
+                    if (expectedSessionIdentity == null) store.clearCredentials()
+                    else store.clearCredentialsIfSession(expectedSessionIdentity)
                 } else {
                     lastRefreshFailedAt = System.currentTimeMillis()
-                    return@Authenticator null
                 }
-            } catch (e: Exception) {
-                // Network failure during refresh: fast-fail other queued requests without wiping credentials
+                null
+            } catch (_: Exception) {
                 lastRefreshFailedAt = System.currentTimeMillis()
-                return@Authenticator null
+                null
             }
         }
     }
 
-    private val okHttpClient = OkHttpClient.Builder()
+    private fun createOkHttpClient(expectedSessionIdentity: String?): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
-        .addInterceptor(authInterceptor)
+        .addInterceptor(authInterceptor(expectedSessionIdentity))
         .addInterceptor(browsingTimeoutInterceptor)
         .addInterceptor(safeLoggingInterceptor)
-        .authenticator(tokenAuthenticator)
-        // Coil reuses this same client for every gallery thumbnail (see
-        // IrisApplication.newImageLoader), so OkHttp's default of 5 concurrent
-        // requests per host was shared between thumbnail downloads and the
-        // paginated /api/records calls — a fast scroll saturated it with
-        // thumbnails and left page-fetch requests queued behind them. This is
-        // a private single-user home server, not a rate-limited public API.
+        .authenticator(tokenAuthenticator(expectedSessionIdentity))
+        // Keep the same request concurrency limit as the browsing client.
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
         .applyPerformanceMonitor()
         .build()
+
+    private val okHttpClient = createOkHttpClient(expectedSessionIdentity = null)
 
     val authenticatedOkHttpClient: OkHttpClient
         get() = okHttpClient
 
     @Volatile
     private var cachedService: IrisApiService? = null
+    @Volatile
+    private var cachedServiceSessionIdentity: String? = null
+
+    private data class BoundServiceCache(
+        val baseUrl: String,
+        val sessionIdentity: String,
+        val service: IrisApiService
+    )
+
+    @Volatile
+    private var cachedBoundService: BoundServiceCache? = null
 
     val apiService: IrisApiService
         get() {
+            val sessionIdentity = credentialsStore?.getSessionIdentity()
             val current = cachedService
-            if (current != null) return current
+            if (current != null && cachedServiceSessionIdentity == sessionIdentity) return current
             return synchronized(this) {
-                cachedService ?: createService().also { cachedService = it }
+                if (cachedService != null && cachedServiceSessionIdentity == sessionIdentity) {
+                    cachedService!!
+                } else {
+                    createService(sessionIdentity).also {
+                        cachedService = it
+                        cachedServiceSessionIdentity = sessionIdentity
+                    }
+                }
             }
         }
+
+    /**
+     * API facade for one immutable credential session. If the session changes
+     * before a request reaches OkHttp, that request is rejected locally rather
+     * than being sent with the next account's token.
+     */
+    fun apiServiceForSession(sessionIdentity: String): IrisApiService {
+        require(sessionIdentity.isNotBlank()) { "A session identity is required" }
+        val cached = cachedBoundService
+        if (cached?.baseUrl == baseUrl && cached.sessionIdentity == sessionIdentity) return cached.service
+        return synchronized(this) {
+            val current = cachedBoundService
+            if (current?.baseUrl == baseUrl && current.sessionIdentity == sessionIdentity) {
+                current.service
+            } else {
+                createService(sessionIdentity).also {
+                    cachedBoundService = BoundServiceCache(baseUrl, sessionIdentity, it)
+                }
+            }
+        }
+    }
 
     fun updateBaseUrl(newUrl: String) {
         val normalized = normalizeBaseUrl(newUrl)
@@ -276,15 +329,17 @@ class IrisApiClient(
                 }
                 baseUrl = normalized
                 cachedService = null
+                cachedServiceSessionIdentity = null
+                cachedBoundService = null
             }
         }
     }
 
-    private fun createService(): IrisApiService {
+    private fun createService(expectedSessionIdentity: String? = null): IrisApiService {
         val contentType = "application/json".toMediaType()
         return Retrofit.Builder()
             .baseUrl(baseUrl)
-            .client(okHttpClient)
+            .client(if (expectedSessionIdentity == null) okHttpClient else createOkHttpClient(expectedSessionIdentity))
             .addConverterFactory(json.asConverterFactory(contentType))
             .build()
             .create(IrisApiService::class.java)
@@ -331,6 +386,7 @@ class IrisApiClient(
 
         fun normalizeBaseUrl(url: String): String {
             var trimmed = url.trim()
+            if (trimmed.isBlank()) return "http://127.0.0.1:8000/"
             if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
                 trimmed = "http://$trimmed"
             }

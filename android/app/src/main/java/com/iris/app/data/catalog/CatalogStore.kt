@@ -33,6 +33,12 @@ interface CatalogStore {
     /** How many records the mirror holds for a filter. */
     suspend fun count(mediaType: String = "all"): Int
 
+    /** Session identity that owns the cached rows, or null for an empty/unbound mirror. */
+    suspend fun ownerSessionKey(): String?
+
+    /** Persists which signed-in device session owns the mirror. */
+    suspend fun setOwnerSessionKey(sessionKey: String?)
+
     /** Drops everything — used when the mirror belongs to a different server. */
     suspend fun clear()
 }

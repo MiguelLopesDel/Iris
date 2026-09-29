@@ -37,7 +37,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             val currentUrl = settingsRepository.serverUrl.first()
             _uiState.update { it.copy(serverUrl = currentUrl) }
-            testConnection()
+            if (currentUrl.isNotBlank()) testConnection()
         }
     }
 
@@ -63,6 +63,19 @@ class SettingsViewModel(
     }
 
     fun testConnection() {
+        if (_uiState.value.serverUrl.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    isTestingConnection = false,
+                    isServerOnline = false,
+                    serverMode = null,
+                    serverInfo = null,
+                    connectionTestResult = "Informe o endereço do servidor para testar a conexão."
+                )
+            }
+            return
+        }
+
         viewModelScope.launch {
             val isLoggedIn = irisRepository.credentialsStore.hasValidCredentials()
             val username = irisRepository.credentialsStore.getUsername()
