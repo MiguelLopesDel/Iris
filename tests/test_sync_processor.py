@@ -4,17 +4,15 @@ import hashlib
 import sqlite3
 import sys
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 
+from core import upload_processing_store as processing_store_module
 from core.sync_db import ensure_tables
-from core.sync_processor import (
-    _claim_processing_job,
-    _record_processing_failure,
-    _release_processing_lease,
-    process_upload,
-)
+from core.sync_processor import process_upload
 from core.sync_recovery import _recover_finalizing_upload, recover_pending_uploads
 from core.upload_processing_state import record_upload_processing_result
+from core.upload_processing_store import UploadProcessingStore
 
 
 def _database_with_jobs(path, *upload_ids: str) -> None:
@@ -35,14 +33,15 @@ def _database_with_jobs(path, *upload_ids: str) -> None:
 def test_processing_claim_is_exclusive_across_workers_and_libraries(tmp_path) -> None:
     db_path = tmp_path / "library.db"
     _database_with_jobs(db_path, "upload-one", "upload-two")
+    store = UploadProcessingStore(db_path)
 
-    first = _claim_processing_job(db_path, "upload-one", "worker-a")
+    first = store.claim("upload-one", "worker-a")
     assert first == ("worker-a", 1)
-    assert _claim_processing_job(db_path, "upload-two", "worker-b") == (
+    assert store.claim("upload-two", "worker-b") == (
         None,
         "pending_processing",
     )
-    assert _claim_processing_job(db_path, "upload-one", "worker-c") == (
+    assert store.claim("upload-one", "worker-c") == (
         None,
         "processing",
     )
@@ -60,13 +59,88 @@ def test_processing_claim_is_exclusive_across_workers_and_libraries(tmp_path) ->
     conn.commit()
     conn.close()
 
-    recovered = _claim_processing_job(db_path, "upload-one", "worker-c")
+    recovered = store.claim("upload-one", "worker-c")
     assert recovered == ("worker-c", 2)
-    _release_processing_lease(db_path, "upload-one", "worker-c")
-    assert _claim_processing_job(db_path, "upload-two", "worker-b") == (
+    store.release("upload-one", "worker-c")
+    assert store.claim("upload-two", "worker-b") == (
         "worker-b",
         1,
     )
+
+
+def test_processing_heartbeat_renews_item_and_library_leases(tmp_path, monkeypatch) -> None:
+    database = tmp_path / "library.db"
+    _database_with_jobs(database, "upload-one")
+    store = UploadProcessingStore(database)
+    assert store.claim("upload-one", "worker-a") == ("worker-a", 1)
+    connection = sqlite3.connect(database)
+    original_lease = connection.execute(
+        "SELECT processing_lease_until FROM sync_uploads WHERE id = 'upload-one'"
+    ).fetchone()[0]
+    connection.close()
+    monkeypatch.setattr(processing_store_module, "_PROCESSING_HEARTBEAT_SECONDS", 0.01)
+
+    stop_event = threading.Event()
+    heartbeat = threading.Thread(
+        target=store.renew_until_stopped,
+        args=("upload-one", "worker-a", stop_event),
+        daemon=True,
+    )
+    heartbeat.start()
+    try:
+        deadline = time.monotonic() + 2
+        renewed = None
+        while time.monotonic() < deadline:
+            connection = sqlite3.connect(database)
+            item_lease = connection.execute(
+                "SELECT processing_lease_until FROM sync_uploads WHERE id = 'upload-one'"
+            ).fetchone()[0]
+            library_lease = connection.execute(
+                "SELECT lease_until FROM sync_processing_leases "
+                "WHERE lock_name = 'library-processing'"
+            ).fetchone()[0]
+            connection.close()
+            if item_lease == library_lease and item_lease != original_lease:
+                renewed = item_lease
+                break
+            threading.Event().wait(0.01)
+        assert renewed is not None, "heartbeat did not renew both persisted leases"
+    finally:
+        stop_event.set()
+        heartbeat.join(timeout=1)
+
+    assert not heartbeat.is_alive()
+
+
+def test_processing_heartbeat_stops_after_lease_owner_changes(tmp_path, monkeypatch) -> None:
+    database = tmp_path / "library.db"
+    _database_with_jobs(database, "upload-one")
+    store = UploadProcessingStore(database)
+    assert store.claim("upload-one", "worker-old") == ("worker-old", 1)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "UPDATE sync_uploads SET processing_lease_token = 'worker-current' "
+        "WHERE id = 'upload-one'"
+    )
+    connection.execute(
+        "UPDATE sync_processing_leases SET owner_token = 'worker-current' "
+        "WHERE lock_name = 'library-processing'"
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(processing_store_module, "_PROCESSING_HEARTBEAT_SECONDS", 0.01)
+
+    stop_event = threading.Event()
+    heartbeat = threading.Thread(
+        target=store.renew_until_stopped,
+        args=("upload-one", "worker-old", stop_event),
+        daemon=True,
+    )
+    heartbeat.start()
+    heartbeat.join(timeout=1)
+
+    assert not heartbeat.is_alive()
+    assert stop_event.is_set()
 
 
 def test_process_upload_with_ai_holds_lease_and_records_catalog_origin(
@@ -297,17 +371,16 @@ def test_processing_result_refuses_stale_lease_without_change_event(tmp_path) ->
 def test_processing_failures_retry_with_backoff_then_become_terminal(tmp_path) -> None:
     db_path = tmp_path / "library.db"
     _database_with_jobs(db_path, "upload-one")
+    store = UploadProcessingStore(db_path)
 
     for attempt in range(1, 5):
         token = f"worker-{attempt}"
-        claim = _claim_processing_job(db_path, "upload-one", token)
+        claim = store.claim("upload-one", token)
         assert claim == (token, attempt)
-        result = _record_processing_failure(
-            db_path, "upload-one", token, attempt, "OSError"
-        )
+        result = store.record_failure("upload-one", token, attempt, "OSError")
         expected_state = "pending_processing" if attempt < 4 else "failed_processing"
         assert result["state"] == expected_state
-        _release_processing_lease(db_path, "upload-one", token)
+        store.release("upload-one", token)
 
         conn = sqlite3.connect(db_path)
         row = conn.execute(
