@@ -25,17 +25,53 @@ capture timestamp, `upload_id`, and next byte offset.
    these as metadata and must never resolve a client relative path on its filesystem.
 2. The response supplies `upload_id`, `offset`, and `chunk_size` (currently 32 MiB).
 3. `PUT /api/sync/uploads/{upload_id}?offset={offset}` sends raw bytes, not multipart.
-   Send chunks sequentially, then store the returned offset transactionally.
+   Send chunks sequentially, then store the returned offset transactionally. The
+   server fsyncs acknowledged bytes before advancing the confirmed offset.
 4. Retry the same offset after an interrupted request. On `409`, obtain the confirmed
    position with `GET /api/sync/uploads/{upload_id}` before retrying; never guess it.
-5. `POST /api/sync/uploads/{upload_id}/complete` verifies the full SHA-256 and moves
-   the original into the account-owned server library.
+5. `POST /api/sync/uploads/{upload_id}/complete` verifies the full SHA-256 and
+   begins finalizing the original into the account-owned server library. The
+   server persists its intended destination before moving the file, so a retry
+   can recover if the server stops between the filesystem move and catalog
+   registration.
 
-The completion state `pending_processing` means backup succeeded but metadata, thumbnail,
-and AI indexing are not ready yet. The change feed advances it through `processing` to
-`ready`, or to `failed_processing` with a safe error summary. Do not re-upload an item
-only because it is processing. `duplicate` means the original was already present in the
-same private library.
+### Batch requests and partial success
+
+- `POST /api/sync/uploads/batch` reserves 1–16 jobs at once. Each item has a
+  stable `client_upload_id`; retrying it with identical metadata returns the
+  existing reservation. An item-level `error_code` does not invalidate sibling
+  reservations.
+- `POST /api/sync/uploads/complete-batch` finalizes 1–16 upload IDs. Results are
+  per item; retry only failed/transient items. Byte transfer is still
+  per-media, streamed, resumable, and independently acknowledged.
+- Batch endpoints reduce control-plane round trips only. They do not combine
+  media bytes into one request or imply atomic all-or-nothing behavior.
+
+The completion state `pending_processing` means the original has been accepted and
+durably placed in the account library, but catalog/derivative work is not complete.
+The change feed advances it through `processing` to `ready`, or to
+`failed_processing` with a safe error summary. Do not re-upload an item only because it
+is processing or processing failed. `duplicate` means the original was already present
+in the same private library; its device/source provenance is still recorded.
+
+In multi-user mode, server startup scans each private library for durable
+`finalizing`, `pending_processing`, and interrupted `processing` uploads. It
+reconciles the persisted file destination, then resumes catalog work one item at
+a time. The processing mode follows server configuration; when sync AI processing
+is disabled, this recovery only registers media and does not generate embeddings
+or run face/model work. Processing is protected by database-backed per-library
+leases across server processes. Transient failures retry automatically with
+bounded backoff (up to four attempts); terminal `failed_processing` items still
+need an operator/user retry flow, which is not yet exposed.
+
+Finalization is an idempotent operation keyed by server upload ID. The server records a
+`finalizing` intent and destination before its file move. If a completion response is
+lost or the server restarts at that boundary, retry `/complete`; the server validates
+the final file (or remaining temporary file), completes the durable move, and resumes
+catalog registration. If downstream registration is asynchronous, the response stays
+`pending_processing` until the change feed reports its terminal state. An unrecoverable
+missing/corrupt file is a server recovery error, not permission to silently mark the
+client item backed up.
 
 ## Reading changes
 

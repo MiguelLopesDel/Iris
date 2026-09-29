@@ -607,8 +607,21 @@ async def lifespan(app: FastAPI):
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
         )
+        from core.sync_processor import start_pending_upload_recovery
+
+        stop_event, worker = start_pending_upload_recovery(
+            users_db_path=app.state.users_db_path,
+            sync_ai_processing=app.state.sync_ai_processing,
+            load_model=app.state.load_model,
+            on_finished=app.state.backend_registry.invalidate,
+        )
+        app.state.sync_recovery_stop_event = stop_event
+        app.state.sync_recovery_worker = worker
     yield
     if app.state.multiuser_enabled:
+        stop_event = getattr(app.state, "sync_recovery_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
         app.state.backup_service.stop()
     dump()
     try:
@@ -709,21 +722,31 @@ async def authenticate_library_request(request: Request, call_next):
     # redesigned around an account-owned destination.
     if path.startswith("/api/backup/") or path in {"/api/settings", "/api/filesystem", "/api/open-folder"}:
         return Response(status_code=404, content='{"detail":"Indisponível em bibliotecas privadas"}', media_type="application/json")
-    try:
-        backend = request.app.state.backend_registry.get(user.id)
-    except KeyError:
-        session.clear()
-        return Response(status_code=401, content='{"detail":"Sessão inválida"}', media_type="application/json")
+    # Device sync routes are backed directly by the account database and do
+    # not use SearchBackend. Avoid creating it as an authentication side
+    # effect: upload completion invalidates the cached backend so gallery reads
+    # see the new catalog, and eagerly recreating it on the next sync request
+    # reloads the search model for every uploaded item.
+    backend = None
+    if path != "/api/sync" and not path.startswith("/api/sync/"):
+        try:
+            backend = request.app.state.backend_registry.get(user.id)
+        except KeyError:
+            session.clear()
+            return Response(status_code=401, content='{"detail":"Sessão inválida"}', media_type="application/json")
     request.state.iris_user = user
     request.state.iris_device_id = device_id
-    request.state.backend = backend
-    backend_token = _request_backend.set(backend)
+    backend_token = None
+    if backend is not None:
+        request.state.backend = backend
+        backend_token = _request_backend.set(backend)
     user_token = _request_user.set(user)
     try:
         return await call_next(request)
     finally:
         _request_user.reset(user_token)
-        _request_backend.reset(backend_token)
+        if backend_token is not None:
+            _request_backend.reset(backend_token)
 
 
 @app.middleware("http")
@@ -735,6 +758,7 @@ async def log_request(request: Request, call_next):
     media, or a session token.
     """
     request_id = uuid.uuid4().hex[:16]
+    request.state.request_id = request_id
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -755,7 +779,12 @@ async def log_request(request: Request, call_next):
     if access_enabled or response.status_code >= 400:
         user = getattr(request.state, "iris_user", None)
         logger.info(
-            "http_request_completed",
+            "http_request_completed request_id=%s method=%s path=%s status=%d duration_ms=%.1f",
+            request_id,
+            request.method,
+            request_path(request.url.path),
+            response.status_code,
+            duration_ms,
             extra={
                 "event": "http_request_completed",
                 "request_id": request_id,

@@ -5,6 +5,8 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+from core.library_quota import ensure_tables as ensure_library_quota_tables
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -33,6 +35,12 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
         ("source_media_store_id", "TEXT NOT NULL DEFAULT ''"),
         ("source_generation", "INTEGER NOT NULL DEFAULT 0"),
         ("source_media_kind", "TEXT NOT NULL DEFAULT ''"),
+        ("client_upload_id", "TEXT"),
+        ("final_path", "TEXT NOT NULL DEFAULT ''"),
+        ("processing_lease_token", "TEXT"),
+        ("processing_lease_until", "TEXT NOT NULL DEFAULT ''"),
+        ("processing_attempts", "INTEGER NOT NULL DEFAULT 0"),
+        ("processing_next_attempt_at", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in upload_columns:
             conn.execute(f"ALTER TABLE sync_uploads ADD COLUMN {name} {declaration}")
@@ -51,8 +59,20 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
         PRIMARY KEY (media_id, device_id, source_id, media_store_id),
         FOREIGN KEY (media_id) REFERENCES memes(id) ON DELETE CASCADE)"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS sync_processing_leases (
+        lock_name TEXT PRIMARY KEY, owner_token TEXT NOT NULL,
+        lease_until TEXT NOT NULL)"""
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_changes_sequence ON sync_changes(sequence)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_media_origins_source ON media_origins(device_id, source_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_uploads_state ON sync_uploads(state)")
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_uploads_client_id
+        ON sync_uploads(device_id, client_upload_id)
+        WHERE client_upload_id IS NOT NULL"""
+    )
+    ensure_library_quota_tables(conn)
 
 
 def append_change(conn: sqlite3.Connection, entity_type: str, entity_id: str, operation: str, revision: int, payload: dict) -> int:

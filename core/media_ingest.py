@@ -6,8 +6,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from core.indexer_db import init_db, now_iso
-from core.sync_db import append_change, ensure_tables, record_origin
+from core.sync_db import append_change, now_iso, record_origin
 
 
 def ingest_upload_without_ai(
@@ -15,6 +14,7 @@ def ingest_upload_without_ai(
     db_path: Path,
     media_root: Path,
     upload_id: str,
+    processing_lease_token: str,
     file_path: Path,
     on_finished: Callable[[], None] | None = None,
 ) -> dict[str, int | str]:
@@ -24,7 +24,6 @@ def ingest_upload_without_ai(
     only adds the stored original and source metadata to the account catalog;
     thumbnails remain on-demand, and both embedding columns stay NULL.
     """
-    init_db(db_path).close()
     media_root = media_root.resolve()
     file_path = file_path.resolve()
     storage_path = file_path.relative_to(media_root).as_posix()
@@ -32,18 +31,18 @@ def ingest_upload_without_ai(
 
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
+    delete_duplicate_original = False
     try:
-        ensure_tables(connection)
         with connection:
             upload = connection.execute(
                 """SELECT filename, expected_hash, captured_at, device_id,
                           source_id, source_name, source_relative_path, source_volume,
                           source_media_store_id, source_generation, source_media_kind
-                   FROM sync_uploads WHERE id = ?""",
-                (upload_id,),
+                   FROM sync_uploads WHERE id = ? AND processing_lease_token = ?""",
+                (upload_id, processing_lease_token),
             ).fetchone()
             if upload is None:
-                raise ValueError(f"Upload {upload_id} is missing from the sync catalog")
+                raise RuntimeError("Processing lease was lost before catalog commit")
 
             duplicate = connection.execute(
                 "SELECT id FROM memes WHERE content_hash = ? LIMIT 1",
@@ -51,12 +50,14 @@ def ingest_upload_without_ai(
             ).fetchone()
             if duplicate is not None:
                 media_id = int(duplicate["id"])
-                file_path.unlink(missing_ok=True)
                 record_origin(connection, media_id, upload["device_id"], _source(upload))
-                connection.execute(
-                    "UPDATE sync_uploads SET state = 'duplicate', updated_at = ? WHERE id = ?",
-                    (now_iso(), upload_id),
+                changed = connection.execute(
+                    """UPDATE sync_uploads SET state = 'duplicate', updated_at = ?
+                       WHERE id = ? AND processing_lease_token = ?""",
+                    (now_iso(), upload_id, processing_lease_token),
                 )
+                if changed.rowcount != 1:
+                    raise RuntimeError("Processing lease was lost before catalog commit")
                 sequence = append_change(
                     connection,
                     "media",
@@ -66,6 +67,7 @@ def ingest_upload_without_ai(
                     {"upload_id": upload_id, "media_id": media_id, "state": "duplicate"},
                 )
                 state = "duplicate"
+                delete_duplicate_original = True
             else:
                 library = connection.execute(
                     "SELECT id FROM media_libraries WHERE name = 'device-uploads'"
@@ -116,10 +118,13 @@ def ingest_upload_without_ai(
                 )
                 media_id = int(cursor.lastrowid)
                 record_origin(connection, media_id, upload["device_id"], _source(upload))
-                connection.execute(
-                    "UPDATE sync_uploads SET state = 'ready', updated_at = ? WHERE id = ?",
-                    (now_iso(), upload_id),
+                changed = connection.execute(
+                    """UPDATE sync_uploads SET state = 'ready', updated_at = ?
+                       WHERE id = ? AND processing_lease_token = ?""",
+                    (now_iso(), upload_id, processing_lease_token),
                 )
+                if changed.rowcount != 1:
+                    raise RuntimeError("Processing lease was lost before catalog commit")
                 sequence = append_change(
                     connection,
                     "media",
@@ -131,6 +136,9 @@ def ingest_upload_without_ai(
                 state = "ready"
     finally:
         connection.close()
+
+    if delete_duplicate_original:
+        file_path.unlink(missing_ok=True)
 
     if on_finished is not None:
         on_finished()
