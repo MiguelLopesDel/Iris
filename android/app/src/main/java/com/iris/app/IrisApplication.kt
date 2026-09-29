@@ -11,9 +11,12 @@ import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.data.repository.DefaultGalleryDataSource
+import com.iris.app.data.repository.GalleryDataSource
 import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.data.catalog.MediaCatalog
 import com.iris.app.data.catalog.SqliteCatalogStore
+import com.iris.app.data.local.DeviceGalleryReader
 import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.BackgroundSyncPolicy
 import com.iris.app.data.sync.AccountSyncSession
@@ -63,6 +66,9 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
 
     /** On-disk mirror of the catalog, so the gallery paints before the network. */
     lateinit var mediaCatalog: MediaCatalog
+        private set
+
+    lateinit var galleryDataSource: GalleryDataSource
         private set
 
     /** Opt-in, local-only timing summaries shown in Settings diagnostics. */
@@ -131,6 +137,11 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
                 total = response.total,
             )
         }
+        galleryDataSource = DefaultGalleryDataSource(
+            serverRepository = irisRepository,
+            catalog = mediaCatalog,
+            deviceGalleryReader = DeviceGalleryReader(this, contentResolver),
+        )
 
         // Coil's default URI-based cache keys do not distinguish two Iris
         // accounts on the same server. Bind the cache to the current account.

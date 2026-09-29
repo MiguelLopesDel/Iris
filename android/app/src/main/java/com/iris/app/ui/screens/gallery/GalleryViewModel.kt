@@ -3,14 +3,13 @@ package com.iris.app.ui.screens.gallery
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.iris.app.data.catalog.MediaCatalog
-import com.iris.app.data.local.DeviceGalleryReader
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.model.CloudConnectionState
 import com.iris.app.data.model.CloudSyncStatus
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.data.repository.GalleryDataSource
 import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
@@ -47,8 +46,7 @@ data class GalleryUiState(
 class GalleryViewModel(
     private val repository: IrisRepository,
     val performanceMonitor: PerformanceMonitor,
-    private val catalog: MediaCatalog? = null,
-    private val deviceGalleryReader: DeviceGalleryReader? = null,
+    private val galleryDataSource: GalleryDataSource,
     private val settingsRepository: ServerSettingsRepository? = null,
 ) : ViewModel() {
 
@@ -71,7 +69,7 @@ class GalleryViewModel(
         } else {
             // A device can be logged out after process death before the prior
             // logout finished clearing disk. Never hydrate that private mirror.
-            viewModelScope.launch { runCatching { catalog?.clear() } }
+            viewModelScope.launch { runCatching { galleryDataSource.clear() } }
         }
         refreshDeviceMedia()
         refreshOrigins()
@@ -118,7 +116,7 @@ class GalleryViewModel(
                     refresh()
                 } else {
                     clearPrivateRecords()
-                    runCatching { catalog?.clear() }
+            runCatching { galleryDataSource.clear() }
                     checkServerAndLoad()
                 }
             }
@@ -170,17 +168,21 @@ class GalleryViewModel(
      * result replaces this as soon as it lands.
      */
     private fun showMirroredCatalog() {
-        val catalog = catalog ?: return
         val sessionKey = currentSessionKey() ?: return
         viewModelScope.launch {
             if (currentSessionKey() != sessionKey) return@launch
-            runCatching { catalog.activateSession(sessionKey) }
+            runCatching { galleryDataSource.activateSession(sessionKey) }
             if (currentSessionKey() != sessionKey) return@launch
             val cached = runCatching {
-                catalog.cached(offset = 0, limit = MIRROR_FIRST_PAINT, mediaType = _uiState.value.mediaType)
+                galleryDataSource.cachedRecords(
+                    offset = 0,
+                    limit = MIRROR_FIRST_PAINT,
+                    mediaType = _uiState.value.mediaType,
+                )
             }.getOrNull().orEmpty()
             if (cached.isEmpty() || currentSessionKey() != sessionKey) return@launch
-            val cachedTotal = runCatching { catalog.cachedCount(_uiState.value.mediaType) }.getOrDefault(0)
+            val cachedTotal = runCatching { galleryDataSource.cachedCount(_uiState.value.mediaType) }
+                .getOrDefault(0)
             if (currentSessionKey() != sessionKey) return@launch
             _uiState.update { current ->
                 // Never paint over a network result that already arrived.
@@ -200,11 +202,10 @@ class GalleryViewModel(
 
     /** Reads a small MediaStore page independently from account/server state. */
     fun refreshDeviceMedia(page: Int = 1) {
-        val reader = deviceGalleryReader ?: return
         devicePageLoadJob?.cancel()
         devicePageLoadJob = viewModelScope.launch {
             val devicePage = runCatching {
-                reader.page(page, PAGE_SIZE, _uiState.value.mediaType)
+                galleryDataSource.devicePage(page, PAGE_SIZE, _uiState.value.mediaType)
             }.getOrNull() ?: return@launch
             if (!devicePage.permissionGranted) {
                 if (page == 1) {
@@ -363,15 +364,14 @@ class GalleryViewModel(
                 )
             }
 
-            repository.getRecords(
+            galleryDataSource.serverPage(
                 page = page,
                 // A home server has noticeable request latency. One useful batch
                 // plus look-ahead avoids making the user wait at every short scroll.
-                perPage = 24,
+                pageSize = PAGE_SIZE,
                 // Newest-first by capture date, like Google Photos — the gallery
                 // groups pages into date headers and that only stays coherent if
                 // pages arrive in date order.
-                sortBy = "data",
                 mediaType = _uiState.value.mediaType
             ).onSuccess { response ->
                 finishPage()
@@ -381,13 +381,11 @@ class GalleryViewModel(
                 }
                 // One transaction per page, so ordinary scrolling warms the
                 // mirror for the next cold start.
-                catalog?.let { mirror ->
-                    launch {
-                        if (currentSessionKey() == requestedSessionKey) {
-                            runCatching {
-                                mirror.remember(response.records, requestedSessionKey) {
-                                    currentSessionKey() == requestedSessionKey
-                                }
+                launch {
+                    if (currentSessionKey() == requestedSessionKey) {
+                        runCatching {
+                            galleryDataSource.remember(response.records, requestedSessionKey) {
+                                currentSessionKey() == requestedSessionKey
                             }
                         }
                     }
@@ -452,7 +450,7 @@ class GalleryViewModel(
                 error = "AUTH_REQUIRED"
             )
         }
-        runCatching { catalog?.clear() }
+                    runCatching { galleryDataSource.clear() }
     }
 
     private fun clearPrivateRecords() {
@@ -506,13 +504,12 @@ class GalleryViewModel(
     class Factory(
         private val repository: IrisRepository,
         private val performanceMonitor: PerformanceMonitor,
-        private val catalog: MediaCatalog? = null,
-        private val deviceGalleryReader: DeviceGalleryReader? = null,
+        private val galleryDataSource: GalleryDataSource,
         private val settingsRepository: ServerSettingsRepository? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return GalleryViewModel(repository, performanceMonitor, catalog, deviceGalleryReader, settingsRepository) as T
+            return GalleryViewModel(repository, performanceMonitor, galleryDataSource, settingsRepository) as T
         }
     }
 }

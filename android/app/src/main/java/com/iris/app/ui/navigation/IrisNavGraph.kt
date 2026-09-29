@@ -37,7 +37,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import com.iris.app.IrisApplication
-import com.iris.app.data.local.DeviceGalleryReader
 import com.iris.app.ui.screens.collections.CollectionMediaScreen
 import com.iris.app.ui.screens.collections.CollectionMediaViewModel
 import com.iris.app.ui.screens.collections.CollectionsScreen
@@ -214,8 +213,7 @@ fun IrisNavGraph(
                     factory = GalleryViewModel.Factory(
                         application.irisRepository,
                         application.performanceMonitor,
-                        application.mediaCatalog,
-                        DeviceGalleryReader(application, application.contentResolver),
+                        application.galleryDataSource,
                         application.settingsRepository
                     )
                 )
