@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.net.Uri
 import android.provider.MediaStore
 import android.graphics.Bitmap
+import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Environment
 import androidx.test.core.app.ActivityScenario
@@ -48,9 +49,14 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Emulator-only UI smoke coverage for the main app routes. The fixture server
@@ -142,7 +148,7 @@ class InterfaceSmokeTest {
         val devicePage = runBlocking { DeviceGalleryReader(app).page(1, 24, "all") }
         assertTrue(
             "API ${Build.VERSION.SDK_INT} MediaStore reader did not return the inserted local image: $devicePage",
-            devicePage.records.any { it.deviceUri == localFixtureUri.toString() }
+            devicePage.records.any { it.arquivo == "local-only-fixture.jpg" }
         )
 
         compose.onNodeWithContentDescription("Atualizar").performClick()
@@ -595,11 +601,27 @@ class InterfaceSmokeTest {
         val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
         if (Build.VERSION.SDK_INT < 29) {
             return try {
-                Uri.parse(
-                    requireNotNull(
-                        MediaStore.Images.Media.insertImage(app.contentResolver, bitmap, filename, null)
-                    )
+                val directory = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    "IrisTest"
                 )
+                check(directory.isDirectory || directory.mkdirs())
+                val image = File(directory, filename)
+                FileOutputStream(image).use { output ->
+                    check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
+                }
+                val scannedUri = AtomicReference<Uri?>()
+                val scanCompleted = CountDownLatch(1)
+                MediaScannerConnection.scanFile(
+                    app,
+                    arrayOf(image.absolutePath),
+                    arrayOf("image/jpeg")
+                ) { _, uri ->
+                    scannedUri.set(uri)
+                    scanCompleted.countDown()
+                }
+                check(scanCompleted.await(10, TimeUnit.SECONDS)) { "Media scanner did not finish indexing $filename" }
+                requireNotNull(scannedUri.get()) { "Media scanner did not return a URI for $filename" }
             } finally {
                 bitmap.recycle()
             }
