@@ -13,7 +13,11 @@ certificado, mas nada no servidor sabe disso.
 
 ## Pré-requisitos
 
-- Linux com Docker Engine e Docker Compose v2;
+- Linux x86_64 com Docker Engine, Docker Compose v2, `git` e `curl`. Não é
+  preciso Python, PyTorch nem CUDA no host: tudo vem na imagem
+  `ghcr.io/miguellopesdel/iris`;
+- opcional, para GPU NVIDIA: placa RTX 20 ou mais nova, driver >= 580 e o
+  [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html);
 - uma forma de alcançar `127.0.0.1:8501` do host a partir dos seus aparelhos
   (ver "Acesso remoto"); o guia usa Tailscale como exemplo, mas qualquer VPN,
   malha ou proxy reverso serve;
@@ -22,10 +26,15 @@ certificado, mas nada no servidor sabe disso.
 
 ## Instalação
 
+Em resumo, são quatro passos: instalar, criar a conta administradora
+(["Ativar contas"](#ativar-contas)), escolher como seus aparelhos chegam ao
+servidor (["Acesso remoto privado"](#acesso-remoto-privado)) e conferir o destino
+dos backups (["Backup, restauração e atualização"](#backup-restauração-e-atualização)).
+
 ```bash
 git clone https://github.com/MiguelLopesDel/Iris.git
 cd Iris
-./scripts/server.sh install
+./scripts/server.sh install          # com GPU NVIDIA: ./scripts/server.sh install --gpu
 ```
 
 O instalador verifica Docker Compose, cria `.env` com o UID/GID do usuário atual,
@@ -35,9 +44,12 @@ prepara `data/` e `media/` com permissão `0700`, baixa a imagem publicada
 O container roda com o UID/GID do `.env`, então `data/` e `media/` continuam
 pertencendo ao seu usuário.
 
-Com GPU NVIDIA (driver ≥ 580 e NVIDIA Container Toolkit instalados), descomente
-`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` no `.env` antes de
-instalar: todos os comandos passam a usar a imagem `-cuda`. Para configuração avançada, edite `.env` antes ou depois da instalação.
+Com `--gpu`, o instalador grava
+`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` no `.env`, e todos os
+comandos seguintes (`status`, `update`, `backup`…) passam a usar a imagem `-cuda`
+com acesso à GPU. Rodar `install --gpu` numa instalação CPU existente faz a
+troca. Os modelos de IA (~10 GB) são baixados no primeiro uso e ficam em volumes
+do Docker, preservados entre atualizações. Para configuração avançada, edite `.env` antes ou depois da instalação.
 
 O mesmo `.env` define os limites por conta. Os padrões são deliberadamente altos:
 32 GiB por arquivo, 10.000 arquivos por envio, 10 TiB por biblioteca e 500 milhões
@@ -155,7 +167,8 @@ sudo tailscale serve --bg http://127.0.0.1:8501
 tailscale serve status
 ```
 
-Use o endereço `.ts.net` que ele mostrar. Não use o IP da malha seguido de
+Use o endereço `https://<servidor>.<tailnet>.ts.net` que ele mostrar, no
+navegador ou como URL do servidor no app Android. Não use o IP da malha seguido de
 `:8501`: o Docker atende deliberadamente só no host local. Em ZeroTier ou Nebula,
 onde não há equivalente do `serve`, ligue o Docker à interface da malha em vez de
 `127.0.0.1` — ali o alcance já está limitado a quem entrou na rede.
