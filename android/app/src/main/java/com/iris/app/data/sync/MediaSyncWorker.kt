@@ -16,10 +16,18 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.iris.app.IrisApplication
 import com.iris.app.data.model.MediaScanPolicy
+import com.iris.app.data.model.SyncRunOutcome
+import com.iris.app.data.model.SyncRunTrigger
 import com.iris.app.data.repository.ServerSettingsRepository.AccountSyncSettings
 import com.iris.app.performance.Metric
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
 
@@ -49,6 +57,27 @@ class MediaSyncWorker(
                 )
             }
         }
+        val isPeriodic = inputData.getBoolean(PERIODIC_SYNC_KEY, false)
+        val forceScan = inputData.getBoolean(FORCE_SCAN_KEY, false)
+        val recorder = SyncRunRecorder(app.dbHelper, app.syncUploadManager.speedMeter, accountKey)
+        recorder.start(
+            trigger = when {
+                forceScan -> SyncRunTrigger.MANUAL
+                isPeriodic -> SyncRunTrigger.PERIODIC
+                else -> SyncRunTrigger.AUTOMATIC
+            },
+            startedInForeground = app.isAppInForeground,
+        )
+        val checkpoints = CoroutineScope(coroutineContext).launch {
+            while (true) {
+                delay(RUN_CHECKPOINT_MILLIS)
+                recorder.checkpoint()
+            }
+        }
+        var outcome = SyncRunOutcome.RETRY
+        var outcomeDetail: String? = null
+        var outcomeStopReason: Int? = null
+
         var stage = "load_settings"
         try {
             ensureSession(app, sessionIdentity, accountKey)
@@ -64,11 +93,11 @@ class MediaSyncWorker(
             if (healthResult.isFailure) {
                 Log.w(TAG, "Background sync retry stage=$stage error=${healthResult.exceptionOrNull()?.javaClass?.simpleName ?: "Unknown"}")
                 app.settingsRepository.markCloudUnavailable(accountKey)
+                outcomeDetail = "server_unreachable"
                 return Result.retry()
             }
             app.settingsRepository.markCloudConnected(accountKey)
 
-            val isPeriodic = inputData.getBoolean(PERIODIC_SYNC_KEY, false)
             val canRunMediaWork = !isPeriodic || BackgroundSyncPolicy.shouldRunMediaWork(
                 wifiOnly = syncSettings.wifiOnly,
                 chargingOnly = syncSettings.chargingOnly,
@@ -79,7 +108,13 @@ class MediaSyncWorker(
             // 2. Discover new media and drain the durable queue together. This
             // lets the first new or already-pending item upload while the rest
             // of MediaStore is still being scanned and hashed.
-            val forceScan = inputData.getBoolean(FORCE_SCAN_KEY, false)
+            if (!canRunMediaWork) {
+                outcomeDetail = when {
+                    syncSettings.wifiOnly && isActiveNetworkMetered(applicationContext) -> "wifi_required"
+                    syncSettings.chargingOnly && !isCharging(applicationContext) -> "charging_required"
+                    else -> "constraints"
+                }
+            }
             val shouldProcessMediaQueue = BackgroundSyncPolicy.shouldProcessMediaQueue(
                 allowedByConstraints = canRunMediaWork,
                 autoBackupEnabled = syncSettings.autoBackupEnabled,
@@ -143,16 +178,25 @@ class MediaSyncWorker(
 
             if (queueCompleted) {
                 app.settingsRepository.markCloudSyncSucceeded(accountKey)
+                outcome = if (canRunMediaWork) SyncRunOutcome.COMPLETED else SyncRunOutcome.SKIPPED
                 return Result.success()
             }
             stage = "upload_queue"
             Log.w(TAG, "Background sync retry stage=$stage reason=upload_queue_incomplete")
             app.settingsRepository.markCloudSyncFailed(accountKey)
+            outcomeDetail = "upload_incomplete"
             return Result.retry()
         } catch (cancelled: CancellationException) {
+            outcome = SyncRunOutcome.STOPPED
+            if (isStopped) {
+                outcomeStopReason = stopReason
+            } else {
+                outcomeDetail = "session_changed"
+            }
             throw cancelled
         } catch (e: Exception) {
             Log.w(TAG, "Background sync retry stage=$stage error=${e.javaClass.simpleName}")
+            outcomeDetail = "error_${stage}_${e.javaClass.simpleName}"
             // A local file/queue failure is not proof the server is offline.
             // Re-probe to distinguish it from a host that went away mid-sync.
             if (syncSession.matches(
@@ -165,6 +209,12 @@ class MediaSyncWorker(
                 else app.settingsRepository.markCloudUnavailable(accountKey)
             }
             return Result.retry()
+        } finally {
+            checkpoints.cancel()
+            withContext(NonCancellable) {
+                runCatching { recorder.finish(outcome, outcomeStopReason, outcomeDetail) }
+                    .onFailure { Log.w(TAG, "Sync history not saved error=${it.javaClass.simpleName}") }
+            }
         }
     }
 
@@ -191,6 +241,7 @@ class MediaSyncWorker(
         private const val ONE_TIME_WORK_TAG = "iris_immediate_sync"
         private const val FORCE_SCAN_KEY = "force_media_scan"
         private const val PERIODIC_SYNC_KEY = "periodic_cloud_sync"
+        private const val RUN_CHECKPOINT_MILLIS = 15_000L
 
         fun schedulePeriodic(context: Context) {
             val constraints = Constraints.Builder()

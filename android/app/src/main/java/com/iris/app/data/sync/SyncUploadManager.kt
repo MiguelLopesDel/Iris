@@ -34,6 +34,8 @@ class SyncUploadManager(
     private val maxConcurrentUploads: Int = MAX_CONCURRENT_UPLOADS,
     private val uploadInitMaxBatchSize: Int = UploadInitBatcher.MAX_BATCH_SIZE,
     private val uploadInitCoalesceWindowMillis: Long = UploadInitBatcher.COALESCE_WINDOW_MILLIS,
+    /** Always-on throughput of the current or last queue run, for the sync screen and history. */
+    val speedMeter: UploadSpeedMeter = UploadSpeedMeter(),
     private val apiServiceProvider: (String) -> IrisApiService
 ) {
 
@@ -108,6 +110,7 @@ class SyncUploadManager(
             return@withContext false
         }
         _isUploading.value = true
+        speedMeter.startRun()
         val queueStartedAtNanos = System.nanoTime()
         val acknowledgedBytes = AtomicLong(0L)
         val confirmedItems = AtomicLong(0L)
@@ -145,7 +148,10 @@ class SyncUploadManager(
                         isSessionCurrent = isSessionCurrent,
                     ),
                     observer = ResumableUploadTransfer.Observer(
-                        onBytesAcknowledged = { bytes -> acknowledgedBytes.addAndGet(bytes) },
+                        onBytesAcknowledged = { bytes ->
+                            acknowledgedBytes.addAndGet(bytes)
+                            speedMeter.recordAcknowledged(bytes)
+                        },
                         beginPayloadRequest = { transferActivity?.beginRequest() ?: {} },
                         onProgress = ::updateProgress,
                     ),
@@ -191,6 +197,7 @@ class SyncUploadManager(
                                     val itemConfirmed = transfer.execute(nextJob)
                                     if (itemConfirmed) {
                                         confirmedItems.incrementAndGet()
+                                        speedMeter.recordConfirmedItem()
                                     } else {
                                         // Stop claiming more work on any transient
                                         // failure. Other already-active jobs may
@@ -220,6 +227,7 @@ class SyncUploadManager(
             }
             !retryRequested.get()
         } finally {
+            speedMeter.finishRun()
             _isUploading.value = false
             synchronized(progressLock) {
                 activeProgress.clear()

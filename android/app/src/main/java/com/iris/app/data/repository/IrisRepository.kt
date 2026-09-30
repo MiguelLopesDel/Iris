@@ -6,6 +6,8 @@ import com.iris.app.data.model.DeviceLoginResponse
 import com.iris.app.data.model.IrisCollection
 import com.iris.app.data.model.IrisConcept
 import com.iris.app.data.model.LocalUploadJob
+import com.iris.app.data.model.SyncRun
+import com.iris.app.data.sync.ServerSpeedTest
 import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.MediaScanPolicy
@@ -100,6 +102,25 @@ class IrisRepository(
     suspend fun getUploadQueueCounts(): Map<UploadJobState, Int> {
         val accountKey = credentialsStore.accountIdentity.value ?: return emptyMap()
         return dbHelper.countsByState(accountKey)
+    }
+
+    suspend fun getRemainingUploadBytes(): Long {
+        val accountKey = credentialsStore.accountIdentity.value ?: return 0L
+        return dbHelper.remainingUploadBytes(accountKey)
+    }
+
+    suspend fun getRecentSyncRuns(limit: Int): List<SyncRun> {
+        val accountKey = credentialsStore.accountIdentity.value ?: return emptyList()
+        return dbHelper.recentSyncRuns(accountKey, limit)
+    }
+
+    /** Measures this device's path to the server; see [ServerSpeedTest]. */
+    suspend fun runServerSpeedTest(
+        onResult: (ServerSpeedTest.Result) -> Unit
+    ): Result<List<ServerSpeedTest.Result>> = runCatchingCancellable {
+        val sessionIdentity = credentialsStore.sessionIdentity.value
+            ?: error("Faça login antes de medir a velocidade")
+        ServerSpeedTest().run(apiClient.apiServiceForSession(sessionIdentity), onResult)
     }
 
     suspend fun getUnassignedPendingUploadCount(): Int =

@@ -5,6 +5,9 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.iris.app.data.model.LocalUploadJob
+import com.iris.app.data.model.SyncRun
+import com.iris.app.data.model.SyncRunOutcome
+import com.iris.app.data.model.SyncRunTrigger
 import com.iris.app.data.model.UploadJobState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -48,6 +51,7 @@ class UploadDatabaseHelper(
     override fun onCreate(db: SQLiteDatabase) {
         createUploadJobsTable(db)
         createSyncCursorsTable(db)
+        createSyncRunsTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -112,6 +116,9 @@ class UploadDatabaseHelper(
                 """.trimIndent()
             )
             db.execSQL("DROP TABLE upload_jobs_v3")
+        }
+        if (oldVersion < 5) {
+            createSyncRunsTable(db)
         }
     }
 
@@ -361,6 +368,129 @@ class UploadDatabaseHelper(
         }
     }
 
+    /** Bytes still to send for queued and in-flight jobs, for the time-remaining estimate. */
+    suspend fun remainingUploadBytes(accountKey: String): Long = withContext(Dispatchers.IO) {
+        require(accountKey.isNotBlank()) { "An account key is required to read upload jobs" }
+        readableDatabase.rawQuery(
+            "SELECT COALESCE(SUM(MAX(byte_size - next_byte_offset, 0)), 0) FROM upload_jobs " +
+                "WHERE account_key = ? AND state IN ('QUEUED', 'UPLOADING')",
+            arrayOf(accountKey)
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+    }
+
+    suspend fun insertSyncRun(
+        accountKey: String,
+        startedAtMillis: Long,
+        trigger: SyncRunTrigger,
+        startedInForeground: Boolean,
+    ): Long = withContext(Dispatchers.IO) {
+        require(accountKey.isNotBlank()) { "An account key is required to record a sync run" }
+        writeMutex.withLock {
+            val db = writableDatabase
+            db.beginTransactionNonExclusive()
+            try {
+                val id = db.insertOrThrow("sync_runs", null, ContentValues().apply {
+                    put("account_key", accountKey)
+                    put("started_at", startedAtMillis)
+                    put("run_trigger", trigger.name)
+                    put("started_in_foreground", if (startedInForeground) 1 else 0)
+                    put("outcome", SyncRunOutcome.RUNNING.name)
+                })
+                // History is a window, not an archive: keep the newest runs only.
+                db.execSQL(
+                    "DELETE FROM sync_runs WHERE account_key = ? AND id NOT IN " +
+                        "(SELECT id FROM sync_runs WHERE account_key = ? ORDER BY id DESC LIMIT ?)",
+                    arrayOf<Any>(accountKey, accountKey, SYNC_RUN_HISTORY_LIMIT)
+                )
+                db.setTransactionSuccessful()
+                id
+            } finally {
+                db.endTransaction()
+            }
+        }
+    }
+
+    /** Saves progress mid-run, so a run whose process is killed still shows what it sent. */
+    suspend fun updateSyncRunProgress(
+        accountKey: String,
+        id: Long,
+        bytes: Long,
+        items: Long,
+        uploadMillis: Long,
+    ) = withContext(Dispatchers.IO) {
+        writableDatabase.update("sync_runs", ContentValues().apply {
+            put("bytes", bytes)
+            put("items", items)
+            put("upload_millis", uploadMillis)
+        }, "id = ? AND account_key = ? AND outcome = ?", arrayOf(id.toString(), accountKey, SyncRunOutcome.RUNNING.name))
+    }
+
+    suspend fun finishSyncRun(
+        accountKey: String,
+        id: Long,
+        endedAtMillis: Long,
+        bytes: Long,
+        items: Long,
+        uploadMillis: Long,
+        outcome: SyncRunOutcome,
+        stopReason: Int?,
+        detail: String?,
+    ) = withContext(Dispatchers.IO) {
+        writableDatabase.update("sync_runs", ContentValues().apply {
+            put("ended_at", endedAtMillis)
+            put("bytes", bytes)
+            put("items", items)
+            put("upload_millis", uploadMillis)
+            put("outcome", outcome.name)
+            if (stopReason != null) put("stop_reason", stopReason) else putNull("stop_reason")
+            if (detail != null) put("detail", detail) else putNull("detail")
+        }, "id = ? AND account_key = ?", arrayOf(id.toString(), accountKey))
+    }
+
+    /** Drops a run that had nothing to do, so idle periodic checks do not bury real ones. */
+    suspend fun deleteSyncRun(accountKey: String, id: Long) = withContext(Dispatchers.IO) {
+        writableDatabase.delete("sync_runs", "id = ? AND account_key = ?", arrayOf(id.toString(), accountKey))
+    }
+
+    suspend fun deleteOtherSyncRuns(accountKey: String, outcome: SyncRunOutcome, keepId: Long) =
+        withContext(Dispatchers.IO) {
+            writableDatabase.delete(
+                "sync_runs",
+                "account_key = ? AND outcome = ? AND id != ?",
+                arrayOf(accountKey, outcome.name, keepId.toString())
+            )
+        }
+
+    suspend fun recentSyncRuns(accountKey: String, limit: Int): List<SyncRun> = withContext(Dispatchers.IO) {
+        require(accountKey.isNotBlank()) { "An account key is required to read sync runs" }
+        val runs = mutableListOf<SyncRun>()
+        readableDatabase.rawQuery(
+            "SELECT id, started_at, ended_at, run_trigger, started_in_foreground, bytes, items, " +
+                "upload_millis, outcome, stop_reason, detail FROM sync_runs " +
+                "WHERE account_key = ? ORDER BY id DESC LIMIT ?",
+            arrayOf(accountKey, limit.coerceAtLeast(0).toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                runs += SyncRun(
+                    id = cursor.getLong(0),
+                    startedAtMillis = cursor.getLong(1),
+                    endedAtMillis = if (cursor.isNull(2)) null else cursor.getLong(2),
+                    trigger = runCatching { SyncRunTrigger.valueOf(cursor.getString(3)) }
+                        .getOrDefault(SyncRunTrigger.AUTOMATIC),
+                    startedInForeground = cursor.getInt(4) != 0,
+                    bytes = cursor.getLong(5),
+                    items = cursor.getLong(6),
+                    uploadMillis = cursor.getLong(7),
+                    outcome = runCatching { SyncRunOutcome.valueOf(cursor.getString(8)) }
+                        .getOrDefault(SyncRunOutcome.RUNNING),
+                    stopReason = if (cursor.isNull(9)) null else cursor.getInt(9),
+                    detail = if (cursor.isNull(10)) null else cursor.getString(10),
+                )
+            }
+        }
+        runs
+    }
+
     suspend fun countUnassignedPendingJobs(): Int = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM upload_jobs WHERE account_key IS NULL AND state IN ('QUEUED', 'UPLOADING')",
@@ -402,7 +532,8 @@ class UploadDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 5
+        const val SYNC_RUN_HISTORY_LIMIT = 50
         private const val JOB_COLUMNS =
             "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind FROM upload_jobs"
 
@@ -444,6 +575,28 @@ class UploadDatabaseHelper(
             db.execSQL("DROP INDEX IF EXISTS idx_upload_jobs_account_uri")
             db.execSQL("DROP INDEX IF EXISTS idx_upload_jobs_account_id")
             db.execSQL("DROP INDEX IF EXISTS idx_upload_jobs_account_state_id")
+        }
+
+        private fun createSyncRunsTable(db: SQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE sync_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_key TEXT NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    ended_at INTEGER,
+                    run_trigger TEXT NOT NULL,
+                    started_in_foreground INTEGER NOT NULL,
+                    bytes INTEGER NOT NULL DEFAULT 0,
+                    items INTEGER NOT NULL DEFAULT 0,
+                    upload_millis INTEGER NOT NULL DEFAULT 0,
+                    outcome TEXT NOT NULL,
+                    stop_reason INTEGER,
+                    detail TEXT
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX idx_sync_runs_account_id ON sync_runs(account_key, id)")
         }
 
         private fun createSyncCursorsTable(db: SQLiteDatabase) {

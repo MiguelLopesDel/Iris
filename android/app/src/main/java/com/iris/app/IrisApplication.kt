@@ -1,6 +1,8 @@
 package com.iris.app
 
+import android.app.Activity
 import android.app.Application
+import android.os.Bundle
 import androidx.work.Configuration
 import coil.ImageLoader
 import coil.ImageLoaderFactory
@@ -71,6 +73,15 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
     lateinit var galleryDataSource: GalleryDataSource
         private set
 
+    private var startedActivities = 0
+
+    /**
+     * Whether any activity is visible. The sync history records it at the start
+     * of each run, which is how a run with the app closed is told apart.
+     */
+    val isAppInForeground: Boolean
+        get() = synchronized(this) { startedActivities > 0 }
+
     /** Opt-in, local-only timing summaries shown in Settings diagnostics. */
     val performanceMonitor = PerformanceMonitor()
 
@@ -84,6 +95,23 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
     override fun onCreate() {
         super.onCreate()
         instance = this
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityStarted(activity: Activity) {
+                synchronized(this@IrisApplication) { startedActivities++ }
+            }
+
+            override fun onActivityStopped(activity: Activity) {
+                synchronized(this@IrisApplication) {
+                    startedActivities = (startedActivities - 1).coerceAtLeast(0)
+                }
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityResumed(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        })
 
         credentialsStore = DeviceCredentialsStore(this)
         settingsRepository = ServerSettingsRepository(this)
