@@ -37,6 +37,16 @@ def test_cpu_image_installs_the_cpu_onnx_runtime():
     assert "onnxruntime==" in requirements
 
 
+def test_image_is_published_and_runs_as_the_host_user():
+    compose = (ROOT / "docker-compose.yml").read_text()
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+    assert "image: ${IRIS_IMAGE:-ghcr.io/miguellopesdel/iris}:${IRIS_VERSION:-latest}" in compose
+    assert 'user: "${IRIS_UID:-1000}:${IRIS_GID:-1000}"' in compose
+    assert "ghcr.io/miguellopesdel/iris" in release
+    assert "IRIS_PROFILE=${{ matrix.profile }}" in release
+    assert "./scripts/test_release.sh" in release
+
+
 def test_docker_context_excludes_android_sdk_and_emulator_data():
     dockerignore = (ROOT / ".dockerignore").read_text()
     assert ".android-sdk/" in dockerignore

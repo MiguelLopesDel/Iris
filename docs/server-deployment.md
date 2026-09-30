@@ -29,8 +29,15 @@ cd Iris
 ```
 
 O instalador verifica Docker Compose, cria `.env` com o UID/GID do usuário atual,
-prepara `data/` e `media/` com permissão `0700`, constrói o container e espera o
-health check. Para configuração avançada, edite `.env` antes ou depois da instalação.
+prepara `data/` e `media/` com permissão `0700`, baixa a imagem publicada
+(`ghcr.io/miguellopesdel/iris`) e espera o health check. Se a versão pedida em
+`IRIS_VERSION` não tiver imagem publicada, ele a constrói a partir do checkout.
+O container roda com o UID/GID do `.env`, então `data/` e `media/` continuam
+pertencendo ao seu usuário.
+
+Com GPU NVIDIA (driver ≥ 580 e NVIDIA Container Toolkit instalados), descomente
+`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` no `.env` antes de
+instalar: todos os comandos passam a usar a imagem `-cuda`. Para configuração avançada, edite `.env` antes ou depois da instalação.
 
 O mesmo `.env` define os limites por conta. Os padrões são deliberadamente altos:
 32 GiB por arquivo, 10.000 arquivos por envio, 10 TiB por biblioteca e 500 milhões
@@ -243,11 +250,13 @@ Os backups antigos não são apagados automaticamente; remova-os quando quiser.
 ./scripts/server.sh status
 ```
 
-Com `IRIS_BACKUP_DIR` definido, o update faz um backup antes de atualizar. Ele
-exige uma árvore Git limpa e usa `git pull --ff-only`, evitando merges surpresa.
-Guarde o commit atual (`git rev-parse HEAD`); se for preciso voltar, retorne a
-ele, execute `docker compose up -d --build` e, se o esquema dos dados tiver
-mudado, restaure o backup feito antes do update.
+Com `IRIS_BACKUP_DIR` definido, o update faz um backup antes de atualizar. Num
+checkout Git, ele exige uma árvore limpa e usa `git pull --ff-only`, evitando
+merges surpresa; depois baixa a imagem de `IRIS_VERSION`. Com `IRIS_VERSION=latest`
+cada update segue o último release; para controlar quando atualizar, fixe uma
+versão (por exemplo `IRIS_VERSION=0.4.0`) e troque-a quando quiser. Para voltar,
+restaure a versão anterior em `IRIS_VERSION`, execute `./scripts/server.sh update`
+e, se o esquema dos dados tiver mudado, restaure o backup feito antes do update.
 
 O Iris mantém fotos em texto claro no servidor para gerar busca, pessoas e
 duplicatas. Contas isolam pessoas entre si, mas quem controla o host/Docker pode
