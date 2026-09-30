@@ -33,6 +33,9 @@ from core.users_db import IrisUser
 _MAX_CHUNK_BYTES = 32 * 1024 * 1024
 _MAX_UPLOAD_INIT_BATCH = 16
 _UPLOAD_DISK_BUFFER_BYTES = 1024 * 1024
+# A speed test measures a path, not a library: large enough for a stable rate
+# over a home connection, small enough that it cannot fill a disk.
+SPEED_TEST_MAX_BYTES = 256 * 1024 * 1024
 _UPLOAD_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
@@ -337,6 +340,63 @@ class SyncUploadService:
                 )
         log_phase("chunk_durable", phase_started, bytes=received, state="durable")
         return {"upload_id": upload_id, "offset": offset + received}
+
+    async def receive_speed_test(
+        self,
+        user: IrisUser,
+        device_id: str | None,
+        *,
+        write_to_disk: bool,
+        content_length: int,
+        stream: AsyncIterable[bytes],
+    ) -> dict[str, Any]:
+        """Receive a synthetic payload that is never stored as media.
+
+        Without ``write_to_disk`` the bytes are dropped, measuring network and
+        HTTP alone. With it they go through the same buffered write and fsync
+        as an upload chunk into a scratch file, so the difference between the
+        two runs is the cost of this server's storage.
+        """
+        if not device_id:
+            raise SyncUploadError(403, "Use uma sessão de dispositivo para medir a velocidade")
+        if content_length > SPEED_TEST_MAX_BYTES:
+            raise SyncUploadError(413, "Teste de velocidade excede o limite")
+        started = time.perf_counter()
+        received = 0
+        scratch: Path | None = None
+        output = None
+        try:
+            if write_to_disk:
+                scratch = user.db_path.parent / "sync_uploads" / f"speedtest-{uuid.uuid4().hex}.part"
+                scratch.parent.mkdir(parents=True, exist_ok=True)
+                output = scratch.open("wb")
+            pending = bytearray()
+            async for chunk in stream:
+                received += len(chunk)
+                if received > SPEED_TEST_MAX_BYTES:
+                    raise SyncUploadError(413, "Teste de velocidade excede o limite")
+                if output is None:
+                    continue
+                pending.extend(chunk)
+                if len(pending) >= _UPLOAD_DISK_BUFFER_BYTES:
+                    await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
+                    pending.clear()
+            if output is not None:
+                if pending:
+                    await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
+                await run_in_threadpool(_flush_upload_buffer, output)
+        finally:
+            if output is not None:
+                await run_in_threadpool(output.close)
+            if scratch is not None:
+                # A scratch file of synthetic bytes, never media: it is removed
+                # outright rather than sent to any trash.
+                scratch.unlink(missing_ok=True)
+        return {
+            "bytes": received,
+            "server_seconds": round(time.perf_counter() - started, 4),
+            "mode": "disk" if write_to_disk else "discard",
+        }
 
     async def complete_upload(
         self,

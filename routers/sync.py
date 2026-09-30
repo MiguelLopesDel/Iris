@@ -166,6 +166,22 @@ def _finished_callback(request: Request, user_id: int):
     return lambda: request.app.state.backend_registry.invalidate(user_id)
 
 
+@router.post("/speedtest")
+async def speed_test(request: Request, mode: str = Query("discard", pattern="^(discard|disk)$")):
+    """Let a device measure its path to this server with bytes that are never kept."""
+    user = _user(request)
+    try:
+        return await _upload_service(request).receive_speed_test(
+            user,
+            getattr(request.state, "iris_device_id", None),
+            write_to_disk=mode == "disk",
+            content_length=int(request.headers.get("content-length", "0") or 0),
+            stream=request.stream(),
+        )
+    except SyncUploadError as exc:
+        _raise_http(exc)
+
+
 @router.post("/uploads/{upload_id}/complete")
 async def complete_upload(request: Request, upload_id: str):
     user = _user(request)
