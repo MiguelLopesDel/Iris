@@ -171,6 +171,7 @@ fun IrisNavGraph(
                         NavigationBarItem(
                             selected = selected,
                             onClick = {
+                                if (selected) return@NavigationBarItem
                                 navigationFinishes[item.route] = application.performanceMonitor.begin(
                                     item.navigationMetric()
                                 )
