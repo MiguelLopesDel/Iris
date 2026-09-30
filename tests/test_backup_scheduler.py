@@ -177,6 +177,7 @@ import time
 from pathlib import Path
 from fastapi.testclient import TestClient
 from core.auth import hash_password
+from core.instance_backup import iris_version
 from core.users_db import create_user
 
 data = Path("data")
@@ -206,7 +207,7 @@ with TestClient(server.app) as root, TestClient(server.app) as ana:
     run = state["runs"][0]
     assert (run["status"], run["trigger"], run["pinned"]) == ("ok", "manual", True), run
     [snapshot] = state["snapshots"]
-    assert snapshot["iris_version"] == "0.3.0" and snapshot["iris_commit"] == "cafe123"
+    assert snapshot["iris_version"] == iris_version() and snapshot["iris_commit"] == "cafe123"
     assert snapshot["retention_label"] == "guardado para sempre"
 
     saved = root.put("/api/admin/settings", json={"backup_schedule": "off"})

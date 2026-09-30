@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iris-media"
-version = "0.3.0"
+version = "0.4.0"
 description = "Self-hosted multi-account photo and video library."
 requires-python = ">=3.13,<3.14"
 # This repository is an application, not a portable Python library. Runtime
