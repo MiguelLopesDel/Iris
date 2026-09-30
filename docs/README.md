@@ -25,6 +25,8 @@ exista; confira também os contratos e testes da área antes de alterar código.
 - [Contribuir e configurar o ambiente](../CONTRIBUTING.md).
 - [Testes e diagnóstico](testing.md) — verificações rápidas, smoke tests e
   release.
+- [Fluxo de testes Android](android-testing-workflow.md) — ciclo rápido,
+  app de laboratório isolado, automação de UI e uso seguro de aparelho físico.
 - [Testes de desempenho](performance-testing.md) — ferramentas, cargas e limites
   das medições.
 - [Prontidão do piloto](pilot-readiness.md) — validações operacionais pendentes.

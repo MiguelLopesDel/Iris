@@ -1,0 +1,5 @@
+appId: com.iris.app.lab
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Galeria"

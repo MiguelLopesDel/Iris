@@ -32,6 +32,8 @@ android {
         }
     }
 
+    testBuildType = "lab"
+
     buildTypes {
         getByName("debug") {
             val defaultUrl = configuredIrisServerUrl.ifBlank { "http://10.0.2.2:8000/" }
@@ -40,6 +42,12 @@ android {
                 "IRIS_DEFAULT_SERVER_URL",
                 "\"${escapeBuildConfigString(defaultUrl)}\""
             )
+        }
+        create("lab") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".lab"
+            matchingFallbacks += listOf("debug")
+            isDebuggable = true
         }
         release {
             buildConfigField(

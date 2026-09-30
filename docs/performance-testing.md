@@ -238,9 +238,10 @@ de I/O do processo são específicas do Uvicorn; host/cgroup podem conter ativid
 concorrente e não devem ser atribuídos integralmente ao servidor.
 
 O benchmark cria arquivos de teste no MediaStore do AVD e os remove ao final. Não
-usa mídia pessoal. A instalação/teste deve ser serializada no emulador; não use
-`gradlew connectedDebugAndroidTest` neste caso, pois o Gradle pode descobrir e tentar
-instalar nos telefones físicos conectados. O comando acima fixa `adb -s` no AVD. O
+usa mídia pessoal. A instalação/teste deve ser serializada no emulador. O script
+instala o app e o APK de instrumentação da variante isolada `lab` e fixa `adb -s`
+no primeiro serial `emulator-*`; não execute diretamente tarefas Gradle de
+instrumentação quando houver telefones físicos conectados. O
 teste AVD passou (1/1). Uma tentativa anterior do Gradle enumerou também um telefone,
 cuja instalação foi cancelada pelo Android (`INSTALL_FAILED_USER_RESTRICTED`); zero
 testes rodaram nesse aparelho, e nenhum resultado físico foi coletado.

@@ -87,16 +87,78 @@ background job, and persisted queue.
 
 ## Common workflows
 
+### Change, integration, and release workflow
+
+- Keep `main` as the only permanent development branch. Start each task from an
+  up-to-date `main` on a short-lived `feat/...`, `fix/...`, `docs/...`, or
+  `chore/...` branch; split work that cannot be reviewed and validated as one
+  coherent change. Do not develop directly on `main` or keep completed branches.
+- Use a pull request as the normal integration path, especially for outside
+  contributions. Review the final diff, behavior, tests, migrations, and
+  deployment impact. A solo PR can be self-reviewed; do not invent a second
+  reviewer requirement, but do require the applicable CI checks. Merge only
+  after checks pass, then delete the task branch. Never force-push shared
+  branches or rewrite `main` history.
+- Commits use English Conventional Commit messages and no attribution trailers.
+  Keep each commit internally coherent and independently understandable;
+  separate unrelated behavior, cleanup, dependency, and deployment changes.
+  Prefer small batches that can be tested and integrated promptly over large,
+  long-lived feature branches.
+- Run targeted checks while developing and the applicable full checks before
+  integration. CI covers Python, Docker release smoke, and Android JVM
+  tests/builds; it compiles but does not yet execute Android instrumentation on
+  a device. Android changes must also use the isolated instrumentation workflow
+  for device-facing behavior; report clearly when sandbox/device limitations
+  prevent a check. A successful build is not a substitute for a behavioral
+  test.
+- Treat merge and deployment as separate events. A commit on `main` is
+  integrated, not automatically deployed. Before deployment, identify the
+  exact commit, ensure the server worktree is clean, make/verify a backup, then
+  update and check health, logs, and the running commit. Record the outcome and
+  have a recovery path for both application code and persistent data.
+- Important current limitation: `scripts/server.sh update` runs
+  `git pull --ff-only` on whichever branch is checked out. Until that script is
+  changed and tested to select an explicit deployment ref, only run it on a
+  server checked out to `main`; never deploy a feature branch by accident.
+  Backups protect data but do not by themselves roll back application code.
+- Do not claim tag-based or immutable-image deployment exists yet. Add release
+  tags/notes or deploy-by-image-digest only when the deployment workflow can
+  select and verify that exact version. Database/schema changes must include
+  migration, backup, compatibility, and rollback considerations.
+
 - Server (Docker Compose): `./scripts/server.sh install`, `status`, `logs`,
   `backup`, and `update`. Use `./scripts/server.sh port <1024-65535>` to change
   the published local port. Do not run lifecycle commands against a user's
   remote server unless explicitly asked.
 - Python checks: `pytest`; lint with `ruff check core routers scripts tests`;
   compile with `python3 -m compileall -q core routers scripts tests`.
-- Android: from `android/`, use `./gradlew :app:assembleDebug`,
-  `./gradlew :app:testDebugUnitTest`, and `./gradlew :app:connectedDebugAndroidTest`
-  when an emulator/device is available. `./scripts/test.sh` wraps common local
-  build/device workflows.
+- Android: from `android/`, use `./scripts/test.sh fast`,
+  `./scripts/test.sh build`, `./scripts/test.sh device-smoke`, and
+  `./scripts/test.sh compose-smoke` / `./scripts/test.sh maestro-smoke`. The script
+  scopes instrumentation to an emulator and the isolated lab application.
+- Mobile test loop: run JVM/Compose unit tests first; use the `lab` app variant
+  and `./scripts/test.sh device-smoke` for repeatable UI smoke checks. The lab
+  variant uses the separate `com.iris.app.lab` package so its URL, credentials,
+  preferences, and local database cannot overwrite the installed Iris app.
+  Device/instrumentation scripts must select an `emulator-*` serial explicitly
+  and refuse physical phones. Use physical devices only for deliberate manual
+  acceptance and performance checks; never run test suites that mutate app
+  state or write test media into a personal installation/library. Keep test
+  accounts, servers, and media disposable and isolated.
+- For agent-assisted UI exploration, prefer stable Compose semantics and
+  accessibility labels over screen coordinates. Convert every confirmed bug
+  into a deterministic unit/UI flow before relying on further agent exploration.
+  Use Maestro flows/MCP for end-to-end journeys; setup and the project-scoped
+  Codex MCP entry (`maestro-smoke`) live in `docs/android-testing-workflow.md` and
+  `.codex/config.toml`. Keep flows checked in and reproducible, not ad hoc
+  AI-only sessions. Use physical-device Macrobenchmark only for measured performance
+  questions, and Firebase Test Lab/device matrices for broader compatibility,
+  not as the inner development loop.
+- ADB: use approved `adb` commands directly without asking again for each
+  command. If the sandbox specifically blocks ADB's local daemon socket, group
+  the required read/test actions into one escalated invocation rather than
+  retrying approval per command. Never target a physical serial from automated
+  test scripts.
 - Server release checks: `./scripts/test_release.sh` (review its scope and
   environment requirements before invoking).
 

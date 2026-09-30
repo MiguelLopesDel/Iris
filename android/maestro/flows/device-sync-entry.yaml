@@ -1,0 +1,17 @@
+appId: com.iris.app.lab
+name: Device sync sign-in form validation
+tags:
+  - smoke
+  - sync
+---
+- launchApp:
+    clearState: true
+- tapOn: "Sincronizar"
+- assertVisible: "Sincronização & Backup"
+- assertVisible: "Conectar Dispositivo"
+- assertVisible: "Entrar e Sincronizar"
+- tapOn: "Nome de usuário"
+- inputText: "conta-de-teste"
+- tapOn: "Senha"
+- inputText: "senha-temporaria-de-teste"
+- assertVisible: "Entrar e Sincronizar"
