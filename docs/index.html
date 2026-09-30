@@ -354,18 +354,17 @@
   <!-- Install -->
   <section id="install">
     <h2 data-i18n="install_title">Installation</h2>
-    <p class="section-sub" data-i18n="install_sub">Runs locally on Linux with an NVIDIA GPU. CPU fallback is available but slower.</p>
+    <p class="section-sub" data-i18n="install_sub">One server holds your originals and runs the AI; the browser and the Android app connect to it. It ships as a Docker image, so the server needs Docker — not Python or CUDA.</p>
 
     <h3 data-i18n="install_req">Requirements</h3>
     <table>
       <thead><tr><th data-i18n="install_th_comp">Component</th><th data-i18n="install_th_min">Minimum</th><th data-i18n="install_th_rec">Recommended</th></tr></thead>
       <tbody>
-        <tr><td>Python</td><td>3.10</td><td>3.12</td></tr>
+        <tr><td>OS</td><td>Linux x86_64</td><td>Linux x86_64</td></tr>
+        <tr><td data-i18n="install_software">Software</td><td>Docker + Compose v2, git, curl</td><td>—</td></tr>
         <tr><td data-i18n="install_ram">RAM</td><td>8 GB</td><td>16 GB+</td></tr>
-        <tr><td>GPU</td><td>—</td><td>NVIDIA RTX 3060+ (CUDA 13, driver ≥ 580)</td></tr>
-        <tr><td data-i18n="install_disk">Disk (models)</td><td>4 GB</td><td>12 GB (all models incl. CLAP)</td></tr>
-        <tr><td>OS</td><td>Linux / macOS</td><td>Linux + CUDA</td></tr>
-        <tr><td data-i18n="install_chromaprint">Chromaprint (audio dedup)</td><td>—</td><td><code>apt install libchromaprint-tools</code></td></tr>
+        <tr><td>GPU</td><td>—</td><td>NVIDIA RTX 20+ (driver ≥ 580, NVIDIA Container Toolkit)</td></tr>
+        <tr><td data-i18n="install_disk">Disk (models)</td><td>~10 GB</td><td data-i18n="install_disk_rec">+ a second disk for backups</td></tr>
       </tbody>
     </table>
 
@@ -373,43 +372,34 @@
       <div class="step">
         <div class="step-num">1</div>
         <div class="step-body">
-          <h3 data-i18n="install_step1_title">Clone the repository</h3>
+          <h3 data-i18n="install_step1_title">Download and install the server</h3>
           <div class="code-header">bash</div>
           <pre>git clone https://github.com/MiguelLopesDel/Iris.git
-cd iris</pre>
+cd Iris
+./scripts/server.sh install        # NVIDIA GPU: ./scripts/server.sh install --gpu</pre>
         </div>
       </div>
       <div class="step">
         <div class="step-num">2</div>
         <div class="step-body">
-          <h3 data-i18n="install_step2_title">Create a virtual environment and install dependencies</h3>
+          <h3 data-i18n="install_step2_title">Create the administrator account</h3>
           <div class="code-header">bash</div>
-          <pre>python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt</pre>
+          <pre>./scripts/server.sh create-admin --username admin --display-name "Your name"</pre>
+          <p data-i18n-html="install_step2_desc">Open <strong>http://127.0.0.1:8501</strong> on the server and create the other accounts in <strong>Sistema</strong>.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-body">
-          <h3 data-i18n="install_step3_title">Launch the app</h3>
+          <h3 data-i18n="install_step3_title">Reach it from your devices</h3>
           <div class="code-header">bash</div>
-          <pre>./scripts/run_app.sh
-# or: python3 -m uvicorn server:app --host 127.0.0.1 --port 8501</pre>
-          <p data-i18n-html="install_step3_desc">Open <strong>http://localhost:8501</strong> in your browser.</p>
+          <pre>sudo tailscale serve --bg http://127.0.0.1:8501</pre>
+          <p data-i18n-html="install_step3_desc">Iris listens only on <code>127.0.0.1</code>. Publish it with the private layer you prefer — Tailscale, ZeroTier, WireGuard or a reverse proxy with TLS — and use that address in the browser or the Android app.</p>
         </div>
       </div>
     </div>
 
-    <div style="margin-top: 2rem;">
-      <h3 data-i18n="install_docker_cpu">Docker (CPU)</h3>
-      <div class="code-header">bash</div>
-      <pre>docker compose up</pre>
-
-      <h3 style="margin-top: 1.5rem;" data-i18n="install_docker_gpu">Docker (GPU — requires NVIDIA Container Toolkit)</h3>
-      <div class="code-header">bash</div>
-      <pre>docker compose -f docker-compose.yml -f docker-compose.gpu.yml up</pre>
-    </div>
+    <p data-i18n-html="install_more">Updates, backups and every option: <a href="https://github.com/MiguelLopesDel/Iris/blob/main/docs/server-deployment.md">server guide</a>.</p>
   </section>
 
   <!-- Concept recognition -->
@@ -599,20 +589,21 @@ const T = {
     fmt_video: "VIDEO",
     fmt_audio: "AUDIO",
     install_title: "Installation",
-    install_sub: "Runs locally on Linux with an NVIDIA GPU. CPU fallback is available but slower.",
+    install_sub: "One server holds your originals and runs the AI; the browser and the Android app connect to it. It ships as a Docker image, so the server needs Docker — not Python or CUDA.",
     install_req: "Requirements",
     install_th_comp: "Component",
     install_th_min: "Minimum",
     install_th_rec: "Recommended",
+    install_software: "Software",
     install_ram: "RAM",
     install_disk: "Disk (models)",
-    install_chromaprint: "Chromaprint (audio dedup)",
-    install_step1_title: "Clone the repository",
-    install_step2_title: "Create a virtual environment and install dependencies",
-    install_step3_title: "Launch the app",
-    install_step3_desc: 'Open <strong>http://localhost:8501</strong> in your browser.',
-    install_docker_cpu: "Docker (CPU)",
-    install_docker_gpu: "Docker (GPU — requires NVIDIA Container Toolkit)",
+    install_disk_rec: "+ a second disk for backups",
+    install_step1_title: "Download and install the server",
+    install_step2_title: "Create the administrator account",
+    install_step2_desc: 'Open <strong>http://127.0.0.1:8501</strong> on the server and create the other accounts in <strong>Sistema</strong>.',
+    install_step3_title: "Reach it from your devices",
+    install_step3_desc: 'Iris listens only on <code>127.0.0.1</code>. Publish it with the private layer you prefer — Tailscale, ZeroTier, WireGuard or a reverse proxy with TLS — and use that address in the browser or the Android app.',
+    install_more: 'Updates, backups and every option: <a href="https://github.com/MiguelLopesDel/Iris/blob/main/docs/server-deployment.md">server guide</a>.',
     concept_title: "Concept recognition",
     concept_sub: "Teach Iris to recognize any visual entity using a handful of reference images.",
     concept_step1_title: 'Open the Concepts tab and click "Create new concept"',
@@ -722,20 +713,21 @@ const T = {
     fmt_video: "VÍDEO",
     fmt_audio: "ÁUDIO",
     install_title: "Instalação",
-    install_sub: "Roda localmente no Linux com GPU NVIDIA. Fallback para CPU disponível, mas mais lento.",
+    install_sub: "Um servidor guarda seus originais e roda a IA; o navegador e o app Android se conectam a ele. Ele é distribuído como imagem Docker, então o servidor precisa de Docker — não de Python nem CUDA.",
     install_req: "Requisitos",
     install_th_comp: "Componente",
     install_th_min: "Mínimo",
     install_th_rec: "Recomendado",
+    install_software: "Software",
     install_ram: "RAM",
     install_disk: "Disco (modelos)",
-    install_chromaprint: "Chromaprint (dedup de áudio)",
-    install_step1_title: "Clone o repositório",
-    install_step2_title: "Crie um ambiente virtual e instale as dependências",
-    install_step3_title: "Inicie o app",
-    install_step3_desc: 'Abra <strong>http://localhost:8501</strong> no seu navegador.',
-    install_docker_cpu: "Docker (CPU)",
-    install_docker_gpu: "Docker (GPU — requer NVIDIA Container Toolkit)",
+    install_disk_rec: "+ um segundo disco para backups",
+    install_step1_title: "Baixe e instale o servidor",
+    install_step2_title: "Crie a conta administradora",
+    install_step2_desc: 'Abra <strong>http://127.0.0.1:8501</strong> no servidor e crie as outras contas em <strong>Sistema</strong>.',
+    install_step3_title: "Acesse pelos seus aparelhos",
+    install_step3_desc: 'O Iris atende só em <code>127.0.0.1</code>. Publique-o com a camada privada que preferir — Tailscale, ZeroTier, WireGuard ou um proxy reverso com TLS — e use esse endereço no navegador ou no app Android.',
+    install_more: 'Atualizações, backups e todas as opções: <a href="https://github.com/MiguelLopesDel/Iris/blob/main/docs/server-deployment.md">guia do servidor</a>.',
     concept_title: "Reconhecimento de conceitos",
     concept_sub: "Ensine o Iris a reconhecer qualquer entidade visual usando algumas imagens de referência.",
     concept_step1_title: 'Abra a aba Conceitos e clique em "Criar novo conceito"',

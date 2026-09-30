@@ -526,7 +526,7 @@ def test_every_snapshot_records_the_iris_version_that_wrote_it(
     monkeypatch.setenv("IRIS_COMMIT", "feed123")
     snapshot = instance_backup.create(_roots(instance), tmp_path / "b", now=T0).snapshot
     manifest = _manifest(snapshot)
-    assert manifest["iris_version"] == "0.3.0"
+    assert manifest["iris_version"] == instance_backup.iris_version()
     assert manifest["iris_commit"] == "feed123"
     assert manifest["retention"] == "policy"
     pinned = instance_backup.create(
@@ -534,7 +534,9 @@ def test_every_snapshot_records_the_iris_version_that_wrote_it(
     ).snapshot
     assert _manifest(pinned)["retention"] == "pinned"
     [first, second] = instance_backup.snapshots(tmp_path / "b")
-    assert (first.iris_version, first.iris_commit, first.prunable) == ("0.3.0", "feed123", True)
+    assert (first.iris_version, first.iris_commit, first.prunable) == (
+        instance_backup.iris_version(), "feed123", True
+    )
     assert second.prunable is False
 
 

@@ -2,7 +2,11 @@
 
 **A private, self-hosted photo and video library for people, families, and teams.** Host Iris on your own computer or server, give each person an isolated account and library, and connect from the browser or Android app. AI-assisted search and media processing are optional capabilities, not requirements for receiving and browsing a library.
 
-> One exception, stated plainly: semantic search translates your query to English > before encoding it, because the embedding model is English-trained, and that > translation call goes to an external service. Your files stay put; the words you > type in the search box do not. Set `IRIS_TRANSLATE_QUERIES=0` to keep everything > local, at the cost of weaker results for non-English queries.
+> One exception, stated plainly: semantic search translates your query to English
+> before encoding it, because the embedding model is English-trained, and that
+> translation call goes to an external service. Your files stay put; the words you
+> type in the search box do not. Set `IRIS_TRANSLATE_QUERIES=0` to keep everything
+> local, at the cost of weaker results for non-English queries.
 
 🌐 **[Project page → miguellopesdel.github.io/Iris](https://miguellopesdel.github.io/Iris/)**
 
@@ -38,141 +42,134 @@ Iris is designed as a familiar gallery backed by a server you control. Accounts 
 
 ---
 
-## Quick start
+## Install the Iris server
 
-### Requirements
+Iris runs as one server that holds the originals and does the AI work; the
+browser and the Android app connect to it. The server ships as a Docker image
+(`ghcr.io/miguellopesdel/iris`), so the machine running it needs Docker, not
+Python, PyTorch or CUDA. The full guide, with every option, is
+[docs/server-deployment.md](docs/server-deployment.md).
 
-- Python 3.13 (the dependency locks target Linux x86_64; the Docker image
-  needs no local Python at all)
-- Linux (primary platform) — macOS works with CPU; Windows untested
-- NVIDIA GPU recommended (RTX 20 series or newer, driver ≥ 580 for CUDA 13;
-  RTX 3060+ for comfortable speed)
-- 16 GB RAM or more
-- ~10 GB disk for AI model weights (downloaded on first run)
+### What you need
 
-CPU search is fully supported. For an older APU such as a Ryzen 3 3200G, use the
-low-resource profile below; its integrated GPU is not a CUDA device, so Iris uses
-the CPU and system RAM deliberately.
+| | Minimum | Recommended |
+|---|---|---|
+| OS | Linux x86_64 | Linux x86_64 |
+| Software | Docker Engine + Docker Compose v2, `git`, `curl` | same |
+| RAM | 8 GB | 16 GB or more |
+| Disk | space for your photos and videos, plus ~10 GB for AI models | a second disk for backups |
+| GPU | none — everything runs on the CPU | NVIDIA RTX 20 series or newer, driver ≥ 580, [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) |
 
-### Development / contributing
-
-For a local disposable two-account sandbox with hot reload, see
-[CONTRIBUTING.md](CONTRIBUTING.md). It does not require Docker, Tailscale, a second
-computer, personal media, or an AI model download.
-
-### Install
+### 1. Download and install
 
 ```bash
 git clone https://github.com/MiguelLopesDel/Iris.git
-cd iris
-
-python3.13 -m venv venv
-source venv/bin/activate
-pip install --no-deps --require-hashes -r requirements.txt
-python scripts/check_deps.py
+cd Iris
+./scripts/server.sh install
 ```
 
-This installs the production CPU profile, so an NVIDIA GPU is not required. The
-`requirements*.txt` files are complete locks (see
-[docs/dependency-profiles.md](docs/dependency-profiles.md)); `--no-deps` is
-required. For development and tests, install `requirements-dev.txt` instead. On
-NVIDIA machines, create a separate clean virtualenv, install
-`requirements-cuda.txt` and check it with `python scripts/check_deps.py --cuda`.
-On macOS, where the Linux locks do not apply, `pip install -r requirements-cpu.in`
-resolves the newest compatible versions (best effort, untested).
+`install` creates `.env` for your Linux user, prepares `data/`, `media/` and
+`backups/`, downloads the Iris image and waits until the server is healthy. The
+AI models (~10 GB) download on first use and are kept between updates.
 
-### Run
+**NVIDIA GPU:** install with `./scripts/server.sh install --gpu` instead. It
+sets `COMPOSE_FILE` in `.env`, so this and every later command use the `-cuda`
+image with GPU access. Running it again on an existing CPU install switches it.
+
+### 2. Create the administrator account
 
 ```bash
-./scripts/run_app.sh
-# or:
-python3 -m uvicorn server:app --host 127.0.0.1 --port 8501
+./scripts/server.sh create-admin --username admin --display-name "Your name"
 ```
 
-Open **http://localhost:8501** in your browser.
+Iris then turns on login. Open **http://127.0.0.1:8501** on the server, sign in,
+and create the other accounts in **Sistema**. Each account gets its own private
+library; shared spaces are opt-in.
 
-By default Iris opens `data/iris_v1.db` (falling back to a legacy
-`data/meme_compass_full_v1.db` if that's the only catalog present) and resolves media under `media/`.
-Use the **Sistema** tab to switch databases and media roots, import/index folders or
-uploaded files, choose CPU/CUDA/MPS, and manage versioned catalog snapshots (point-in-time
-backup/restore to an external folder, plus media reconcile/export).
+### 3. Reach it from your other devices
 
-You can also override the startup paths through environment variables:
-
-```bash
-IRIS_DB=data/library.db IRIS_MEDIA_ROOT=/path/to/media ./scripts/run_app.sh
-```
-
-### Servidor privado para família ou equipe
-
-Iris começa no modo de biblioteca única para preservar instalações existentes. Para
-ativar contas e bibliotecas realmente isoladas, faça backup de `data/` e `media/`,
-pare o Iris e execute uma única vez:
-
-```bash
-python scripts/bootstrap_admin.py --username administrador --display-name "Seu nome"
-```
-
-O script move o catálogo, índices FAISS, miniaturas e mídia atuais para a primeira
-biblioteca privada. Ao reiniciar, o Iris ativa login; somente essa conta administradora
-cria contas adicionais. Cada conta recebe seu próprio SQLite, índices FAISS, mídia,
-miniaturas e fila de importação.
-
-Para acesso remoto, mantenha o Iris em `127.0.0.1` e publique esse endereço com a
-camada privada que você preferir — Tailscale, ZeroTier, WireGuard, um proxy reverso
-com TLS. O servidor não depende de nenhuma delas. Com Tailscale, por exemplo:
+Iris listens only on `127.0.0.1` of the server: nothing is exposed to your
+network or the Internet until you choose how. Put a private layer in front of
+it — Tailscale, ZeroTier, WireGuard, or a reverse proxy with TLS. With
+Tailscale, for example:
 
 ```bash
 sudo tailscale serve --bg http://127.0.0.1:8501
 ```
 
-Não exponha a porta diretamente à Internet sem TLS e rate limiting. O servidor processa originais para busca,
-pessoas e duplicatas; portanto, o operador do host pode tecnicamente ler os arquivos.
-Permissões de conta isolam usuários entre si, mas não substituem criptografia ponta a
-ponta contra quem controla o servidor.
+Then open the `https://<server>.<tailnet>.ts.net` address it prints from any
+device on your tailnet, in the browser or as the server URL in the Android app
+(see [android/README.md](android/README.md); the app is built from source, no
+store release yet). Other options are in
+[docs/server-deployment.md](docs/server-deployment.md#acesso-remoto-privado).
+Do not map the port to `0.0.0.0` without TLS and rate limiting.
 
-Para validar uma instalação real e medir navegação/busca com clientes concorrentes,
-consulte [docs/testing.md](docs/testing.md) e
-[docs/performance-testing.md](docs/performance-testing.md).
+### 4. Day to day
+
+```bash
+./scripts/server.sh status          # health and container state
+./scripts/server.sh logs            # follow the logs
+./scripts/server.sh backup          # back up now (a daily backup is automatic)
+./scripts/server.sh update          # back up, then move to the IRIS_VERSION image
+```
+
+`IRIS_VERSION=latest` in `.env` follows each release; set a version such as
+`0.4.0` to update only when you decide. Backups go to `IRIS_BACKUP_DIR`
+(`./backups` by default) every day at 03:00 — point it at another disk.
 
 ---
 
-## Docker
+## Run from source (development)
 
-Para instalar como servidor privado multiusuário, siga o guia completo em
-[docs/server-deployment.md](docs/server-deployment.md). O Compose padrão publica
-somente em `127.0.0.1`; para alcançá-lo de outros aparelhos, ponha na frente a VPN,
-malha ou proxy reverso da sua escolha.
-
-### CPU (no GPU required)
+For a disposable two-account sandbox with hot reload, see
+[CONTRIBUTING.md](CONTRIBUTING.md); it needs no Docker, personal media or model
+download. To run Iris directly from a checkout, without Docker:
 
 ```bash
-docker compose up
+git clone https://github.com/MiguelLopesDel/Iris.git
+cd Iris
+python3.13 -m venv venv
+source venv/bin/activate
+pip install --no-deps --require-hashes -r requirements.txt
+python scripts/check_deps.py
+./scripts/run_app.sh        # or: python3 -m uvicorn server:app --host 127.0.0.1 --port 8501
 ```
 
-Open http://localhost:8501.
+Open **http://localhost:8501**. The `requirements*.txt` files are complete locks
+for Linux x86_64 and Python 3.13, so `--no-deps` is required (see
+[docs/dependency-profiles.md](docs/dependency-profiles.md)). On NVIDIA machines,
+use a separate virtualenv with `requirements-cuda.txt` and check it with
+`python scripts/check_deps.py --cuda`. On macOS, where the Linux locks do not
+apply, `pip install -r requirements-cpu.in` resolves the newest compatible
+versions (best effort, untested).
 
-### GPU (NVIDIA)
+CPU search is fully supported. For an older APU such as a Ryzen 3 3200G, use the
+low-resource profile under [CLI indexing](#cli-indexing); its integrated GPU is
+not a CUDA device, so Iris uses the CPU and system RAM deliberately.
 
-Requires the NVIDIA driver ≥ 580 and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html):
+By default Iris opens `data/iris_v1.db` (falling back to a legacy
+`data/meme_compass_full_v1.db` if that's the only catalog present) and resolves
+media under `media/`. Use the **Sistema** tab to switch databases and media
+roots, import/index folders or uploaded files, choose CPU/CUDA/MPS, and manage
+versioned catalog snapshots. The startup paths can also come from the
+environment:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+IRIS_DB=data/library.db IRIS_MEDIA_ROOT=/path/to/media ./scripts/run_app.sh
 ```
 
-Or set `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in `.env`, and
-every `docker compose` command (including `./scripts/server.sh`) uses the GPU
-image.
+A source install starts as a single library. To turn on accounts, back up
+`data/` and `media/`, stop Iris and run once
+`python scripts/bootstrap_admin.py --username admin --display-name "Your name"`:
+it moves the current catalog, indexes, thumbnails and media into the first
+private library and enables login on the next start.
 
-### Data persistence
-
-Mount your media and database directories:
-
-```yaml
-volumes:
-  - ./data:/app/data
-  - /path/to/your/media:/media:ro
-```
+The server processes originals for search, people and duplicates, so whoever
+controls the host can technically read the files. Accounts isolate users from
+each other; they are not end-to-end encryption against the server operator. To
+validate a real installation and measure it under concurrent clients, see
+[docs/testing.md](docs/testing.md) and
+[docs/performance-testing.md](docs/performance-testing.md).
 
 ---
 
@@ -286,7 +283,7 @@ static/                  — CSS and JavaScript frontend modules
 **Visual embedding**: `sentence-transformers/clip-ViT-L-14` (768-dim, stored in FAISS)  
 **Audio embedding**: `laion/clap-htsat-unfused` (512-dim; optional, for semantic audio search and dedup)  
 **Face embedding**: InsightFace `buffalo_l` / ArcFace (512-dim; in-memory FAISS index, models auto-downloaded on first use)
-**Caption model**: `microsoft/Florence-2-large` (can be disabled with `--caption-model none`)  
+**Caption model**: `florence-community/Florence-2-large` (can be disabled with `--caption-model none`)  
 **Transcription**: OpenAI Whisper (default: `tiny` model; disable with `--whisper-model none`)  
 **Database**: SQLite (schema v4) + FAISS flat indices for image, description, and audio embeddings
 
@@ -326,8 +323,9 @@ source venv/bin/activate
 
 pytest                              # full suite
 ./scripts/run_tests.sh              # standard suite; also: db | model | integration | golden | all | menu
-ruff check core scripts tests
-python -m compileall -q core scripts tests server.py
+python scripts/check_deps.py        # installed dependencies match the lock
+ruff check core routers scripts tests server.py
+python -m compileall -q core routers scripts tests server.py
 ```
 
 ### Commit style
