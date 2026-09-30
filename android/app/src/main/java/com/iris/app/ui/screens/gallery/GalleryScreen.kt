@@ -51,7 +51,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -104,7 +104,7 @@ fun GalleryScreen(
     onSettingsClick: () -> Unit,
     onLoginClick: () -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     val mediaPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -355,13 +355,15 @@ fun GalleryScreen(
                                 sections.forEach { section ->
                                     item(
                                         key = "header-${section.label}",
+                                        contentType = "date-header",
                                         span = { GridItemSpan(maxLineSpan) }
                                     ) {
                                         DateSectionHeader(section.label)
                                     }
                                     items(
                                         items = section.records,
-                                        key = { record -> record.index }
+                                        key = { record -> record.index },
+                                        contentType = { "media" }
                                     ) { record ->
                                         MediaCard(
                                             record = record,
@@ -382,7 +384,7 @@ fun GalleryScreen(
                                 }
 
                                 if (uiState.isLoading && uiState.records.isNotEmpty()) {
-                                    items(12) {
+                                    items(12, contentType = { "placeholder" }) {
                                         GalleryPreviewSkeleton()
                                     }
                                 }
@@ -394,6 +396,7 @@ fun GalleryScreen(
                                 if (uiState.records.size < uiState.totalRecords) {
                                     item(
                                         key = "loading-more",
+                                        contentType = "loading-footer",
                                         span = { GridItemSpan(maxLineSpan) }
                                     ) {
                                         LoadingMoreFooter(
@@ -431,7 +434,7 @@ private fun GalleryLoadingGrid() {
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        items(18) { GalleryPreviewSkeleton() }
+        items(18, contentType = { "placeholder" }) { GalleryPreviewSkeleton() }
     }
 }
 
@@ -584,9 +587,15 @@ private fun FastScrollbar(
         label = "scrubberAlpha"
     )
 
-    val activeFraction = if (isDragging) dragFraction else scrollFraction
-    val activeLabel = remember(activeFraction, sections) {
-        labelForFraction(sections, sectionFlatCounts, totalFlatItems, activeFraction)
+    // Read the moving position during placement, not composition. Ordinary
+    // scrolling should move the thumb without rebuilding its content.
+    fun activeFraction() = if (isDragging) dragFraction else scrollFraction
+    fun thumbY() = (trackHeightPx * activeFraction() - thumbHeightPx / 2)
+        .coerceIn(0f, (trackHeightPx - thumbHeightPx).coerceAtLeast(0f))
+    val activeLabel = if (isDragging) {
+        labelForFraction(sections, sectionFlatCounts, totalFlatItems, dragFraction)
+    } else {
+        ""
     }
 
     fun seekTo(y: Float) {
@@ -598,6 +607,8 @@ private fun FastScrollbar(
             coroutineScope.launch { gridState.scrollToItem(targetIndex) }
         }
     }
+    // Keep the long-lived gesture handler bound to the current paginated grid.
+    val latestSeekTo by rememberUpdatedState<(Float) -> Unit>(::seekTo)
 
     Box(
         modifier = modifier
@@ -607,20 +618,17 @@ private fun FastScrollbar(
                 detectDragGestures(
                     onDragStart = { offset ->
                         isDragging = true
-                        seekTo(offset.y)
+                        latestSeekTo(offset.y)
                     },
                     onDrag = { change, _ ->
                         change.consume()
-                        seekTo(change.position.y)
+                        latestSeekTo(change.position.y)
                     },
                     onDragEnd = { isDragging = false },
                     onDragCancel = { isDragging = false }
                 )
             }
     ) {
-        val thumbY = (trackHeightPx * activeFraction - thumbHeightPx / 2)
-            .coerceIn(0f, (trackHeightPx - thumbHeightPx).coerceAtLeast(0f))
-
         if (isDragging) {
             Box(
                 modifier = Modifier
@@ -628,7 +636,7 @@ private fun FastScrollbar(
                     .offset {
                         IntOffset(
                             x = -32.dp.roundToPx(),
-                            y = (thumbY + thumbHeightPx / 2 - 16.dp.toPx()).roundToInt()
+                            y = (thumbY() + thumbHeightPx / 2 - 16.dp.toPx()).roundToInt()
                         )
                     }
                     .background(IrisAccentLime, RoundedCornerShape(8.dp))
@@ -648,7 +656,7 @@ private fun FastScrollbar(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .graphicsLayer { alpha = thumbAlpha }
-                .offset { IntOffset(x = 0, y = thumbY.roundToInt()) }
+                .offset { IntOffset(x = 0, y = thumbY().roundToInt()) }
                 .width(4.dp)
                 .height(32.dp)
                 .background(IrisAccentLime, RoundedCornerShape(2.dp))

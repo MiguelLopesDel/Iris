@@ -151,6 +151,7 @@ tmp_test_images/
 *.vec
 .iris-dev/
 .iris-load/
+/.tools/
 
 # AI assistant context files
 CLAUDE.md
@@ -182,3 +183,5 @@ MAPA.md
 /core.[0-9]*
 /android/core.[0-9]*
 /android/.kotlin/
+# Local agent permissions and plugin state are machine-specific.
+/.claude/settings.local.json

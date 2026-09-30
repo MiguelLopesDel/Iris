@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Error
@@ -60,11 +61,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -105,34 +111,61 @@ fun SyncScreen(
     viewModel: SyncViewModel,
     onConfigureServer: () -> Unit
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var mediaLibraryAccess by remember(context) {
+        mutableStateOf(currentMediaLibraryAccess(context))
+    }
     var permissionFollowUp by remember { mutableStateOf(MediaPermissionFollowUp.DiscoverFolders) }
+    var showDeviceSourcePicker by remember { mutableStateOf(false) }
+    val pickerVisible = rememberUpdatedState(showDeviceSourcePicker)
     val mediaPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
+        mediaLibraryAccess = classifyMediaLibraryAccess(
+            sdk = Build.VERSION.SDK_INT,
+            imageGranted = grants[Manifest.permission.READ_MEDIA_IMAGES] == true,
+            videoGranted = grants[Manifest.permission.READ_MEDIA_VIDEO] == true,
+            selectedMediaGranted = grants[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true,
+            legacyStorageGranted = grants[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+        )
         if (grants.values.any { it }) {
             viewModel.discoverSources()
+            if (mediaLibraryAccess == MediaLibraryAccess.LIMITED) {
+                showDeviceSourcePicker = true
+            }
             when (permissionFollowUp) {
                 MediaPermissionFollowUp.DiscoverFolders ->
                     viewModel.finishPendingBackupSetupIfScopeChosen(context)
                 MediaPermissionFollowUp.EnableAutoBackup ->
                     viewModel.setAutoBackupEnabled(true, context)
                 MediaPermissionFollowUp.EnableAllFolders ->
-                    viewModel.enableBackupForAllFolders(context)
+                    if (mediaLibraryAccess == MediaLibraryAccess.FULL) {
+                        viewModel.enableBackupForAllFolders(context)
+                    }
             }
         } else {
             viewModel.showMediaPermissionRequired()
         }
     }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                mediaLibraryAccess = currentMediaLibraryAccess(context)
+                if (pickerVisible.value) viewModel.discoverSources()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val requestMediaPermission: (MediaPermissionFollowUp) -> Unit = { followUp ->
         permissionFollowUp = followUp
-        val permissions = if (Build.VERSION.SDK_INT >= 33) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-        } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-        mediaPermissionLauncher.launch(permissions)
+        mediaPermissionLauncher.launch(mediaPermissionsForSdk(Build.VERSION.SDK_INT))
+    }
+    val openDeviceSourcePicker: () -> Unit = {
+        showDeviceSourcePicker = true
+        requestMediaPermission(MediaPermissionFollowUp.DiscoverFolders)
     }
 
     if (uiState.isLoggedIn && uiState.backupSetupPromptReady &&
@@ -156,7 +189,7 @@ fun SyncScreen(
                     }
                     TextButton(onClick = {
                         viewModel.answerBackupSetupPrompt(configureFolders = true) {
-                            requestMediaPermission(MediaPermissionFollowUp.DiscoverFolders)
+                            openDeviceSourcePicker()
                         }
                     }) {
                         Text(stringResource(R.string.sync_backup_choose_folders_action))
@@ -531,29 +564,51 @@ fun SyncScreen(
                             onCheckedChange = viewModel::setSyncVideosEnabled
                         )
 
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = { requestMediaPermission(MediaPermissionFollowUp.DiscoverFolders) },
-                            enabled = !uiState.isDiscoveringSources
-                        ) {
-                            if (uiState.isDiscoveringSources) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(8.dp))
+                        if (uiState.sourceMode == "selected") {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = openDeviceSourcePicker,
+                                enabled = !uiState.isDiscoveringSources,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                                    Text(stringResource(R.string.sync_folders_section), fontWeight = FontWeight.SemiBold)
+                                    val sourceSummary = when {
+                                        uiState.isDiscoveringSources ->
+                                            stringResource(R.string.sync_folders_loading)
+                                        uiState.availableSources.isEmpty() ->
+                                            stringResource(R.string.sync_folders_not_loaded)
+                                        else -> stringResource(
+                                            R.string.sync_folders_selected_count,
+                                            uiState.selectedSourceIds.size,
+                                            uiState.availableSources.size
+                                        )
+                                    }
+                                    Text(sourceSummary, fontSize = 12.sp, color = IrisTextSoft)
+                                }
+                                if (uiState.isDiscoveringSources) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Text(stringResource(R.string.sync_source_picker_edit), fontWeight = FontWeight.SemiBold)
+                                }
                             }
-                            Text(stringResource(R.string.sync_choose_folders))
                         }
 
                         uiState.sourceDiscoveryError?.let { message ->
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                if (message == "MEDIA_PERMISSION_REQUIRED") {
-                                    stringResource(R.string.sync_media_permission_required)
-                                } else {
-                                    message
-                                },
-                                color = IrisDanger,
-                                fontSize = 12.sp
-                            )
+                            if (!showDeviceSourcePicker) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    if (message == "MEDIA_PERMISSION_REQUIRED") {
+                                        stringResource(R.string.sync_media_permission_required)
+                                    } else {
+                                        message
+                                    },
+                                    color = IrisDanger,
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
 
                         if (uiState.backupSetupPending) {
@@ -563,55 +618,6 @@ fun SyncScreen(
                                 color = IrisTextSoft,
                                 fontSize = 12.sp
                             )
-                        }
-
-                        if (uiState.sourceMode == "selected" && uiState.availableSources.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            // A lista já chegou a dezenas de álbuns num aparelho
-                            // real, empurrando Wi-Fi, bateria e a fila para fora
-                            // da tela. Fechada por padrão, com a contagem do que
-                            // está escolhido visível sem precisar abrir.
-                            SectionToggle(
-                                title = stringResource(R.string.sync_folders_section),
-                                subtitle = stringResource(
-                                    R.string.sync_folders_selected_count,
-                                    uiState.selectedSourceIds.size,
-                                    uiState.availableSources.size
-                                ),
-                                expanded = uiState.isFolderPickerExpanded,
-                                onToggle = viewModel::toggleFolderPicker
-                            )
-                            if (uiState.isFolderPickerExpanded) {
-                                uiState.availableSources.forEach { source ->
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    val kindLabel = if (source.mediaKind == "video") {
-                                        stringResource(R.string.sync_videos_lowercase)
-                                    } else {
-                                        stringResource(R.string.sync_photos_lowercase)
-                                    }
-                                    val summary = stringResource(
-                                        R.string.sync_source_summary,
-                                        source.itemCount,
-                                        kindLabel
-                                    )
-                                    PreferenceSwitch(
-                                        // The bucket name alone is not an identity:
-                                        // an extracted website backup produces folders
-                                        // called "06" and "07", and this device had two
-                                        // separate backups with the same folder names and
-                                        // the same item counts. The path is what tells
-                                        // them apart and what reveals they are junk.
-                                        title = source.name,
-                                        subtitle = if (source.relativePath.isNotBlank()) {
-                                            "$summary\n${source.relativePath}"
-                                        } else {
-                                            summary
-                                        },
-                                        checked = source.id in uiState.selectedSourceIds,
-                                        onCheckedChange = { viewModel.toggleSource(source.id, it, context) }
-                                    )
-                                }
-                            }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -686,6 +692,27 @@ fun SyncScreen(
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }
+    }
+
+    if (showDeviceSourcePicker) {
+        DeviceMediaSourcePicker(
+            sources = uiState.availableSources,
+            selectedIds = uiState.selectedSourceIds,
+            isLoading = uiState.isDiscoveringSources,
+            hasLimitedMediaAccess = mediaLibraryAccess == MediaLibraryAccess.LIMITED,
+            errorMessage = uiState.sourceDiscoveryError?.let { message ->
+                if (message == "MEDIA_PERMISSION_REQUIRED") {
+                    stringResource(R.string.sync_media_permission_required)
+                } else {
+                    message
+                }
+            },
+            onToggleSource = { sourceId, enabled -> viewModel.toggleSource(sourceId, enabled, context) },
+            onClearSelection = { viewModel.clearSelectedSources(context) },
+            onRefresh = viewModel::discoverSources,
+            onRequestMediaAccess = { requestMediaPermission(MediaPermissionFollowUp.DiscoverFolders) },
+            onDismiss = { showDeviceSourcePicker = false }
+        )
     }
 }
 

@@ -22,4 +22,48 @@ class BackgroundSyncPolicyTest {
         assertFalse(BackgroundSyncPolicy.shouldRunMediaWork(false, true, true, false))
         assertTrue(BackgroundSyncPolicy.shouldRunMediaWork(true, true, true, true))
     }
+
+    @Test
+    fun `background work does not upload queued media without backup opt in`() {
+        assertFalse(
+            BackgroundSyncPolicy.shouldProcessMediaQueue(
+                allowedByConstraints = true,
+                autoBackupEnabled = false,
+                forceScan = false,
+            )
+        )
+    }
+
+    @Test
+    fun `opted in backup processes the media queue when constraints allow it`() {
+        assertTrue(
+            BackgroundSyncPolicy.shouldProcessMediaQueue(
+                allowedByConstraints = true,
+                autoBackupEnabled = true,
+                forceScan = false,
+            )
+        )
+    }
+
+    @Test
+    fun `manual sync can process queued media without persistent backup opt in`() {
+        assertTrue(
+            BackgroundSyncPolicy.shouldProcessMediaQueue(
+                allowedByConstraints = true,
+                autoBackupEnabled = false,
+                forceScan = true,
+            )
+        )
+    }
+
+    @Test
+    fun `media constraints pause even manually requested queue work`() {
+        assertFalse(
+            BackgroundSyncPolicy.shouldProcessMediaQueue(
+                allowedByConstraints = false,
+                autoBackupEnabled = true,
+                forceScan = true,
+            )
+        )
+    }
 }

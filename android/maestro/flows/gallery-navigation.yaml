@@ -1,0 +1,29 @@
+appId: com.iris.app.lab
+name: Gallery navigation and offline states
+tags:
+  - smoke
+  - navigation
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Galeria"
+- assertVisible:
+    text: "Sem conexão com a nuvem.*"
+- tapOn: "Busca"
+- assertVisible: "Busca Multimodal"
+- assertVisible: "Busque em seus memes"
+- tapOn: "Álbuns"
+- assertVisible: "Álbuns"
+- assertVisible: "Nenhum álbum"
+- tapOn: "Pessoas"
+- assertVisible: "Nenhuma pessoa encontrada"
+- back
+- tapOn: "Espaços"
+- assertVisible: "Espaços"
+- assertVisible: "Nenhum espaço ainda"
+- tapOn: "Sincronizar"
+- assertVisible: "Sincronização & Backup"
+- assertVisible: "Conectar Dispositivo"
+- tapOn: "Galeria"
+- assertVisible:
+    text: "Sem conexão com a nuvem.*"

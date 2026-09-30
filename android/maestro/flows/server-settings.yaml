@@ -1,0 +1,18 @@
+appId: com.iris.app.lab
+name: Open server connection settings
+tags:
+  - smoke
+  - settings
+---
+- launchApp:
+    clearState: true
+- tapOn: "Sincronizar"
+- assertVisible: "Conectar Dispositivo"
+- tapOn: "Trocar"
+- assertVisible: "Configurações do Servidor"
+- assertVisible: "URL do Servidor"
+- assertVisible: "Salvar e Testar Conexão"
+- tapOn:
+    text: "Voltar"
+- assertVisible: "Sincronização & Backup"
+- assertVisible: "Conectar Dispositivo"

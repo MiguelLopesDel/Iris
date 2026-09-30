@@ -1,0 +1,15 @@
+[mcp_servers.maestro]
+command = "bash"
+args = ["scripts/maestro-mcp.sh"]
+
+[mcp_servers.maestro.tools.cheat_sheet]
+approval_mode = "approve"
+
+[mcp_servers.maestro.tools.list_devices]
+approval_mode = "approve"
+
+[mcp_servers.maestro.tools.inspect_screen]
+approval_mode = "approve"
+
+[mcp_servers.maestro.tools.run]
+approval_mode = "approve"

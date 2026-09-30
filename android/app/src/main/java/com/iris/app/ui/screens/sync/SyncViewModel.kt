@@ -58,7 +58,6 @@ data class SyncUiState(
     val availableSources: List<DeviceMediaSource> = emptyList(),
     val isDiscoveringSources: Boolean = false,
     val sourceDiscoveryError: String? = null,
-    val isFolderPickerExpanded: Boolean = false,
     val isQueueExpanded: Boolean = false
 )
 
@@ -316,6 +315,15 @@ class SyncViewModel(
         }
     }
 
+    fun clearSelectedSources(context: Context) {
+        val accountKey = credentialsStore.accountIdentity.value ?: return
+        _uiState.update { it.copy(selectedSourceIds = emptySet()) }
+        viewModelScope.launch {
+            settingsRepository.updateSelectedSourceIds(accountKey, emptySet())
+            enqueueBackgroundIfEnabled(context, accountKey)
+        }
+    }
+
     fun setSyncImagesEnabled(enabled: Boolean) {
         val accountKey = credentialsStore.accountIdentity.value ?: return
         viewModelScope.launch { settingsRepository.updateSyncImagesEnabled(accountKey, enabled) }
@@ -337,9 +345,6 @@ class SyncViewModel(
                         it.copy(
                             availableSources = sources,
                             isDiscoveringSources = false,
-                            // Asking for the folder list and getting a closed
-                            // header back reads like the button did nothing.
-                            isFolderPickerExpanded = sources.isNotEmpty()
                         )
                     }
             } catch (cancelled: CancellationException) {
@@ -419,10 +424,6 @@ class SyncViewModel(
                 )
             }
         }
-    }
-
-    fun toggleFolderPicker() {
-        _uiState.update { it.copy(isFolderPickerExpanded = !it.isFolderPickerExpanded) }
     }
 
     fun toggleQueue() {
