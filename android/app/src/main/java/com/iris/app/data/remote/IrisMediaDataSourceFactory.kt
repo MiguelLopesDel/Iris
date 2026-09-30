@@ -6,6 +6,7 @@ package com.iris.app.data.remote
 
 import android.net.Uri
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -94,7 +95,9 @@ class IrisOkHttpDataSource(
         val responseBody = resp.body
             ?: throw HttpDataSource.HttpDataSourceException(
                 "Null response body",
+                null,
                 dataSpec,
+                PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
                 HttpDataSource.HttpDataSourceException.TYPE_OPEN
             )
         this.responseByteStream = responseBody.byteStream()
@@ -143,6 +146,7 @@ class IrisOkHttpDataSource(
                 throw HttpDataSource.HttpDataSourceException(
                     EOFException(),
                     dataSpec ?: DataSpec(Uri.EMPTY),
+                    PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
                     HttpDataSource.HttpDataSourceException.TYPE_READ
                 )
             }

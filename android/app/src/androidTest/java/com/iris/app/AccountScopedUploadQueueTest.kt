@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import android.database.sqlite.SQLiteDatabase
 import android.content.ContentValues
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import com.iris.app.data.local.DeviceAuthStore
@@ -43,6 +44,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.io.FileInputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -495,12 +497,17 @@ class AccountScopedUploadQueueTest {
         var adoptedMediaPermissions = false
 
         try {
-            instrumentation.uiAutomation.adoptShellPermissionIdentity(
-                android.Manifest.permission.READ_MEDIA_IMAGES,
-                android.Manifest.permission.READ_MEDIA_VIDEO,
-                android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
-            )
-            adoptedMediaPermissions = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                instrumentation.uiAutomation.adoptShellPermissionIdentity(
+                    android.Manifest.permission.READ_MEDIA_IMAGES,
+                    android.Manifest.permission.READ_MEDIA_VIDEO,
+                    android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+                )
+                adoptedMediaPermissions = true
+            } else {
+                runShellCommand(instrumentation, "pm grant ${app.packageName} ${android.Manifest.permission.READ_EXTERNAL_STORAGE}")
+                runShellCommand(instrumentation, "pm grant ${app.packageName} ${android.Manifest.permission.WRITE_EXTERNAL_STORAGE}")
+            }
 
             fixtureSizes.forEachIndexed { index, size ->
                 val kind = fixtureKinds[index]
@@ -2184,6 +2191,15 @@ class AccountScopedUploadQueueTest {
         private companion object {
             const val PACE_BLOCK_BYTES = 64L * 1024L
         }
+    }
+
+    private fun runShellCommand(
+        instrumentation: android.app.Instrumentation,
+        command: String,
+    ) {
+        val descriptor = instrumentation.uiAutomation.executeShellCommand(command)
+        FileInputStream(descriptor.fileDescriptor).use { it.readBytes() }
+        descriptor.close()
     }
 
     private fun formatMs(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)

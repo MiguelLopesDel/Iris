@@ -33,6 +33,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasScrollAction
 import com.iris.app.data.remote.IrisApiClient
+import com.iris.app.data.local.DeviceGalleryReader
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -47,6 +48,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.FileInputStream
 import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -117,15 +119,31 @@ class InterfaceSmokeTest {
     @Test
     fun gallery_shows_device_media_when_server_library_is_empty() {
         fixture.emptyRecords = true
-        InstrumentationRegistry.getInstrumentation().uiAutomation.apply {
-            adoptShellPermissionIdentity(
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            instrumentation.uiAutomation.adoptShellPermissionIdentity(
                 android.Manifest.permission.READ_MEDIA_IMAGES,
                 android.Manifest.permission.READ_MEDIA_VIDEO,
                 android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
             )
+            shellMediaPermissionsAdopted = true
+        } else {
+            runShellCommand(instrumentation, "pm grant ${app.packageName} ${android.Manifest.permission.READ_EXTERNAL_STORAGE}")
+            runShellCommand(instrumentation, "pm grant ${app.packageName} ${android.Manifest.permission.WRITE_EXTERNAL_STORAGE}")
+            assertTrue(
+                "Legacy storage permission was not granted on API ${Build.VERSION.SDK_INT}",
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    app,
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            )
         }
-        shellMediaPermissionsAdopted = true
         localFixtureUri = insertLocalPhoto("local-only-fixture.jpg")
+        val devicePage = runBlocking { DeviceGalleryReader(app).page(1, 24, "all") }
+        assertTrue(
+            "API ${Build.VERSION.SDK_INT} MediaStore reader did not return the inserted local image: $devicePage",
+            devicePage.records.any { it.deviceUri == localFixtureUri.toString() }
+        )
 
         compose.onNodeWithContentDescription("Atualizar").performClick()
 
@@ -170,6 +188,15 @@ class InterfaceSmokeTest {
         compose.onNodeWithContentDescription("local-only-fixture.jpg", substring = true).performClick()
         waitForText("Mídia do aparelho")
         assertTrue("Opening device media must not request a server record", requestedPaths.none { it == "/api/records/-1" })
+    }
+
+    private fun runShellCommand(
+        instrumentation: android.app.Instrumentation,
+        command: String,
+    ) {
+        val descriptor = instrumentation.uiAutomation.executeShellCommand(command)
+        FileInputStream(descriptor.fileDescriptor).use { it.readBytes() }
+        descriptor.close()
     }
 
     @Test
@@ -563,18 +590,29 @@ class InterfaceSmokeTest {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun insertLocalPhoto(filename: String): Uri {
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        if (Build.VERSION.SDK_INT < 29) {
+            return try {
+                Uri.parse(
+                    requireNotNull(
+                        MediaStore.Images.Media.insertImage(app.contentResolver, bitmap, filename, null)
+                    )
+                )
+            } finally {
+                bitmap.recycle()
+            }
+        }
+
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
             put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
-            if (Build.VERSION.SDK_INT >= 29) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/IrisTest")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/IrisTest")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = requireNotNull(app.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
-        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
         try {
             requireNotNull(app.contentResolver.openOutputStream(uri)).use { output ->
                 check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
