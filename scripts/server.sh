@@ -40,6 +40,22 @@ prepare_env() {
     export IRIS_BACKUP_HOST_DIR
 }
 
+enable_gpu() {
+    # docker compose reads COMPOSE_FILE from .env, so every later command
+    # (status, update, backup...) keeps using the NVIDIA image.
+    local files="docker-compose.yml:docker-compose.gpu.yml"
+    if grep -q '^#\?COMPOSE_FILE=' .env; then
+        sed -i "s|^#\?COMPOSE_FILE=.*|COMPOSE_FILE=$files|" .env
+    else
+        printf '\nCOMPOSE_FILE=%s\n' "$files" >> .env
+    fi
+    export COMPOSE_FILE="$files"
+    if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then
+        echo "Warning: Docker reports no NVIDIA runtime; install the NVIDIA Container Toolkit." >&2
+    fi
+    echo "Using the NVIDIA image (COMPOSE_FILE in .env)."
+}
+
 host_timezone() {
     # The schedule's clock should be the owner's, not the container's UTC.
     local zone=""
@@ -166,7 +182,13 @@ wait_for_health() {
 case "${1:-}" in
     install)
         require_compose
+        case "${2:-}" in
+            "") ;;
+            --gpu) ;;
+            *) echo "Usage: $0 install [--gpu]" >&2; exit 2 ;;
+        esac
         prepare_env
+        [ "${2:-}" = "--gpu" ] && enable_gpu
         start_server
         wait_for_health
         echo "Daily backups go to $IRIS_BACKUP_HOST_DIR at $(env_value IRIS_BACKUP_TIME)" \
@@ -236,7 +258,7 @@ case "${1:-}" in
         set_port "$2"
         ;;
     *)
-        echo "Usage: $0 {install|create-admin|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>}" >&2
+        echo "Usage: $0 {install [--gpu]|create-admin|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>}" >&2
         exit 2
         ;;
 esac
