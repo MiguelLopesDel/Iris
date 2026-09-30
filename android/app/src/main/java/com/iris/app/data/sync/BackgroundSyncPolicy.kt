@@ -11,4 +11,15 @@ internal object BackgroundSyncPolicy {
         networkUnmetered: Boolean,
         isCharging: Boolean,
     ): Boolean = (!wifiOnly || networkUnmetered) && (!chargingOnly || isCharging)
+
+    /**
+     * Draining already-persisted uploads is media work too: background session
+     * startup must not upload queued files unless backup is opted in. A manual
+     * sync is an explicit one-shot request and may process the queue regardless.
+     */
+    fun shouldProcessMediaQueue(
+        allowedByConstraints: Boolean,
+        autoBackupEnabled: Boolean,
+        forceScan: Boolean,
+    ): Boolean = allowedByConstraints && (autoBackupEnabled || forceScan)
 }

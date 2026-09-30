@@ -79,11 +79,15 @@ class MediaSyncWorker(
             // 2. Discover new media and drain the durable queue together. This
             // lets the first new or already-pending item upload while the rest
             // of MediaStore is still being scanned and hashed.
-            val shouldScanForNewMedia = canRunMediaWork &&
-                (syncSettings.autoBackupEnabled || inputData.getBoolean(FORCE_SCAN_KEY, false))
+            val forceScan = inputData.getBoolean(FORCE_SCAN_KEY, false)
+            val shouldProcessMediaQueue = BackgroundSyncPolicy.shouldProcessMediaQueue(
+                allowedByConstraints = canRunMediaWork,
+                autoBackupEnabled = syncSettings.autoBackupEnabled,
+                forceScan = forceScan,
+            )
             val queueCompleted = when {
                 !canRunMediaWork -> true
-                shouldScanForNewMedia -> {
+                shouldProcessMediaQueue -> {
                     stage = "media_scan_and_upload"
                     val policy = MediaScanPolicy(
                         mode = syncSettings.sourceMode,
@@ -121,20 +125,10 @@ class MediaSyncWorker(
                         },
                     ).queueCompleted
                 }
-                else -> {
-                    stage = "upload_queue"
-                    app.syncUploadManager.processQueue(
-                        accountKey,
-                        sessionIdentity,
-                        isSessionCurrent = {
-                            !isStopped && syncSession.matches(
-                                app.credentialsStore.sessionIdentity.value,
-                                app.credentialsStore.accountIdentity.value
-                            )
-                        },
-                        onFirstUploadJobClaimed = onFirstUploadJobClaimed,
-                    )
-                }
+                // Checking server health/change feed is independent from photo
+                // backup. Do not drain durable uploads in the background after
+                // the user has opted out; manual sync sets FORCE_SCAN_KEY.
+                else -> true
             }
 
             ensureSession(app, sessionIdentity, accountKey)
