@@ -1,80 +1,84 @@
 # Perfis de dependencias
 
-As dependencias do Iris sao divididas por funcao, sem repetir pins entre os
-perfis:
+O Iris separa o que voce **declara** do que e **instalado**:
 
-- `requirements-common.txt`: dependencias diretas compartilhadas pela
-  aplicacao.
-- `requirements.txt`: runtime de producao CPU (PyTorch CPU + ONNX Runtime CPU).
-- `requirements-cuda.txt`: runtime de producao NVIDIA CUDA 12.6. Deve ser
-  instalado diretamente em um ambiente limpo; nao instala primeiro as wheels
-  CPU.
-- `requirements-dev.txt`: perfil CPU mais pytest, httpx, Ruff e pip-audit.
-- `constraints-common.txt`: pins transitivos compartilhados. Dependencias
-  diretas ficam fora dele para cada versao ter uma unica declaracao.
+| arquivo | papel | editar? |
+|---|---|---|
+| `requirements.in` | dependencias diretas da aplicacao, com a versao minima testada | sim |
+| `requirements-cpu.in` | `requirements.in` + PyTorch CPU + ONNX Runtime CPU | sim |
+| `requirements-cuda.in` | `requirements.in` + PyTorch CUDA 13 + ONNX Runtime GPU | sim |
+| `requirements-dev.in` | perfil CPU + pytest, httpx, Ruff, pip-audit, uv | sim |
+| `requirements.txt` | lock completo do perfil CPU (producao e imagem Docker) | nao, e gerado |
+| `requirements-cuda.txt` | lock completo do perfil NVIDIA | nao, e gerado |
+| `requirements-dev.txt` | lock completo do perfil de desenvolvimento | nao, e gerado |
+
+Os locks sao gerados por `scripts/lock_deps.sh` e fixam **o grafo inteiro**, com
+hashes, para Linux x86_64 e CPython 3.13. Instale-os sempre assim:
+
+```bash
+pip install --no-deps --require-hashes -r requirements.txt
+python scripts/check_deps.py            # ou --cuda no perfil NVIDIA
+```
+
+## Por que `--no-deps`
+
+O `insightface` declara `opencv-python` e `onnxruntime`. Esses pacotes instalam
+os mesmos modulos (`cv2`, `onnxruntime`) que o `opencv-python-headless` e o
+`onnxruntime-gpu` que o Iris realmente usa. Instalados lado a lado, o ultimo a
+ser gravado vence, e a imagem GPU pode perder o `CUDAExecutionProvider` sem
+nenhum erro: os rostos passariam a rodar na CPU.
+
+Por isso os locks omitem esses pacotes (`--no-emit-package`) e a instalacao nao
+resolve dependencias. O `pip check` acusa as omissoes; o
+`scripts/check_deps.py` roda o `pip check`, tolera **somente** elas e confere
+que o runtime certo esta presente (CUDA no perfil NVIDIA, CPU no perfil CPU).
 
 `pyproject.toml` guarda metadados, comandos e configuracao de build/lint/teste,
 mas nao declara dependencies: Iris e um aplicativo com runtimes mutuamente
-exclusivos, nao uma biblioteca Python com uma instalacao universal. `pip
-install -e . --no-deps` registra os comandos locais sem deixar o resolvedor do
-PyPI trocar as wheels explicitamente escolhidas pelo perfil.
+exclusivos, nao uma biblioteca. `pip install -e . --no-deps` registra os comandos
+locais sem mexer nas wheels do perfil.
 
 ## Desenvolvimento CPU (recomendado)
 
-Use sempre um virtualenv dentro do repositorio; nao instale o Iris no Python
-global nem reutilize um ambiente CUDA para testes CPU.
-
 ```bash
-python3.11 -m venv .venv
+python3.13 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pip install --no-deps --require-hashes -r requirements-dev.txt
 .venv/bin/python -m pip install --no-deps -e .
-.venv/bin/python -m pip check
-.venv/bin/python -m pytest -q tests/test_dependency_contract.py
+.venv/bin/python scripts/check_deps.py
 .venv/bin/python -m pytest -q
 ```
 
-Python suportado: 3.11 e 3.12. O CI usa Python 3.12. O `requirements-dev.txt`
-e `requirements.txt` escolhem wheels CPU explicitamente e fixam o conjunto de
-dependencias diretas e transitivas; use o `python` do mesmo virtualenv para
-pytest, Ruff e os comandos `iris-*`.
-
-## NVIDIA CUDA 12.6
+## NVIDIA (CUDA 13)
 
 Crie outro ambiente, sem instalar o perfil CPU antes:
 
 ```bash
-python3.12 -m venv .venv-cuda
-.venv-cuda/bin/python -m pip install --upgrade pip
-.venv-cuda/bin/python -m pip install -r requirements-cuda.txt
-.venv-cuda/bin/python -m pip check
-.venv-cuda/bin/python -c "import torch, torchvision, torchaudio, onnxruntime"
+python3.13 -m venv .venv-cuda
+.venv-cuda/bin/python -m pip install --no-deps --require-hashes -r requirements-cuda.txt
+.venv-cuda/bin/python scripts/check_deps.py --cuda
 ```
 
-Nao combine `requirements.txt` e `requirements-cuda.txt`, nem mantenha
-`onnxruntime` e `onnxruntime-gpu` instalados juntos. `requirements-cuda.txt`
-instala PyTorch 2.7.1/torchvision 0.22.1/torchaudio 2.7.1 com CUDA 12.6 e
-ONNX Runtime GPU 1.20.2. O CPU usa as mesmas versoes base de PyTorch com wheel
-`+cpu` e ONNX Runtime 1.20.1. As combinacoes correspondem as trincas oficiais
-listadas na
-[documentacao do PyTorch](https://docs.pytorch.org/get-started/previous-versions/).
+As bibliotecas CUDA e cuDNN vem como wheels do pip; o host so precisa do driver
+NVIDIA >= 580. CUDA 13 cobre GPUs da serie RTX 20 (Turing) em diante; placas
+mais antigas (GTX 10xx) rodam o Iris na CPU. A imagem Docker e a mesma do perfil
+CPU com `--build-arg IRIS_PROFILE=cuda`, e o `docker-compose.gpu.yml` so
+sobrepoe a imagem `-cuda` e o acesso a GPU.
 
-O perfil GPU tem Dockerfile e Compose separados (`Dockerfile.gpu` e
-`docker-compose.gpu.yml`). A imagem GPU requer Docker com suporte NVIDIA e
-precisa ser validada numa maquina NVIDIA; a compilacao CPU nao comprova esse
-perfil.
+## Atualizar dependencias
 
-## Ao atualizar pins
+1. Para adicionar ou remover uma dependencia direta, edite o `.in` do perfil
+   certo (`requirements.in` quando serve a todos).
+2. Regere os locks:
 
-1. Altere a dependencia direta somente em `requirements-common.txt`, no perfil
-   CPU, no CUDA, ou em `requirements-dev.txt`, conforme sua funcao.
-2. Regere `constraints-common.txt` num ambiente limpo para Python 3.11/3.12,
-   preservando nele apenas pins transitivos compartilhados.
-3. Rode `pip check`, `tests/test_dependency_contract.py`, imports reais e a
-   suite dentro do perfil; teste CPU e CUDA separadamente.
-4. Atualize os perfis do Docker e CI junto com os arquivos de requisitos.
+   ```bash
+   scripts/lock_deps.sh             # mantem os pins atuais sempre que possivel
+   scripts/lock_deps.sh --upgrade   # leva tudo a ultima versao compativel
+   ```
 
-As constraints nao incluem hashes de artefato; os pins fixam versoes, mas nao
-garantem bytes identicos entre indexadores ou plataformas. Se a reproducao da
-cadeia de fornecimento passar a ser requisito, adote locks com hashes por
-plataforma em uma mudanca propria.
+3. Instale o lock num ambiente limpo e rode `scripts/check_deps.py`, a suite e
+   uma indexacao real com modelos (CPU e, numa maquina NVIDIA, `--cuda`).
+4. Depois de validar, suba as versoes minimas nos `.in` para as testadas.
+
+O CI regera os locks e falha se eles divergirem dos `.in`, entao um `.in`
+editado sem regerar os locks nao passa despercebido.

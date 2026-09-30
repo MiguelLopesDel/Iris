@@ -362,7 +362,7 @@
       <tbody>
         <tr><td>Python</td><td>3.10</td><td>3.12</td></tr>
         <tr><td data-i18n="install_ram">RAM</td><td>8 GB</td><td>16 GB+</td></tr>
-        <tr><td>GPU</td><td>—</td><td>NVIDIA RTX 3060+ (CUDA 12.6)</td></tr>
+        <tr><td>GPU</td><td>—</td><td>NVIDIA RTX 3060+ (CUDA 13, driver ≥ 580)</td></tr>
         <tr><td data-i18n="install_disk">Disk (models)</td><td>4 GB</td><td>12 GB (all models incl. CLAP)</td></tr>
         <tr><td>OS</td><td>Linux / macOS</td><td>Linux + CUDA</td></tr>
         <tr><td data-i18n="install_chromaprint">Chromaprint (audio dedup)</td><td>—</td><td><code>apt install libchromaprint-tools</code></td></tr>
@@ -408,7 +408,7 @@ pip install -r requirements.txt</pre>
 
       <h3 style="margin-top: 1.5rem;" data-i18n="install_docker_gpu">Docker (GPU — requires NVIDIA Container Toolkit)</h3>
       <div class="code-header">bash</div>
-      <pre>docker compose -f docker-compose.gpu.yml up</pre>
+      <pre>docker compose -f docker-compose.yml -f docker-compose.gpu.yml up</pre>
     </div>
   </section>
 

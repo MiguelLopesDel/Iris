@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "iris-media"
 version = "0.3.0"
 description = "Self-hosted multi-account photo and video library."
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.13,<3.14"
 # This repository is an application, not a portable Python library. Runtime
 # dependencies are installed from requirements.txt (CPU) or
 # requirements-cuda.txt (NVIDIA); development tools are in requirements-dev.txt.
@@ -35,7 +35,7 @@ py-modules = ["server"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 extend-exclude = [
     "scripts/test_playground.py",
     "scripts/test_queries.py",

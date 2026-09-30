@@ -1,0 +1,7 @@
+# NVIDIA CUDA 13 runtime profile. Locked into requirements-cuda.txt by
+# scripts/lock_deps.sh. The CUDA libraries come from pip wheels, so the host
+# only needs an NVIDIA driver >= 580.
+-r requirements.in
+onnxruntime-gpu>=1.30.0
+torch>=2.14.1
+torchvision>=0.29.1

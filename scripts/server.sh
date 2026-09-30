@@ -6,7 +6,8 @@ project_root="$(cd -- "$script_dir/.." && pwd)"
 cd "$project_root"
 
 # Recorded in every backup, so a backup says which Iris wrote it. The image
-# has no .git, so the commit travels as an environment variable.
+# has no .git, so a local build bakes the commit in as a build argument;
+# published images carry the commit they were built from.
 IRIS_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
 export IRIS_COMMIT
 
@@ -75,13 +76,23 @@ set_port() {
     else
         printf '\nIRIS_PORT=%s\n' "$port" >> .env
     fi
-    docker compose up -d --build
+    start_server
     wait_for_health
     echo "Iris is now available locally at http://127.0.0.1:$port"
     echo "To reach it from other devices, put a private layer in front of that"
     echo "address — a mesh VPN, a tunnel, or a reverse proxy with TLS."
     echo "With Tailscale, for example:"
     echo "  sudo tailscale serve --bg http://127.0.0.1:$port"
+}
+
+start_server() {
+    # Run the published image; build it from this checkout only when that tag
+    # was never published (a development branch, or before the first release).
+    if ! docker compose pull --quiet iris; then
+        echo "No published image for this version; building it locally."
+        docker compose build iris
+    fi
+    docker compose up -d
 }
 
 show_storage() {
@@ -156,7 +167,7 @@ case "${1:-}" in
     install)
         require_compose
         prepare_env
-        docker compose up -d --build
+        start_server
         wait_for_health
         echo "Daily backups go to $IRIS_BACKUP_HOST_DIR at $(env_value IRIS_BACKUP_TIME)" \
             "($(env_value IRIS_BACKUP_TIMEZONE)); change it in .env or in System > Installation."
@@ -183,11 +194,15 @@ case "${1:-}" in
         ;;
     update)
         require_compose
-        git diff --quiet || { echo "Commit or stash local changes before updating." >&2; exit 1; }
+        if [ -d .git ]; then
+            git diff --quiet || { echo "Commit or stash local changes before updating." >&2; exit 1; }
+        fi
         echo "Backing up before updating..."
         run_backup || { echo "Backup failed; not updating." >&2; exit 1; }
-        git pull --ff-only
-        docker compose up -d --build
+        if [ -d .git ]; then
+            git pull --ff-only
+        fi
+        start_server
         wait_for_health
         echo "Update completed. Run ./scripts/server.sh status to confirm."
         ;;

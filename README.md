@@ -42,9 +42,11 @@ Iris is designed as a familiar gallery backed by a server you control. Accounts 
 
 ### Requirements
 
-- Python 3.11 or 3.12
+- Python 3.13 (the dependency locks target Linux x86_64; the Docker image
+  needs no local Python at all)
 - Linux (primary platform) — macOS works with CPU; Windows untested
-- NVIDIA GPU with CUDA 12.6 recommended (RTX 3060+ for comfortable speed)
+- NVIDIA GPU recommended (RTX 20 series or newer, driver ≥ 580 for CUDA 13;
+  RTX 3060+ for comfortable speed)
 - 16 GB RAM or more
 - ~10 GB disk for AI model weights (downloaded on first run)
 
@@ -64,17 +66,20 @@ computer, personal media, or an AI model download.
 git clone https://github.com/MiguelLopesDel/Iris.git
 cd iris
 
-python3 -m venv venv
+python3.13 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install --no-deps --require-hashes -r requirements.txt
+python scripts/check_deps.py
 ```
 
-This installs the production CPU profile, so an NVIDIA GPU is not required. For
-development and tests, create an isolated environment and install
-`requirements-dev.txt` instead. On NVIDIA/CUDA 12.6 machines, create a separate
-clean virtualenv and install `requirements-cuda.txt` directly; do not layer it
-over the CPU profile. Confirm the installation with `python -m pip check` and
-`python -c "import torch, torchvision, torchaudio, onnxruntime"`.
+This installs the production CPU profile, so an NVIDIA GPU is not required. The
+`requirements*.txt` files are complete locks (see
+[docs/dependency-profiles.md](docs/dependency-profiles.md)); `--no-deps` is
+required. For development and tests, install `requirements-dev.txt` instead. On
+NVIDIA machines, create a separate clean virtualenv, install
+`requirements-cuda.txt` and check it with `python scripts/check_deps.py --cuda`.
+On macOS, where the Linux locks do not apply, `pip install -r requirements-cpu.in`
+resolves the newest compatible versions (best effort, untested).
 
 ### Run
 
@@ -149,11 +154,15 @@ Open http://localhost:8501.
 
 ### GPU (NVIDIA)
 
-Requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html):
+Requires the NVIDIA driver ≥ 580 and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html):
 
 ```bash
-docker compose -f docker-compose.gpu.yml up
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
 ```
+
+Or set `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in `.env`, and
+every `docker compose` command (including `./scripts/server.sh`) uses the GPU
+image.
 
 ### Data persistence
 

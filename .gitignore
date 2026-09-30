@@ -185,3 +185,6 @@ MAPA.md
 /android/.kotlin/
 # Local agent permissions and plugin state are machine-specific.
 /.claude/settings.local.json
+
+# Per-volume trash created by Send2Trash on mounted drives
+.Trash-*/

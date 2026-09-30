@@ -1,0 +1,8 @@
+# Development tools layered on the CPU profile. Locked into requirements-dev.txt
+# by scripts/lock_deps.sh.
+-r requirements-cpu.in
+httpx>=0.28.1
+pip-audit>=2.10.1
+pytest>=9.1.1
+ruff>=0.16.9
+uv>=0.12.21

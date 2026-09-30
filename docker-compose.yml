@@ -1,11 +1,15 @@
+# CPU server. For NVIDIA, also load docker-compose.gpu.yml (see .env.example).
+# `docker compose pull` fetches the published image; `docker compose build`
+# builds the same tag from this checkout instead.
 services:
   iris:
+    image: ${IRIS_IMAGE:-ghcr.io/miguellopesdel/iris}:${IRIS_VERSION:-latest}
     build:
       context: .
-      dockerfile: Dockerfile
       args:
-        IRIS_UID: ${IRIS_UID:-1000}
-        IRIS_GID: ${IRIS_GID:-1000}
+        IRIS_PROFILE: cpu
+        IRIS_COMMIT: ${IRIS_COMMIT:-}
+    user: "${IRIS_UID:-1000}:${IRIS_GID:-1000}"
     ports:
       - "127.0.0.1:${IRIS_PORT:-8501}:8501"
     volumes:
@@ -14,6 +18,8 @@ services:
       - ${IRIS_BACKUP_DIR:-./backups}:/backup
       - huggingface_cache:/home/iris/.cache/huggingface
       - whisper_cache:/home/iris/.cache/whisper
+      - insightface_models:/home/iris/.insightface
+      - easyocr_models:/home/iris/.EasyOCR
     environment:
       PYTHONPATH: /app
       IRIS_MULTIUSER: ${IRIS_MULTIUSER:-auto}
@@ -42,7 +48,6 @@ services:
       IRIS_TRASH_DAYS: ${IRIS_TRASH_DAYS:-30}
       IRIS_BACKUP_DEST: /backup
       IRIS_BACKUP_HOST_DIR: ${IRIS_BACKUP_HOST_DIR:-}
-      IRIS_COMMIT: ${IRIS_COMMIT:-}
       IRIS_BACKUP_SCHEDULE: ${IRIS_BACKUP_SCHEDULE:-daily}
       IRIS_BACKUP_TIME: ${IRIS_BACKUP_TIME:-03:00}
       IRIS_BACKUP_TIMEZONE: ${IRIS_BACKUP_TIMEZONE:-UTC}
@@ -54,3 +59,5 @@ services:
 volumes:
   huggingface_cache:
   whisper_cache:
+  insightface_models:
+  easyocr_models:
