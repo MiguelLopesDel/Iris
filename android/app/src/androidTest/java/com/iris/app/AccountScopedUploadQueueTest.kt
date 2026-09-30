@@ -1287,6 +1287,14 @@ class AccountScopedUploadQueueTest {
         val identity = "${origin}|user:${login.user?.id ?: error("Server login response lacks user id")}|${login.deviceId}"
         credentials.saveSession(login.accessToken, login.refreshToken, login.deviceId, identity)
         val api = apiClient.apiServiceForSession(identity)
+        // The same path without the sync pipeline: the ceiling the runs below are compared with.
+        val ceiling = com.iris.app.data.sync.ServerSpeedTest().run(api)
+        Log.i(
+            "IrisUploadBench",
+            "IRIS_SPEEDTEST " + ceiling.joinToString(" ") { result ->
+                "${result.phase}=${formatMs(result.bytesPerSecond / 1_000_000.0)}MBps"
+            },
+        )
         val fileCount = 16
         val photoBytes = 1024 * 1024
         val videoBytes = 36 * 1024 * 1024

@@ -512,6 +512,22 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             )
                         }
 
+                        if (uiState.uploadSpeed.runNumber > 0L) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            UploadSpeedPanel(uiState.uploadSpeed, uiState.remainingUploadBytes)
+                        }
+
+                        if (uiState.isLoggedIn) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            ServerSpeedTestPanel(
+                                running = uiState.isSpeedTestRunning,
+                                results = uiState.speedTestResults,
+                                error = uiState.speedTestError,
+                                enabled = !uiState.isSyncing,
+                                onRun = viewModel::runSpeedTest
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(16.dp))
                         HorizontalDivider(color = IrisDarkSurfaceBright)
                         Spacer(modifier = Modifier.height(12.dp))
@@ -641,7 +657,26 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 }
             }
 
-            // ── Section 3: Upload Queue & History ────────────────────────────────
+            // ── Section 3: Run history (survives the app being closed) ───────────
+            item {
+                SectionToggle(
+                    title = stringResource(R.string.sync_history_section),
+                    subtitle = if (uiState.syncRuns.isEmpty()) {
+                        stringResource(R.string.sync_history_empty)
+                    } else {
+                        stringResource(R.string.sync_history_subtitle, uiState.syncRuns.size)
+                    },
+                    expanded = uiState.isHistoryExpanded,
+                    onToggle = viewModel::toggleHistory
+                )
+            }
+            if (uiState.isHistoryExpanded) {
+                items(uiState.syncRuns, key = { "run-${it.id}" }) { run ->
+                    SyncRunCard(run = run, activeRunId = uiState.activeSyncRunId)
+                }
+            }
+
+            // ── Section 4: Upload Queue ──────────────────────────────────────────
             item {
                 Text(
                     text = stringResource(R.string.sync_queue_title, uiState.queueTotal),

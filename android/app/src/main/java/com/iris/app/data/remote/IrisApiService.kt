@@ -13,6 +13,7 @@ import com.iris.app.data.model.RecordMetadataResponse
 import com.iris.app.data.model.RecordsResponse
 import com.iris.app.data.model.SearchResponse
 import com.iris.app.data.model.ServerInfo
+import com.iris.app.data.model.SpeedTestResponse
 import com.iris.app.data.model.UploadChunkResponse
 import com.iris.app.data.model.UploadCompleteBatchRequest
 import com.iris.app.data.model.UploadCompleteBatchResponse
@@ -78,6 +79,13 @@ interface IrisApiService {
     suspend fun getUploadStatus(
         @Path("upload_id") uploadId: String
     ): UploadStatusResponse
+
+    /** Sends synthetic bytes the server never keeps; [mode] is "discard" or "disk". */
+    @POST("api/sync/speedtest")
+    suspend fun speedTest(
+        @Query("mode") mode: String,
+        @Body body: RequestBody
+    ): SpeedTestResponse
 
     @PUT("api/sync/uploads/{upload_id}")
     suspend fun uploadChunk(

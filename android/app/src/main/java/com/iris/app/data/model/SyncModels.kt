@@ -151,6 +151,13 @@ data class UploadChunkResponse(
 )
 
 @Serializable
+data class SpeedTestResponse(
+    @SerialName("bytes") val bytes: Long,
+    @SerialName("server_seconds") val serverSeconds: Double,
+    @SerialName("mode") val mode: String
+)
+
+@Serializable
 data class UploadCompleteResponse(
     @SerialName("upload_id") val uploadId: String,
     @SerialName("state") val state: String,

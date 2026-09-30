@@ -38,7 +38,7 @@ case "${1:-fast}" in
         "$adb_command" -s "$emulator_serial" install -r -t app/build/outputs/apk/lab/app-lab.apk
         "$adb_command" -s "$emulator_serial" install -r -t app/build/outputs/apk/androidTest/lab/app-lab-androidTest.apk
         "$adb_command" -s "$emulator_serial" shell am instrument -w -r \
-            -e class com.iris.app.AuthenticatedMediaTransportTest,com.iris.app.MediaDownloaderTest,com.iris.app.InterfaceSmokeTest,com.iris.app.AccountScopedUploadQueueTest,com.iris.app.AccountScopedSyncSettingsTest,com.iris.app.CloudSyncStatusRepositoryTest \
+            -e class com.iris.app.AuthenticatedMediaTransportTest,com.iris.app.MediaDownloaderTest,com.iris.app.InterfaceSmokeTest,com.iris.app.AccountScopedUploadQueueTest,com.iris.app.AccountScopedSyncSettingsTest,com.iris.app.CloudSyncStatusRepositoryTest,com.iris.app.SyncRunHistoryTest \
             com.iris.app.lab.test/androidx.test.runner.AndroidJUnitRunner
         ;;
     device-smoke)

@@ -8,10 +8,14 @@ import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.model.CloudSyncStatus
 import com.iris.app.data.model.DeviceMediaSource
 import com.iris.app.data.model.LocalUploadJob
+import com.iris.app.data.model.SyncRun
 import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.data.sync.MediaSyncWorker
+import com.iris.app.data.sync.ServerSpeedTest
+import com.iris.app.data.sync.SyncRunRecorder
+import com.iris.app.data.sync.UploadSpeedSnapshot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -58,7 +62,17 @@ data class SyncUiState(
     val availableSources: List<DeviceMediaSource> = emptyList(),
     val isDiscoveringSources: Boolean = false,
     val sourceDiscoveryError: String? = null,
-    val isQueueExpanded: Boolean = false
+    val isQueueExpanded: Boolean = false,
+    /** Throughput of the current upload run, or of the last one once it ends. */
+    val uploadSpeed: UploadSpeedSnapshot = UploadSpeedSnapshot(),
+    val remainingUploadBytes: Long = 0L,
+    val syncRuns: List<SyncRun> = emptyList(),
+    /** The run executing in this process; a stored running row that is not it was interrupted. */
+    val activeSyncRunId: Long? = null,
+    val isHistoryExpanded: Boolean = false,
+    val isSpeedTestRunning: Boolean = false,
+    val speedTestResults: List<ServerSpeedTest.Result> = emptyList(),
+    val speedTestError: String? = null
 )
 
 class SyncViewModel(
@@ -85,6 +99,12 @@ class SyncViewModel(
         }
         loadQueue()
         startPeriodicQueuePoller()
+        startSpeedTicker()
+        viewModelScope.launch {
+            SyncRunRecorder.activeRunId.collect { id ->
+                _uiState.update { it.copy(activeSyncRunId = id) }
+            }
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -111,6 +131,9 @@ class SyncViewModel(
                             cloudSyncStatus = CloudSyncStatus(),
                             isSyncing = false,
                             currentProgress = 0f,
+                            uploadSpeed = UploadSpeedSnapshot(),
+                            remainingUploadBytes = 0L,
+                            syncRuns = emptyList(),
                             syncWifiOnly = false,
                             syncChargingOnly = false,
                             autoBackupEnabled = false,
@@ -415,13 +438,65 @@ class SyncViewModel(
             if (credentialsStore.sessionIdentity.value != requestedSession ||
                 credentialsStore.accountIdentity.value != requestedAccount
             ) return@launch
+            val remainingBytes = try {
+                repository.getRemainingUploadBytes()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _uiState.value.remainingUploadBytes
+            }
+            val runs = try {
+                repository.getRecentSyncRuns(HISTORY_LIMIT)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _uiState.value.syncRuns
+            }
+            if (credentialsStore.sessionIdentity.value != requestedSession ||
+                credentialsStore.accountIdentity.value != requestedAccount
+            ) return@launch
             _uiState.update {
                 it.copy(
                     uploadQueue = window,
                     queueCounts = counts,
                     queueTotal = total,
-                    queueRefreshFailed = false
+                    queueRefreshFailed = false,
+                    remainingUploadBytes = remainingBytes,
+                    syncRuns = runs
                 )
+            }
+        }
+    }
+
+    /** Measures the path to the server. Refused while uploading, which would share the link. */
+    fun runSpeedTest() {
+        val state = _uiState.value
+        if (state.isSpeedTestRunning || state.isSyncing || !state.isLoggedIn) return
+        _uiState.update { it.copy(isSpeedTestRunning = true, speedTestResults = emptyList(), speedTestError = null) }
+        viewModelScope.launch {
+            val outcome = repository.runServerSpeedTest { result ->
+                _uiState.update { it.copy(speedTestResults = it.speedTestResults + result) }
+            }
+            _uiState.update {
+                it.copy(
+                    isSpeedTestRunning = false,
+                    speedTestError = outcome.exceptionOrNull()?.let { error ->
+                        error.localizedMessage ?: error.javaClass.simpleName
+                    }
+                )
+            }
+        }
+    }
+
+    fun toggleHistory() = _uiState.update { it.copy(isHistoryExpanded = !it.isHistoryExpanded) }
+
+    /** Refreshes the live rate every second while uploading, and once more when it stops. */
+    private fun startSpeedTicker() {
+        viewModelScope.launch {
+            val meter = repository.uploadManager.speedMeter
+            while (true) {
+                _uiState.update { it.copy(uploadSpeed = meter.snapshot()) }
+                delay(if (_uiState.value.isSyncing) 1_000L else 3_000L)
             }
         }
     }
@@ -444,6 +519,8 @@ class SyncViewModel(
     companion object {
         /** Rows kept in memory for the queue list. */
         const val QUEUE_WINDOW = 40
+        /** Runs shown in the upload history. */
+        const val HISTORY_LIMIT = 20
     }
 
     class Factory(
