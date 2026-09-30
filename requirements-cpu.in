@@ -1,0 +1,5 @@
+# CPU runtime profile. Locked into requirements.txt by scripts/lock_deps.sh.
+-r requirements.in
+onnxruntime>=1.30.0
+torch>=2.14.1
+torchvision>=0.29.1

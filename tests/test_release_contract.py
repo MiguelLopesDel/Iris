@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _requirements() -> set[str]:
     requirements = set()
-    for filename in ("requirements.txt", "requirements-common.txt"):
+    for filename in ("requirements.txt", "requirements.in"):
         for line in (ROOT / filename).read_text().splitlines():
             line = line.strip()
             if not line or line.startswith(("#", "-")):
@@ -29,10 +29,10 @@ def test_private_server_runtime_dependencies_are_declared():
     assert {"fastapi", "itsdangerous", "pwdlib", "uvicorn"} <= requirements
 
 
-def test_cpu_image_has_the_packages_needed_for_insightface_build():
+def test_cpu_image_installs_the_cpu_onnx_runtime():
     dockerfile = (ROOT / "Dockerfile").read_text()
     requirements = (ROOT / "requirements.txt").read_text()
-    assert "g++" in dockerfile
+    assert "ARG IRIS_PROFILE=cpu" in dockerfile
     assert "onnxruntime-gpu" not in requirements
     assert "onnxruntime==" in requirements
 

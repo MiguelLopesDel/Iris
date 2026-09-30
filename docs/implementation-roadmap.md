@@ -178,6 +178,21 @@ espaco compartilhado. O fluxo de copiar para um espaco e sempre explicito.
   restricoes, usando PyTorch 2.7.1/cu126 e ONNX Runtime GPU 1.20.2. A imagem
   base NVIDIA CUDA 12.6 + Ubuntu 24.04 foi confirmada no registry, mas a
   imagem GPU ainda nao foi compilada neste ambiente sem Docker/GPU.
+- Em 2026-09-30, as dependencias passaram a ser declaradas em
+  `requirements*.in` e travadas por `scripts/lock_deps.sh` (uv) em locks
+  completos com hashes, instalados com `--no-deps`; `requirements-common.txt`,
+  `constraints-common.txt` e `Dockerfile.gpu` sairam. Tudo foi levado a
+  ultima versao estavel: Python 3.13, PyTorch 2.14.1/torchvision 0.29.1
+  (`torchaudio` removido, sem uso), CUDA 13 (cu130), ONNX Runtime 1.30,
+  insightface 2.0, opencv 5.0, sentence-transformers 6.1, transformers 5.18,
+  numpy 2.5. O insightface 2.0 declara `opencv-python` e `onnxruntime`, que
+  sombreiam `opencv-python-headless` e `onnxruntime-gpu`; os locks os omitem e
+  `scripts/check_deps.py` valida o resultado. Validacao: suite 618 aprovados e
+  18 pulados; indexacao real (EasyOCR, Florence-2, CLIP, Whisper, InsightFace)
+  em CPU e numa RTX 4050 com driver 615, com as cinco sessoes ONNX do
+  InsightFace em `CUDAExecutionProvider`. A imagem unica (`IRIS_PROFILE`
+  cpu/cuda sobre `python:3.13-slim`) nao foi compilada aqui, sem Docker; o
+  build fica a cargo do CI (`release-smoke` e `release.yml`).
 - Os testes de hot-path, lixeira e enrichment foram ajustados para o contrato
   `get_record(position)`/`_record_for_db_id`, sem reverter a refatoracao do
   catalogo em andamento. O ensaio direcionado passou 35/35.

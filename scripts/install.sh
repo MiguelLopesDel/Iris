@@ -8,19 +8,22 @@ NC='\033[0m'
 echo -e "${GREEN}=== Instalador Automático do Iris ===${NC}"
 echo "For a private Docker server, use ./scripts/server.sh install instead."
 
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}Erro: Python 3 não encontrado. Por favor, instale o Python 3 antes de continuar.${NC}"
+# The dependency locks target CPython 3.13 on Linux x86_64.
+PYTHON=python3.13
+command -v "$PYTHON" &> /dev/null || PYTHON=python3
+if ! command -v "$PYTHON" &> /dev/null; then
+    echo -e "${RED}Erro: Python 3.13 não encontrado. Instale o Python 3.13 antes de continuar.${NC}"
     exit 1
 fi
 
-if ! python3 -c 'import sys; sys.exit(not ((3, 11) <= sys.version_info[:2] < (3, 13)))'; then
-    echo -e "${RED}Iris requer Python 3.11 ou 3.12.${NC}"
+if ! "$PYTHON" -c 'import sys; sys.exit(sys.version_info[:2] != (3, 13))'; then
+    echo -e "${RED}Iris requer Python 3.13.${NC}"
     exit 1
 fi
 
 if [ ! -d "venv" ]; then
     echo "Criando ambiente virtual (venv)..."
-    python3 -m venv venv
+    "$PYTHON" -m venv venv
 else
     echo "Ambiente virtual já existe."
 fi
@@ -30,8 +33,8 @@ source venv/bin/activate
 
 pip install --upgrade pip
 
-if pip install -r requirements.txt && python -m pip check && \
-    python -c 'import torch, torchvision, torchaudio, onnxruntime'; then
+if pip install --no-deps --require-hashes -r requirements.txt && \
+    python scripts/check_deps.py; then
     echo -e "${GREEN}✅ Instalação concluída com sucesso!${NC}"
     echo ""
     echo "This installer is for local development or a single-user local run."

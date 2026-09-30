@@ -8,8 +8,8 @@ para começar. O fluxo de desenvolvimento é local e usa apenas dados descartáv
 ```bash
 git clone https://github.com/MiguelLopesDel/Iris.git
 cd Iris
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
+python3.13 -m venv .venv
+.venv/bin/python -m pip install --no-deps --require-hashes -r requirements-dev.txt
 .venv/bin/python -m pip install --no-deps -e .
 . .venv/bin/activate
 ./scripts/install_git_hooks.sh
@@ -29,9 +29,10 @@ galeria, permissões e isolamento em duas abas anônimas/incógnitas, sem tocar 
 `data/`, `media/` ou qualquer biblioteca real.
 
 O modo padrão usa `IRIS_LOAD_MODEL=0` para iniciar rapidamente e sem baixar modelos.
-O `requirements-dev.txt` instala a combinação CPU testada e as ferramentas de
-desenvolvimento. Instale o pacote editável com `--no-deps` para preservar as
-wheels do perfil selecionado, sem deixar o resolvedor do PyPI trocá-las.
+O `requirements-dev.txt` é o lock completo da combinação CPU testada mais as
+ferramentas de desenvolvimento; por isso é instalado com `--no-deps`. Instale o
+pacote editável também com `--no-deps`, para o resolvedor do PyPI não trocar as
+wheels do perfil. Para mudar dependências, veja `docs/dependency-profiles.md`.
 Para testar busca semântica, busca por imagem ou indexação real, pare o processo e
 rode:
 
