@@ -90,8 +90,9 @@ background job, and persisted queue.
 ### Change, integration, and release workflow
 
 - Keep `main` as the only permanent development branch. Start each task from an
-  up-to-date `main` on a short-lived `feat/...`, `fix/...`, `docs/...`, or
-  `chore/...` branch; split work that cannot be reviewed and validated as one
+  up-to-date `main` on a short-lived branch prefixed with the matching
+  Conventional Commit type: `feat/`, `fix/`, `docs/`, `chore/`, `build/`,
+  `ci/`, or `refactor/`; split work that cannot be reviewed and validated as one
   coherent change. Do not develop directly on `main` or keep completed branches.
 - Use a pull request as the normal integration path, especially for outside
   contributions. Review the final diff, behavior, tests, migrations, and
@@ -116,22 +117,44 @@ background job, and persisted queue.
   exact commit, ensure the server worktree is clean, make/verify a backup, then
   update and check health, logs, and the running commit. Record the outcome and
   have a recovery path for both application code and persistent data.
-- Important current limitation: `scripts/server.sh update` runs
-  `git pull --ff-only` on whichever branch is checked out. Until that script is
-  changed and tested to select an explicit deployment ref, only run it on a
-  server checked out to `main`; never deploy a feature branch by accident.
-  Backups protect data but do not by themselves roll back application code.
-- Do not claim tag-based or immutable-image deployment exists yet. Add release
-  tags/notes or deploy-by-image-digest only when the deployment workflow can
-  select and verify that exact version. Database/schema changes must include
-  migration, backup, compatibility, and rollback considerations.
+- Releases: tagging `vX.Y.Z` (it must match `version` in `pyproject.toml`) runs
+  `.github/workflows/release.yml`, which runs `scripts/test_release.sh` and
+  publishes `ghcr.io/miguellopesdel/iris` as `X.Y.Z`, `X.Y`, `latest` and the
+  matching `-cuda` tags. The running code is that image, selected by
+  `IRIS_VERSION` in the server's `.env`, not the checked-out source.
+- `scripts/server.sh update` backs up, runs `git pull --ff-only` in a git
+  checkout (only for scripts and compose files), then pulls the image for
+  `IRIS_VERSION`, building it from the checkout only when that tag was never
+  published. Only run it on a server checked out to `main`, and prefer a pinned
+  `IRIS_VERSION` over `latest` for deliberate upgrades. Backups protect data;
+  rolling back code means restoring the previous `IRIS_VERSION`.
+- Do not claim deploy-by-image-digest exists yet; tags are mutable. Database/
+  schema changes must include migration, backup, compatibility, and rollback
+  considerations.
 
 - Server (Docker Compose): `./scripts/server.sh install`, `status`, `logs`,
   `backup`, and `update`. Use `./scripts/server.sh port <1024-65535>` to change
   the published local port. Do not run lifecycle commands against a user's
   remote server unless explicitly asked.
-- Python checks: `pytest`; lint with `ruff check core routers scripts tests`;
-  compile with `python3 -m compileall -q core routers scripts tests`.
+- Python checks: `python scripts/check_deps.py`; `pytest`; lint with
+  `ruff check core routers scripts tests server.py`; compile with
+  `python3 -m compileall -q core routers scripts tests server.py`.
+- Dependencies (details in `docs/dependency-profiles.md`): Python 3.13 on Linux
+  x86_64. Declare direct dependencies only in `requirements*.in`, then run
+  `scripts/lock_deps.sh` to regenerate the hashed `requirements*.txt` locks;
+  never edit the locks by hand, and commit `.in` and locks together (CI fails
+  when they diverge). Install locks only with
+  `pip install --no-deps --require-hashes -r <lock>` into a dedicated venv, and
+  verify with `scripts/check_deps.py` (`--cuda` for the NVIDIA profile), not
+  `pip check`. Never let `opencv-python` or, in the CUDA profile, CPU
+  `onnxruntime` into an environment: insightface declares them and they shadow
+  `opencv-python-headless` / `onnxruntime-gpu`. Dependency upgrades need a real
+  model run (indexing with EasyOCR, Florence-2, CLIP, Whisper and faces), not
+  only the fake-model test suite.
+- Docker: one `Dockerfile` builds both profiles (`--build-arg
+  IRIS_PROFILE=cpu|cuda`); `docker-compose.gpu.yml` only overrides the image
+  and GPU access and is enabled with `COMPOSE_FILE` in `.env`. Keep runtime
+  settings in `docker-compose.yml` so both profiles share them.
 - Android: from `android/`, use `./scripts/test.sh fast`,
   `./scripts/test.sh build`, `./scripts/test.sh device-smoke`, and
   `./scripts/test.sh compose-smoke` / `./scripts/test.sh maestro-smoke`. The script
