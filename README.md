@@ -111,7 +111,9 @@ Then open the `https://<server>.<tailnet>.ts.net` address it prints from any
 device on your tailnet, in the browser or as the server URL in the Android app
 (see [android/README.md](android/README.md); the app is built from source, no
 store release yet). Other options are in
-[docs/server-deployment.md](docs/server-deployment.md#acesso-remoto-privado).
+[docs/server-deployment.md](docs/server-deployment.md#acesso-remoto-privado);
+how the app trusts private certificates or plain HTTP is in
+[docs/connectivity.md](docs/connectivity.md).
 Do not map the port to `0.0.0.0` without TLS and rate limiting.
 
 ### 4. Day to day

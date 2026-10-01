@@ -40,6 +40,7 @@ Desenvolvido com **Kotlin**, **Jetpack Compose** e **Material 3**, seguindo o de
 
 6. **Configuração do Servidor**:
    - Configuração de URL do servidor (ex: `http://10.0.2.2:8000/` para emulador, IP da rede local ou domínio remoto).
+   - Segurança da conexão por servidor: certificados de autoridade privada ou autoassinados e HTTP só com confirmação. Ver [docs/connectivity.md](../docs/connectivity.md).
    - Botão para testar conexão com diagnóstico imediato.
    - Painel informativo com status do modelo CLIP, dispositivo de aceleração (CUDA/CPU), banco SQLite e índice FAISS.
 

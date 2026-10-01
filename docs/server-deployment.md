@@ -238,6 +238,11 @@ Seja qual for o caminho, **não** troque o mapeamento do Docker para `0.0.0.0`
 sem antes decidir conscientemente por exposição pública, TLS e recuperação de
 incidentes — isso abre a porta para toda a rede local de uma vez.
 
+Com certificado de uma autoridade privada, autoassinado ou com HTTP numa rede
+privada, o app precisa ser orientado a confiar no servidor:
+[docs/connectivity.md](connectivity.md) descreve as opções e como conferir as
+impressões digitais.
+
 ## Backup, restauração e atualização
 
 O Iris faz backup da instalação inteira sozinho, todo dia às 03:00 no fuso do
