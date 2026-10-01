@@ -187,6 +187,13 @@ passo de medição: preservar também todos os eventos de fase do servidor em ar
 randomizar a ordem e repetir os perfis; então validar no aparelho/rede reais antes de
 selecionar uma política. Nada disso estima telefone, Wi-Fi, Tailscale ou servidor fraco.
 
+O mesmo comando `benchmark-sync` também roda `BackgroundSyncServiceTest`: o worker
+real, pelo WorkManager e sem nenhuma activity visível, contra o laboratório. Ele
+confere no `dumpsys activity services` que o backup virou serviço `dataSync`, que as
+execuções terminam sem cancelar umas às outras e que o histórico registra o serviço.
+No fim, o script limpa os dados do app `lab` (`pm clear`), porque esses testes logam
+num servidor real e mudam as preferências do app.
+
 Para repetir sem pôr a senha na linha de comando ou no histórico do shell:
 
 ```bash

@@ -16,6 +16,7 @@ import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.remote.IrisApiService
 import com.iris.app.data.sync.MediaStoreScanner
+import com.iris.app.data.sync.ResumableUploadTransfer
 import com.iris.app.data.sync.SyncUploadManager
 import com.iris.app.data.sync.SyncQueueCoordinator
 import com.iris.app.performance.Metric
@@ -1386,6 +1387,46 @@ class AccountScopedUploadQueueTest {
                 "$workers-worker=${formatMs(mbps)}MBps"
             },
         )
+    }
+
+    @Test
+    fun deleted_local_media_is_failed_and_does_not_stall_the_queue() = runBlocking {
+        val origin = IrisApiClient.getOrigin(server.url("/").toString())
+        app.credentialsStore.saveSession(
+            deviceId = "deleted-media-device",
+            accessToken = "deleted-media-token",
+            refreshToken = "deleted-media-refresh",
+            expiresInSeconds = 3600,
+            username = "deleted-media-user",
+            serverOrigin = origin,
+            userId = 41
+        )
+        val accountKey = app.credentialsStore.accountIdentity.value!!
+        val sessionIdentity = app.credentialsStore.sessionIdentity.value!!
+        val manager = SyncUploadManager(app.contentResolver, dbHelper) { session ->
+            app.apiClient.apiServiceForSession(session)
+        }
+        val stamp = System.nanoTime()
+        val deleted = createMediaStoreBenchmarkItem(app.contentResolver, "deleted-$stamp.jpg", false, 96 * 1024, stamp)
+        val kept = createMediaStoreBenchmarkItem(app.contentResolver, "kept-$stamp.jpg", false, 96 * 1024, stamp + 1)
+        try {
+            // The deleted item is queued first, so it is the first one claimed.
+            listOf(deleted, kept).forEach { item ->
+                assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-09-30T00:00:00Z") > 0L)
+            }
+            app.contentResolver.delete(deleted.uri, null, null)
+
+            assertTrue("A deleted photo must not stall the queue", manager.processQueue(accountKey, sessionIdentity))
+
+            val jobs = dbHelper.getAllJobs(accountKey).associateBy { it.filename }
+            assertEquals("FAILED", jobs.getValue(deleted.filename).state.name)
+            assertEquals(ResumableUploadTransfer.SOURCE_MISSING_MESSAGE, jobs.getValue(deleted.filename).errorMessage)
+            assertEquals("READY", jobs.getValue(kept.filename).state.name)
+            // Nothing is left to retry on the next run either.
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+        } finally {
+            app.contentResolver.delete(kept.uri, null, null)
+        }
     }
 
     @Test

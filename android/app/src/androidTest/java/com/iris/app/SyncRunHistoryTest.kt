@@ -51,6 +51,20 @@ class SyncRunHistoryTest {
     }
 
     @Test
+    fun upgrading_from_version_5_adds_the_foreground_service_column() = runBlocking {
+        val before = db.insertSyncRun("account-a", 1_000L, SyncRunTrigger.AUTOMATIC, startedInForeground = false)
+        db.writableDatabase.execSQL("ALTER TABLE sync_runs DROP COLUMN foreground_service")
+        db.writableDatabase.version = 5
+        db.close()
+
+        db = UploadDatabaseHelper(context, databaseName)
+        assertEquals(UploadDatabaseHelper.DATABASE_VERSION, db.readableDatabase.version)
+        assertNull("A run from before the upgrade has no answer", db.recentSyncRuns("account-a", 10).single().foregroundService)
+        db.markSyncRunForeground("account-a", before, started = true)
+        assertEquals(true, db.recentSyncRuns("account-a", 10).single().foregroundService)
+    }
+
+    @Test
     fun a_run_is_stored_with_progress_outcome_and_stop_reason() = runBlocking {
         val id = db.insertSyncRun("account-a", 1_000L, SyncRunTrigger.PERIODIC, startedInForeground = false)
         db.updateSyncRunProgress("account-a", id, bytes = 5_000L, items = 2L, uploadMillis = 700L)
@@ -104,23 +118,54 @@ class SyncRunHistoryTest {
 
         val idle = SyncRunRecorder(db, meter, "account-a")
         idle.start(SyncRunTrigger.PERIODIC, startedInForeground = false)
-        assertTrue(SyncRunRecorder.activeRunId.value != null)
+        assertEquals(1, SyncRunRecorder.activeRunIds.value.size)
         idle.finish(SyncRunOutcome.COMPLETED)
         assertTrue(db.recentSyncRuns("account-a", 10).isEmpty())
-        assertNull(SyncRunRecorder.activeRunId.value)
+        assertTrue(SyncRunRecorder.activeRunIds.value.isEmpty())
 
         val busy = SyncRunRecorder(db, meter, "account-a")
         busy.start(SyncRunTrigger.MANUAL, startedInForeground = true)
-        meter.startRun()
+        busy.queueRunStarted(meter.startRun())
         meter.recordAcknowledged(3_000_000L)
         meter.recordConfirmedItem()
         meter.finishRun()
+        busy.queueRunFinished(meter.snapshot())
         busy.finish(SyncRunOutcome.COMPLETED)
 
         val run = db.recentSyncRuns("account-a", 10).single()
         assertEquals(3_000_000L, run.bytes)
         assertEquals(1L, run.items)
         assertEquals(SyncRunOutcome.COMPLETED, run.outcome)
+    }
+
+    @Test
+    fun concurrent_runs_each_credit_only_their_own_queue_pass() = runBlocking {
+        val meter = UploadSpeedMeter()
+        val first = SyncRunRecorder(db, meter, "account-a")
+        val second = SyncRunRecorder(db, meter, "account-a")
+        first.start(SyncRunTrigger.PERIODIC, startedInForeground = false)
+        second.start(SyncRunTrigger.MANUAL, startedInForeground = false)
+        assertEquals(2, SyncRunRecorder.activeRunIds.value.size)
+
+        // The first owns the queue; the second waits for it.
+        first.queueRunStarted(meter.startRun())
+        meter.recordAcknowledged(5_000_000L)
+        meter.finishRun()
+        first.queueRunFinished(meter.snapshot())
+
+        // The second's own pass starts before the first records its end.
+        second.queueRunStarted(meter.startRun())
+        meter.recordAcknowledged(2_000_000L)
+        first.finish(SyncRunOutcome.COMPLETED)
+        assertEquals("One run is still active", 1, SyncRunRecorder.activeRunIds.value.size)
+        meter.finishRun()
+        second.queueRunFinished(meter.snapshot())
+        second.finish(SyncRunOutcome.COMPLETED)
+
+        val runs = db.recentSyncRuns("account-a", 10).associateBy { it.trigger }
+        assertEquals(5_000_000L, runs.getValue(SyncRunTrigger.PERIODIC).bytes)
+        assertEquals(2_000_000L, runs.getValue(SyncRunTrigger.MANUAL).bytes)
+        assertTrue(SyncRunRecorder.activeRunIds.value.isEmpty())
     }
 
     @Test

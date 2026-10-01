@@ -109,4 +109,17 @@
     <string name="sync_speed_test_parallel">%1$d conexões: %2$s</string>
     <string name="sync_speed_test_disk">Gravando no disco do servidor: %1$s</string>
     <string name="sync_speed_test_failed">Não foi possível medir: %1$s</string>
+    <string name="sync_notification_channel">Backup de mídias</string>
+    <string name="sync_notification_title">Fazendo backup no Iris</string>
+    <string name="sync_notification_preparing">Procurando fotos e vídeos novos…</string>
+    <string name="sync_notification_progress">%1$s · %2$d enviados · faltam %3$s</string>
+    <string name="sync_notification_progress_done">%1$s · %2$d enviados</string>
+    <string name="sync_background_title">Backup com o app fechado</string>
+    <string name="sync_background_battery">O Android interrompe envios em segundo plano depois de alguns minutos. Para o backup continuar com o app fechado, permita que o Iris rode sem restrição de bateria.</string>
+    <string name="sync_background_battery_action">Permitir em segundo plano</string>
+    <string name="sync_background_notifications">Permita notificações para ver o progresso do backup enquanto o app está fechado.</string>
+    <string name="sync_background_notifications_action">Permitir notificações</string>
+    <string name="sync_history_foreground_service">Rodou como serviço com notificação</string>
+    <string name="sync_history_foreground_refused">O Android não permitiu rodar como serviço (restrição de bateria)</string>
+    <string name="sync_notification_progress_no_rate">%1$d enviados · faltam %2$s</string>
 </resources>

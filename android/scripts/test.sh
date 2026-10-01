@@ -125,11 +125,14 @@ case "${1:-fast}" in
         "$adb_command" -s "$emulator_serial" install -r -t app/build/outputs/apk/lab/app-lab.apk
         "$adb_command" -s "$emulator_serial" install -r -t app/build/outputs/apk/androidTest/lab/app-lab-androidTest.apk
         "$adb_command" -s "$emulator_serial" shell am instrument -w -r \
-            -e class com.iris.app.AccountScopedUploadQueueTest#isolated_real_server_upload_benchmark_measures_end_to_end_photo_video_payload_path \
+            -e class com.iris.app.AccountScopedUploadQueueTest#isolated_real_server_upload_benchmark_measures_end_to_end_photo_video_payload_path,com.iris.app.BackgroundSyncServiceTest \
             -e irisBenchBaseUrl http://10.0.2.2:8851 \
             -e irisBenchUsername "$IRIS_BENCH_USERNAME" \
             -e irisBenchPassword "$IRIS_BENCH_PASSWORD" \
             com.iris.app.lab.test/androidx.test.runner.AndroidJUnitRunner
+        # These runs log the lab app into a real server and change its settings
+        # and catalog; reset it so the next suite starts from a clean app.
+        "$adb_command" -s "$emulator_serial" shell pm clear com.iris.app.lab
         ;;
     *)
         usage

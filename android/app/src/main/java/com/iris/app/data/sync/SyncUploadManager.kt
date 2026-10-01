@@ -95,22 +95,30 @@ class SyncUploadManager(
         )
     }
 
-    /** Returns false when another runner owns the queue or an item needs retry. */
+    /**
+     * Returns false when an item needs retry. A second runner waits for the one
+     * that owns the queue instead of returning: items its own scan enqueued may
+     * arrive after the first runner stopped claiming, and leaving them would
+     * strand them until the next scheduled sync.
+     *
+     * [onQueueRunStarted] receives the speed meter's number for this pass and
+     * [onQueueRunFinished] its final totals, so a caller credits only its own pass.
+     */
     suspend fun processQueue(
         accountKey: String,
         sessionIdentity: String,
         workSignal: SyncQueueCoordinator.WorkSignal? = null,
         isSessionCurrent: () -> Boolean = { true },
         onFirstUploadJobClaimed: () -> Unit = {},
+        onQueueRunStarted: (Long) -> Unit = {},
+        onQueueRunFinished: (UploadSpeedSnapshot) -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO) {
         require(accountKey.isNotBlank()) { "An account key is required to process uploads" }
         require(sessionIdentity.isNotBlank()) { "A session identity is required to process uploads" }
-        // Prevent multiple workers or UI buttons from running concurrent upload loops
-        if (!uploadMutex.tryLock()) {
-            return@withContext false
-        }
+        // One upload loop at a time; a concurrent worker waits its turn.
+        uploadMutex.lock()
         _isUploading.value = true
-        speedMeter.startRun()
+        onQueueRunStarted(speedMeter.startRun())
         val queueStartedAtNanos = System.nanoTime()
         val acknowledgedBytes = AtomicLong(0L)
         val confirmedItems = AtomicLong(0L)
@@ -194,11 +202,11 @@ class SyncUploadManager(
                                 }
 
                                 try {
-                                    val itemConfirmed = transfer.execute(nextJob)
-                                    if (itemConfirmed) {
+                                    val result = transfer.execute(nextJob)
+                                    if (result == ResumableUploadTransfer.ItemResult.CONFIRMED) {
                                         confirmedItems.incrementAndGet()
                                         speedMeter.recordConfirmedItem()
-                                    } else {
+                                    } else if (result == ResumableUploadTransfer.ItemResult.RETRY) {
                                         // Stop claiming more work on any transient
                                         // failure. Other already-active jobs may
                                         // finish, then WorkManager retries the
@@ -228,6 +236,7 @@ class SyncUploadManager(
             !retryRequested.get()
         } finally {
             speedMeter.finishRun()
+            onQueueRunFinished(speedMeter.snapshot())
             _isUploading.value = false
             synchronized(progressLock) {
                 activeProgress.clear()

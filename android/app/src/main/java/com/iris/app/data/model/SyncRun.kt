@@ -18,6 +18,8 @@ data class SyncRun(
     val stopReason: Int?,
     /** Short machine code explaining a retry or failure; never a message with user data. */
     val detail: String?,
+    /** True when the run became a foreground service, false when Android refused, null when not attempted. */
+    val foregroundService: Boolean? = null,
 )
 
 enum class SyncRunTrigger { MANUAL, AUTOMATIC, PERIODIC }

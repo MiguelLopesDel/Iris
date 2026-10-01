@@ -119,6 +119,8 @@ class UploadDatabaseHelper(
         }
         if (oldVersion < 5) {
             createSyncRunsTable(db)
+        } else if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE sync_runs ADD COLUMN foreground_service INTEGER")
         }
     }
 
@@ -447,6 +449,12 @@ class UploadDatabaseHelper(
         }, "id = ? AND account_key = ?", arrayOf(id.toString(), accountKey))
     }
 
+    suspend fun markSyncRunForeground(accountKey: String, id: Long, started: Boolean) = withContext(Dispatchers.IO) {
+        writableDatabase.update("sync_runs", ContentValues().apply {
+            put("foreground_service", if (started) 1 else 0)
+        }, "id = ? AND account_key = ?", arrayOf(id.toString(), accountKey))
+    }
+
     /** Drops a run that had nothing to do, so idle periodic checks do not bury real ones. */
     suspend fun deleteSyncRun(accountKey: String, id: Long) = withContext(Dispatchers.IO) {
         writableDatabase.delete("sync_runs", "id = ? AND account_key = ?", arrayOf(id.toString(), accountKey))
@@ -466,7 +474,7 @@ class UploadDatabaseHelper(
         val runs = mutableListOf<SyncRun>()
         readableDatabase.rawQuery(
             "SELECT id, started_at, ended_at, run_trigger, started_in_foreground, bytes, items, " +
-                "upload_millis, outcome, stop_reason, detail FROM sync_runs " +
+                "upload_millis, outcome, stop_reason, detail, foreground_service FROM sync_runs " +
                 "WHERE account_key = ? ORDER BY id DESC LIMIT ?",
             arrayOf(accountKey, limit.coerceAtLeast(0).toString())
         ).use { cursor ->
@@ -485,6 +493,7 @@ class UploadDatabaseHelper(
                         .getOrDefault(SyncRunOutcome.RUNNING),
                     stopReason = if (cursor.isNull(9)) null else cursor.getInt(9),
                     detail = if (cursor.isNull(10)) null else cursor.getString(10),
+                    foregroundService = if (cursor.isNull(11)) null else cursor.getInt(11) != 0,
                 )
             }
         }
@@ -532,7 +541,7 @@ class UploadDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
-        const val DATABASE_VERSION = 5
+        const val DATABASE_VERSION = 6
         const val SYNC_RUN_HISTORY_LIMIT = 50
         private const val JOB_COLUMNS =
             "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind FROM upload_jobs"
@@ -592,7 +601,8 @@ class UploadDatabaseHelper(
                     upload_millis INTEGER NOT NULL DEFAULT 0,
                     outcome TEXT NOT NULL,
                     stop_reason INTEGER,
-                    detail TEXT
+                    detail TEXT,
+                    foreground_service INTEGER
                 )
                 """.trimIndent()
             )
