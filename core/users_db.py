@@ -10,7 +10,7 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.embedding_models import DEFAULT_MODEL, resolve_embedding_model
@@ -40,6 +40,7 @@ class IrisDevice:
     refresh_token_hash: str
     token_version: int
     revoked_at: str | None
+    last_seen_at: str = ""
 
 
 def now_iso() -> str:
@@ -212,6 +213,7 @@ def _device_from_row(row: sqlite3.Row) -> IrisDevice:
         id=str(row["id"]), user_id=int(row["user_id"]), name=str(row["name"]),
         platform=str(row["platform"]), refresh_token_hash=str(row["refresh_token_hash"]),
         token_version=int(row["token_version"]), revoked_at=row["revoked_at"],
+        last_seen_at=str(row["last_seen_at"] or ""),
     )
 
 
@@ -245,6 +247,17 @@ def rotate_device_refresh_token(path: Path, device_id: str, token_hash: str) -> 
             (token_hash, now_iso(), device_id),
         )
     return cursor.rowcount == 1
+
+
+def touch_device(path: Path, device_id: str, *, min_interval_seconds: int = 300) -> None:
+    """Record that a device was just used, writing at most once per interval."""
+    now = datetime.now(UTC)
+    threshold = (now - timedelta(seconds=min_interval_seconds)).isoformat()
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE devices SET last_seen_at = ? WHERE id = ? AND last_seen_at < ?",
+            (now.isoformat(), device_id, threshold),
+        )
 
 
 def revoke_device(path: Path, user_id: int, device_id: str) -> bool:

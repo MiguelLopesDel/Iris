@@ -115,6 +115,7 @@ from core.web_enrichment import (
     reject_suggestion,
     update_job,
 )
+from core.web_sessions import web_session_device
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.backup import BackupRouteOperations
@@ -737,6 +738,13 @@ async def authenticate_library_request(request: Request, call_next):
             if device is None or device.revoked_at or device.user_id != user_id or device.token_version != payload.get("token_version"):
                 user_id = None
     user = get_user_by_id(request.app.state.users_db_path, int(user_id)) if isinstance(user_id, int) else None
+    if user is not None and device_id is None and user.session_version == session_version:
+        # A browser: its session is a device of its own, revocable like a phone.
+        device_id = web_session_device(
+            session, request.app.state.users_db_path, user, request.headers.get("user-agent", "")
+        )
+        if device_id is None:
+            user = None
     if user is None or user.session_version != session_version:
         session.clear()
         if path.startswith("/api/"):
