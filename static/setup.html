@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuração inicial — Iris</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <p class="eyebrow">IRIS</p>
+    <h1>Bem-vindo ao Iris</h1>
+    <p>Crie a conta de administrador deste servidor. Ela gerencia as outras contas e as configurações da instalação.</p>
+    <p id="setup-legacy" class="setup-note" hidden>Uma biblioteca de antes das contas foi encontrada. Ela será movida para esta conta, com fotos, vídeos e índices.</p>
+    <form id="setup-form" class="login-form" autocomplete="off">
+      <label>Código de instalação
+        <input name="code" required autofocus autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX">
+        <small class="setup-hint">Mostrado ao final da instalação e no log do servidor. Para ver de novo: <code>./scripts/server.sh setup-code</code></small>
+      </label>
+      <label>Usuário <input name="username" autocomplete="username" required minlength="2" maxlength="63"></label>
+      <label>Seu nome <input name="display_name" autocomplete="name"></label>
+      <label>Senha <input name="password" type="password" autocomplete="new-password" required minlength="12">
+        <small class="setup-hint">Pelo menos 12 caracteres.</small>
+      </label>
+      <label>Repita a senha <input name="confirm" type="password" autocomplete="new-password" required minlength="12"></label>
+      <p id="setup-error" class="form-error" hidden></p>
+      <button type="submit">Criar administrador</button>
+    </form>
+  </main>
+  <script src="/static/setup.js"></script>
+</body>
+</html>

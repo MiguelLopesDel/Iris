@@ -4077,3 +4077,6 @@ a.btn {
   flex: 1;
   margin: 0;
 }
+.setup-note { padding: 10px 12px; border-radius: 10px; background: var(--surface-muted, rgb(127 127 127 / 10%)); }
+.setup-hint { font-weight: 400; color: var(--muted, #666); }
+.setup-hint code { font-size: 0.85em; }

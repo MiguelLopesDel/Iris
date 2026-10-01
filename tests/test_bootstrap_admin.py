@@ -6,8 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from core.first_setup import _move_media_contents
+from core.first_setup import default_legacy_db as _default_legacy_db
 from core.users_db import get_user_by_username
-from scripts.bootstrap_admin import _default_legacy_db, _move_media_contents
 
 
 def test_bootstrap_admin_creates_an_empty_private_library(tmp_path: Path):

@@ -26,7 +26,7 @@ from tqdm import tqdm
 from transformers import AutoProcessor, Florence2ForConditionalGeneration
 from transformers import logging as transformers_logging
 
-from core import fingerprint_index, import_review
+from core import compute_device, fingerprint_index, import_review
 from core.deleted_registry import load_deleted_content_hashes
 from core.embedding_models import (
     EmbeddingEncoder,
@@ -253,13 +253,8 @@ def parse_arguments() -> IndexerConfig:
 
 
 def resolve_device(requested: str) -> str:
-    if requested != "auto":
-        return requested
-    if torch.cuda.is_available():
-        return "cuda"
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+    """Kept for callers and the CLI; the decision lives in core.compute_device."""
+    return compute_device.resolve(requested)
 
 
 
