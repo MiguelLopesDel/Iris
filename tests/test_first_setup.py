@@ -306,3 +306,47 @@ def shutil_usage(free: int):
     import collections
 
     return collections.namedtuple("usage", "total used free")(free * 10, free * 9, free)
+
+
+def test_a_source_folder_that_is_only_partly_removed_never_loses_files(tmp_path: Path) -> None:
+    out = _run(tmp_path, _LEGACY_LIBRARY + r'''
+trip = media / "viagem"
+trip.mkdir()
+for name in ("1.jpg", "2.jpg", "3.jpg"):
+    (trip / name).write_bytes(name.encode() * 500)
+expected = {f"viagem/{n}": n.encode() * 500 for n in ("1.jpg", "2.jpg", "3.jpg")}
+expected.update({n: n.encode() * 1000 for n in ("a.jpg", "b.jpg", "c.jpg")})
+
+real_rmtree = shutil.rmtree
+def removal_dies_halfway(path, *args, **kwargs):
+    # The copy of viagem/ is complete; deleting the original removes one
+    # file and then fails, as a dying disk or a permission problem would.
+    if Path(path).name == "viagem" and "media" in str(path) and "users" not in str(path):
+        next(iter(sorted(Path(path).iterdir()))).unlink()
+        raise OSError(5, "Input/output error")
+    return real_rmtree(path, *args, **kwargs)
+shutil.rmtree = removal_dies_halfway
+
+import server
+with TestClient(server.app) as client:
+    code = (data / "setup_code").read_text().strip()
+    failed = client.post("/api/setup", json={"code": code, "username": "admin", "password": "senha muito segura"})
+    # The complete copy cannot go back over a half-removed original: the
+    # account stays with it, setup closes, and the response says where it is.
+    assert failed.status_code == 500, failed.text
+    assert "viagem" in failed.json()["detail"]
+    assert client.get("/healthz").json()["status"] == "ok"
+
+def files_under(root):
+    return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()} if root.exists() else {}
+
+found = files_under(media)
+for user_dir in (data / "users").glob("*/media") if (data / "users").exists() else []:
+    for name, content in files_under(user_dir).items():
+        found.setdefault(name, content)
+missing = sorted(set(expected) - set(found))
+assert not missing, f"lost files: {missing}"
+assert all(found[name] == content for name, content in expected.items())
+print("ok")
+''')
+    assert out.strip().endswith("ok")

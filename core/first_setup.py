@@ -202,16 +202,18 @@ def check_migration_space(legacy: LegacyLibrary, data_dir: Path) -> None:
         )
 
 
-def _move(source: Path, destination: Path) -> None:
+def _move(source: Path, destination: Path, on_copied=lambda: None) -> None:
     """Move without ever being the cause of the only complete copy disappearing.
 
-    Within one filesystem this is a rename. Across filesystems it copies, and
-    only when the copy is complete removes the original. A failed copy leaves
-    the original untouched and its partial copy is discarded; a failure while
-    removing the original leaves both, and the complete copy is kept.
+    Within one filesystem this is a rename. Across filesystems it copies,
+    calls ``on_copied`` once the copy is complete, and only then removes the
+    original. A failed copy leaves the original untouched and its partial
+    copy is discarded. A failure while removing the original happens after
+    ``on_copied``: the complete copy is already accounted for and is kept.
     """
     try:
         os.rename(source, destination)
+        on_copied()
         return
     except OSError as exc:
         if exc.errno != errno.EXDEV:
@@ -227,6 +229,7 @@ def _move(source: Path, destination: Path) -> None:
         else:
             destination.unlink(missing_ok=True)
         raise
+    on_copied()
     if source.is_dir():
         shutil.rmtree(source)
     else:
@@ -242,22 +245,45 @@ class _MoveJournal:
     def move(self, source: Path, destination: Path) -> None:
         if destination.exists():
             raise FileExistsError(f"destino já existe: {destination}")
-        _move(source, destination)
-        self._done.append((source, destination))
+        # Recorded as soon as the destination holds a complete copy, before the
+        # original is removed: if that removal fails partway, undo must know
+        # the destination is the copy to keep.
+        _move(source, destination, on_copied=lambda: self._done.append((source, destination)))
 
     def undo(self) -> list[str]:
-        """Move everything back, newest first; returns what could not be restored."""
+        """Move everything back, newest first; returns what could not be restored.
+
+        Never overwrites: an original that still (partly) exists means its
+        removal failed, so the complete copy stays where it is and is reported.
+        """
         stuck = []
         for source, destination in reversed(self._done):
             try:
                 if source.exists():
-                    raise FileExistsError(f"a origem já existe: {source}")
+                    raise FileExistsError(f"a origem ainda existe em parte: {source}")
                 source.parent.mkdir(parents=True, exist_ok=True)
                 _move(destination, source)
             except Exception as exc:  # keep restoring the rest
                 stuck.append(f"{destination} -> {source} ({exc})")
         self._done.clear()
         return stuck
+
+
+def _remove_empty_tree(root: Path) -> list[Path]:
+    """Remove ``root`` if only empty directories remain; return any files left.
+
+    Undoing setup removes the folders the new account created and nothing
+    else: a file there means something was not put back, and it is kept.
+    """
+    if not root.exists():
+        return []
+    files = [path for path in root.rglob("*") if not path.is_dir()]
+    if files:
+        return files
+    for directory in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+        directory.rmdir()
+    root.rmdir()
+    return []
 
 
 def _move_media_contents(source_root: Path, destination_root: Path, journal: _MoveJournal | None = None) -> None:
@@ -320,8 +346,9 @@ def create_first_admin(
         out_of_space = isinstance(exc, OSError) and exc.errno == errno.ENOSPC
         stuck = journal.undo()
         if not stuck:
+            stuck = [f"{path} (ficou na pasta da conta)" for path in _remove_empty_tree(destination_root)]
+        if not stuck:
             delete_user(users_db, user.id)
-            shutil.rmtree(destination_root, ignore_errors=True)
             logger.warning("setup_migration_rolled_back error_type=%s", type(exc).__name__)
             reason = "falta espaço em disco" if out_of_space else str(exc)
             raise MigrationFailed(
