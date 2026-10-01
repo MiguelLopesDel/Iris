@@ -2,6 +2,7 @@ package com.iris.app.data.remote.security
 
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Connection
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import java.io.IOException
@@ -12,9 +13,12 @@ import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
+import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManagerFactory
@@ -108,12 +112,25 @@ open class ConnectionSecurity(
 
     open fun securityFor(origin: ServerOrigin): ServerSecurity = store.get(origin)
 
+    /**
+     * Changes the policy of [origin]. Takes effect at once: the TLS session cache is
+     * dropped and every connection the app opened is closed, including ones in use
+     * (a playing video reconnects). Closing a TLS connection writes to the network:
+     * call this off the main thread.
+     */
     fun update(origin: ServerOrigin, change: (ServerSecurity) -> ServerSecurity) {
         store.put(origin, change(store.get(origin)))
         trustManager.forgetCachedAnchors()
         sslContext = newContext()
+        generation.incrementAndGet()
         rejected.remove(origin.key)
+        val open = synchronized(connections) { connections.keys.toList().also { connections.clear() } }
+        open.forEach { runCatching { it.socket().close() } }
     }
+
+    // Connections seen by the guard, with the policy generation they were last checked under.
+    private val connections = WeakHashMap<Connection, Long>()
+    private val generation = AtomicLong()
 
     /** The chain a server presented the last time it was refused, for the user to inspect. */
     fun lastRejectedChain(origin: ServerOrigin): List<X509Certificate>? = rejected[origin.key]?.chain
@@ -131,14 +148,52 @@ open class ConnectionSecurity(
 
     open fun apply(builder: OkHttpClient.Builder): OkHttpClient.Builder = builder
         .sslSocketFactory(socketFactory, trustManager)
+        // Refuses HTTP before anything is dialled.
         .addInterceptor(cleartextGuard)
+        // Runs for every exchange on the network: after each redirect and on every
+        // reused (possibly multiplexed) connection, which the line above never sees.
+        .addNetworkInterceptor(exchangeGuard)
 
     private val cleartextGuard = Interceptor { chain ->
+        requireCleartextConsent(chain.request().url)
+        chain.proceed(chain.request())
+    }
+
+    private val exchangeGuard = Interceptor { chain ->
         val url = chain.request().url
+        requireCleartextConsent(url)
+        chain.connection()?.let { connection -> checkConnection(connection, url) }
+        chain.proceed(chain.request())
+    }
+
+    private fun requireCleartextConsent(url: HttpUrl) {
         if (!url.isHttps && !securityFor(ServerOrigin.of(url)).cleartextAllowed) {
             throw CleartextNotPermittedException(ServerOrigin.of(url))
         }
-        chain.proceed(chain.request())
+    }
+
+    /**
+     * A connection is used only under the policy it satisfies now: one opened before
+     * the policy changed is checked again (once per change) before carrying a request.
+     */
+    private fun checkConnection(connection: Connection, url: HttpUrl) {
+        val current = generation.get()
+        if (synchronized(connections) { connections[connection] } == current) return
+        val session = (connection.socket() as? SSLSocket)?.session
+        if (url.isHttps && session != null) {
+            // The chain as received. OkHttp's Handshake.peerCertificates is "cleaned" against
+            // the system authorities only and comes back empty for a private CA.
+            val chain = runCatching { session.peerCertificates.filterIsInstance<X509Certificate>() }
+                .getOrDefault(emptyList())
+            try {
+                trustManager.revalidate(ServerOrigin.of(url), chain)
+            } catch (failure: CertificateException) {
+                runCatching { connection.socket().close() }
+                throw SSLHandshakeException("Connection no longer trusted for ${ServerOrigin.of(url)}")
+                    .apply { initCause(failure) }
+            }
+        }
+        synchronized(connections) { connections[connection] = current }
     }
 
     companion object {
@@ -212,6 +267,17 @@ internal class PolicyTrustManager(
     private val onRejected: (ServerOrigin, List<X509Certificate>, String) -> Unit,
 ) : X509ExtendedTrustManager() {
     private val pinnedManagers = ConcurrentHashMap<List<String>, X509TrustManager>()
+    private val acceptedAuthTypes = ConcurrentHashMap<String, String>()
+
+    /** Checks an already established chain against [origin]'s current policy. */
+    fun revalidate(origin: ServerOrigin, chain: List<X509Certificate>) {
+        if (chain.isEmpty()) throw CertificateException("No certificates for $origin")
+        // The key-exchange type the handshake reported; TLS 1.3 reports a generic one.
+        val authType = acceptedAuthTypes[origin.key] ?: "UNKNOWN"
+        verify(chain.toTypedArray(), authType, origin.host, origin.port) { manager ->
+            manager.checkServerTrusted(chain.toTypedArray(), authType)
+        }
+    }
 
     fun forgetCachedAnchors() = pinnedManagers.clear()
 
@@ -261,6 +327,7 @@ internal class PolicyTrustManager(
                     pinnedManager(anchors).checkServerTrusted(chain, authType)
                 }
             }
+            if (origin != null) acceptedAuthTypes[origin.key] = authType
         } catch (failure: CertificateException) {
             if (origin != null) onRejected(origin, chain.toList(), authType)
             throw failure

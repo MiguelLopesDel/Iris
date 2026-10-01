@@ -252,4 +252,79 @@ class ConnectionSecurityTest {
             assertTrue(ConnectionProblem.from(error, origin, security) is ConnectionProblem.UntrustedCertificate)
         }
     }
+
+    @Test
+    fun `a redirect cannot reach http without consent for the target`() {
+        val target = MockWebServer().also { it.start(); servers += it }
+        target.enqueue(MockResponse().setBody("leaked"))
+        val security = security()
+
+        // https (trusted) -> http
+        val secure = httpsServer(root)
+        security.update(origin(secure)) {
+            it.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(root.certificate.encoded))
+        }
+        // http (allowed) -> another http server (not allowed)
+        val allowed = MockWebServer().also { it.start(); servers += it }
+        security.update(origin(allowed)) { it.copy(cleartextAllowed = true) }
+        allowed.enqueue(MockResponse().setResponseCode(302).setHeader("Location", target.url("/y")))
+
+        val following = security.apply(OkHttpClient.Builder().followRedirects(true).followSslRedirects(true)).build()
+        // Replace the queued "ok" answers: the redirect is what this server answers.
+        secure.dispatcher = queueOf(MockResponse().setResponseCode(302).setHeader("Location", target.url("/x")))
+        for (start in listOf(secure.url("/").newBuilder().scheme("https").build(), allowed.url("/"))) {
+            try {
+                following.newCall(Request.Builder().url(start).build()).execute().close()
+                fail("followed a redirect to unconsented http from $start")
+            } catch (error: IOException) {
+                assertTrue("$error", generateSequence<Throwable>(error) { it.cause }.any { it is CleartextNotPermittedException })
+            }
+        }
+        assertEquals("nothing reached the unconsented server", 0, target.requestCount)
+    }
+
+    @Test
+    fun `revoking trust cuts connections in use and is not bypassed by multiplexing`() {
+        val server = MockWebServer()
+        server.protocols = listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1)
+        server.start()
+        servers += server
+        server.issue(root)
+        val slowBody = okio.Buffer().write(ByteArray(2_000_000))
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                if (request.path == "/video") MockResponse().setBody(slowBody.clone()).throttleBody(16_384, 50, java.util.concurrent.TimeUnit.MILLISECONDS)
+                else MockResponse().setBody("ok")
+        }
+        val security = security()
+        val origin = origin(server)
+        security.update(origin) {
+            it.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(root.certificate.encoded))
+        }
+        val client = security.client()
+        val base = server.url("/").newBuilder().scheme("https")
+        val video = client.newCall(Request.Builder().url(base.encodedPath("/video").build()).build()).execute()
+        assertEquals(okhttp3.Protocol.HTTP_2, video.protocol)
+        val stream = video.body!!.source()
+        stream.require(16_384) // playing
+
+        security.update(origin) { ServerSecurity() } // revoked
+        val interrupted = try {
+            stream.readByteArray(); false
+        } catch (_: IOException) {
+            true
+        }
+        assertTrue("the stream in use must be cut", interrupted)
+        try {
+            client.newCall(Request.Builder().url(base.encodedPath("/healthz").build()).build()).execute().close()
+            fail("a new request must not ride the connection opened under the revoked trust")
+        } catch (error: IOException) {
+            assertTrue("$error", ConnectionProblem.from(error, origin, security) is ConnectionProblem.UntrustedCertificate)
+        }
+    }
+
+    private fun queueOf(vararg responses: MockResponse) = okhttp3.mockwebserver.QueueDispatcher().apply {
+        responses.forEach(::enqueueResponse)
+    }
 }
+

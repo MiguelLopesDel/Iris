@@ -116,9 +116,14 @@ configurados depois disso pedem a confirmação.
 Em **Configurações do servidor → Segurança da conexão**, o app mostra a política do
 servidor atual: modo de confiança, impressões digitais fixadas e se HTTP está
 permitido. **Restaurar o padrão para este servidor** volta a aceitar apenas
-autoridades públicas e recusar HTTP. A mudança vale na hora: o app descarta as
-conexões abertas e as sessões TLS em cache, de modo que nenhuma conexão aceita pela
-política antiga sobrevive.
+autoridades públicas e recusar HTTP. A mudança vale na hora: o app encerra todas as
+conexões que abriu, inclusive as que estão em uso (um vídeo tocando se reconecta), e
+descarta as sessões TLS em cache, de modo que nenhuma conexão aceita pela política
+antiga carrega outra requisição.
+
+A política é conferida em cada requisição que sai pela rede, não só na primeira:
+um redirecionamento para HTTP não autorizado é recusado, e uma conexão reaproveitada
+(inclusive multiplexada em HTTP/2) só é usada se ainda satisfizer a política atual.
 
 ## Diagnóstico
 
