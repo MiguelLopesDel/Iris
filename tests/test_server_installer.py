@@ -128,8 +128,9 @@ def _files(project: Path, version: str) -> None:
     (project / "pyproject.toml").write_text(f'[project]\nname = "iris"\nversion = "{version}"\n')
 
 
-def _released_clone(tmp_path: Path, env: dict) -> Path:
-    """Upstream with releases v0.4.0 and v0.5.0 and main ahead (0.6.0, untagged); a clone of main."""
+def _released_clone(tmp_path: Path, env: dict, *, main_tag: str | None = None) -> Path:
+    """Upstream with releases v0.4.0 and v0.5.0 and main ahead (0.6.0, untagged
+    unless ``main_tag``); a clone of main."""
     upstream = tmp_path / "upstream"
     upstream.mkdir()
 
@@ -138,7 +139,7 @@ def _released_clone(tmp_path: Path, env: dict) -> Path:
 
     git("init", "-q", "-b", "main")
     (upstream / ".gitignore").write_text(".env\ndata/\nmedia/\nbackups/\n")
-    for version, tag in (("0.4.0", "v0.4.0"), ("0.5.0", "v0.5.0"), ("0.6.0", None)):
+    for version, tag in (("0.4.0", "v0.4.0"), ("0.5.0", "v0.5.0"), ("0.6.0", main_tag)):
         _files(upstream, version)
         (upstream / "CHANGES").write_text(version)
         git("add", "-A")
@@ -227,3 +228,24 @@ def test_without_git_an_unpublished_version_is_built_here(tmp_path: Path) -> Non
     result = _server(project, env, "install", "--cpu")
     assert "building it locally" in result.stdout
     assert any(line.startswith("docker compose build iris IRIS_VERSION=0.9.1") for line in _docker(tmp_path))
+
+
+def test_a_pre_release_is_never_picked_as_the_newest_release(tmp_path: Path) -> None:
+    # git sorts v0.6.0-rc.1 above v0.5.0 (and even above v0.6.0).
+    env = _env(tmp_path, _docker_stub(tmp_path))
+    project = _released_clone(tmp_path, env, main_tag="v0.6.0-rc.1")
+    _server(project, env, "update")
+    assert _head(project, env) == "v0.5.0"
+    assert set(_pulled(tmp_path)) == {"0.5.0"}
+
+
+def test_a_pre_release_runs_when_pinned(tmp_path: Path) -> None:
+    env = _env(tmp_path, _docker_stub(tmp_path))
+    project = _released_clone(tmp_path, env, main_tag="v0.6.0-rc.1")
+    (project / ".env").write_text(
+        (ROOT / ".env.example").read_text().replace("IRIS_VERSION=latest", "IRIS_VERSION=0.6.0-rc.1")
+    )
+    result = _server(project, env, "update")
+    assert "Release: v0.6.0-rc.1" in result.stdout
+    assert _head(project, env) == "v0.6.0-rc.1"
+    assert set(_pulled(tmp_path)) == {"0.6.0-rc.1"}

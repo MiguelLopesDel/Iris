@@ -125,9 +125,10 @@ Do not map the port to `0.0.0.0` without TLS and rate limiting.
 ```
 
 Servers run releases, never `main`: `install` and `update` put the checkout on
-the newest `vX.Y.Z` tag and run that version's image, so the scripts and the
-image always match. Set `IRIS_VERSION=0.4.0` in `.env` to stay on a release
-until you decide; `update` also moves back to it. Backups go to `IRIS_BACKUP_DIR`
+the newest stable `vX.Y.Z` tag and run that version's image, so the scripts and
+the image always match. Set `IRIS_VERSION=0.4.0` in `.env` to stay on a release
+until you decide; `update` also moves back to it. Pre-releases (`v0.6.0-rc.1`)
+run only when pinned that way. Backups go to `IRIS_BACKUP_DIR`
 (`./backups` by default) every day at 03:00 — point it at another disk.
 
 ---

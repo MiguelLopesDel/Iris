@@ -14,8 +14,9 @@ export IRIS_COMMIT
 # Code and image always come from the same release. Releases are the vX.Y.Z
 # tags: main is where changes are integrated, and only what is tagged reaches
 # a server. `update` moves this checkout to the release tag and runs that
-# version's image; IRIS_VERSION=latest (the default) means the newest tag, a
-# pinned version (IRIS_VERSION=0.4.0 in .env or the environment) that one.
+# version's image; IRIS_VERSION=latest (the default) means the newest stable
+# tag, a pinned version (IRIS_VERSION=0.4.0 in .env or the environment) that
+# one, pre-releases such as 0.6.0-rc.1 included.
 # Without git (an unpacked archive) the version is the one in pyproject.toml.
 requested_version="${IRIS_VERSION:-}"
 configured_version() {
@@ -35,7 +36,10 @@ release_tag() {
     local configured
     configured="$(configured_version)"
     if [ "$configured" = latest ]; then
-        git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1
+        # Stable releases only: exactly vX.Y.Z. A pre-release (v0.6.0-rc.1) is
+        # never picked by itself -- git even sorts it after v0.6.0 -- and runs
+        # only when pinned explicitly with IRIS_VERSION=0.6.0-rc.1.
+        git tag --list 'v*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true
     else
         git rev-parse --quiet --verify "refs/tags/v$configured" >/dev/null && printf 'v%s\n' "$configured"
     fi

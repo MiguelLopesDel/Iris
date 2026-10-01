@@ -322,8 +322,10 @@ O servidor roda sempre um **release**, nunca a `main`. Releases são as tags
 a um servidor. O `install` e o `update` colocam o checkout na tag do release e usam
 a imagem dessa mesma versão, de modo que scripts, `docker-compose.yml` e imagem
 nunca ficam de versões diferentes. Com `IRIS_VERSION=latest` (o padrão) o alvo é
-a tag mais nova; para controlar quando atualizar, fixe uma versão (por exemplo
-`IRIS_VERSION=0.4.0`). O update exige uma árvore Git limpa e baixa a imagem
+o release estável mais novo, uma tag exatamente `vX.Y.Z`; para controlar quando
+atualizar, fixe uma versão (por exemplo `IRIS_VERSION=0.4.0`). Pré-lançamentos
+(`v0.6.0-rc.1`) nunca são escolhidos sozinhos: rodam só quando fixados
+explicitamente (`IRIS_VERSION=0.6.0-rc.1`). O update exige uma árvore Git limpa e baixa a imagem
 **antes** de trocar o checkout: se o release acabou de receber a tag e a imagem
 ainda está sendo publicada, nada muda e ele pede para tentar de novo em alguns
 minutos. Para voltar,
