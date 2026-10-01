@@ -47,6 +47,7 @@ from core import (
     equivalence_graph,
     first_setup,
     import_review,
+    instance_lock,
     instance_settings,
     library_trash,
     space_catalog,
@@ -592,6 +593,8 @@ async def lifespan(app: FastAPI):
             print(f"[iris] Limpou {killed} navegador(es) orfao(s) de execucao anterior")
     except Exception:
         pass
+    # Maintenance commands (scripts/attach_library.py) refuse while this is held.
+    server_lock = instance_lock.hold_for_server(_DATA_DIR) if app.state.multiuser_enabled else None
     if app.state.setup_required:
         # Whoever completes setup becomes the administrator; the code proves
         # they can read this console or the data folder, not just reach the page.
@@ -654,6 +657,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     _search_executor.shutdown(wait=False, cancel_futures=True)
+    if server_lock is not None:
+        instance_lock.release(server_lock)
     print("[iris] Shutdown complete")
 
 
