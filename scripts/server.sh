@@ -21,6 +21,10 @@ prepare_env() {
     if [ ! -f .env ]; then
         cp .env.example .env
         sed -i "s/^IRIS_UID=.*/IRIS_UID=$(id -u)/; s/^IRIS_GID=.*/IRIS_GID=$(id -g)/" .env
+        # Compose names a project after its folder, so two installs in folders
+        # with the same name (say /tmp/Iris and ~/Iris) would drive the same
+        # container. A name derived from this path keeps installs apart.
+        printf '\nCOMPOSE_PROJECT_NAME=iris-%s\n' "$(printf '%s' "$project_root" | sha256sum | cut -c1-8)" >> .env
         echo "Created .env for Linux user $(id -u):$(id -g)."
     fi
     if ! grep -q '^IRIS_BACKUP_TIMEZONE=' .env || grep -q '^IRIS_BACKUP_TIMEZONE=UTC$' .env; then
@@ -40,6 +44,16 @@ prepare_env() {
     export IRIS_BACKUP_HOST_DIR
 }
 
+nvidia_gpu_present() {
+    command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1
+}
+
+docker_reaches_nvidia() {
+    # The NVIDIA Container Toolkit registers a Docker runtime, or a CDI spec.
+    docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia ||
+        [ -e /etc/cdi/nvidia.yaml ] || [ -e /var/run/cdi/nvidia.yaml ]
+}
+
 enable_gpu() {
     # docker compose reads COMPOSE_FILE from .env, so every later command
     # (status, update, backup...) keeps using the NVIDIA image.
@@ -50,10 +64,52 @@ enable_gpu() {
         printf '\nCOMPOSE_FILE=%s\n' "$files" >> .env
     fi
     export COMPOSE_FILE="$files"
-    if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then
-        echo "Warning: Docker reports no NVIDIA runtime; install the NVIDIA Container Toolkit." >&2
+}
+
+disable_gpu() {
+    sed -i 's|^COMPOSE_FILE=\(.*docker-compose.gpu.yml.*\)$|#COMPOSE_FILE=\1|' .env
+    unset COMPOSE_FILE
+}
+
+choose_image() {
+    # The NVIDIA image only starts where Docker can hand the GPU to it, so the
+    # choice is made here; using or not using the GPU is then a setting in
+    # System > Installation.
+    case "$1" in
+        --gpu)
+            enable_gpu
+            echo "Image: NVIDIA (requested with --gpu)."
+            ;;
+        --cpu)
+            disable_gpu
+            echo "Image: CPU (requested with --cpu)."
+            ;;
+        *)
+            if nvidia_gpu_present && docker_reaches_nvidia; then
+                enable_gpu
+                echo "Image: NVIDIA — found $(nvidia-smi -L | head -n 1 | sed 's/ (UUID.*//')."
+            elif nvidia_gpu_present; then
+                disable_gpu
+                echo "Image: CPU — an NVIDIA GPU is present, but Docker cannot use it." >&2
+                echo "  Install the NVIDIA Container Toolkit, then run install again to use it." >&2
+            else
+                disable_gpu
+                echo "Image: CPU — no NVIDIA GPU found."
+            fi
+            ;;
+    esac
+}
+
+print_setup_instructions() {
+    local code_file="data/setup_code"
+    if [ ! -f "$code_file" ]; then
+        echo "Setup is complete. Sign in at http://127.0.0.1:$(configured_port)/"
+        return
     fi
-    echo "Using the NVIDIA image (COMPOSE_FILE in .env)."
+    echo
+    echo "Finish setup in the browser: http://127.0.0.1:$(configured_port)/setup"
+    echo "Installation code: $(head -n 1 "$code_file")"
+    echo "(Show it again with: ./scripts/server.sh setup-code)"
 }
 
 host_timezone() {
@@ -169,7 +225,8 @@ wait_for_health() {
     local port
     port="$(configured_port)"
     for attempt in $(seq 1 30); do
-        if curl --fail --silent --show-error "http://127.0.0.1:$port/healthz" >/dev/null; then
+        # Connection errors are expected while the server starts; only the outcome matters.
+        if curl --fail --silent "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
             return 0
         fi
         sleep 2
@@ -183,20 +240,21 @@ case "${1:-}" in
     install)
         require_compose
         case "${2:-}" in
-            "") ;;
-            --gpu) ;;
-            *) echo "Usage: $0 install [--gpu]" >&2; exit 2 ;;
+            ""|--gpu|--cpu) ;;
+            *) echo "Usage: $0 install [--gpu|--cpu]" >&2; exit 2 ;;
         esac
         prepare_env
-        [ "${2:-}" = "--gpu" ] && enable_gpu
+        choose_image "${2:-}"
         start_server
         wait_for_health
         echo "Daily backups go to $IRIS_BACKUP_HOST_DIR at $(env_value IRIS_BACKUP_TIME)" \
             "($(env_value IRIS_BACKUP_TIMEZONE)); change it in .env or in System > Installation."
         echo "Shared-space storage (IRIS_SPACE_STORAGE in .env):"
         show_storage || true
-        echo "Iris is running locally. Create the first account with:"
-        echo "  ./scripts/server.sh create-admin --username administrator --display-name 'Your name'"
+        print_setup_instructions
+        ;;
+    setup-code)
+        print_setup_instructions
         ;;
     create-admin)
         require_compose
@@ -258,7 +316,7 @@ case "${1:-}" in
         set_port "$2"
         ;;
     *)
-        echo "Usage: $0 {install [--gpu]|create-admin|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>}" >&2
+        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>}" >&2
         exit 2
         ;;
 esac

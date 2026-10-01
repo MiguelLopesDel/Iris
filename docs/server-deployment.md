@@ -34,7 +34,7 @@ dos backups (["Backup, restauração e atualização"](#backup-restauração-e-a
 ```bash
 git clone https://github.com/MiguelLopesDel/Iris.git
 cd Iris
-./scripts/server.sh install          # com GPU NVIDIA: ./scripts/server.sh install --gpu
+./scripts/server.sh install
 ```
 
 O instalador verifica Docker Compose, cria `.env` com o UID/GID do usuário atual,
@@ -44,12 +44,20 @@ prepara `data/` e `media/` com permissão `0700`, baixa a imagem publicada
 O container roda com o UID/GID do `.env`, então `data/` e `media/` continuam
 pertencendo ao seu usuário.
 
-Com `--gpu`, o instalador grava
-`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` no `.env`, e todos os
-comandos seguintes (`status`, `update`, `backup`…) passam a usar a imagem `-cuda`
-com acesso à GPU. Rodar `install --gpu` numa instalação CPU existente faz a
-troca. Os modelos de IA (~10 GB) são baixados no primeiro uso e ficam em volumes
-do Docker, preservados entre atualizações. Para configuração avançada, edite `.env` antes ou depois da instalação.
+**GPU NVIDIA:** o instalador detecta sozinho. Se a máquina tem o driver NVIDIA e
+o Docker consegue usá-lo (NVIDIA Container Toolkit), ele grava
+`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` no `.env` e todos os
+comandos seguintes (`status`, `update`, `backup`…) usam a imagem `-cuda` com
+acesso à GPU. Sem GPU, ou com GPU que o Docker não alcança, ele usa a imagem
+CPU e explica o motivo. Usar ou não a GPU é então uma opção do administrador em
+**Sistema → Instalação → Processamento**, que vale na hora, sem reinstalar
+(`IRIS_GPU=off` no `.env` muda o padrão). `install --gpu` e `install --cpu`
+forçam a escolha da imagem. Os modelos de IA (~10 GB) são baixados no primeiro
+uso e ficam em volumes do Docker, preservados entre atualizações.
+
+Uma instalação nova grava também um `COMPOSE_PROJECT_NAME` derivado do caminho
+da pasta: duas instalações em pastas de mesmo nome (por exemplo um teste em
+`/tmp/Iris` e a de uso em `~/Iris`) não comandam o mesmo container. Para configuração avançada, edite `.env` antes ou depois da instalação.
 
 O mesmo `.env` define os limites por conta. Os padrões são deliberadamente altos:
 32 GiB por arquivo, 10.000 arquivos por envio, 10 TiB por biblioteca e 500 milhões
@@ -127,16 +135,32 @@ fotos de nenhuma conta ou espaço.
 
 ## Ativar contas
 
-Em uma instalação nova, crie a primeira conta — o comando cria uma biblioteca privada
-vazia. Para migrar uma biblioteca Iris já existente, pare o container e faça backup de
-`data/` e `media/`; o mesmo comando detecta e move o catálogo existente:
+O `install` termina mostrando um endereço e um **código de instalação** de uso único:
+
+```
+Finish setup in the browser: http://127.0.0.1:8501/setup
+Installation code: K7QM-4XPA
+```
+
+Abra a página, digite o código e escolha usuário e senha do administrador. Quem
+completa o setup vira administrador; o código prova que a pessoa consegue ler o
+console ou a pasta `data/` do servidor, e não apenas alcançar a página. Ele também
+aparece no log (`./scripts/server.sh logs`) e `./scripts/server.sh setup-code`
+mostra de novo. Depois de 10 códigos errados em 10 minutos a página recusa novas
+tentativas por um tempo. Assim que o administrador existe, o código é apagado, o
+setup se fecha de vez, você entra na conta direto e o servidor passa a pedir login,
+sem reiniciar. A conta administradora cria as demais pelo painel **Sistema**.
+
+Se houver uma biblioteca Iris de antes das contas em `data/` e `media/`, a página
+avisa e o setup a move para a conta do administrador (`data/users/1/`). Faça
+backup de `data/` e `media/` antes.
+
+Em servidores sem navegador, o terminal continua disponível; ele pede a senha e
+faz a mesma migração:
 
 ```bash
 ./scripts/server.sh create-admin --username administrador --display-name "Seu nome"
 ```
-
-O bootstrap move a biblioteca antiga para `data/users/1/` e, no próximo início,
-ativa a tela de login. A conta administradora cria as demais pelo painel **Sistema**.
 
 ## Acesso remoto privado
 

@@ -132,9 +132,13 @@ background job, and persisted queue.
   schema changes must include migration, backup, compatibility, and rollback
   considerations.
 
-- Server (Docker Compose): `./scripts/server.sh install`, `status`, `logs`,
-  `backup`, and `update`. Use `./scripts/server.sh port <1024-65535>` to change
-  the published local port. Do not run lifecycle commands against a user's
+- Server (Docker Compose): `./scripts/server.sh install` (detects an NVIDIA GPU
+  and picks the image; `--gpu`/`--cpu` override), `setup-code`, `status`, `logs`,
+  `backup`, and `update`. The first administrator is created in the browser at
+  `/setup` with the one-time installation code (`core/first_setup.py`);
+  `create-admin` is the terminal alternative. The compute device is chosen only
+  in `core/compute_device.py`, which honours the administrator's `gpu` setting.
+  Use `./scripts/server.sh port <1024-65535>` to change the published local port. Do not run lifecycle commands against a user's
   remote server unless explicitly asked.
 - Python checks: `python scripts/check_deps.py`; `pytest`; lint with
   `ruff check core routers scripts tests server.py`; compile with

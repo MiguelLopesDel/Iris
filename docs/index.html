@@ -376,7 +376,7 @@
           <div class="code-header">bash</div>
           <pre>git clone https://github.com/MiguelLopesDel/Iris.git
 cd Iris
-./scripts/server.sh install        # NVIDIA GPU: ./scripts/server.sh install --gpu</pre>
+./scripts/server.sh install        # detects an NVIDIA GPU by itself</pre>
         </div>
       </div>
       <div class="step">
@@ -384,8 +384,9 @@ cd Iris
         <div class="step-body">
           <h3 data-i18n="install_step2_title">Create the administrator account</h3>
           <div class="code-header">bash</div>
-          <pre>./scripts/server.sh create-admin --username admin --display-name "Your name"</pre>
-          <p data-i18n-html="install_step2_desc">Open <strong>http://127.0.0.1:8501</strong> on the server and create the other accounts in <strong>Sistema</strong>.</p>
+          <pre>Finish setup in the browser: http://127.0.0.1:8501/setup
+Installation code: K7QM-4XPA</pre>
+          <p data-i18n-html="install_step2_desc">Open the <strong>/setup</strong> page, type the installation code the installer printed, and choose the administrator's username and password. Then create the other accounts in <strong>Sistema</strong>.</p>
         </div>
       </div>
       <div class="step">
@@ -600,7 +601,7 @@ const T = {
     install_disk_rec: "+ a second disk for backups",
     install_step1_title: "Download and install the server",
     install_step2_title: "Create the administrator account",
-    install_step2_desc: 'Open <strong>http://127.0.0.1:8501</strong> on the server and create the other accounts in <strong>Sistema</strong>.',
+    install_step2_desc: 'Open the <strong>/setup</strong> page, type the installation code the installer printed, and choose the administrator\'s username and password. Then create the other accounts in <strong>Sistema</strong>.',
     install_step3_title: "Reach it from your devices",
     install_step3_desc: 'Iris listens only on <code>127.0.0.1</code>. Publish it with the private layer you prefer — Tailscale, ZeroTier, WireGuard or a reverse proxy with TLS — and use that address in the browser or the Android app.',
     install_more: 'Updates, backups and every option: <a href="https://github.com/MiguelLopesDel/Iris/blob/main/docs/server-deployment.md">server guide</a>.',
@@ -724,7 +725,7 @@ const T = {
     install_disk_rec: "+ um segundo disco para backups",
     install_step1_title: "Baixe e instale o servidor",
     install_step2_title: "Crie a conta administradora",
-    install_step2_desc: 'Abra <strong>http://127.0.0.1:8501</strong> no servidor e crie as outras contas em <strong>Sistema</strong>.',
+    install_step2_desc: 'Abra a página <strong>/setup</strong>, digite o código de instalação que o instalador mostrou e escolha usuário e senha do administrador. Depois crie as outras contas em <strong>Sistema</strong>.',
     install_step3_title: "Acesse pelos seus aparelhos",
     install_step3_desc: 'O Iris atende só em <code>127.0.0.1</code>. Publique-o com a camada privada que preferir — Tailscale, ZeroTier, WireGuard ou um proxy reverso com TLS — e use esse endereço no navegador ou no app Android.',
     install_more: 'Atualizações, backups e todas as opções: <a href="https://github.com/MiguelLopesDel/Iris/blob/main/docs/server-deployment.md">guia do servidor</a>.',

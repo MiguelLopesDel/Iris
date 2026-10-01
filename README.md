@@ -72,19 +72,29 @@ cd Iris
 `backups/`, downloads the Iris image and waits until the server is healthy. The
 AI models (~10 GB) download on first use and are kept between updates.
 
-**NVIDIA GPU:** install with `./scripts/server.sh install --gpu` instead. It
-sets `COMPOSE_FILE` in `.env`, so this and every later command use the `-cuda`
-image with GPU access. Running it again on an existing CPU install switches it.
+**NVIDIA GPU:** nothing to choose. When the machine has an NVIDIA driver and
+Docker can reach it (NVIDIA Container Toolkit), `install` picks the CUDA image
+and gives the container the GPU; otherwise it uses the CPU image and says why.
+Whether Iris actually uses the GPU is then an administrator setting in
+**Sistema → Instalação → Processamento**, changed without reinstalling.
+`install --gpu` / `--cpu` override the detection.
 
 ### 2. Create the administrator account
 
-```bash
-./scripts/server.sh create-admin --username admin --display-name "Your name"
+`install` ends with an address and a one-time **installation code**:
+
+```
+Finish setup in the browser: http://127.0.0.1:8501/setup
+Installation code: K7QM-4XPA
 ```
 
-Iris then turns on login. Open **http://127.0.0.1:8501** on the server, sign in,
-and create the other accounts in **Sistema**. Each account gets its own private
-library; shared spaces are opt-in.
+Open that page, type the code, and choose the administrator's username and
+password. The code proves you can read the server's console, not just reach
+the page; it is also in the server log, and `./scripts/server.sh setup-code`
+shows it again. Setup closes for good once the administrator exists; you are
+signed in right away and create the other accounts in **Sistema**. Each account
+gets its own private library; shared spaces are opt-in. (Headless servers can
+still use `./scripts/server.sh create-admin --username admin` instead.)
 
 ### 3. Reach it from your other devices
 
@@ -108,6 +118,7 @@ Do not map the port to `0.0.0.0` without TLS and rate limiting.
 
 ```bash
 ./scripts/server.sh status          # health and container state
+./scripts/server.sh setup-code      # the installation code, while setup is pending
 ./scripts/server.sh logs            # follow the logs
 ./scripts/server.sh backup          # back up now (a daily backup is automatic)
 ./scripts/server.sh update          # back up, then move to the IRIS_VERSION image
