@@ -302,27 +302,30 @@ def _device_of(path: Path) -> int:
     return path.stat().st_dev
 
 
-def check_migration_space(legacy: LegacyLibrary, data_dir: Path) -> None:
+def check_migration_space(legacy: LegacyLibrary, data_dir: Path, destination: Path | None = None) -> None:
     """Refuse before anything is created when the moved library will not fit.
 
     A move within one filesystem is a rename and needs no room; only what
     crosses filesystems (a separate media mount, say) is copied first.
+    ``data_dir`` is where the legacy library sits; ``destination``, where it
+    goes (by default the same data folder, which holds the accounts).
     """
     if not legacy.has_db:
         return
-    data_dir.mkdir(parents=True, exist_ok=True)
-    data_device = _device_of(data_dir)
+    destination = destination or data_dir
+    destination.mkdir(parents=True, exist_ok=True)
+    data_device = _device_of(destination)
     to_copy = sum(
         _tree_bytes(source) for source in _migration_sources(legacy, data_dir)
         if _device_of(source) != data_device
     )
     if not to_copy:
         return
-    free = shutil.disk_usage(data_dir).free
+    free = shutil.disk_usage(destination).free
     if to_copy + _SPACE_HEADROOM_BYTES > free:
         raise SetupError(
             f"Espaço insuficiente para migrar a biblioteca: é preciso copiar {to_copy / 1e9:.1f} GB "
-            f"para {data_dir} e há {free / 1e9:.1f} GB livres. Libere espaço e tente de novo."
+            f"para {destination} e há {free / 1e9:.1f} GB livres. Libere espaço e tente de novo."
         )
 
 
@@ -465,6 +468,30 @@ def _rewrite_library_roots(db_path: Path, new_roots: dict[int, Path]) -> None:
         conn.close()
 
 
+def move_legacy_into(user: IrisUser, legacy: LegacyLibrary, source_data_dir: Path, journal: _MoveJournal) -> None:
+    """Move a legacy catalog and every folder its items live in into ``user``'s library.
+
+    Every move is recorded in ``journal``; on failure the caller undoes it.
+    ``source_data_dir`` is the data folder the catalog came from (its
+    ``thumbnails/`` travels too). The account's own catalog must not exist.
+    """
+    destination_root = user.db_path.parent
+    journal.move(legacy.db, user.db_path)
+    for source, rest in _catalog_companions(legacy.db):
+        journal.move(source, destination_root / f"{user.db_path.stem}{rest}")
+    _move_media_contents(legacy.media_root, user.media_root, journal)
+    old_thumbnails = source_data_dir / "thumbnails"
+    if old_thumbnails.exists():
+        journal.move(old_thumbnails, destination_root / "thumbnails")
+    new_roots = _move_stores(legacy, user.media_root, journal)
+    for path in (destination_root, user.media_root, destination_root / "thumbnails"):
+        if path.exists():
+            os.chmod(path, 0o700)
+    # Last: until every file is in place, the catalog keeps its old roots,
+    # so a rollback puts back a database that still matches its files.
+    _rewrite_library_roots(user.db_path, new_roots)
+
+
 def create_first_admin(
     users_db: Path,
     data_dir: Path,
@@ -495,20 +522,7 @@ def create_first_admin(
         return user
     journal = _MoveJournal()
     try:
-        journal.move(legacy.db, user.db_path)
-        for source, rest in _catalog_companions(legacy.db):
-            journal.move(source, destination_root / f"{user.db_path.stem}{rest}")
-        _move_media_contents(legacy.media_root, user.media_root, journal)
-        old_thumbnails = data_dir / "thumbnails"
-        if old_thumbnails.exists():
-            journal.move(old_thumbnails, destination_root / "thumbnails")
-        new_roots = _move_stores(legacy, user.media_root, journal)
-        for path in (destination_root, user.media_root, destination_root / "thumbnails"):
-            if path.exists():
-                os.chmod(path, 0o700)
-        # Last: until every file is in place, the catalog keeps its old roots,
-        # so a rollback puts back a database that still matches its files.
-        _rewrite_library_roots(user.db_path, new_roots)
+        move_legacy_into(user, legacy, data_dir, journal)
     except Exception as exc:
         out_of_space = isinstance(exc, OSError) and exc.errno == errno.ENOSPC
         stuck = journal.undo()

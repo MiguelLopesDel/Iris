@@ -164,6 +164,32 @@ faz a mesma migração:
 ./scripts/server.sh create-admin --username administrador --display-name "Seu nome"
 ```
 
+### Trazer uma biblioteca antiga para uma conta já criada
+
+Se o servidor já foi instalado e a biblioteca antiga está em outra máquina, copie
+o catálogo (com os arquivos `-wal`, `.vec` e `.faiss` ao lado dele), a pasta
+`data/library/` e a pasta `media/` para uma pasta dentro de `data/` do servidor.
+Rodado na máquina antiga, a partir da pasta do projeto:
+
+```bash
+rsync -a --info=progress2 data/meme_compass_full_v1[._]* data/library media \
+      usuario@servidor:~/Iris/data/import/
+```
+
+Depois, no servidor:
+
+```bash
+./scripts/server.sh attach-library --user seu-usuario --from data/import
+```
+
+O comando para o servidor, mostra quantos itens serão trazidos e pede
+confirmação; a conta precisa estar vazia e usar o mesmo modelo de busca do
+catálogo. A mídia já está no mesmo disco, então nada é copiado de novo: os
+arquivos são movidos para a conta, com OCR, legendas, embeddings, álbuns e
+pessoas como estavam. O catálogo vazio anterior da conta fica guardado em
+`data/users/<id>/replaced-*` e, se algo falhar no meio, tudo volta ao lugar.
+As miniaturas são geradas de novo conforme a galeria abre.
+
 ## Acesso remoto privado
 
 O Iris usa a porta `8501` por padrão, mas ela é configurável no servidor. A porta

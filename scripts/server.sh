@@ -263,6 +263,18 @@ case "${1:-}" in
         docker compose up -d iris
         wait_for_health
         ;;
+    attach-library)
+        # An old catalog copied into data/ becomes the library of an empty
+        # account. The server must be stopped meanwhile; it comes back either way.
+        require_compose
+        shift
+        docker compose stop iris
+        attach_status=0
+        docker compose run --rm -it --no-deps iris python scripts/attach_library.py "$@" || attach_status=$?
+        docker compose up -d iris
+        wait_for_health
+        exit "$attach_status"
+        ;;
     status)
         require_compose
         docker compose ps
@@ -316,7 +328,7 @@ case "${1:-}" in
         set_port "$2"
         ;;
     *)
-        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>}" >&2
+        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>}" >&2
         exit 2
         ;;
 esac
