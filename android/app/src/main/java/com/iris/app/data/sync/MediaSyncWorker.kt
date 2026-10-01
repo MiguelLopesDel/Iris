@@ -16,6 +16,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.await
 import androidx.work.workDataOf
 import com.iris.app.IrisApplication
 import com.iris.app.data.model.MediaScanPolicy
@@ -346,28 +347,23 @@ class MediaSyncWorker(
             enqueueUnlessRunning(context, request)
         }
 
-        /**
-         * Queues [request] as the account's one-time sync without interrupting
-         * one that is uploading. Replacing a running sync cancelled it and
-         * restarted it from its last acknowledged chunk each time the app
-         * started or a setting changed. Instead the request runs after it, so
-         * media that appeared after its scan is still found; one follow-up is
-         * enough. With nothing running, a sync still waiting for constraints is
-         * replaced, so a changed Wi-Fi or charging choice applies.
-         */
+        /** See [OneTimeSyncScheduling]: never interrupts a running sync, queues at most one follow-up. */
         private suspend fun enqueueUnlessRunning(context: Context, request: OneTimeWorkRequest) {
-            val workManager = WorkManager.getInstance(context)
-            val chain = workManager.getWorkInfosForUniqueWorkFlow(ONE_TIME_WORK_TAG).first()
-            val running = chain.any { it.state == WorkInfo.State.RUNNING }
-            val followUpQueued = chain.any {
-                it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED
+            OneTimeSyncScheduling.enqueue(WorkManagerOneTimeQueue(WorkManager.getInstance(context)), request)
+        }
+
+        private class WorkManagerOneTimeQueue(
+            private val workManager: WorkManager,
+        ) : OneTimeSyncQueue<OneTimeWorkRequest> {
+            override suspend fun states(): List<WorkInfo.State> =
+                workManager.getWorkInfosForUniqueWorkFlow(ONE_TIME_WORK_TAG).first().map { it.state }
+
+            override suspend fun append(request: OneTimeWorkRequest) {
+                workManager.enqueueUniqueWork(ONE_TIME_WORK_TAG, ExistingWorkPolicy.APPEND_OR_REPLACE, request).await()
             }
-            when {
-                running && followUpQueued -> Unit
-                running -> workManager.enqueueUniqueWork(
-                    ONE_TIME_WORK_TAG, ExistingWorkPolicy.APPEND_OR_REPLACE, request
-                )
-                else -> workManager.enqueueUniqueWork(ONE_TIME_WORK_TAG, ExistingWorkPolicy.REPLACE, request)
+
+            override suspend fun replace(request: OneTimeWorkRequest) {
+                workManager.enqueueUniqueWork(ONE_TIME_WORK_TAG, ExistingWorkPolicy.REPLACE, request).await()
             }
         }
 
