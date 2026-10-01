@@ -89,6 +89,24 @@ required for the first release.
   new uploads and never deletes an accepted original.
 - Use WorkManager with a durable local database queue. Default constraints: network
   required; expose Wi-Fi-only and battery preferences to the user.
+- A run that uploads media becomes a foreground `dataSync` service with an ongoing,
+  silent notification (rate, items sent, bytes left), so Android does not stop it at
+  its few-minute limit for background work. Android 12+ only lets a run started with
+  the app closed become that service when the user exempted the app from battery
+  optimization; the sync screen asks for that exemption and for notification
+  permission while automatic backup is on. When Android refuses, the run continues as
+  ordinary background work and the run history records the refusal.
+- Never cancel a sync that is uploading to start another: app start, login and
+  setting changes only replace a one-time sync that is still waiting for its
+  constraints. A second runner that finds the queue busy has nothing to do and is not
+  a failure.
+- An item whose local media was deleted before it was uploaded is failed with
+  "O arquivo não existe mais no aparelho" and the queue moves on; retrying it would
+  stop the whole backup on every run. Only a read failure with the file absent counts
+  as deletion, never a network or server error.
+- Keep a local history of runs (trigger, whether the app was open, bytes, items,
+  foreground-service outcome, and the WorkManager stop reason) so a user can verify
+  afterwards that backup progressed with the app closed.
 - Display server thumbnails/listing as cache. Do not download originals unless opened,
   explicitly saved offline, or shared.
 - Keep the app usable while uploads run; show pending, uploading, backed up/processing,

@@ -119,6 +119,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     }
     var permissionFollowUp by remember { mutableStateOf(MediaPermissionFollowUp.DiscoverFolders) }
     var showDeviceSourcePicker by remember { mutableStateOf(false) }
+    var backgroundAccess by remember(context) { mutableStateOf(BackgroundSyncAccess.current(context)) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { backgroundAccess = BackgroundSyncAccess.current(context) }
     val pickerVisible = rememberUpdatedState(showDeviceSourcePicker)
     val mediaPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -153,6 +157,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 mediaLibraryAccess = currentMediaLibraryAccess(context)
+                // The battery exemption is granted in a system screen; re-read it on return.
+                backgroundAccess = BackgroundSyncAccess.current(context)
                 if (pickerVisible.value) viewModel.discoverSources()
             }
         }
@@ -654,6 +660,20 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             onCheckedChange = { viewModel.setSyncChargingOnly(it) }
                         )
                     }
+                }
+            }
+
+            if (uiState.isLoggedIn && uiState.autoBackupEnabled && !backgroundAccess.complete) {
+                item {
+                    BackgroundSyncAccessCard(
+                        access = backgroundAccess,
+                        onAllowBattery = { requestBatteryExemption(context) },
+                        onAllowNotifications = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        }
+                    )
                 }
             }
 

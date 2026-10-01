@@ -52,6 +52,11 @@ internal class SyncRunRecorder(
         }
     }
 
+    suspend fun markForeground(started: Boolean) {
+        val id = runId ?: return
+        bestEffort("foreground") { dbHelper.markSyncRunForeground(accountKey, id, started) }
+    }
+
     suspend fun finish(outcome: SyncRunOutcome, stopReason: Int? = null, detail: String? = null) {
         val id = runId ?: return
         runId = null

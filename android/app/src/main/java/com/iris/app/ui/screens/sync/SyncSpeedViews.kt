@@ -148,6 +148,16 @@ internal fun SyncRunCard(run: SyncRun, activeRunIds: Set<Long>) {
                     color = IrisTextSoft
                 )
             }
+            run.foregroundService?.let { asService ->
+                Text(
+                    stringResource(
+                        if (asService) R.string.sync_history_foreground_service
+                        else R.string.sync_history_foreground_refused
+                    ),
+                    fontSize = 12.sp,
+                    color = IrisTextMuted
+                )
+            }
             Text(
                 if (reason != null) "$status: $reason" else status,
                 fontSize = 12.sp,

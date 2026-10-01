@@ -8,6 +8,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -115,6 +120,32 @@ class SyncSpeedViewsTest {
         assertEquals(6, compose.onAllNodesWithText("Mbps", substring = true).fetchSemanticsNodes().size)
 
         saveScreenshotIfRequested("sync-speed-views.png")
+    }
+
+    @Test
+    fun background_access_card_offers_only_what_is_missing() {
+        var batteryClicks = 0
+        var notificationClicks = 0
+        var access by mutableStateOf(BackgroundSyncAccess(batteryUnrestricted = false, notificationsAllowed = false))
+        compose.setContent {
+            IrisTheme {
+                BackgroundSyncAccessCard(
+                    access = access,
+                    onAllowBattery = { batteryClicks++ },
+                    onAllowNotifications = { notificationClicks++ },
+                )
+            }
+        }
+        val buttons = compose.onAllNodes(hasClickAction())
+        assertEquals(2, buttons.fetchSemanticsNodes().size)
+        buttons[0].performClick()
+        buttons[1].performClick()
+        assertEquals(1, batteryClicks)
+        assertEquals(1, notificationClicks)
+
+        access = BackgroundSyncAccess(batteryUnrestricted = true, notificationsAllowed = false)
+        compose.waitForIdle()
+        assertEquals(1, compose.onAllNodes(hasClickAction()).fetchSemanticsNodes().size)
     }
 
     /** Same assertion in whichever decimal separator the device locale uses. */

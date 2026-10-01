@@ -8,6 +8,7 @@ import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
@@ -132,37 +133,53 @@ class MediaSyncWorker(
                         includeImages = syncSettings.imagesEnabled,
                         includeVideos = syncSettings.videosEnabled
                     )
-                    SyncQueueCoordinator.scanAndDrain(
-                        scanAndEnqueue = { onNewJobEnqueued ->
-                            app.mediaStoreScanner.scanAndEnqueueNewMedia(
-                                accountKey = accountKey,
-                                policy = policy,
-                                isSessionCurrent = {
-                                    !isStopped && syncSession.matches(
-                                        app.credentialsStore.sessionIdentity.value,
-                                        app.credentialsStore.accountIdentity.value
-                                    )
-                                },
-                                onNewJobEnqueued = onNewJobEnqueued,
-                            )
-                        },
-                        drainQueue = { workSignal ->
-                            app.syncUploadManager.processQueue(
-                                accountKey,
-                                sessionIdentity,
-                                isSessionCurrent = {
-                                    !isStopped && syncSession.matches(
-                                        app.credentialsStore.sessionIdentity.value,
-                                        app.credentialsStore.accountIdentity.value
-                                    )
-                                },
-                                onFirstUploadJobClaimed = onFirstUploadJobClaimed,
-                                workSignal = workSignal,
-                                onQueueRunStarted = recorder::queueRunStarted,
-                                onQueueRunFinished = recorder::queueRunFinished,
-                            )
-                        },
-                    ).queueCompleted
+                    val runningAsService = startForegroundService()
+                    recorder.markForeground(runningAsService)
+                    val notificationUpdates = if (runningAsService) {
+                        CoroutineScope(coroutineContext).launch {
+                            while (true) {
+                                delay(NOTIFICATION_UPDATE_MILLIS)
+                                updateNotification(app, accountKey)
+                            }
+                        }
+                    } else {
+                        null
+                    }
+                    try {
+                        SyncQueueCoordinator.scanAndDrain(
+                            scanAndEnqueue = { onNewJobEnqueued ->
+                                app.mediaStoreScanner.scanAndEnqueueNewMedia(
+                                    accountKey = accountKey,
+                                    policy = policy,
+                                    isSessionCurrent = {
+                                        !isStopped && syncSession.matches(
+                                            app.credentialsStore.sessionIdentity.value,
+                                            app.credentialsStore.accountIdentity.value
+                                        )
+                                    },
+                                    onNewJobEnqueued = onNewJobEnqueued,
+                                )
+                            },
+                            drainQueue = { workSignal ->
+                                app.syncUploadManager.processQueue(
+                                    accountKey,
+                                    sessionIdentity,
+                                    isSessionCurrent = {
+                                        !isStopped && syncSession.matches(
+                                            app.credentialsStore.sessionIdentity.value,
+                                            app.credentialsStore.accountIdentity.value
+                                        )
+                                    },
+                                    onFirstUploadJobClaimed = onFirstUploadJobClaimed,
+                                    workSignal = workSignal,
+                                    onQueueRunStarted = recorder::queueRunStarted,
+                                    onQueueRunFinished = recorder::queueRunFinished,
+                                )
+                            },
+                        ).queueCompleted
+                    } finally {
+                        notificationUpdates?.cancel()
+                    }
                 }
                 // Checking server health/change feed is independent from photo
                 // backup. Do not drain durable uploads in the background after
@@ -222,6 +239,39 @@ class MediaSyncWorker(
         }
     }
 
+    override suspend fun getForegroundInfo(): ForegroundInfo =
+        SyncNotifications.foregroundInfo(applicationContext, SyncNotifications.Content.Preparing)
+
+    /**
+     * Turns this run into a foreground data-sync service, which Android does
+     * not stop after its background time limit. Android 12+ refuses it for an
+     * app in the background unless the user exempted it from battery
+     * optimization; the run then continues as ordinary background work.
+     */
+    private suspend fun startForegroundService(): Boolean = try {
+        setForeground(getForegroundInfo())
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (refused: Exception) {
+        Log.w(TAG, "Foreground service refused error=${refused.javaClass.simpleName}")
+        false
+    }
+
+    private suspend fun updateNotification(app: IrisApplication, accountKey: String) {
+        try {
+            val remaining = app.dbHelper.remainingUploadBytes(accountKey)
+            val speed = app.syncUploadManager.speedMeter.snapshot()
+            setForeground(
+                SyncNotifications.foregroundInfo(applicationContext, SyncNotifications.content(speed, remaining))
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.w(TAG, "Sync notification not updated error=${failure.javaClass.simpleName}")
+        }
+    }
+
     private fun isActiveNetworkMetered(context: Context): Boolean =
         context.getSystemService(ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
 
@@ -246,6 +296,7 @@ class MediaSyncWorker(
         private const val FORCE_SCAN_KEY = "force_media_scan"
         private const val PERIODIC_SYNC_KEY = "periodic_cloud_sync"
         private const val RUN_CHECKPOINT_MILLIS = 15_000L
+        private const val NOTIFICATION_UPDATE_MILLIS = 2_000L
 
         fun schedulePeriodic(context: Context) {
             val constraints = Constraints.Builder()

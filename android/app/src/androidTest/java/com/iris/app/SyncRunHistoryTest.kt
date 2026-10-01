@@ -51,6 +51,20 @@ class SyncRunHistoryTest {
     }
 
     @Test
+    fun upgrading_from_version_5_adds_the_foreground_service_column() = runBlocking {
+        val before = db.insertSyncRun("account-a", 1_000L, SyncRunTrigger.AUTOMATIC, startedInForeground = false)
+        db.writableDatabase.execSQL("ALTER TABLE sync_runs DROP COLUMN foreground_service")
+        db.writableDatabase.version = 5
+        db.close()
+
+        db = UploadDatabaseHelper(context, databaseName)
+        assertEquals(UploadDatabaseHelper.DATABASE_VERSION, db.readableDatabase.version)
+        assertNull("A run from before the upgrade has no answer", db.recentSyncRuns("account-a", 10).single().foregroundService)
+        db.markSyncRunForeground("account-a", before, started = true)
+        assertEquals(true, db.recentSyncRuns("account-a", 10).single().foregroundService)
+    }
+
+    @Test
     fun a_run_is_stored_with_progress_outcome_and_stop_reason() = runBlocking {
         val id = db.insertSyncRun("account-a", 1_000L, SyncRunTrigger.PERIODIC, startedInForeground = false)
         db.updateSyncRunProgress("account-a", id, bytes = 5_000L, items = 2L, uploadMillis = 700L)
