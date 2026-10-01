@@ -93,11 +93,13 @@ class SyncUploadService:
         temp_path = root / f"{upload_id}.part"
         with self.open_connection(user) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            remaining = UploadReservationStore.remaining_bytes(connection, quota_bytes)
-            if metadata.size > remaining:
-                raise SyncUploadError(413, "Cota da biblioteca excedida")
-            root.mkdir(mode=0o700, exist_ok=True)
             created_at = now_iso()
+            media_id = UploadReservationStore.catalogued_media_id(connection, metadata.sha256)
+            # Bytes already in the library cost nothing: they are never sent.
+            if media_id is None and metadata.size > UploadReservationStore.remaining_bytes(
+                connection, quota_bytes
+            ):
+                raise SyncUploadError(413, "Cota da biblioteca excedida")
             UploadReservationStore.insert(
                 connection,
                 upload_id=upload_id,
@@ -110,6 +112,7 @@ class SyncUploadService:
                 created_at=created_at,
                 updated_at=created_at,
                 source=metadata.source,
+                state="uploading" if media_id is None else "duplicate",
             )
             UploadReservationStore.record_source(
                 connection,
@@ -117,6 +120,9 @@ class SyncUploadService:
                 source=metadata.source,
                 updated_at=now_iso(),
             )
+            if media_id is not None:
+                return _known_duplicate(connection, upload_id, media_id, device_id, metadata.source)
+            root.mkdir(mode=0o700, exist_ok=True)
         return {"upload_id": upload_id, "offset": 0, "chunk_size": _MAX_CHUNK_BYTES}
 
     def reserve_upload_batch(
@@ -208,7 +214,8 @@ class SyncUploadService:
                         })
                     continue
 
-                if item["size"] > remaining:
+                media_id = UploadReservationStore.catalogued_media_id(connection, item["sha256"])
+                if media_id is None and item["size"] > remaining:
                     results.append({
                         "client_upload_id": client_upload_id,
                         "error_code": 413,
@@ -232,6 +239,7 @@ class SyncUploadService:
                     updated_at=timestamp,
                     source=source,
                     client_upload_id=client_upload_id,
+                    state="uploading" if media_id is None else "duplicate",
                 )
                 UploadReservationStore.record_source(
                     connection,
@@ -239,6 +247,12 @@ class SyncUploadService:
                     source=source,
                     updated_at=timestamp,
                 )
+                if media_id is not None:
+                    results.append({
+                        "client_upload_id": client_upload_id,
+                        **_known_duplicate(connection, upload_id, media_id, device_id, source),
+                    })
+                    continue
                 remaining -= item["size"]
                 results.append({
                     "client_upload_id": client_upload_id,
@@ -668,6 +682,30 @@ class SyncUploadService:
                 del self._operation_locks[key]
             else:
                 self._operation_locks[key] = (lock, refcount - 1)
+
+
+def _known_duplicate(
+    connection: sqlite3.Connection,
+    upload_id: str,
+    media_id: int,
+    device_id: str,
+    source: dict[str, str | int],
+) -> dict[str, Any]:
+    """Settle a reservation whose content the library already has, before any byte is sent.
+
+    The reservation row is kept (state ``duplicate``) so a retry with the same
+    client id gets the same answer, and the device is recorded as an origin
+    exactly as when the duplicate is only found after the transfer.
+    """
+    record_origin(connection, media_id, device_id, source)
+    sequence = append_change(
+        connection, "media", str(media_id), "unchanged", 1,
+        {"media_id": media_id, "state": "duplicate"},
+    )
+    return {
+        "upload_id": upload_id, "media_id": media_id, "offset": 0,
+        "chunk_size": _MAX_CHUNK_BYTES, "state": "duplicate", "cursor": sequence,
+    }
 
 
 def _write_upload_buffer(output, payload: bytes) -> None:

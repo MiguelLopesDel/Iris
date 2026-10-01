@@ -30,6 +30,7 @@ class UploadReservationStore:
         updated_at: str,
         source: dict[str, str | int],
         client_upload_id: str | None = None,
+        state: str = "uploading",
     ) -> None:
         columns = [
             "id", "device_id", "filename", "expected_size", "expected_hash",
@@ -39,7 +40,7 @@ class UploadReservationStore:
         ]
         values: list[Any] = [
             upload_id, device_id, filename, expected_size, expected_hash,
-            captured_at, "uploading", str(temp_path), created_at, updated_at,
+            captured_at, state, str(temp_path), created_at, updated_at,
             source["id"], source["name"], source["relative_path"], source["volume"],
             source["media_store_id"], source["generation"], source["media_kind"],
         ]
@@ -53,6 +54,13 @@ class UploadReservationStore:
             f"INSERT INTO sync_uploads ({quoted_columns}) VALUES ({placeholders})",
             values,
         )
+
+    @staticmethod
+    def catalogued_media_id(connection: sqlite3.Connection, content_hash: str) -> int | None:
+        row = connection.execute(
+            "SELECT id FROM memes WHERE content_hash = ? LIMIT 1", (content_hash,)
+        ).fetchone()
+        return int(row[0]) if row is not None else None
 
     @staticmethod
     def record_source(
