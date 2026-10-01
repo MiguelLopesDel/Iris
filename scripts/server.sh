@@ -11,6 +11,46 @@ cd "$project_root"
 IRIS_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
 export IRIS_COMMIT
 
+# Code and image always come from the same release. Releases are the vX.Y.Z
+# tags: main is where changes are integrated, and only what is tagged reaches
+# a server. `update` moves this checkout to the release tag and runs that
+# version's image; IRIS_VERSION=latest (the default) means the newest stable
+# tag, a pinned version (IRIS_VERSION=0.4.0 in .env or the environment) that
+# one, pre-releases such as 0.6.0-rc.1 included.
+# Without git (an unpacked archive) the version is the one in pyproject.toml.
+requested_version="${IRIS_VERSION:-}"
+configured_version() {
+    local configured="$requested_version"
+    if [ -z "$configured" ] && [ -f .env ]; then
+        configured="$(sed -n 's/^IRIS_VERSION=//p' .env | tail -n 1)"
+    fi
+    printf '%s\n' "${configured:-latest}"
+}
+checkout_version() {
+    local version=""
+    [ -f pyproject.toml ] && version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)"
+    printf '%s\n' "${version:-latest}"
+}
+release_tag() {
+    # The tag `update` should be on, or nothing when there is no release yet.
+    local configured
+    configured="$(configured_version)"
+    if [ "$configured" = latest ]; then
+        # Stable releases only: exactly vX.Y.Z. A pre-release (v0.6.0-rc.1) is
+        # never picked by itself -- git even sorts it after v0.6.0 -- and runs
+        # only when pinned explicitly with IRIS_VERSION=0.6.0-rc.1.
+        git tag --list 'v*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true
+    else
+        git rev-parse --quiet --verify "refs/tags/v$configured" >/dev/null && printf 'v%s\n' "$configured"
+    fi
+}
+if [ "$(configured_version)" = latest ]; then
+    IRIS_VERSION="$(checkout_version)"
+else
+    IRIS_VERSION="$(configured_version)"
+fi
+export IRIS_VERSION
+
 require_compose() {
     command -v docker >/dev/null 2>&1 || { echo "Docker is required." >&2; exit 1; }
     docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required." >&2; exit 1; }
@@ -157,9 +197,30 @@ set_port() {
     echo "  sudo tailscale serve --bg http://127.0.0.1:$port"
 }
 
+follow_release() {
+    # Put this checkout on the release tag and select that version's image.
+    # The image is pulled first: if the release is still being published, the
+    # checkout and the running server stay exactly as they were.
+    local target
+    target="$(release_tag)" || true
+    if [ -z "$target" ]; then
+        echo "No release $(configured_version) to run (no matching vX.Y.Z tag)." >&2
+        return 1
+    fi
+    IRIS_VERSION="${target#v}"
+    if ! docker compose pull --quiet iris; then
+        echo "The image for $target is not available yet (a release is published a few minutes" \
+            "after its tag); nothing was changed. Try again shortly." >&2
+        return 1
+    fi
+    git -c advice.detachedHead=false checkout --quiet "$target"
+    IRIS_COMMIT="$(git rev-parse --short HEAD)"
+    echo "Release: $target"
+}
+
 start_server() {
-    # Run the published image; build it from this checkout only when that tag
-    # was never published (a development branch, or before the first release).
+    # Run the published image; build it from this checkout only when that
+    # version was never published (no git and no release, or before the first one).
     if ! docker compose pull --quiet iris; then
         echo "No published image for this version; building it locally."
         docker compose build iris
@@ -245,6 +306,10 @@ case "${1:-}" in
         esac
         prepare_env
         choose_image "${2:-}"
+        if [ -d .git ] && [ -n "$(release_tag)" ]; then
+            git diff --quiet || { echo "Commit or stash local changes before installing." >&2; exit 1; }
+            follow_release || exit 1
+        fi
         start_server
         wait_for_health
         echo "Daily backups go to $IRIS_BACKUP_HOST_DIR at $(env_value IRIS_BACKUP_TIME)" \
@@ -292,7 +357,8 @@ case "${1:-}" in
         echo "Backing up before updating..."
         run_backup || { echo "Backup failed; not updating." >&2; exit 1; }
         if [ -d .git ]; then
-            git pull --ff-only
+            git fetch --quiet --tags origin
+            follow_release || exit 1
         fi
         start_server
         wait_for_health

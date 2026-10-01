@@ -315,12 +315,21 @@ Os backups antigos não são apagados automaticamente; remova-os quando quiser.
 ./scripts/server.sh status
 ```
 
-Com `IRIS_BACKUP_DIR` definido, o update faz um backup antes de atualizar. Num
-checkout Git, ele exige uma árvore limpa e usa `git pull --ff-only`, evitando
-merges surpresa; depois baixa a imagem de `IRIS_VERSION`. Com `IRIS_VERSION=latest`
-cada update segue o último release; para controlar quando atualizar, fixe uma
-versão (por exemplo `IRIS_VERSION=0.4.0`) e troque-a quando quiser. Para voltar,
-restaure a versão anterior em `IRIS_VERSION`, execute `./scripts/server.sh update`
+Com `IRIS_BACKUP_DIR` definido, o update faz um backup antes de atualizar.
+
+O servidor roda sempre um **release**, nunca a `main`. Releases são as tags
+`vX.Y.Z`: a `main` é onde as mudanças são integradas, e só o que recebe tag chega
+a um servidor. O `install` e o `update` colocam o checkout na tag do release e usam
+a imagem dessa mesma versão, de modo que scripts, `docker-compose.yml` e imagem
+nunca ficam de versões diferentes. Com `IRIS_VERSION=latest` (o padrão) o alvo é
+o release estável mais novo, uma tag exatamente `vX.Y.Z`; para controlar quando
+atualizar, fixe uma versão (por exemplo `IRIS_VERSION=0.4.0`). Pré-lançamentos
+(`v0.6.0-rc.1`) nunca são escolhidos sozinhos: rodam só quando fixados
+explicitamente (`IRIS_VERSION=0.6.0-rc.1`). O update exige uma árvore Git limpa e baixa a imagem
+**antes** de trocar o checkout: se o release acabou de receber a tag e a imagem
+ainda está sendo publicada, nada muda e ele pede para tentar de novo em alguns
+minutos. Para voltar,
+fixe a versão anterior em `IRIS_VERSION`, execute `./scripts/server.sh update`
 e, se o esquema dos dados tiver mudado, restaure o backup feito antes do update.
 
 O Iris mantém fotos em texto claro no servidor para gerar busca, pessoas e
