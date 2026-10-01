@@ -55,6 +55,20 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
         return digest.digest().toHex()
     }
 
+    /**
+     * False when the media is gone from the device: deleted, or its volume
+     * removed. A permission problem is not treated as absence, because it is
+     * fixed by granting access, not by giving up on the item.
+     */
+    fun isAvailable(uri: Uri): Boolean = try {
+        contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
+    } catch (_: java.io.FileNotFoundException) {
+        false
+    } catch (_: Exception) {
+        // Not proof of deletion (a permission or provider problem); keep the item queued.
+        true
+    }
+
     private fun openFileDescriptor(uri: Uri) = try {
         contentResolver.openFileDescriptor(uri, "r")
     } catch (_: Exception) {

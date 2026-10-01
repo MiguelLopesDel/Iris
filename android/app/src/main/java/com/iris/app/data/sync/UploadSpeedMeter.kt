@@ -21,14 +21,16 @@ class UploadSpeedMeter(
     private var runItems = 0L
     private var runNumber = 0L
 
+    /** Starts a run and returns its number, which identifies it in later snapshots. */
     @Synchronized
-    fun startRun() {
+    fun startRun(): Long {
         runNumber++
         samples.clear()
         runStartedAtMillis = nowMillis()
         runEndedAtMillis = null
         runBytes = 0L
         runItems = 0L
+        return runNumber
     }
 
     @Synchronized

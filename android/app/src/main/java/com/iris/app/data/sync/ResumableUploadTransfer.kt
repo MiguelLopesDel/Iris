@@ -41,7 +41,40 @@ internal class ResumableUploadTransfer(
         val onProgress: (Long, Long, Long) -> Unit,
     )
 
-    suspend fun execute(job: LocalUploadJob): Boolean = withContext(Dispatchers.IO) {
+    enum class ItemResult {
+        /** The server has the item (uploaded, already present, or processing). */
+        CONFIRMED,
+        /** The media left the device before it was uploaded; the item is failed and the queue moves on. */
+        SOURCE_MISSING,
+        /** A transient failure: stop claiming work and let WorkManager retry from committed offsets. */
+        RETRY,
+    }
+
+    /**
+     * Uploads one job. A job whose local media was deleted is failed instead of
+     * retried: it can never succeed, and retrying it stopped the whole queue on
+     * every run, so one deleted photo halted the backup for good.
+     */
+    suspend fun execute(job: LocalUploadJob): ItemResult = withContext(Dispatchers.IO) {
+        var readFailed = false
+        val handled = transfer(job) { readFailed = true }
+        when {
+            handled -> ItemResult.CONFIRMED
+            // A deleted file surfaces as the same IOException as a dropped
+            // link; only its absence on the device tells the two apart.
+            readFailed && !context.mediaPayloadSource.isAvailable(Uri.parse(job.localUri)) -> markSourceMissing(job)
+            else -> ItemResult.RETRY
+        }
+    }
+
+    private suspend fun markSourceMissing(job: LocalUploadJob): ItemResult {
+        context.dbHelper.updateJobState(
+            context.accountKey, job.id, UploadJobState.FAILED, SOURCE_MISSING_MESSAGE,
+        )
+        return ItemResult.SOURCE_MISSING
+    }
+
+    private suspend fun transfer(job: LocalUploadJob, onIoFailure: () -> Unit): Boolean = withContext(Dispatchers.IO) {
         val accountKey = context.accountKey
         val db = context.dbHelper
         val api = context.apiServiceProvider(context.sessionIdentity)
@@ -157,6 +190,7 @@ internal class ResumableUploadTransfer(
             }
             false
         } catch (failure: IOException) {
+            onIoFailure()
             false
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) { db.updateJobState(accountKey, job.id, UploadJobState.QUEUED) }
@@ -193,5 +227,9 @@ internal class ResumableUploadTransfer(
         return MessageDigest.getInstance("SHA-256")
             .digest(stableFields.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
+    }
+
+    companion object {
+        const val SOURCE_MISSING_MESSAGE = "O arquivo não existe mais no aparelho"
     }
 }

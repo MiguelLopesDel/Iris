@@ -82,22 +82,22 @@ class SyncSpeedViewsTest {
                     )
                     SyncRunCard(
                         run(4, SyncRunOutcome.RUNNING, foreground = false, bytes = 120_000_000L, items = 20, uploadMillis = 6_000L),
-                        activeRunId = 4L,
+                        activeRunIds = setOf(4L),
                     )
                     SyncRunCard(
                         run(
                             3, SyncRunOutcome.STOPPED, foreground = false, bytes = 3_100_000_000L, items = 410,
                             uploadMillis = 600_000L, stopReason = WorkInfo.STOP_REASON_TIMEOUT,
                         ),
-                        activeRunId = 4L,
+                        activeRunIds = setOf(4L),
                     )
                     SyncRunCard(
                         run(2, SyncRunOutcome.RUNNING, foreground = false, bytes = 80_000_000L, items = 9, uploadMillis = 4_000L),
-                        activeRunId = 4L,
+                        activeRunIds = setOf(4L),
                     )
                     SyncRunCard(
                         run(1, SyncRunOutcome.COMPLETED, foreground = true, bytes = 900_000_000L, items = 150, uploadMillis = 45_000L),
-                        activeRunId = 4L,
+                        activeRunIds = setOf(4L),
                     )
                 }
             }

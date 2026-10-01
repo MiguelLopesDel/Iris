@@ -672,7 +672,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             }
             if (uiState.isHistoryExpanded) {
                 items(uiState.syncRuns, key = { "run-${it.id}" }) { run ->
-                    SyncRunCard(run = run, activeRunId = uiState.activeSyncRunId)
+                    SyncRunCard(run = run, activeRunIds = uiState.activeSyncRunIds)
                 }
             }
 

@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * Writes one worker execution into the persisted sync history. The row is
@@ -22,15 +23,25 @@ internal class SyncRunRecorder(
     private val wallClockMillis: () -> Long = System::currentTimeMillis,
 ) {
     private var runId: Long? = null
-    private var meterRunAtStart = 0L
+    /** The meter run this worker's own queue pass started, if it reached the queue. */
+    @Volatile private var meterRun: Long? = null
+    @Volatile private var finishedTotals: UploadSpeedSnapshot? = null
 
     suspend fun start(trigger: SyncRunTrigger, startedInForeground: Boolean) {
-        meterRunAtStart = speedMeter.snapshot().runNumber
         val id = bestEffort("start") {
             dbHelper.insertSyncRun(accountKey, wallClockMillis(), trigger, startedInForeground)
         } ?: return
         runId = id
-        activeRun.value = id
+        activeRuns.update { it + id }
+    }
+
+    /** Hooks for [SyncUploadManager.processQueue], so only this worker's pass is credited to it. */
+    fun queueRunStarted(meterRunNumber: Long) {
+        meterRun = meterRunNumber
+    }
+
+    fun queueRunFinished(totals: UploadSpeedSnapshot) {
+        if (totals.runNumber == meterRun) finishedTotals = totals
     }
 
     suspend fun checkpoint() {
@@ -62,7 +73,7 @@ internal class SyncRunRecorder(
                 }
             }
         } finally {
-            activeRun.compareAndSet(id, null)
+            activeRuns.update { it - id }
         }
     }
 
@@ -78,18 +89,19 @@ internal class SyncRunRecorder(
     private data class Totals(val bytes: Long, val items: Long, val uploadMillis: Long)
 
     private fun totals(): Totals {
-        val snapshot = speedMeter.snapshot()
-        // No queue pass since this run started: the meter still describes an
-        // earlier run, whose bytes are not this run's.
-        if (snapshot.runNumber == meterRunAtStart) return Totals(0L, 0L, 0L)
+        // The meter is shared: while this worker waits for the queue or after
+        // its pass ends, it describes another worker's pass, not this one.
+        val snapshot = finishedTotals
+            ?: speedMeter.snapshot().takeIf { meterRun != null && it.runNumber == meterRun }
+            ?: return Totals(0L, 0L, 0L)
         return Totals(snapshot.runBytes, snapshot.runItems, snapshot.runElapsedMillis)
     }
 
     companion object {
         private const val TAG = "SyncRunRecorder"
-        private val activeRun = MutableStateFlow<Long?>(null)
+        private val activeRuns = MutableStateFlow<Set<Long>>(emptySet())
 
-        /** The run executing in this process, if any. A stored RUNNING row that is not this one was interrupted. */
-        val activeRunId: StateFlow<Long?> = activeRun.asStateFlow()
+        /** Runs executing in this process. A stored RUNNING row not among them was interrupted. */
+        val activeRunIds: StateFlow<Set<Long>> = activeRuns.asStateFlow()
     }
 }

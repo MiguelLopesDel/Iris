@@ -68,7 +68,7 @@ data class SyncUiState(
     val remainingUploadBytes: Long = 0L,
     val syncRuns: List<SyncRun> = emptyList(),
     /** The run executing in this process; a stored running row that is not it was interrupted. */
-    val activeSyncRunId: Long? = null,
+    val activeSyncRunIds: Set<Long> = emptySet(),
     val isHistoryExpanded: Boolean = false,
     val isSpeedTestRunning: Boolean = false,
     val speedTestResults: List<ServerSpeedTest.Result> = emptyList(),
@@ -101,8 +101,8 @@ class SyncViewModel(
         startPeriodicQueuePoller()
         startSpeedTicker()
         viewModelScope.launch {
-            SyncRunRecorder.activeRunId.collect { id ->
-                _uiState.update { it.copy(activeSyncRunId = id) }
+            SyncRunRecorder.activeRunIds.collect { ids ->
+                _uiState.update { it.copy(activeSyncRunIds = ids) }
             }
         }
     }
@@ -263,8 +263,10 @@ class SyncViewModel(
     }
 
     fun triggerManualSync(context: Context) {
-        MediaSyncWorker.enqueueImmediate(context)
-        loadQueue()
+        viewModelScope.launch {
+            MediaSyncWorker.enqueueImmediate(context)
+            loadQueue()
+        }
     }
 
     fun setSyncWifiOnly(wifiOnly: Boolean) {

@@ -94,7 +94,7 @@ internal fun UploadSpeedPanel(speed: UploadSpeedSnapshot, remainingBytes: Long) 
 
 /** One persisted run: when, how it started, what it sent, and why it ended. */
 @Composable
-internal fun SyncRunCard(run: SyncRun, activeRunId: Long?) {
+internal fun SyncRunCard(run: SyncRun, activeRunIds: Set<Long>) {
     val started = remember(run.startedAtMillis) {
         DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(run.startedAtMillis))
     }
@@ -108,7 +108,7 @@ internal fun SyncRunCard(run: SyncRun, activeRunId: Long?) {
     val appState = stringResource(
         if (run.startedInForeground) R.string.sync_history_foreground else R.string.sync_history_background
     )
-    val interrupted = run.outcome == SyncRunOutcome.RUNNING && run.id != activeRunId
+    val interrupted = run.outcome == SyncRunOutcome.RUNNING && run.id !in activeRunIds
     val status = when {
         interrupted -> stringResource(R.string.sync_history_interrupted)
         run.outcome == SyncRunOutcome.RUNNING -> stringResource(R.string.sync_history_running)

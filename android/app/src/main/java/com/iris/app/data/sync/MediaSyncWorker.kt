@@ -9,8 +9,10 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -156,6 +158,8 @@ class MediaSyncWorker(
                                 },
                                 onFirstUploadJobClaimed = onFirstUploadJobClaimed,
                                 workSignal = workSignal,
+                                onQueueRunStarted = recorder::queueRunStarted,
+                                onQueueRunFinished = recorder::queueRunFinished,
                             )
                         },
                     ).queueCompleted
@@ -260,7 +264,7 @@ class MediaSyncWorker(
             )
         }
 
-        fun enqueueImmediate(context: Context) {
+        suspend fun enqueueImmediate(context: Context) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
@@ -270,16 +274,12 @@ class MediaSyncWorker(
                 .setInputData(workDataOf(FORCE_SCAN_KEY to true))
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                ONE_TIME_WORK_TAG,
-                ExistingWorkPolicy.REPLACE,
-                request
-            )
+            enqueueUnlessRunning(context, request)
         }
 
         /** Run this account's pending work after login/account switch, without
          * bypassing the account's automatic-backup opt-in. */
-        fun enqueueBackground(
+        suspend fun enqueueBackground(
             context: Context,
             syncSettings: AccountSyncSettings
         ) {
@@ -292,11 +292,32 @@ class MediaSyncWorker(
                 .setConstraints(constraints)
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                ONE_TIME_WORK_TAG,
-                ExistingWorkPolicy.REPLACE,
-                request
-            )
+            enqueueUnlessRunning(context, request)
+        }
+
+        /**
+         * Queues [request] as the account's one-time sync without interrupting
+         * one that is uploading. Replacing a running sync cancelled it and
+         * restarted it from its last acknowledged chunk each time the app
+         * started or a setting changed. Instead the request runs after it, so
+         * media that appeared after its scan is still found; one follow-up is
+         * enough. With nothing running, a sync still waiting for constraints is
+         * replaced, so a changed Wi-Fi or charging choice applies.
+         */
+        private suspend fun enqueueUnlessRunning(context: Context, request: OneTimeWorkRequest) {
+            val workManager = WorkManager.getInstance(context)
+            val chain = workManager.getWorkInfosForUniqueWorkFlow(ONE_TIME_WORK_TAG).first()
+            val running = chain.any { it.state == WorkInfo.State.RUNNING }
+            val followUpQueued = chain.any {
+                it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED
+            }
+            when {
+                running && followUpQueued -> Unit
+                running -> workManager.enqueueUniqueWork(
+                    ONE_TIME_WORK_TAG, ExistingWorkPolicy.APPEND_OR_REPLACE, request
+                )
+                else -> workManager.enqueueUniqueWork(ONE_TIME_WORK_TAG, ExistingWorkPolicy.REPLACE, request)
+            }
         }
 
         fun cancelPeriodic(context: Context) {
