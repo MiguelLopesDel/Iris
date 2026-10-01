@@ -13,8 +13,10 @@ import errno
 import hmac
 import logging
 import os
+import re
 import secrets
 import shutil
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass
@@ -120,6 +122,30 @@ def default_legacy_db(data_dir: Path) -> Path:
 
 
 @dataclass(frozen=True)
+class LegacyStore:
+    """A library registered in the legacy catalog (table ``media_libraries``).
+
+    Files imported with copy-to-library live in its folder, referenced by a
+    path relative to it; the folder's absolute path was recorded at import
+    time and goes stale when the project moves, so ``directory`` is where the
+    folder actually is now, or ``None`` when it is gone.
+    """
+
+    library_id: int
+    name: str
+    recorded_root: str
+    directory: Path | None
+
+
+@dataclass(frozen=True)
+class LegacySummary:
+    items: int
+    with_file: int
+    missing: int  # items whose file exists nowhere any more
+    outside: int  # files that exist only outside data/ and media/, which setup cannot bring
+
+
+@dataclass(frozen=True)
 class LegacyLibrary:
     """What setup finds from a pre-accounts single library."""
 
@@ -127,16 +153,46 @@ class LegacyLibrary:
     media_root: Path
     has_db: bool
     has_media: bool
+    stores: tuple[LegacyStore, ...] = ()
+
+
+def _read_stores(db: Path, data_dir: Path) -> tuple[LegacyStore, ...]:
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return ()
+    try:
+        rows = conn.execute("SELECT id, name, root_path FROM media_libraries ORDER BY id").fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+    stores = []
+    for library_id, name, root in rows:
+        recorded = Path(root) if root else None
+        if recorded is not None and not recorded.is_absolute():
+            recorded = (data_dir.parent / recorded).resolve()
+        if recorded is not None and recorded.is_dir():
+            directory: Path | None = recorded.resolve()
+        elif (data_dir / "library" / str(name)).is_dir():
+            # The project moved since import: the folder is where import puts it.
+            directory = (data_dir / "library" / str(name)).resolve()
+        else:
+            directory = None
+        stores.append(LegacyStore(int(library_id), str(name), str(root or ""), directory))
+    return tuple(stores)
 
 
 def find_legacy_library(data_dir: Path, media_root: Path, db: Path | None = None) -> LegacyLibrary:
     source_db = (db or default_legacy_db(data_dir)).resolve()
     source_media = media_root.resolve()
     has_media = source_media.is_dir() and any(source_media.iterdir())
-    return LegacyLibrary(source_db, source_media, source_db.exists(), has_media)
+    has_db = source_db.exists()
+    stores = _read_stores(source_db, data_dir.resolve()) if has_db else ()
+    return LegacyLibrary(source_db, source_media, has_db, has_media, stores)
 
 
-def check_legacy_library(legacy: LegacyLibrary) -> None:
+def check_legacy_library(legacy: LegacyLibrary, data_dir: Path | None = None) -> None:
     # An existing but empty media/ is not a legacy library: the Docker image
     # creates that directory in every fresh install. What deserves a refusal
     # is a genuine half-migration -- files on one side and nothing on the other.
@@ -144,14 +200,72 @@ def check_legacy_library(legacy: LegacyLibrary) -> None:
         raise SetupError("Migração incompleta: o banco antigo existe mas a pasta de mídia não")
     if legacy.has_media and not legacy.has_db:
         raise SetupError("Migração incompleta: há mídia antiga mas nenhum banco para indexá-la")
+    if data_dir is not None:
+        data = data_dir.resolve()
+        for store in legacy.stores:
+            if store.directory is not None and (store.directory == data or store.directory in data.parents):
+                raise SetupError(
+                    f"A biblioteca '{store.name}' aponta para {store.directory}, que contém a pasta de dados; "
+                    "mover isso para a conta não é seguro. Ajuste o caminho dela antes do setup."
+                )
 
 
-def _faiss_files(db_path: Path) -> list[Path]:
-    prefix = db_path.with_suffix("")
-    return [
-        prefix.with_name(f"{prefix.name}_image.faiss"),
-        prefix.with_name(f"{prefix.name}_desc.faiss"),
-    ]
+def _within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def summarize_legacy_library(legacy: LegacyLibrary) -> LegacySummary:
+    """Where each catalogued item's file is, as the server would look for it."""
+    if not legacy.has_db:
+        return LegacySummary(0, 0, 0, 0)
+    stores = {store.library_id: store for store in legacy.stores}
+    movable_roots = [legacy.media_root] + [store.directory for store in legacy.stores if store.directory]
+    try:
+        conn = sqlite3.connect(f"file:{legacy.db}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT caminho, relative_path, storage_path, library_id FROM memes"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        # An empty or older catalog: nothing to count, and nothing to block setup over.
+        rows = []
+    with_file = missing = outside = 0
+    for caminho, relative_path, storage_path, library_id in rows:
+        candidates: list[Path] = []
+        store = stores.get(int(library_id)) if library_id is not None else None
+        if store and store.directory and storage_path:
+            candidates.append(store.directory / storage_path)
+        if relative_path:
+            candidates.append(legacy.media_root / relative_path)
+        if caminho:
+            candidates.append(Path(caminho))
+            candidates.append(legacy.media_root / Path(caminho).name)
+        found = next((c for c in candidates if c.is_file()), None)
+        if found is None:
+            missing += 1
+        elif any(_within(found.resolve(), root) for root in movable_roots):
+            with_file += 1
+        else:
+            outside += 1
+    return LegacySummary(len(rows), with_file, missing, outside)
+
+
+# Files that belong to a catalog database and move with it, renamed to the
+# account's database name: SQLite's write-ahead log (which may hold commits
+# not yet in the .db), the FAISS indexes and the embedding sidecars.
+_COMPANION_SUFFIX = re.compile(r"^(\.db-wal|\.db-shm|_image\.faiss|_desc\.faiss|\.[a-z0-9_]+\.vec)$")
+
+
+def _catalog_companions(db: Path) -> list[tuple[Path, str]]:
+    stem = db.stem
+    companions = []
+    for path in sorted(db.parent.glob(f"{stem}*")):
+        rest = path.name[len(stem):]
+        if path != db and _COMPANION_SUFFIX.match(rest):
+            companions.append((path, rest))
+    return companions
 
 
 # Room left free on the data disk beyond what the migration copies.
@@ -164,13 +278,23 @@ def _tree_bytes(path: Path) -> int:
     return sum(child.stat().st_size for child in path.rglob("*") if child.is_file())
 
 
+def _separate_stores(legacy: LegacyLibrary) -> list[LegacyStore]:
+    """Library folders that move on their own (not already inside media/)."""
+    return [
+        store for store in legacy.stores
+        if store.directory is not None and not _within(store.directory, legacy.media_root)
+    ]
+
+
 def _migration_sources(legacy: LegacyLibrary, data_dir: Path) -> list[Path]:
-    sources = [p for p in [legacy.db, *_faiss_files(legacy.db)] if p.exists()]
+    sources = [legacy.db] if legacy.db.exists() else []
+    sources.extend(path for path, _ in _catalog_companions(legacy.db))
     if legacy.media_root.is_dir():
         sources.extend(sorted(legacy.media_root.iterdir()))
     thumbnails = data_dir / "thumbnails"
     if thumbnails.exists():
         sources.append(thumbnails)
+    sources.extend(store.directory for store in _separate_stores(legacy))
     return sources
 
 
@@ -301,6 +425,46 @@ def _move_media_contents(source_root: Path, destination_root: Path, journal: _Mo
         journal.move(source, destination_root / source.name)
 
 
+def _move_stores(legacy: LegacyLibrary, user_media: Path, journal: _MoveJournal) -> dict[int, Path]:
+    """Bring each library folder into the account; return each library's new root."""
+    # The legacy media/ has already been moved into the account's media/ top
+    # level, so anything there is the user's own; a "library" folder among it
+    # keeps its name and the libraries go next to it instead.
+    parent = user_media / "library"
+    if parent.exists():
+        parent = user_media / "legacy-libraries"
+    new_roots: dict[int, Path] = {}
+    for store in legacy.stores:
+        if store.directory is None:
+            continue
+        if _within(store.directory, legacy.media_root):
+            new_roots[store.library_id] = user_media / store.directory.relative_to(legacy.media_root)
+            continue
+        target = parent / store.name
+        suffix = 2
+        while target.exists():
+            target = parent / f"{store.name}-{suffix}"
+            suffix += 1
+        parent.mkdir(parents=True, exist_ok=True)
+        journal.move(store.directory, target)
+        new_roots[store.library_id] = target
+    return new_roots
+
+
+def _rewrite_library_roots(db_path: Path, new_roots: dict[int, Path]) -> None:
+    if not new_roots:
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.executemany(
+                "UPDATE media_libraries SET root_path = ? WHERE id = ?",
+                [(str(root), library_id) for library_id, root in new_roots.items()],
+            )
+    finally:
+        conn.close()
+
+
 def create_first_admin(
     users_db: Path,
     data_dir: Path,
@@ -319,7 +483,7 @@ def create_first_admin(
     """
     if has_users(users_db):
         raise SetupError("O Iris já tem contas; a configuração inicial só roda uma vez")
-    check_legacy_library(legacy)
+    check_legacy_library(legacy, data_dir)
     check_migration_space(legacy, data_dir)
     user = create_user(
         users_db, data_dir, username=username, password_hash=password_hash,
@@ -331,17 +495,20 @@ def create_first_admin(
         return user
     journal = _MoveJournal()
     try:
-        for source in [legacy.db, *_faiss_files(legacy.db)]:
-            if source.exists():
-                target = (
-                    user.db_path if source == legacy.db
-                    else destination_root / source.name.replace(legacy.db.stem, user.db_path.stem, 1)
-                )
-                journal.move(source, target)
+        journal.move(legacy.db, user.db_path)
+        for source, rest in _catalog_companions(legacy.db):
+            journal.move(source, destination_root / f"{user.db_path.stem}{rest}")
         _move_media_contents(legacy.media_root, user.media_root, journal)
         old_thumbnails = data_dir / "thumbnails"
         if old_thumbnails.exists():
             journal.move(old_thumbnails, destination_root / "thumbnails")
+        new_roots = _move_stores(legacy, user.media_root, journal)
+        for path in (destination_root, user.media_root, destination_root / "thumbnails"):
+            if path.exists():
+                os.chmod(path, 0o700)
+        # Last: until every file is in place, the catalog keeps its old roots,
+        # so a rollback puts back a database that still matches its files.
+        _rewrite_library_roots(user.db_path, new_roots)
     except Exception as exc:
         out_of_space = isinstance(exc, OSError) and exc.errno == errno.ENOSPC
         stuck = journal.undo()
@@ -364,7 +531,4 @@ def create_first_admin(
             + "; ".join(stuck),
             rolled_back=False, out_of_space=out_of_space,
         ) from exc
-    for path in (destination_root, user.media_root, destination_root / "thumbnails"):
-        if path.exists():
-            os.chmod(path, 0o700)
     return user

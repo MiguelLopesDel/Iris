@@ -11,6 +11,15 @@
     .then((status) => {
       if (!status.required) window.location.replace('/');
       document.querySelector('#setup-legacy').hidden = !status.legacy_library;
+      const summary = status.legacy_summary;
+      if (summary) {
+        const parts = [` ${summary.with_file} de ${summary.items} itens serão movidos.`];
+        if (summary.missing) parts.push(` ${summary.missing} já não tinham arquivo.`);
+        if (summary.outside) {
+          parts.push(` ${summary.outside} estão fora das pastas data/ e media/ e não serão movidos.`);
+        }
+        document.querySelector('#setup-legacy-summary').textContent = parts.join('');
+      }
     })
     .catch(() => {});
 
