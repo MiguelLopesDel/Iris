@@ -3,6 +3,11 @@
 The Android app is an Iris device client. It must not call the manual browser import
 endpoint (`/api/import`) and must not access server filesystem paths.
 
+The web interface uses the same protocol: a signed-in browser is a device
+(`platform=web`) authenticated by its session cookie instead of bearer tokens.
+It appears in `GET /api/sync/devices` and, once revoked, its session ends on the
+next request.
+
 ## Authentication and device identity
 
 1. `POST /api/auth/devices/login` as form data: `username`, `password`,
@@ -24,6 +29,10 @@ capture timestamp, `upload_id`, and next byte offset.
    name, relative path, volume, item ID, generation, and media kind. The server stores
    these as metadata and must never resolve a client relative path on its filesystem.
 2. The response supplies `upload_id`, `offset`, and `chunk_size` (currently 32 MiB).
+   When the library already holds content with that SHA-256, the reservation is
+   settled immediately with `state: "duplicate"` and the existing `media_id`: send
+   no bytes and do not call `complete`. Such a reservation does not count against
+   the quota, and the device/source is recorded as an origin of that media.
 3. `PUT /api/sync/uploads/{upload_id}?offset={offset}` sends raw bytes, not multipart.
    Send chunks sequentially, then store the returned offset transactionally. The
    server fsyncs acknowledged bytes before advancing the confirmed offset.

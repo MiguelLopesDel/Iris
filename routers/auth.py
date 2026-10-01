@@ -15,6 +15,7 @@ from core.users_db import (
     get_user_by_username,
     rotate_device_refresh_token,
 )
+from core.web_sessions import end_web_session, start_web_session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -46,8 +47,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
     user = get_user_by_username(users_path, username)
     if user is None or not verify_password(password, user.password_hash):
         raise HTTPException(401, "Usuário ou senha inválidos")
-    request.session.clear()
-    request.session.update({"user_id": user.id, "session_version": user.session_version})
+    start_web_session(request.session, users_path, user, request.headers.get("user-agent", ""))
     return {"ok": True, "user": _public_user(user)}
 
 
@@ -87,7 +87,7 @@ async def refresh_device_token(request: Request, refresh_token: str = Form(...),
 
 @router.post("/logout")
 async def logout(request: Request):
-    request.session.clear()
+    end_web_session(request.session, request.app.state.users_db_path)
     return {"ok": True}
 
 

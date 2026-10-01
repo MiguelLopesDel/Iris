@@ -22,14 +22,24 @@ import {
   escapeHtml,
 } from './api.js?v=46';
 import { confirmModal } from './ui.js?v=5';
+import { loadDevices } from './devices.js?v=1';
+import { uploadFiles } from './web_upload.js?v=1';
 
 let initialized = false;
 let importPoll = null;
 let previousImportStatus = null;
+let systemInfo = null;
+let accountUpload = null;
 
 export function initSystem() {
   loadSystemInfo().then((info) => {
     if (!info) return;
+    systemInfo = info;
+    document.getElementById('devices-panel').hidden = !info.multiuser;
+    document.querySelectorAll('[data-account-import]').forEach((element) => {
+      element.hidden = !info.multiuser;
+    });
+    if (info.multiuser) loadDevices();
     if (info.capabilities?.host_administration) {
       loadBackupSection();
       browseFolder(document.getElementById('import-folder').value);
@@ -49,6 +59,7 @@ export function initSystem() {
     browseFolder(data.parent);
   });
   document.getElementById('import-start').addEventListener('click', runImport);
+  document.getElementById('import-stop').addEventListener('click', () => accountUpload?.abort());
   document.getElementById('backup-config-save').addEventListener('click', saveBackupSettings);
   document.getElementById('snapshot-now').addEventListener('click', runSnapshot);
   document.getElementById('media-reconcile').addEventListener('click', runReconcile);
@@ -62,8 +73,13 @@ async function loadSystemInfo() {
   try {
     const info = await fetchInfo();
     const hostAdministration = !!info.capabilities?.host_administration;
-    document.querySelectorAll('[data-host-only], [data-host-import]').forEach((element) => {
+    document.querySelectorAll('[data-host-only]').forEach((element) => {
       element.hidden = !hostAdministration;
+    });
+    // The server-folder import and its indexing knobs drive the old /api/import;
+    // with accounts, uploads go through the sync protocol and ignore them.
+    document.querySelectorAll('[data-host-import]').forEach((element) => {
+      element.hidden = !hostAdministration || !!info.multiuser;
     });
     if (hostAdministration) {
       const dbSelect = document.getElementById('system-db');
@@ -154,6 +170,10 @@ async function browseFolder(path) {
 }
 
 async function runImport() {
+  if (systemInfo?.multiuser) {
+    runAccountUpload();
+    return;
+  }
   const status = document.getElementById('import-status');
   const button = document.getElementById('import-start');
   const form = new FormData();
@@ -187,6 +207,7 @@ async function runImport() {
 
 async function pollImportStatus(immediate = false) {
   if (importPoll) clearTimeout(importPoll);
+  if (accountUpload) return; // the upload owns the status line while it runs
   if (!document.getElementById('import-status')) return;
   try {
     const job = await getImportStatus();
@@ -211,6 +232,87 @@ async function pollImportStatus(immediate = false) {
     }
   } catch (error) {
     document.getElementById('import-status').textContent = `Erro: ${error.message}`;
+  }
+}
+
+const number = new Intl.NumberFormat('pt-BR');
+
+function formatSize(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value.toLocaleString('pt-BR', { maximumFractionDigits: unit > 1 ? 1 : 0 })} ${units[unit]}`;
+}
+
+function warnBeforeLeaving(event) {
+  event.preventDefault();
+  event.returnValue = '';
+}
+
+function renderUploadProgress(stats) {
+  const parts = [];
+  if (stats.done < stats.total && stats.sentBytes === 0 && stats.hashedBytes < stats.totalBytes) {
+    parts.push(`Lendo arquivos… ${formatSize(stats.hashedBytes)} de ${formatSize(stats.totalBytes)}`);
+  } else {
+    parts.push(`${number.format(stats.done)} de ${number.format(stats.total)} arquivos`);
+  }
+  if (stats.bytesPerSecond > 0 && stats.done < stats.total) parts.push(`${formatSize(stats.bytesPerSecond)}/s`);
+  if (stats.duplicates) parts.push(`${number.format(stats.duplicates)} já estavam na biblioteca`);
+  if (stats.resumedBytes) parts.push(`${formatSize(stats.resumedBytes)} retomados`);
+  if (stats.failed.length) parts.push(`${number.format(stats.failed.length)} com falha`);
+  document.getElementById('import-status').textContent = parts.join(' · ');
+
+  const failures = document.getElementById('import-failures');
+  failures.hidden = !stats.failed.length;
+  if (stats.failed.length) {
+    failures.querySelector('summary').textContent = `Ver ${number.format(stats.failed.length)} arquivo(s) com falha`;
+    failures.querySelector('ul').innerHTML = stats.failed
+      .map((item) => `<li>${escapeHtml(item.name)}: ${escapeHtml(item.message)}</li>`).join('');
+  }
+}
+
+async function runAccountUpload() {
+  const status = document.getElementById('import-status');
+  const button = document.getElementById('import-start');
+  const stopButton = document.getElementById('import-stop');
+  const files = [
+    ...document.getElementById('import-files').files,
+    ...document.getElementById('import-folder-files').files,
+  ];
+  if (!files.length) {
+    status.textContent = 'Escolha arquivos ou uma pasta para enviar.';
+    return;
+  }
+  accountUpload = new AbortController();
+  button.disabled = true;
+  stopButton.hidden = false;
+  window.addEventListener('beforeunload', warnBeforeLeaving);
+  try {
+    const result = await uploadFiles(files, { onProgress: renderUploadProgress, signal: accountUpload.signal });
+    renderUploadProgress(result);
+    const summary = `Enviados ${number.format(result.sent)}`
+      + (result.duplicates ? ` · ${number.format(result.duplicates)} já estavam na biblioteca` : '')
+      + (result.resumedBytes ? ` · ${formatSize(result.resumedBytes)} retomados` : '')
+      + (result.failed.length ? ` · ${number.format(result.failed.length)} com falha` : '');
+    status.textContent = result.stoppedReason
+      ? `${result.stoppedReason} ${summary}. Escolha os mesmos arquivos para continuar de onde parou.`
+      : `Concluído. ${summary}.`;
+    if (result.sent) {
+      const reload = document.createElement('button');
+      reload.className = 'btn btn-subtle';
+      reload.type = 'button';
+      reload.textContent = 'Atualizar galeria';
+      reload.addEventListener('click', () => window.location.reload());
+      status.append(' ', reload);
+    }
+  } catch (error) {
+    status.textContent = `Erro: ${error.message}`;
+  } finally {
+    window.removeEventListener('beforeunload', warnBeforeLeaving);
+    accountUpload = null;
+    button.disabled = false;
+    stopButton.hidden = true;
   }
 }
 

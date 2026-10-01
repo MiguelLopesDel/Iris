@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from core import first_setup
 from core.auth import hash_password
 from core.users_db import has_users
+from core.web_sessions import start_web_session
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
 logger = logging.getLogger("iris")
@@ -112,8 +113,7 @@ async def complete_setup(request: Request, payload: SetupIn):
         _close_setup(request, data_dir)
 
     logger.info("setup_completed user_id=%s migrated_legacy=%s", user.id, legacy.has_db)
-    request.session.clear()
-    request.session.update({"user_id": user.id, "session_version": user.session_version})
+    start_web_session(request.session, users_db, user, request.headers.get("user-agent", ""))
     return {
         "ok": True,
         "migrated_legacy_library": legacy.has_db,

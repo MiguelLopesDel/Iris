@@ -31,7 +31,11 @@ jobs:
         run: python -m compileall -q core routers scripts tests server.py
       - name: Lint
         run: python -m ruff check core routers scripts tests server.py
+      - name: Browser for end-to-end tests
+        run: python -m playwright install --with-deps chromium
       - name: Test
+        env:
+          IRIS_REQUIRE_BROWSER_TESTS: "1"
         run: python -m pytest -q
       - name: Audit dependencies
         # PYSEC-2022-252 (deep-translator) não tem correção publicada: 1.11.4 já

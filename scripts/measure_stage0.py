@@ -152,20 +152,23 @@ def measure(items: int, rounds: int) -> dict:
                 uploads = []
                 for number in range(rounds):
                     filename = f"upload-{number:06d}.jpg"
+                    # Distinct content per round: a repeat would be answered as a
+                    # known duplicate at reservation and measure no transfer.
+                    payload = image_bytes + number.to_bytes(4, "big")
 
-                    def upload(filename: str = filename) -> None:
+                    def upload(filename: str = filename, payload: bytes = payload) -> None:
                         started = device.post(
                             "/api/sync/uploads",
                             headers=headers,
                             json={
                                 "filename": filename,
-                                "size": len(image_bytes),
-                                "sha256": hashlib.sha256(image_bytes).hexdigest(),
+                                "size": len(payload),
+                                "sha256": hashlib.sha256(payload).hexdigest(),
                             },
                         )
                         assert started.status_code == 200, started.text
                         url = "/api/sync/uploads/" + started.json()["upload_id"]
-                        chunk = device.put(url + "?offset=0", headers=headers, content=image_bytes)
+                        chunk = device.put(url + "?offset=0", headers=headers, content=payload)
                         assert chunk.status_code == 200, chunk.text
                         completed = device.post(url + "/complete", headers=headers)
                         assert completed.status_code == 200, completed.text

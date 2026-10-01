@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=55">
+  <link rel="stylesheet" href="/static/style.css?v=56">
 </head>
 <body>
 
@@ -495,6 +495,13 @@
         </div>
       </div>
 
+      <section id="devices-panel" class="detail-panel system-card" hidden>
+        <span class="eyebrow">SEGURANÇA</span>
+        <h4>Dispositivos conectados</h4>
+        <p class="system-hint">Celulares e navegadores com acesso à sua conta. Desconectar encerra a sessão daquele dispositivo na hora.</p>
+        <ul id="devices-list" class="devices-list"></ul>
+      </section>
+
       <section id="account-management" class="detail-panel system-card" hidden>
         <span class="eyebrow">CONTAS</span>
         <h4>Criar conta</h4>
@@ -659,6 +666,9 @@
           <label>Ou envie arquivos
             <input type="file" id="import-files" accept="image/*,video/*,audio/*,.svg" multiple>
           </label>
+          <label data-account-import hidden>Ou uma pasta inteira
+            <input type="file" id="import-folder-files" webkitdirectory multiple>
+          </label>
           <div class="form-grid" data-host-import>
             <label>Biblioteca<input type="text" id="import-library" value="default"></label>
             <label>Raiz gerenciada<input type="text" id="import-library-root" value="data/library"></label>
@@ -681,7 +691,9 @@
             <label class="switch-row"><input type="checkbox" id="import-copy" checked><span class="switch-control"></span><span>Copiar para biblioteca gerenciada</span></label>
           </div>
           <button id="import-start" class="btn btn-primary">Importar e indexar</button>
+          <button id="import-stop" class="btn btn-subtle" type="button" hidden>Parar</button>
           <div id="import-status" class="system-status"></div>
+          <details id="import-failures" class="import-failures" hidden><summary></summary><ul></ul></details>
         </section>
 
         <section class="detail-panel system-card system-card-wide">
@@ -827,7 +839,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=71"></script>
+<script type="module" src="/static/app.js?v=72"></script>
 
 </body>
 </html>

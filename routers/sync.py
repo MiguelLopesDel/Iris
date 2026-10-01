@@ -56,8 +56,12 @@ def _raise_http(exc: SyncUploadError) -> None:
     raise HTTPException(exc.status_code, exc.detail) from exc
 
 
-def _device_payload(device) -> dict:
-    return {"id": device.id, "name": device.name, "platform": device.platform, "revoked": bool(device.revoked_at)}
+def _device_payload(device, current_id: str | None) -> dict:
+    return {
+        "id": device.id, "name": device.name, "platform": device.platform,
+        "revoked": bool(device.revoked_at), "last_seen_at": device.last_seen_at,
+        "current": device.id == current_id,
+    }
 
 
 def _connection(request: Request):
@@ -68,7 +72,12 @@ def _connection(request: Request):
 @router.get("/devices")
 async def devices(request: Request):
     user = _user(request)
-    return {"devices": [_device_payload(device) for device in list_devices(request.app.state.users_db_path, user.id)]}
+    current = getattr(request.state, "iris_device_id", None)
+    return {"devices": [
+        _device_payload(device, current)
+        for device in list_devices(request.app.state.users_db_path, user.id)
+        if not device.revoked_at
+    ]}
 
 
 @router.delete("/devices/{device_id}")
