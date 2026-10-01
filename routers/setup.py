@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from core import first_setup
 from core.auth import hash_password
+from core.users_db import has_users
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
 logger = logging.getLogger("iris")
@@ -38,6 +39,11 @@ def _limiter(request: Request) -> first_setup.AttemptLimiter:
         limiter = first_setup.AttemptLimiter()
         request.app.state.setup_attempts = limiter
     return limiter
+
+
+def _close_setup(request: Request, data_dir: Path) -> None:
+    first_setup.clear_setup_code(data_dir)
+    request.app.state.setup_required = False
 
 
 @router.get("")
@@ -79,10 +85,22 @@ async def complete_setup(request: Request, payload: SetupIn):
                 password_hash=password_hash,
                 display_name=payload.display_name,
             )
+        except first_setup.MigrationFailed as exc:
+            if not exc.rolled_back:
+                # The account exists: leave setup mode so the administrator can
+                # sign in and sort out the files the message lists.
+                _close_setup(request, data_dir)
+                raise HTTPException(500, str(exc)) from exc
+            # Nothing changed: setup stays open with the same code.
+            raise HTTPException(507 if exc.out_of_space else 500, str(exc)) from exc
         except (first_setup.SetupError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
-        first_setup.clear_setup_code(data_dir)
-        request.app.state.setup_required = False
+        except Exception as exc:
+            logger.exception("setup_failed")
+            if has_users(users_db):
+                _close_setup(request, data_dir)
+            raise HTTPException(500, "A configuração inicial falhou; veja o log do servidor") from exc
+        _close_setup(request, data_dir)
 
     logger.info("setup_completed user_id=%s migrated_legacy=%s", user.id, legacy.has_db)
     request.session.clear()

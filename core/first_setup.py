@@ -9,7 +9,9 @@ first account exists and setup closes for good.
 
 from __future__ import annotations
 
+import errno
 import hmac
+import logging
 import os
 import secrets
 import shutil
@@ -19,7 +21,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.indexer_db import init_db
-from core.users_db import IrisUser, create_user, has_users
+from core.users_db import IrisUser, create_user, delete_user, has_users
+
+logger = logging.getLogger("iris")
 
 CODE_FILE = "setup_code"
 # No 0/O or 1/I/L: the code is read off a terminal and typed by hand.
@@ -29,6 +33,19 @@ _CODE_LENGTH = 8
 
 class SetupError(Exception):
     """A setup request that cannot proceed; the message is safe to show."""
+
+
+class MigrationFailed(SetupError):
+    """Moving the legacy library failed after the administrator was created.
+
+    ``rolled_back`` says whether everything was put back (no account, the
+    library whole in its original place) so setup can simply be retried.
+    """
+
+    def __init__(self, message: str, *, rolled_back: bool, out_of_space: bool) -> None:
+        super().__init__(message)
+        self.rolled_back = rolled_back
+        self.out_of_space = out_of_space
 
 
 def ensure_setup_code(data_dir: Path) -> str:
@@ -137,7 +154,113 @@ def _faiss_files(db_path: Path) -> list[Path]:
     ]
 
 
-def _move_media_contents(source_root: Path, destination_root: Path) -> None:
+# Room left free on the data disk beyond what the migration copies.
+_SPACE_HEADROOM_BYTES = 256 * 1024 * 1024
+
+
+def _tree_bytes(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    return sum(child.stat().st_size for child in path.rglob("*") if child.is_file())
+
+
+def _migration_sources(legacy: LegacyLibrary, data_dir: Path) -> list[Path]:
+    sources = [p for p in [legacy.db, *_faiss_files(legacy.db)] if p.exists()]
+    if legacy.media_root.is_dir():
+        sources.extend(sorted(legacy.media_root.iterdir()))
+    thumbnails = data_dir / "thumbnails"
+    if thumbnails.exists():
+        sources.append(thumbnails)
+    return sources
+
+
+def _device_of(path: Path) -> int:
+    return path.stat().st_dev
+
+
+def check_migration_space(legacy: LegacyLibrary, data_dir: Path) -> None:
+    """Refuse before anything is created when the moved library will not fit.
+
+    A move within one filesystem is a rename and needs no room; only what
+    crosses filesystems (a separate media mount, say) is copied first.
+    """
+    if not legacy.has_db:
+        return
+    data_dir.mkdir(parents=True, exist_ok=True)
+    data_device = _device_of(data_dir)
+    to_copy = sum(
+        _tree_bytes(source) for source in _migration_sources(legacy, data_dir)
+        if _device_of(source) != data_device
+    )
+    if not to_copy:
+        return
+    free = shutil.disk_usage(data_dir).free
+    if to_copy + _SPACE_HEADROOM_BYTES > free:
+        raise SetupError(
+            f"Espaço insuficiente para migrar a biblioteca: é preciso copiar {to_copy / 1e9:.1f} GB "
+            f"para {data_dir} e há {free / 1e9:.1f} GB livres. Libere espaço e tente de novo."
+        )
+
+
+def _move(source: Path, destination: Path) -> None:
+    """Move without ever being the cause of the only complete copy disappearing.
+
+    Within one filesystem this is a rename. Across filesystems it copies, and
+    only when the copy is complete removes the original. A failed copy leaves
+    the original untouched and its partial copy is discarded; a failure while
+    removing the original leaves both, and the complete copy is kept.
+    """
+    try:
+        os.rename(source, destination)
+        return
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+    try:
+        if source.is_dir():
+            shutil.copytree(source, destination, symlinks=True)
+        else:
+            shutil.copy2(source, destination)
+    except BaseException:
+        if destination.is_dir():
+            shutil.rmtree(destination, ignore_errors=True)
+        else:
+            destination.unlink(missing_ok=True)
+        raise
+    if source.is_dir():
+        shutil.rmtree(source)
+    else:
+        source.unlink()
+
+
+class _MoveJournal:
+    """Moves files and remembers how, so a failed migration can be put back."""
+
+    def __init__(self) -> None:
+        self._done: list[tuple[Path, Path]] = []
+
+    def move(self, source: Path, destination: Path) -> None:
+        if destination.exists():
+            raise FileExistsError(f"destino já existe: {destination}")
+        _move(source, destination)
+        self._done.append((source, destination))
+
+    def undo(self) -> list[str]:
+        """Move everything back, newest first; returns what could not be restored."""
+        stuck = []
+        for source, destination in reversed(self._done):
+            try:
+                if source.exists():
+                    raise FileExistsError(f"a origem já existe: {source}")
+                source.parent.mkdir(parents=True, exist_ok=True)
+                _move(destination, source)
+            except Exception as exc:  # keep restoring the rest
+                stuck.append(f"{destination} -> {source} ({exc})")
+        self._done.clear()
+        return stuck
+
+
+def _move_media_contents(source_root: Path, destination_root: Path, journal: _MoveJournal | None = None) -> None:
     """Move children without attempting to remove a Docker bind-mount root.
 
     ``/app/media`` is commonly a bind mount while private libraries live under
@@ -146,12 +269,10 @@ def _move_media_contents(source_root: Path, destination_root: Path) -> None:
     mount point. Moving children permits the normal copy-and-delete fallback
     across filesystems and leaves an empty legacy mount behind.
     """
+    journal = journal or _MoveJournal()
     destination_root.mkdir(parents=True, exist_ok=True)
-    for source in source_root.iterdir():
-        destination = destination_root / source.name
-        if destination.exists():
-            raise FileExistsError(f"destino de mídia já existe: {destination}")
-        shutil.move(str(source), str(destination))
+    for source in sorted(source_root.iterdir()):
+        journal.move(source, destination_root / source.name)
 
 
 def create_first_admin(
@@ -163,10 +284,17 @@ def create_first_admin(
     password_hash: str,
     display_name: str = "",
 ) -> IrisUser:
-    """Create the first administrator, moving a legacy library into it if one exists."""
+    """Create the first administrator, moving a legacy library into it if one exists.
+
+    Either the account exists with the whole library, or, when moving fails
+    (a full disk, say), everything is put back and no account remains, so
+    setup can be retried. Only if putting back also fails does the account
+    stay, with :class:`MigrationFailed` saying which files are where.
+    """
     if has_users(users_db):
         raise SetupError("O Iris já tem contas; a configuração inicial só roda uma vez")
     check_legacy_library(legacy)
+    check_migration_space(legacy, data_dir)
     user = create_user(
         users_db, data_dir, username=username, password_hash=password_hash,
         display_name=display_name, is_admin=True,
@@ -175,17 +303,40 @@ def create_first_admin(
     if not legacy.has_db:
         init_db(user.db_path).close()
         return user
-    for source in [legacy.db, *_faiss_files(legacy.db)]:
-        if source.exists():
-            target = (
-                user.db_path if source == legacy.db
-                else destination_root / source.name.replace(legacy.db.stem, user.db_path.stem, 1)
-            )
-            shutil.move(str(source), str(target))
-    _move_media_contents(legacy.media_root, user.media_root)
-    old_thumbnails = data_dir / "thumbnails"
-    if old_thumbnails.exists():
-        shutil.move(str(old_thumbnails), str(destination_root / "thumbnails"))
+    journal = _MoveJournal()
+    try:
+        for source in [legacy.db, *_faiss_files(legacy.db)]:
+            if source.exists():
+                target = (
+                    user.db_path if source == legacy.db
+                    else destination_root / source.name.replace(legacy.db.stem, user.db_path.stem, 1)
+                )
+                journal.move(source, target)
+        _move_media_contents(legacy.media_root, user.media_root, journal)
+        old_thumbnails = data_dir / "thumbnails"
+        if old_thumbnails.exists():
+            journal.move(old_thumbnails, destination_root / "thumbnails")
+    except Exception as exc:
+        out_of_space = isinstance(exc, OSError) and exc.errno == errno.ENOSPC
+        stuck = journal.undo()
+        if not stuck:
+            delete_user(users_db, user.id)
+            shutil.rmtree(destination_root, ignore_errors=True)
+            logger.warning("setup_migration_rolled_back error_type=%s", type(exc).__name__)
+            reason = "falta espaço em disco" if out_of_space else str(exc)
+            raise MigrationFailed(
+                f"A migração da biblioteca falhou ({reason}). Nada foi alterado: "
+                "nenhuma conta foi criada e a biblioteca continua onde estava. "
+                "Resolva o problema e tente de novo.",
+                rolled_back=True, out_of_space=out_of_space,
+            ) from exc
+        logger.error("setup_migration_stuck error_type=%s files=%d", type(exc).__name__, len(stuck))
+        raise MigrationFailed(
+            f"A migração falhou ({exc}) e não pôde ser desfeita por completo. A conta "
+            f"'{user.username}' foi criada; confira estes arquivos antes de usar o Iris: "
+            + "; ".join(stuck),
+            rolled_back=False, out_of_space=out_of_space,
+        ) from exc
     for path in (destination_root, user.media_root, destination_root / "thumbnails"):
         if path.exists():
             os.chmod(path, 0o700)

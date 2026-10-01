@@ -171,6 +171,15 @@ def create_user(
     return _from_row(row)
 
 
+def delete_user(path: Path, user_id: int) -> None:
+    """Remove an account row (devices cascade). Its library files are the caller's.
+
+    Used to undo a first-run setup whose library migration failed.
+    """
+    with _connect(path) as conn:
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
 def get_user_by_id(path: Path, user_id: int) -> IrisUser | None:
     if not path.exists():
         return None

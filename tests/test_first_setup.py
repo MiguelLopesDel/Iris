@@ -177,3 +177,132 @@ def test_terminal_bootstrap_reprompts_a_short_password_instead_of_crashing(tmp_p
     assert "Traceback" not in result.stderr
     assert "pelo menos 12 caracteres" in result.stderr
     assert "Conta administradora criada: admin" in result.stdout
+
+
+_LEGACY_LIBRARY = r'''
+import errno, os, shutil
+from pathlib import Path
+from fastapi.testclient import TestClient
+from core.indexer_db import init_db
+
+data = Path("data")
+data.mkdir()
+init_db(data / "iris_v1.db").close()
+media = Path("media")
+media.mkdir()
+for name in ("a.jpg", "b.jpg", "c.jpg"):
+    (media / name).write_bytes(name.encode() * 1000)
+
+# The media folder on another disk: renames fail and moves fall back to copying.
+real_rename = os.rename
+def other_disk_for_media(src, dst, *args, **kwargs):
+    if "media" in str(src) or "media" in str(dst):
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+    return real_rename(src, dst, *args, **kwargs)
+os.rename = other_disk_for_media
+'''
+
+
+def test_a_migration_that_runs_out_of_space_is_rolled_back_and_can_be_retried(tmp_path: Path) -> None:
+    out = _run(tmp_path, _LEGACY_LIBRARY + r'''
+real_copy = shutil.copy2
+copies = {"n": 0}
+def disk_fills_on_the_second_photo(src, dst, *args, **kwargs):
+    copies["n"] += 1
+    if copies["n"] == 2:
+        Path(dst).write_bytes(b"half")  # a partial copy, as a full disk leaves it
+        raise OSError(errno.ENOSPC, "No space left on device")
+    return real_copy(src, dst, *args, **kwargs)
+shutil.copy2 = disk_fills_on_the_second_photo
+
+import server
+with TestClient(server.app) as client:
+    code = (data / "setup_code").read_text().strip()
+    body = {"code": code, "username": "admin", "password": "senha muito segura"}
+    failed = client.post("/api/setup", json=body)
+    assert failed.status_code == 507, failed.text
+    assert "Nada foi alterado" in failed.json()["detail"]
+    # As before: no account, the library whole where it was, setup open, same code.
+    assert client.get("/healthz").json()["status"] == "setup_required"
+    assert client.get("/api/setup").json() == {"required": True, "legacy_library": True}
+    assert (data / "iris_v1.db").is_file()
+    assert {p.name: p.read_bytes() for p in media.iterdir()} == {
+        n: n.encode() * 1000 for n in ("a.jpg", "b.jpg", "c.jpg")
+    }
+    assert not (data / "users").exists() or not any((data / "users").iterdir())
+
+    # Space freed: the same code completes setup.
+    shutil.copy2 = real_copy
+    done = client.post("/api/setup", json=body)
+    assert done.status_code == 201, done.text
+    assert done.json()["migrated_legacy_library"] is True
+user_root = data / "users" / str(done.json()["user"]["id"])
+assert {p.name: p.read_bytes() for p in (user_root / "media").iterdir()} == {
+    n: n.encode() * 1000 for n in ("a.jpg", "b.jpg", "c.jpg")
+}
+assert not any(media.iterdir())
+print("ok")
+''')
+    assert out.strip().endswith("ok")
+
+
+def test_when_putting_back_also_fails_the_account_stays_and_setup_closes(tmp_path: Path) -> None:
+    out = _run(tmp_path, _LEGACY_LIBRARY + r'''
+real_copy = shutil.copy2
+def copies_fail_after_the_first(src, dst, *args, **kwargs):
+    # The first photo moves; the second fails; moving the first back fails too.
+    if "b.jpg" in str(src) or "users" in str(src):
+        raise OSError(errno.EIO, "Input/output error")
+    return real_copy(src, dst, *args, **kwargs)
+shutil.copy2 = copies_fail_after_the_first
+
+import server
+with TestClient(server.app) as client:
+    code = (data / "setup_code").read_text().strip()
+    failed = client.post("/api/setup", json={"code": code, "username": "admin", "password": "senha muito segura"})
+    assert failed.status_code == 500, failed.text
+    detail = failed.json()["detail"]
+    assert "não pôde ser desfeita" in detail and "a.jpg" in detail
+    # The account exists, so the server no longer waits for setup.
+    assert client.get("/healthz").json()["status"] == "ok"
+    assert not (data / "setup_code").exists()
+    login = client.post("/api/auth/login", data={"username": "admin", "password": "senha muito segura"})
+    assert login.status_code == 200
+# No file was lost: each photo is in exactly one of the two places.
+user_media = data / "users" / "1" / "media"
+found = sorted([p.name for p in media.iterdir()] + [p.name for p in user_media.iterdir()])
+assert found == ["a.jpg", "b.jpg", "c.jpg"], found
+print("ok")
+''')
+    assert out.strip().endswith("ok")
+
+
+def test_a_library_that_will_not_fit_is_refused_before_anything_changes(tmp_path: Path, monkeypatch) -> None:
+    from core.indexer_db import init_db
+
+    data = tmp_path / "data"
+    data.mkdir()
+    init_db(data / "iris_v1.db").close()
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "big.mp4").write_bytes(b"x" * 4096)
+    monkeypatch.setattr(first_setup, "_device_of", lambda path: 2 if "media" in str(path) else 1)
+    monkeypatch.setattr(first_setup.shutil, "disk_usage", lambda path: shutil_usage(free=1024))
+
+    legacy = first_setup.find_legacy_library(data, media)
+    try:
+        first_setup.create_first_admin(data / "users.db", data, legacy, username="admin", password_hash="x")
+    except first_setup.SetupError as exc:
+        assert "Espaço insuficiente" in str(exc)
+    else:
+        raise AssertionError("a library that does not fit must be refused")
+    from core.users_db import has_users
+
+    assert not has_users(data / "users.db")
+    assert (media / "big.mp4").is_file() and (data / "iris_v1.db").is_file()
+
+
+def shutil_usage(free: int):
+    import collections
+
+    return collections.namedtuple("usage", "total used free")(free * 10, free * 9, free)
