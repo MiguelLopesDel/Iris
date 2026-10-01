@@ -1,6 +1,7 @@
 """The browser upload, end to end in a real browser against a real server.
 
-Skipped where Playwright and its Chromium are not installed.
+Skipped where Playwright and its Chromium are not installed, except when
+IRIS_REQUIRE_BROWSER_TESTS=1 (as in CI), where a missing browser is a failure.
 """
 from __future__ import annotations
 
@@ -16,7 +17,11 @@ from pathlib import Path
 
 import pytest
 
-sync_api = pytest.importorskip("playwright.sync_api")
+REQUIRED = os.environ.get("IRIS_REQUIRE_BROWSER_TESTS") == "1"
+if REQUIRED:
+    from playwright import sync_api
+else:
+    sync_api = pytest.importorskip("playwright.sync_api")
 
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = "synthetic password 1"
@@ -87,6 +92,8 @@ def test_a_folder_goes_up_resumes_after_a_failure_and_skips_what_is_known(server
         try:
             browser = playwright.chromium.launch()
         except Exception as exc:  # browser binaries missing
+            if REQUIRED:
+                raise
             pytest.skip(f"Chromium unavailable: {exc}")
         page = browser.new_page()
         page.goto(base + "/login")
