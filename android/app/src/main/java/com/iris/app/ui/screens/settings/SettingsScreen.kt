@@ -1,5 +1,7 @@
 package com.iris.app.ui.screens.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -38,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -45,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -68,6 +73,40 @@ fun SettingsScreen(
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // A CA certificate chosen by the user, read in full: these files are a few kilobytes.
+    val authorityPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val bytes = runCatching {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            if (bytes != null && bytes.size <= 1_048_576) viewModel.importAuthority(bytes)
+        }
+    }
+    uiState.connectionProblem?.let { problem ->
+        ConnectionProblemDialog(
+            problem,
+            ConnectionProblemActions(
+                allowCleartext = viewModel::allowCleartext,
+                trustDeviceCertificates = viewModel::trustDeviceCertificates,
+                trustPresentedCertificate = viewModel::trustPresentedCertificate,
+                importAuthority = {
+                    authorityPicker.launch(
+                        arrayOf("application/x-x509-ca-cert", "application/pkix-cert", "application/x-pem-file", "*/*")
+                    )
+                },
+                dismiss = viewModel::dismissConnectionProblem,
+            ),
+        )
+    }
+    uiState.securityMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissSecurityMessage,
+            title = { Text("Certificado") },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = viewModel::dismissSecurityMessage) { Text("OK") } },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -225,6 +264,11 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         }
                     }
                 }
+            }
+
+            uiState.security?.let { summary ->
+                Spacer(modifier = Modifier.height(16.dp))
+                ConnectionSecurityCard(summary, onReset = viewModel::resetSecurity)
             }
 
             // Account & Library Access Status Card
