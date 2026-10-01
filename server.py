@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from core import (
     app_config,
     equivalence_graph,
+    first_setup,
     import_review,
     instance_settings,
     library_trash,
@@ -119,6 +120,7 @@ from routers.backup import BackupRouteOperations
 from routers.backup import router as backup_router
 from routers.records import RecordRouteOperations
 from routers.records import router as records_router
+from routers.setup import router as setup_router
 from routers.spaces import router as spaces_router
 from routers.sync import router as sync_router
 
@@ -588,6 +590,11 @@ async def lifespan(app: FastAPI):
             print(f"[iris] Limpou {killed} navegador(es) orfao(s) de execucao anterior")
     except Exception:
         pass
+    if app.state.setup_required:
+        # Whoever completes setup becomes the administrator; the code proves
+        # they can read this console or the data folder, not just reach the page.
+        code = first_setup.ensure_setup_code(_DATA_DIR)
+        print(f"[iris] Setup required — open /setup and enter the installation code: {code}")
     if app.state.multiuser_enabled:
         report = app.state.space_policy.report
         print(
@@ -665,6 +672,8 @@ app.state.multiuser_enabled = _private_server_requested or (
     and _has_users
 )
 app.state.setup_required = app.state.multiuser_enabled and not _has_users
+# A legacy single library found here is migrated into the first account.
+app.state.setup_media_root = Path(_MEDIA_ROOT)
 if app.state.multiuser_enabled:
     try:
         engine_cache_size = int(os.environ.get("IRIS_ENGINE_CACHE_SIZE", "1"))
@@ -702,7 +711,7 @@ async def authenticate_library_request(request: Request, call_next):
         return Response(status_code=413, content='{"detail":"Requisição excede o limite configurado"}', media_type="application/json")
     path = request.url.path
     public = (
-        path in {"/login", "/setup", "/healthz", "/favicon.ico", "/api/auth/login", "/api/auth/devices/login", "/api/auth/devices/refresh"}
+        path in {"/login", "/setup", "/api/setup", "/healthz", "/favicon.ico", "/api/auth/login", "/api/auth/devices/login", "/api/auth/devices/refresh"}
         or path.startswith("/static/")
     )
     if public:
@@ -838,6 +847,7 @@ app.include_router(spaces_router)
 app.include_router(admin_router)
 app.include_router(backup_router)
 app.include_router(records_router)
+app.include_router(setup_router)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1408,12 +1418,7 @@ async def serve_setup():
     if not _setup_required():
         return RedirectResponse("/", status_code=303)
     return HTMLResponse(
-        "<main><h1>Iris precisa da primeira conta</h1>"
-        "<p>Crie a primeira conta no servidor. Em uma instalação vazia, o comando cria uma biblioteca privada vazia; "
-        "em uma instalação antiga, ele migra automaticamente o catálogo e a mídia existentes.</p>"
-        "<pre>docker compose run --rm iris python scripts/bootstrap_admin.py --username administrador</pre>"
-        "</main>",
-        status_code=503,
+        (static_dir / "setup.html").read_text(encoding="utf-8"),
         headers={"Cache-Control": "no-store"},
     )
 
