@@ -11,6 +11,25 @@ const MAX_ATTEMPTS = 5;
 
 class UploadStopped extends Error {}
 
+// What each server-side state of a reservation means for this run.
+// A state outside this table is a failure: never a silent skip.
+const ALREADY_THERE = new Set(['duplicate', 'ready', 'pending_processing', 'processing']);
+const STATE_FAILURES = {
+  // The server kept the original but could not catalog it; sending it again
+  // would not help (the contract says not to), so it is reported.
+  failed_processing: 'O servidor recebeu o arquivo antes, mas não conseguiu processá-lo',
+  // A transfer whose bytes did not match the hash. Recoverable: the reservation
+  // stays failed for good, so it is retried once under a new client id.
+  failed: 'O arquivo chegou corrompido ao servidor',
+};
+
+class StateFailure extends Error {
+  constructor(state) {
+    super(STATE_FAILURES[state] || `Estado inesperado do servidor: ${state}`);
+    this.state = state;
+  }
+}
+
 class Channel {
   constructor() { this.items = []; this.waiters = []; this.closed = false; }
   push(item) {
@@ -155,7 +174,7 @@ export async function uploadFiles(files, { onProgress = () => {}, signal } = {})
       if (first === undefined || stopped) break;
       const batch = [first, ...hashed.drain(RESERVE_BATCH - 1)];
       const uploads = batch.map((entry) => {
-        entry.clientId = `web:${entry.sha256.slice(0, 48)}:${fnv1a(relativePath(entry.file))}`;
+        entry.clientId ||= `web:${entry.sha256.slice(0, 48)}:${fnv1a(relativePath(entry.file))}`;
         const item = {
           client_upload_id: entry.clientId, filename: entry.file.name, size: entry.file.size,
           sha256: entry.sha256, captured_at: new Date(entry.file.lastModified || Date.now()).toISOString(),
@@ -181,9 +200,15 @@ export async function uploadFiles(files, { onProgress = () => {}, signal } = {})
           Object.assign(entry, { uploadId: answer.upload_id, offset: answer.offset, chunkSize: answer.chunk_size });
           stats.resumedBytes += answer.offset; // already on the server from an earlier run
           reserved.push(entry);
-        } else {
-          // Already in the library: found by content now, or finished on an earlier run.
+        } else if (ALREADY_THERE.has(answer.state)) {
+          // Found by content now, or sent on an earlier run.
           settle('duplicate');
+        } else if (answer.state === 'failed' && !entry.retried) {
+          entry.retried = true;
+          entry.clientId = `${entry.clientId}:r${Date.now().toString(36)}`;
+          hashed.push(entry); // reserved again, fresh, in a later batch
+        } else {
+          fail(entry, new StateFailure(answer.state).message);
         }
       }
     }
@@ -233,14 +258,17 @@ export async function uploadFiles(files, { onProgress = () => {}, signal } = {})
       if (!status.ok) throw new Error(await errorText(status));
       const body = await status.json();
       if (body.state === 'finalizing') break;
-      if (body.state !== 'uploading') return body.state;
+      if (body.state !== 'uploading') {
+        if (ALREADY_THERE.has(body.state)) return body.state;
+        throw new StateFailure(body.state);
+      }
       stats.sentBytes += Math.max(0, body.offset - entry.offset);
       entry.offset = body.offset;
     }
     const completed = await request(`/api/sync/uploads/${entry.uploadId}/complete`, { method: 'POST' });
     if (!completed.ok) throw new Error(await errorText(completed));
     const body = await completed.json();
-    if (body.state === 'failed_processing') throw new Error('O servidor não conseguiu processar a mídia');
+    if (!ALREADY_THERE.has(body.state)) throw new StateFailure(body.state);
     return body.state;
   }
 

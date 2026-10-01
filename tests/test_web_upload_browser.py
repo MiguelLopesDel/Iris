@@ -143,3 +143,70 @@ def test_a_folder_goes_up_resumes_after_a_failure_and_skips_what_is_known(server
     catalog = _catalog(account)
     assert len(catalog) == 21
     assert catalog[hashlib.sha256(video.read_bytes()).hexdigest()] == "video.mp4"
+
+
+def _signed_in_system_tab(playwright, base: str):
+    try:
+        browser = playwright.chromium.launch()
+    except Exception as exc:  # browser binaries missing
+        if REQUIRED:
+            raise
+        pytest.skip(f"Chromium unavailable: {exc}")
+    page = browser.new_page()
+    page.goto(base + "/login")
+    page.fill("input[name=username]", "ana")
+    page.fill("input[name=password]", PASSWORD)
+    page.click("button[type=submit]")
+    page.wait_for_url(base + "/")
+    page.evaluate("window.location.hash = 'system'")
+    return browser, page
+
+
+def test_failed_states_from_earlier_attempts_are_reported_or_retried(server, tmp_path: Path) -> None:
+    import json
+
+    base, account = server
+    files = {}
+    for name in ("unprocessable.jpg", "corrupted.jpg", "processing.jpg", "odd.jpg"):
+        files[name] = tmp_path / name
+        files[name].write_bytes(b"\xff\xd8\xff" + os.urandom(3000))
+    # What the server answers at reservation, as left by earlier attempts.
+    forced = {
+        "unprocessable.jpg": ["failed_processing"],
+        "corrupted.jpg": ["failed"],  # only the first time
+        "processing.jpg": ["processing"],
+        "odd.jpg": ["archived"],
+    }
+    client_ids: dict[str, list[str]] = {}
+
+    def earlier_attempts(route):
+        sent = json.loads(route.request.post_data)
+        names = {u["client_upload_id"]: u["filename"] for u in sent["uploads"]}
+        response = route.fetch()
+        body = response.json()
+        for item in body["uploads"]:
+            name = names[item["client_upload_id"]]
+            client_ids.setdefault(name, []).append(item["client_upload_id"])
+            if forced.get(name):
+                item["state"] = forced[name].pop(0)
+        route.fulfill(response=response, json=body)
+
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_system_tab(playwright, base)
+        page.route("**/api/sync/uploads/batch", earlier_attempts)
+        page.locator("#import-files").set_input_files([str(path) for path in files.values()])
+        page.click("#import-start")
+        status = page.locator("#import-status")
+        sync_api.expect(status).to_contain_text("Concluído", timeout=60_000)
+        sync_api.expect(status).to_contain_text("Enviados 1")
+        sync_api.expect(status).to_contain_text("1 já estavam na biblioteca")
+        sync_api.expect(status).to_contain_text("2 com falha")
+        failures = page.locator("#import-failures")
+        sync_api.expect(failures).to_contain_text("unprocessable.jpg: O servidor recebeu o arquivo antes")
+        sync_api.expect(failures).to_contain_text("odd.jpg: Estado inesperado do servidor: archived")
+        browser.close()
+
+    # The corrupted one went up again, under a reservation of its own.
+    assert len(client_ids["corrupted.jpg"]) == 2
+    assert client_ids["corrupted.jpg"][0] != client_ids["corrupted.jpg"][1]
+    assert set(_catalog(account)) == {hashlib.sha256(files["corrupted.jpg"].read_bytes()).hexdigest()}
