@@ -20,6 +20,7 @@ from core.first_setup import (
     clear_setup_code,
     create_first_admin,
     find_legacy_library,
+    summarize_legacy_library,
 )
 from core.users_db import has_users
 
@@ -56,9 +57,16 @@ def main() -> int:
         parser.error("data/users.db já possui contas; o bootstrap só roda uma vez")
     legacy = find_legacy_library(data_dir, args.media_root, args.db)
     try:
-        check_legacy_library(legacy)
+        check_legacy_library(legacy, data_dir)
     except SetupError as exc:
         parser.error(str(exc))
+    if legacy.has_db:
+        summary = summarize_legacy_library(legacy)
+        print(
+            f"Biblioteca antiga: {summary.items} itens — {summary.with_file} serão movidos para a conta, "
+            f"{summary.missing} já não têm arquivo, {summary.outside} estão fora de data/ e media/ "
+            "e não serão movidos."
+        )
 
     password = _read_password()
     if args.dry_run:

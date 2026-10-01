@@ -224,7 +224,8 @@ with TestClient(server.app) as client:
     assert "Nada foi alterado" in failed.json()["detail"]
     # As before: no account, the library whole where it was, setup open, same code.
     assert client.get("/healthz").json()["status"] == "setup_required"
-    assert client.get("/api/setup").json() == {"required": True, "legacy_library": True}
+    status = client.get("/api/setup").json()
+    assert status["required"] is True and status["legacy_library"] is True
     assert (data / "iris_v1.db").is_file()
     assert {p.name: p.read_bytes() for p in media.iterdir()} == {
         n: n.encode() * 1000 for n in ("a.jpg", "b.jpg", "c.jpg")
@@ -349,4 +350,146 @@ assert not missing, f"lost files: {missing}"
 assert all(found[name] == content for name, content in expected.items())
 print("ok")
 ''')
+    assert out.strip().endswith("ok")
+
+
+
+_PROJECT_WITH_LIBRARY = r"""
+import errno, os, sqlite3
+from pathlib import Path
+from fastapi.testclient import TestClient
+from core.indexer_db import init_db
+
+# A project as Meme Compass left it: copy-to-library under data/library/default
+# with the absolute root of the folder it was imported from, in-place media in
+# media/ (including a file named like a library file), and an item lost long ago.
+data = Path("data")
+data.mkdir()
+conn = init_db(data / "iris_v1.db")
+STALE_ROOT = "/home/someone/Projetos/Meme_Compass/data/library/default"
+conn.execute(
+    "INSERT INTO media_libraries (id, name, root_path, created_at) VALUES (1, 'default', ?, '')",
+    (STALE_ROOT,),
+)
+library = data / "library" / "default"
+(library / "2024").mkdir(parents=True)
+(library / "2024" / "clip.mp4").write_bytes(b"video")
+(library / "foto.jpg").write_bytes(b"library photo")
+media = Path("media")
+media.mkdir()
+(media / "foto.jpg").write_bytes(b"media photo")
+for caminho, relative, storage, library_id in (
+    ("/old/clip.mp4", None, "2024/clip.mp4", 1),
+    ("/old/foto.jpg", None, "foto.jpg", 1),
+    (str(media.resolve() / "foto.jpg"), "foto.jpg", None, None),
+    ("/old/lost.jpg", None, "lost.jpg", 1),
+):
+    conn.execute(
+        "INSERT INTO memes (arquivo, caminho, relative_path, storage_path, library_id) VALUES (?, ?, ?, ?, ?)",
+        (Path(caminho).name, caminho, relative, storage, library_id),
+    )
+conn.commit()
+conn.close()
+# A commit still only in the write-ahead log must travel with the catalog.
+wal = sqlite3.connect(data / "iris_v1.db")
+wal.execute("PRAGMA wal_autocheckpoint=0")
+wal.execute("UPDATE memes SET tags = 'only in the WAL' WHERE storage_path = 'foto.jpg'")
+wal.commit()
+(data / "iris_v1.desc_embedding.vec").write_bytes(b"vectors")
+
+def opened_files(db, media_root):
+    # What the gallery would serve for each item, through the real engine.
+    from core.search_engine import IrisEngine
+    engine = IrisEngine(db_path=db, media_root=media_root, load_model=False)
+    rows = sqlite3.connect(db).execute(
+        "SELECT caminho, relative_path, storage_path, library_id FROM memes ORDER BY id"
+    ).fetchall()
+    out = []
+    for caminho, relative, storage, library_id in rows:
+        path = Path(engine.resolve_media_path(caminho, relative, storage_path=storage, library_id=library_id))
+        out.append(path.read_bytes() if path.is_file() else None)
+    return out
+
+EXPECTED = [b"video", b"library photo", b"media photo", None]
+
+def roots(db):
+    with sqlite3.connect(db) as c:
+        return [r[0] for r in c.execute("SELECT root_path FROM media_libraries ORDER BY id")]
+"""
+
+
+def test_setup_brings_the_library_folders_and_every_item_still_opens(tmp_path: Path) -> None:
+    out = _run(tmp_path, _PROJECT_WITH_LIBRARY + r"""
+import server
+with TestClient(server.app) as client:
+    summary = client.get("/api/setup").json()["legacy_summary"]
+    assert summary == {"items": 4, "with_file": 3, "missing": 1, "outside": 0}, summary
+    code = (data / "setup_code").read_text().strip()
+    done = client.post("/api/setup", json={"code": code, "username": "admin", "password": "senha muito segura"})
+    assert done.status_code == 201, done.text
+wal.close()
+
+user_root = (data / "users" / str(done.json()["user"]["id"])).resolve()
+db, user_media = user_root / "iris.db", user_root / "media"
+assert not library.exists() and not (data / "iris_v1.db").exists()
+assert (user_root / "iris.desc_embedding.vec").read_bytes() == b"vectors"
+assert roots(db) == [str(user_media / "library" / "default")]
+with sqlite3.connect(db) as c:
+    assert c.execute("SELECT tags FROM memes WHERE storage_path = 'foto.jpg'").fetchone()[0] == "only in the WAL"
+assert opened_files(db, user_media) == EXPECTED
+print("ok")
+""")
+    assert out.strip().endswith("ok")
+
+
+def test_a_library_folder_that_fails_to_move_puts_everything_back(tmp_path: Path) -> None:
+    out = _run(tmp_path, _PROJECT_WITH_LIBRARY + r"""
+wal.close()
+from core import first_setup
+real_move = first_setup._move
+def library_disk_fails(source, destination, *args, **kwargs):
+    if Path(source).name == "default":
+        raise OSError(errno.EIO, "Input/output error")
+    return real_move(source, destination, *args, **kwargs)
+first_setup._move = library_disk_fails
+
+import server
+with TestClient(server.app) as client:
+    code = (data / "setup_code").read_text().strip()
+    body = {"code": code, "username": "admin", "password": "senha muito segura"}
+    failed = client.post("/api/setup", json=body)
+    assert failed.status_code >= 500 and "Nada foi alterado" in failed.json()["detail"], failed.text
+    assert client.get("/api/setup").json()["required"] is True
+
+# The catalog is back with its original roots, next to its own files.
+assert roots(data / "iris_v1.db") == [STALE_ROOT]
+assert (data / "iris_v1.desc_embedding.vec").read_bytes() == b"vectors"
+assert sorted(str(p.relative_to(library)) for p in library.rglob("*") if p.is_file()) == [
+    "2024/clip.mp4", "foto.jpg",
+]
+assert (media / "foto.jpg").read_bytes() == b"media photo"
+print("ok")
+""")
+    assert out.strip().endswith("ok")
+
+
+def test_a_library_folder_never_lands_on_a_media_folder_of_the_same_name(tmp_path: Path) -> None:
+    out = _run(tmp_path, _PROJECT_WITH_LIBRARY + r"""
+wal.close()
+(media / "library" / "default").mkdir(parents=True)
+(media / "library" / "default" / "mine.jpg").write_bytes(b"mine")
+
+import server
+with TestClient(server.app) as client:
+    code = (data / "setup_code").read_text().strip()
+    done = client.post("/api/setup", json={"code": code, "username": "admin", "password": "senha muito segura"})
+    assert done.status_code == 201, done.text
+
+user_media = (data / "users" / str(done.json()["user"]["id"]) / "media").resolve()
+assert (user_media / "library" / "default" / "mine.jpg").read_bytes() == b"mine"
+assert sorted(p.name for p in (user_media / "library").iterdir()) == ["default"]
+assert roots(user_media.parent / "iris.db") == [str(user_media / "legacy-libraries" / "default")]
+assert opened_files(user_media.parent / "iris.db", user_media) == EXPECTED
+print("ok")
+""")
     assert out.strip().endswith("ok")

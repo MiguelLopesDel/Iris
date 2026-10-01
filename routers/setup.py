@@ -53,7 +53,16 @@ def setup_status(request: Request):
         return {"required": False}
     _, data_dir, media_root = _paths(request)
     legacy = first_setup.find_legacy_library(data_dir, media_root)
-    return {"required": True, "legacy_library": legacy.has_db}
+    status = {"required": True, "legacy_library": legacy.has_db}
+    if legacy.has_db:
+        summary = first_setup.summarize_legacy_library(legacy)
+        status["legacy_summary"] = {
+            "items": summary.items,
+            "with_file": summary.with_file,
+            "missing": summary.missing,
+            "outside": summary.outside,
+        }
+    return status
 
 
 @router.post("", status_code=201)
