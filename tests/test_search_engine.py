@@ -105,14 +105,23 @@ class SearchEngineTests(unittest.TestCase):
         np.testing.assert_allclose(scores.numpy(), [[1.0, 0.0]], atol=1e-6)
 
     def test_device_detection_is_cached_for_multiple_library_engines(self) -> None:
-        IrisEngine._detect_device.cache_clear()
+        from core import compute_device
+
+        compute_device.gpu_status.cache_clear()
         try:
-            with patch("core.search_engine.torch.cuda.is_available", return_value=True) as available:
+            with patch("torch.cuda.is_available", return_value=True) as available, \
+                    patch("torch.version.cuda", "13.0"), \
+                    patch("torch.cuda.get_device_name", return_value="Fake GPU"):
                 self.assertEqual(IrisEngine._detect_device(), "cuda")
                 self.assertEqual(IrisEngine._detect_device(), "cuda")
                 available.assert_called_once_with()
+                # The hardware probe is cached; the administrator's choice is not.
+                compute_device.set_gpu_allowed(False)
+                self.assertEqual(IrisEngine._detect_device(), "cpu")
+                available.assert_called_once_with()
         finally:
-            IrisEngine._detect_device.cache_clear()
+            compute_device.set_gpu_allowed(True)
+            compute_device.gpu_status.cache_clear()
 
     def test_normalize_text_removes_accents_and_punctuation(self) -> None:
         self.assertEqual(normalize_text("Cachorro, NÃO!"), "cachorro nao")

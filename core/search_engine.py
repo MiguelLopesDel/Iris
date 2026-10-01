@@ -6,7 +6,6 @@ import os
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +14,7 @@ import torch
 from deep_translator import GoogleTranslator
 from PIL import Image
 
-from core import vector_sidecar
+from core import compute_device, vector_sidecar
 from core.db_manager import DatabaseManager
 from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # historical re-export
 from core.embedding_models import EmbeddingEncoder, load_encoder, resolve_embedding_model
@@ -199,14 +198,9 @@ class IrisEngine:
         self._catalog_model_checked = False
 
     @staticmethod
-    @lru_cache(maxsize=1)
     def _detect_device() -> str:
-        """Detect the compute device once per process, not once per library."""
-        if torch.cuda.is_available():
-            return "cuda"
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
+        """Honours the instance's GPU choice; engines are rebuilt when it changes."""
+        return compute_device.resolve("auto")
 
     @staticmethod
     def _default_db_path() -> str:

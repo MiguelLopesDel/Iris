@@ -543,6 +543,26 @@
         <span class="system-status" data-settings-status></span>
       </section>
 
+      <section id="gpu-settings" class="detail-panel system-card" data-settings-section hidden>
+        <span class="eyebrow">INSTALAÇÃO</span>
+        <h4>Processamento</h4>
+        <p class="system-hint">Busca, indexação e reconhecimento de rostos podem usar uma GPU NVIDIA quando a
+          instalação enxerga uma. Desligar faz tudo rodar no processador.</p>
+        <p id="instance-gpu-report" class="system-hint"></p>
+        <div class="system-form-grid">
+          <label>Usar GPU NVIDIA
+            <select id="instance-gpu" data-setting="gpu">
+              <option value="on">Ligada — usar quando disponível (recomendado)</option>
+              <option value="off">Desligada — processar só na CPU</option>
+            </select>
+            <small class="instance-source" data-source-for="gpu"></small>
+          </label>
+        </div>
+        <p class="system-hint">A troca vale na hora: os modelos são recarregados no novo dispositivo na próxima busca ou importação.</p>
+        <button class="btn btn-primary" type="button" data-save-settings>Salvar</button>
+        <span class="system-status" data-settings-status></span>
+      </section>
+
       <section id="backup-settings" class="detail-panel system-card" data-settings-section hidden>
         <span class="eyebrow">INSTALAÇÃO</span>
         <h4>Backup</h4>
@@ -807,7 +827,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=70"></script>
+<script type="module" src="/static/app.js?v=71"></script>
 
 </body>
 </html>

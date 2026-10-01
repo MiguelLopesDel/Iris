@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core import fs_clone, instance_settings
+from core import compute_device, faces, fs_clone, instance_settings
 from core.instance_backup import BackupError, snapshots
 from core.instance_settings import SettingError
 
@@ -39,6 +39,15 @@ def _apply(request: Request) -> None:
     )
     request.app.state.space_policy = policy
     request.app.state.space_storage = policy.storage
+    gpu = instance_settings.gpu_allowed(request.app.state.users_db_path)
+    if gpu != compute_device.gpu_allowed():
+        compute_device.set_gpu_allowed(gpu)
+        # Loaded models stay on the device they were built for; drop them so
+        # search engines and the face detector reload on the new one.
+        registry = getattr(request.app.state, "backend_registry", None)
+        if registry is not None:
+            registry.clear()
+        faces.set_detector(None)
 
 
 def _state(request: Request) -> dict[str, Any]:
@@ -55,6 +64,7 @@ def _state(request: Request) -> dict[str, Any]:
             for key, item in resolved.items()
         },
         "storage": {**asdict(policy.report), "warning": policy.warning},
+        "gpu": {**asdict(compute_device.gpu_status()), "in_use": compute_device.resolve("auto") == "cuda"},
         "strategies": list(fs_clone.STRATEGIES),
     }
 

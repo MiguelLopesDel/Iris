@@ -120,6 +120,8 @@ SETTINGS: dict[str, Setting] = {
         Setting("backup_keep_daily", "IRIS_BACKUP_KEEP_DAILY", 7, _count(_MAX_KEEP)),
         Setting("backup_keep_weekly", "IRIS_BACKUP_KEEP_WEEKLY", 4, _count(_MAX_KEEP)),
         Setting("backup_keep_monthly", "IRIS_BACKUP_KEEP_MONTHLY", 6, _count(_MAX_KEEP)),
+        # Use an NVIDIA GPU when the installation can see one (core.compute_device).
+        Setting("gpu", "IRIS_GPU", "on", _choice("on", "off")),
     )
 }
 
@@ -262,3 +264,7 @@ def space_storage_policy(path: Path, spaces_dir: Path) -> SpaceStoragePolicy:
         trash_days=int(settings["space_trash_days"].value),
     )
     return SpaceStoragePolicy(report, storage, warning)
+
+
+def gpu_allowed(path: Path) -> bool:
+    return resolve_all(path)["gpu"].value == "on"

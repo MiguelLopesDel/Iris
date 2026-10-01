@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core import (
     app_config,
+    compute_device,
     equivalence_graph,
     first_setup,
     import_review,
@@ -690,6 +691,7 @@ if app.state.multiuser_enabled:
         _USERS_DB, _DATA_DIR / "spaces"
     )
     app.state.space_storage = app.state.space_policy.storage
+    compute_device.set_gpu_allowed(instance_settings.gpu_allowed(_USERS_DB))
     # Whole-instance backups: scheduled by this process, configured in the
     # interface. The destination is a volume in Docker (IRIS_BACKUP_DIR).
     _media_root = Path(os.environ.get("IRIS_MEDIA_DIR", "media"))

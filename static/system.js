@@ -79,6 +79,7 @@ async function loadSystemInfo() {
     document.getElementById('account-management').hidden = !administrator;
     document.getElementById('instance-settings').hidden = !administrator;
     document.getElementById('backup-settings').hidden = !administrator;
+    document.getElementById('gpu-settings').hidden = !administrator;
     const privateHealth = document.getElementById('private-library-health');
     privateHealth.hidden = hostAdministration;
     privateHealth.innerHTML = `<strong>${info.total_records}</strong> itens na sua biblioteca`
@@ -447,9 +448,26 @@ function displayValue(input, value) {
   return Number.isInteger(scaled) ? String(scaled) : scaled.toFixed(2);
 }
 
+const GPU_REASONS = {
+  cpu_image: 'Esta instalação usa a imagem sem suporte a CUDA. Para usar uma GPU NVIDIA, rode '
+    + './scripts/server.sh install numa máquina com o driver NVIDIA e o NVIDIA Container Toolkit: '
+    + 'o instalador detecta a GPU e escolhe a imagem certa.',
+  not_visible: 'A imagem tem suporte a CUDA, mas nenhuma GPU chegou ao container. Confira o driver NVIDIA '
+    + 'e o NVIDIA Container Toolkit e rode ./scripts/server.sh install de novo.',
+};
+
+function renderGpuStatus(gpu) {
+  const report = document.getElementById('instance-gpu-report');
+  if (!report || !gpu) return;
+  report.textContent = gpu.available
+    ? `GPU detectada: ${gpu.name || 'NVIDIA'} · ${gpu.in_use ? 'em uso agora' : 'não está sendo usada'}`
+    : (GPU_REASONS[gpu.reason] || 'Nenhuma GPU NVIDIA disponível nesta instalação.');
+}
+
 function renderInstanceSettings(state) {
   instanceState = state;
   const { settings, storage } = state;
+  renderGpuStatus(state.gpu);
   const yes = (flag) => (flag ? 'sim' : 'não');
   document.getElementById('instance-storage-report').textContent =
     `Disco dos dados: ${storage.filesystem} · reflink: ${yes(storage.reflink)}`
