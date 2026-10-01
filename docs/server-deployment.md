@@ -60,8 +60,10 @@ da pasta: duas instalações em pastas de mesmo nome (por exemplo um teste em
 `/tmp/Iris` e a de uso em `~/Iris`) não comandam o mesmo container. Para configuração avançada, edite `.env` antes ou depois da instalação.
 
 O mesmo `.env` define os limites por conta. Os padrões são deliberadamente altos:
-32 GiB por arquivo, 10.000 arquivos por envio, 10 TiB por biblioteca e 500 milhões
-de pixels por imagem. Ajuste-os ao espaço disponível no servidor; eles existem para
+32 GiB por arquivo, 10 TiB por biblioteca e 500 milhões de pixels por imagem.
+O envio pela interface web usa o mesmo protocolo retomável do app (arquivo por
+arquivo, em pedaços), então não tem limite de quantidade; o limite de 10.000
+arquivos (`IRIS_MAX_UPLOAD_FILES`) vale só para o endpoint antigo `/api/import`. Ajuste-os ao espaço disponível no servidor; eles existem para
 evitar que um upload acidental esgote disco, RAM ou CPU.
 
 As variáveis `IRIS_MAX_SEARCH_TOP_K` e `IRIS_MAX_SEARCH_CANDIDATES` também

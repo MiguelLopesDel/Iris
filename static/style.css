@@ -4080,3 +4080,71 @@ a.btn {
 .setup-note { padding: 10px 12px; border-radius: 10px; background: var(--surface-muted, rgb(127 127 127 / 10%)); }
 .setup-hint { font-weight: 400; color: var(--muted, #666); }
 .setup-hint code { font-size: 0.85em; }
+
+.devices-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.device-row .btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.device-name,
+.device-meta {
+  grid-column: 1;
+}
+
+.device-name {
+  overflow-wrap: anywhere;
+}
+
+.device-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.device-current {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.import-failures summary {
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.import-failures ul {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* Role-gated blocks of the system tab: their own display rules must not undo hidden. */
+[data-host-only][hidden],
+[data-host-import][hidden],
+[data-account-import][hidden] {
+  display: none;
+}
