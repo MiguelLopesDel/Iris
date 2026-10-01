@@ -121,11 +121,13 @@ Do not map the port to `0.0.0.0` without TLS and rate limiting.
 ./scripts/server.sh setup-code      # the installation code, while setup is pending
 ./scripts/server.sh logs            # follow the logs
 ./scripts/server.sh backup          # back up now (a daily backup is automatic)
-./scripts/server.sh update          # back up, then move to the IRIS_VERSION image
+./scripts/server.sh update          # back up, then move to the newest release
 ```
 
-`IRIS_VERSION=latest` in `.env` follows each release; set a version such as
-`0.4.0` to update only when you decide. Backups go to `IRIS_BACKUP_DIR`
+Servers run releases, never `main`: `install` and `update` put the checkout on
+the newest `vX.Y.Z` tag and run that version's image, so the scripts and the
+image always match. Set `IRIS_VERSION=0.4.0` in `.env` to stay on a release
+until you decide; `update` also moves back to it. Backups go to `IRIS_BACKUP_DIR`
 (`./backups` by default) every day at 03:00 — point it at another disk.
 
 ---
