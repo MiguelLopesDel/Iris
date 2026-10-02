@@ -20,7 +20,10 @@ out: it would double the size and be stale on restore anyway.
 Snapshots are incremental the way ``rsync --link-dest`` is: a file whose size,
 mtime, ctime and inode match the previous snapshot is hard-linked instead of copied,
 so each snapshot is complete and browsable while an unchanged photo occupies
-the destination disk once. Backup files are made read-only because a hard
+the destination disk once. Content is reused, not only paths: a file at a new
+path (moved into an account, a renamed folder) or duplicating another is
+hashed and, when the destination already holds those bytes, linked to them.
+Only files whose size matches something already backed up are hashed first. Backup files are made read-only because a hard
 link shared by several snapshots must never be edited in place.
 
 A snapshot is written under a temporary name and renamed only when complete;
@@ -445,6 +448,16 @@ def _create(
             retention=retention,
         )
         copied = linked = 0
+        # Content already in the destination, by (sha256, size): the previous
+        # snapshot's files and this run's copies. A file that moved (a library
+        # attached to an account, a folder renamed) or that duplicates another is
+        # linked to that copy instead of being written again.
+        by_content: dict[tuple[str, int], Path] = {}
+        if previous is not None:
+            for item in previous[1].files:
+                if item.kind == "file":
+                    by_content.setdefault((item.sha256, item.size), previous[0] / item.root / item.path)
+        known_sizes = {size for _, size in by_content}
         observed: dict[Path, tuple[int, int, int, int, int]] = {}
         copied_databases: list[tuple[Path, str]] = []
         scanned: set[Path] = set()
@@ -477,11 +490,24 @@ def _create(
                         entry = known
                         linked += 1
                     else:
-                        digest = _copy_hashing(source, target)
-                        entry = Entry(name, relative.as_posix(), target.stat().st_size,
+                        # Hashing first costs a read; only worth it when some copy
+                        # already in the destination has this size.
+                        reused = None
+                        if stat.st_size in known_sizes:
+                            digest = _sha256(source)
+                            existing = by_content.get((digest, stat.st_size))
+                            if existing is not None and _link(existing, target):
+                                reused = digest
+                        if reused is None:
+                            digest = _copy_hashing(source, target)
+                            by_content.setdefault((digest, stat.st_size), target)
+                            known_sizes.add(stat.st_size)
+                            copied += 1
+                        else:
+                            linked += 1
+                        entry = Entry(name, relative.as_posix(), stat.st_size,
                                       stat.st_mtime_ns, digest, "file", stat.st_ctime_ns,
                                       stat.st_ino, stat.st_dev)
-                        copied += 1
                     state = _identity(source)
                     if state != before:
                         raise BackupError(f"arquivo mudou durante o backup: {source}")

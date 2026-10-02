@@ -200,6 +200,44 @@ def test_second_snapshot_links_unchanged_files_and_copies_new_ones(
     assert instance_backup.verify(second.snapshot) == []
 
 
+def test_a_moved_file_is_linked_by_content_not_copied_again(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    """Attaching a library moves every original: the backup must not store them twice."""
+    dest = tmp_path / "backups"
+    old = instance["data"] / "import" / "library" / "clip.mp4"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(os.urandom(300_000))
+    first = instance_backup.create(_roots(instance), dest, now=T0)
+
+    moved = instance["data"] / "archive" / "clip.mp4"
+    moved.parent.mkdir(parents=True)
+    os.rename(old, moved)
+    second = instance_backup.create(_roots(instance), dest, now=T0 + timedelta(hours=1))
+
+    assert (second.snapshot / "data/archive/clip.mp4").stat().st_ino == (
+        first.snapshot / "data/import/library/clip.mp4"
+    ).stat().st_ino
+    assert not (second.snapshot / "data/import/library/clip.mp4").exists()
+    # Only the databases (always fresh) were written again.
+    databases = sum(1 for e in _manifest(second.snapshot)["files"] if e["kind"] == "sqlite")
+    assert second.copied == databases
+    assert instance_backup.verify(second.snapshot) == []
+
+
+def test_identical_files_in_one_snapshot_are_stored_once(
+    instance: dict[str, Path], tmp_path: Path
+) -> None:
+    content = os.urandom(200_000)
+    for name in ("a.bin", "copy-of-a.bin"):
+        (instance["data"] / "extra").mkdir(exist_ok=True)
+        (instance["data"] / "extra" / name).write_bytes(content)
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+    a, b = snapshot / "data/extra/a.bin", snapshot / "data/extra/copy-of-a.bin"
+    assert a.stat().st_ino == b.stat().st_ino and b.read_bytes() == content
+    assert instance_backup.verify(snapshot) == []
+
+
 def test_file_edited_in_place_with_the_same_size_is_copied_again(
     instance: dict[str, Path], tmp_path: Path
 ) -> None:
