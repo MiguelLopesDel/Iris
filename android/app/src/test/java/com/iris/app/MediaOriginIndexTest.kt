@@ -5,6 +5,7 @@ import com.iris.app.data.model.MediaOrigin
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.UploadJobState
+import com.iris.app.data.sync.MediaFingerprint
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -128,6 +129,22 @@ class MediaOriginIndexTest {
         )
 
         assertEquals(MediaOrigin.ON_DEVICE, MediaOriginIndex.from(listOf(uploaded)).originOf(record))
+    }
+
+    @Test
+    fun `a device file changed since it was hashed reads as checking`() {
+        val uploaded = job("abc", UploadJobState.READY, id = 7L).copy(sourceDateModified = 1_700_000_000L)
+        val index = MediaOriginIndex.from(listOf(uploaded))
+        fun record(size: Long, modified: Long) = MediaRecord(
+            index = -7,
+            arquivo = "IMG_7.jpg",
+            deviceUri = "content://media/external/file/7",
+            deviceFingerprint = MediaFingerprint(size = size, dateModifiedSeconds = modified, generation = 0L),
+        )
+
+        assertEquals(MediaOrigin.ON_DEVICE, index.originOf(record(uploaded.byteSize, 1_700_000_000L)))
+        assertEquals(MediaOrigin.CHECKING, index.originOf(record(uploaded.byteSize + 1, 1_700_000_000L)))
+        assertEquals(MediaOrigin.CHECKING, index.originOf(record(uploaded.byteSize, 1_700_000_500L)))
     }
 
     @Test
