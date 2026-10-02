@@ -14,6 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -25,6 +28,18 @@ class MediaStoreScanner(
     private val uploadManager: SyncUploadManager,
     private val performanceMonitor: PerformanceMonitor? = null
 ) {
+
+    /** How far a scan is: media items looked at, out of those the account's folders include. */
+    data class ScanProgress(val examined: Int, val total: Int)
+
+    private val _scanProgress = MutableStateFlow<ScanProgress?>(null)
+
+    /**
+     * The running scan's progress, or null when none runs. Hashing thousands of
+     * new items takes minutes, and without this the screen only showed the
+     * queue growing with nothing being sent.
+     */
+    val scanProgress: StateFlow<ScanProgress?> = _scanProgress.asStateFlow()
 
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
@@ -55,6 +70,9 @@ class MediaStoreScanner(
         try {
             require(accountKey.isNotBlank()) { "An account key is required to scan media for upload" }
             ensureSession(isSessionCurrent)
+            val total = (if (policy.includeImages) countIncluded(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image", policy) else 0) +
+                (if (policy.includeVideos) countIncluded(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", policy) else 0)
+            val progress = ProgressCounter(total)
             var count = 0
             if (policy.includeImages) {
                 count += scanCollection(
@@ -64,6 +82,7 @@ class MediaStoreScanner(
                     policy,
                     onNewJobEnqueued,
                     isSessionCurrent,
+                    progress,
                 )
             }
             if (policy.includeVideos) {
@@ -74,12 +93,51 @@ class MediaStoreScanner(
                     policy,
                     onNewJobEnqueued,
                     isSessionCurrent,
+                    progress,
                 )
             }
             count
         } finally {
+            _scanProgress.value = null
             finishScan()
         }
+    }
+
+    /** Publishes progress every few items: one update per item only adds UI churn. */
+    private inner class ProgressCounter(private val total: Int) {
+        private var examined = 0
+
+        init {
+            _scanProgress.value = ScanProgress(0, total)
+        }
+
+        fun advance() {
+            examined++
+            if (examined % PROGRESS_STEP == 0 || examined == total) {
+                _scanProgress.value = ScanProgress(examined, total)
+            }
+        }
+    }
+
+    private fun countIncluded(collectionUri: Uri, mediaKind: String, policy: MediaScanPolicy): Int {
+        val columns = buildList {
+            add(MediaStore.MediaColumns.BUCKET_ID)
+            if (Build.VERSION.SDK_INT >= 29) add(MediaStore.MediaColumns.VOLUME_NAME)
+        }.toTypedArray()
+        return contentResolver.query(collectionUri, columns, "${MediaStore.MediaColumns.SIZE} > 0", null, null)?.use { cursor ->
+            val bucketIdColumn = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
+            val volumeColumn = cursor.getColumnIndex(MediaStore.MediaColumns.VOLUME_NAME)
+            var included = 0
+            while (cursor.moveToNext()) {
+                val sourceId = sourceId(
+                    cursor.stringOrEmpty(volumeColumn, "external"),
+                    cursor.stringOrEmpty(bucketIdColumn, "unknown"),
+                    mediaKind,
+                )
+                if (policy.includes(sourceId, mediaKind)) included++
+            }
+            included
+        } ?: 0
     }
 
     private fun projection(): Array<String> = buildList {
@@ -131,6 +189,7 @@ class MediaStoreScanner(
         policy: MediaScanPolicy,
         onNewJobEnqueued: suspend () -> Unit,
         isSessionCurrent: () -> Boolean,
+        progress: ProgressCounter,
     ): Int {
         val selection = "${MediaStore.MediaColumns.SIZE} > 0"
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
@@ -195,9 +254,14 @@ class MediaStoreScanner(
                     enqueued++
                     onNewJobEnqueued()
                 }
+                progress.advance()
             }
         }
         return enqueued
+    }
+
+    private companion object {
+        const val PROGRESS_STEP = 25
     }
 
     private fun sourceId(volume: String, bucketId: String, mediaKind: String): String =

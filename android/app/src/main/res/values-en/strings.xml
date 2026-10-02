@@ -17,6 +17,7 @@
     <string name="sync_videos_lowercase">videos</string>
     <string name="sync_photos_lowercase">photos</string>
     <string name="sync_media_permission_required">Allow photo and video access to list device folders</string>
+    <string name="origin_on_device">On this device and in Iris</string>
     <string name="origin_iris_only">In Iris only, not on this device</string>
     <string name="origin_uploading">Uploading to Iris</string>
     <string name="origin_processing">In Iris, still processing</string>
@@ -54,7 +55,14 @@
     <string name="queue_state_pending">Queued</string>
     <string name="queue_state_sending">Uploading</string>
     <string name="queue_state_processing">Processing on the server</string>
-    <string name="queue_state_done">Finished</string>
+    <string name="queue_state_uploaded">Uploaded</string>
+    <string name="queue_state_already_on_server">Already on the server</string>
+    <string name="sync_status_scanning">Checking device media: %1$d of %2$d</string>
+    <string name="sync_status_uploading">Uploading media in the background…</string>
+    <string name="sync_status_retry_pending">The last sync did not finish. Iris will try again on its own shortly.</string>
+    <string name="sync_status_idle">Ready to sync</string>
+    <string name="sync_action_sync">Sync</string>
+    <string name="sync_action_retry_now">Try now</string>
     <string name="queue_state_failed">Failed</string>
     <!-- Sync speed and history -->
     <string name="sync_speed_now">Now: %1$s</string>

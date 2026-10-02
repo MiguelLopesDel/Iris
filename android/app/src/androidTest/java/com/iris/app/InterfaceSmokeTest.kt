@@ -93,6 +93,7 @@ class InterfaceSmokeTest {
         val url = server.url("/").toString()
         runBlocking { app.settingsRepository.updateServerUrl(url) }
         app.apiClient.updateBaseUrl(url)
+        app.allowCleartext(server)
         app.credentialsStore.saveSession(
             deviceId = "ui-fixture-device",
             accessToken = "ui-fixture-token",
@@ -119,6 +120,7 @@ class InterfaceSmokeTest {
             shellMediaPermissionsAdopted = false
         }
         if (::app.isInitialized) app.credentialsStore.clearCredentials()
+        if (::app.isInitialized && ::server.isInitialized) app.allowCleartext(server, allowed = false)
         if (::server.isInitialized) server.shutdown()
     }
 

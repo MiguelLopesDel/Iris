@@ -40,6 +40,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -82,6 +83,10 @@ class AccountScopedUploadQueueTest {
     private val batchUploadIds = ConcurrentHashMap<String, String>()
     private var firstInitRequestObserved = CompletableDeferred<Unit>()
     private var serverChunkSizeBytes = 32768L
+    private val uploadIdFilenames = ConcurrentHashMap<String, String>()
+    private val rejectChunksForFilenames = ConcurrentHashMap.newKeySet<String>()
+    private val loseUploadOnceForFilenames = ConcurrentHashMap.newKeySet<String>()
+    private val unavailableOnceForFilenames = ConcurrentHashMap.newKeySet<String>()
 
     private fun initializedMediaCount(recorded: List<RecordedRequest>): Int = recorded.sumOf { request ->
         when (request.path) {
@@ -205,6 +210,7 @@ class AccountScopedUploadQueueTest {
                                 val uploadId = batchUploadIds.computeIfAbsent(clientUploadId) {
                                     "account-b-upload-${initSequence.incrementAndGet()}"
                                 }
+                                uploadIdFilenames[uploadId] = item.optString("filename")
                                 results.put(
                                     JSONObject()
                                         .put("client_upload_id", clientUploadId)
@@ -231,6 +237,17 @@ class AccountScopedUploadQueueTest {
                         val requestPath = request.path.orEmpty()
                         val uploadId = requestPath.substringBefore("?").substringAfterLast("/")
                         val offset = requestPath.substringAfter("?offset=", "0").toLongOrNull() ?: 0L
+                        val filename = uploadIdFilenames[uploadId]
+                        if (filename in rejectChunksForFilenames) {
+                            return MockResponse().setResponseCode(400).setBody("unsupported media")
+                        }
+                        // A 404 means the server lost the upload session: a transient failure.
+                        if (filename != null && loseUploadOnceForFilenames.remove(filename)) {
+                            return MockResponse().setResponseCode(404)
+                        }
+                        if (filename != null && unavailableOnceForFilenames.remove(filename)) {
+                            return MockResponse().setResponseCode(503)
+                        }
                         MockResponse().setHeader("Content-Type", "application/json")
                             .setBody(
                                 """{"upload_id":"$uploadId","offset":${offset + request.bodySize}}"""
@@ -257,12 +274,14 @@ class AccountScopedUploadQueueTest {
             app.settingsRepository.updateServerUrl(server.url("/").toString())
         }
         app.apiClient.updateBaseUrl(server.url("/").toString())
+        app.allowCleartext(server)
         app.credentialsStore.clearCredentials()
     }
 
     @After
     fun tearDown() {
         app.credentialsStore.clearCredentials()
+        app.allowCleartext(server, allowed = false)
         dbHelper.close()
         app.deleteDatabase(testDatabaseName)
         server.shutdown()
@@ -1427,6 +1446,130 @@ class AccountScopedUploadQueueTest {
         } finally {
             app.contentResolver.delete(kept.uri, null, null)
         }
+    }
+
+    @Test
+    fun rejected_item_is_failed_and_does_not_stall_the_queue() = runBlocking {
+        val (accountKey, sessionIdentity, manager) = signedInManager("rejected")
+        val stamp = System.nanoTime()
+        val rejected = createMediaStoreBenchmarkItem(app.contentResolver, "rejected-$stamp.jpg", false, 96 * 1024, stamp)
+        val kept = createMediaStoreBenchmarkItem(app.contentResolver, "kept-$stamp.jpg", false, 96 * 1024, stamp + 1)
+        rejectChunksForFilenames += rejected.filename
+        try {
+            listOf(rejected, kept).forEach { item ->
+                assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+            }
+
+            assertTrue("A rejected item must not stall the queue", manager.processQueue(accountKey, sessionIdentity))
+
+            val jobs = dbHelper.getAllJobs(accountKey).associateBy { it.filename }
+            assertEquals("FAILED", jobs.getValue(rejected.filename).state.name)
+            assertEquals("READY", jobs.getValue(kept.filename).state.name)
+        } finally {
+            listOf(rejected, kept).forEach { app.contentResolver.delete(it.uri, null, null) }
+        }
+    }
+
+    @Test
+    fun one_transient_failure_defers_that_item_and_the_rest_keep_uploading() = runBlocking {
+        val (accountKey, sessionIdentity, manager) = signedInManager("transient")
+        val stamp = System.nanoTime()
+        val flaky = createMediaStoreBenchmarkItem(app.contentResolver, "flaky-$stamp.jpg", false, 96 * 1024, stamp)
+        val others = (1..4).map { index ->
+            createMediaStoreBenchmarkItem(app.contentResolver, "steady-$index-$stamp.jpg", false, 96 * 1024, stamp + index)
+        }
+        loseUploadOnceForFilenames += flaky.filename
+        try {
+            (listOf(flaky) + others).forEach { item ->
+                assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+            }
+
+            // The pass reports the deferred item so WorkManager retries it...
+            assertFalse(manager.processQueue(accountKey, sessionIdentity))
+            var jobs = dbHelper.getAllJobs(accountKey).associateBy { it.filename }
+            // ...but it did not stop the others.
+            others.forEach { assertEquals("READY", jobs.getValue(it.filename).state.name) }
+            assertEquals("QUEUED", jobs.getValue(flaky.filename).state.name)
+
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+            jobs = dbHelper.getAllJobs(accountKey).associateBy { it.filename }
+            assertEquals("READY", jobs.getValue(flaky.filename).state.name)
+        } finally {
+            (listOf(flaky) + others).forEach { app.contentResolver.delete(it.uri, null, null) }
+        }
+    }
+
+    @Test
+    fun server_unavailable_while_sending_a_chunk_is_retried_not_failed() = runBlocking {
+        val (accountKey, sessionIdentity, manager) = signedInManager("unavailable")
+        val stamp = System.nanoTime()
+        val item = createMediaStoreBenchmarkItem(app.contentResolver, "unavailable-$stamp.jpg", false, 96 * 1024, stamp)
+        unavailableOnceForFilenames += item.filename
+        try {
+            assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+
+            assertFalse(manager.processQueue(accountKey, sessionIdentity))
+            assertEquals("QUEUED", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+            assertEquals("READY", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+        } finally {
+            app.contentResolver.delete(item.uri, null, null)
+        }
+    }
+
+    @Test
+    fun a_pass_can_set_aside_more_items_than_sqlite_bound_variables() = runBlocking {
+        // Older SQLite versions allow 999 bound variables per statement. Setting
+        // items aside must not grow the claim query with the number of failures.
+        val accountKey = "server|user:77"
+        val count = 1_200
+        repeat(count) { index ->
+            assertTrue(dbHelper.insertOrIgnoreJob(
+                accountKey = accountKey,
+                localUri = "content://media/external/images/media/${10_000 + index}",
+                filename = "deferred-$index.jpg",
+                byteSize = 20L,
+                sha256 = index.toString().padStart(64, '0'),
+                capturedAt = "2026-10-02T00:00:00Z",
+            ) > 0L)
+        }
+
+        var lastClaimedId = 0L
+        var claimed = 0
+        while (true) {
+            val job = dbHelper.claimNextPendingJob(accountKey, lastClaimedId) ?: break
+            assertTrue("Claims advance in id order", job.id > lastClaimedId)
+            lastClaimedId = job.id
+            // Every item fails transiently and goes back to the queue.
+            dbHelper.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+            claimed++
+        }
+
+        assertEquals(count, claimed)
+        // The next pass starts over and finds them all again.
+        assertNotNull(dbHelper.claimNextPendingJob(accountKey))
+    }
+
+    private fun signedInManager(name: String): Triple<String, String, SyncUploadManager> {
+        val origin = IrisApiClient.getOrigin(server.url("/").toString())
+        app.credentialsStore.saveSession(
+            deviceId = "$name-device",
+            accessToken = "$name-token",
+            refreshToken = "$name-refresh",
+            expiresInSeconds = 3600,
+            username = "$name-user",
+            serverOrigin = origin,
+            userId = 43
+        )
+        val manager = SyncUploadManager(app.contentResolver, dbHelper) { session ->
+            app.apiClient.apiServiceForSession(session)
+        }
+        return Triple(
+            app.credentialsStore.accountIdentity.value!!,
+            app.credentialsStore.sessionIdentity.value!!,
+            manager,
+        )
     }
 
     @Test

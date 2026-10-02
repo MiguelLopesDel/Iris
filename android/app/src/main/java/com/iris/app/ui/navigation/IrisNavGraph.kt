@@ -38,6 +38,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import com.iris.app.IrisApplication
+import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.ui.screens.collections.CollectionMediaScreen
 import com.iris.app.ui.screens.collections.CollectionMediaViewModel
 import com.iris.app.ui.screens.collections.CollectionsScreen
@@ -403,7 +404,8 @@ fun IrisNavGraph(
                     factory = SyncViewModel.Factory(
                         application.irisRepository,
                         application.settingsRepository,
-                        application.credentialsStore
+                        application.credentialsStore,
+                        MediaSyncWorker.retryPending(application),
                     )
                 )
                 SyncScreen(

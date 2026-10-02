@@ -18,6 +18,16 @@ class UploadQueueSummaryTest {
     }
 
     @Test
+    fun `items the server already had are not counted as uploaded`() {
+        val summary = UploadQueueSummary.from(
+            mapOf(UploadJobState.READY to 8, UploadJobState.DUPLICATE to 3829)
+        )
+
+        assertEquals(8, summary.uploaded)
+        assertEquals(3829, summary.alreadyOnServer)
+    }
+
+    @Test
     fun `accepted but not yet indexed is neither sending nor done`() {
         val summary = UploadQueueSummary.from(
             mapOf(UploadJobState.PENDING_PROCESSING to 4, UploadJobState.PROCESSING to 1)

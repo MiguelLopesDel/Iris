@@ -254,25 +254,31 @@ class UploadDatabaseHelper(
         }
     }
 
+    /**
+     * Claims the oldest pending job with an id above [afterId].
+     *
+     * A pass walks the queue in id order and passes the last id it claimed, so
+     * jobs it is already sending or set aside are behind it. This keeps the
+     * query at two parameters: excluding them by id needed one parameter each,
+     * and a long pass with many isolated failures could exceed SQLite's limit
+     * on bound variables (999 on older versions).
+     */
     suspend fun claimNextPendingJob(
         accountKey: String,
-        excludedIds: Set<Long> = emptySet()
+        afterId: Long = 0L
     ): LocalUploadJob? = withContext(Dispatchers.IO) {
         require(accountKey.isNotBlank()) { "An account key is required to claim upload jobs" }
         runInWriteTransaction { db ->
-            val exclusionClause = if (excludedIds.isEmpty()) "" else {
-                "AND id NOT IN (${excludedIds.joinToString(",") { "?" }})"
-            }
             val cursor = db.rawQuery(
                 """
                 SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at,
                        source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind
                 FROM upload_jobs
-                WHERE account_key = ? AND state IN ('QUEUED', 'UPLOADING') $exclusionClause
+                WHERE account_key = ? AND state IN ('QUEUED', 'UPLOADING') AND id > ?
                 ORDER BY id ASC
                 LIMIT 1
                 """.trimIndent(),
-                (listOf(accountKey) + excludedIds.map(Long::toString)).toTypedArray()
+                arrayOf(accountKey, afterId.toString())
             )
             val job = cursor.use {
                 if (it.moveToFirst()) {
