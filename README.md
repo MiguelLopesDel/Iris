@@ -122,6 +122,7 @@ Do not map the port to `0.0.0.0` without TLS and rate limiting.
 ./scripts/server.sh status          # health and container state
 ./scripts/server.sh setup-code      # the installation code, while setup is pending
 ./scripts/server.sh logs            # follow the logs
+./scripts/server.sh listen 127.0.0.1 # where Docker listens (see the deployment guide)
 ./scripts/server.sh backup          # back up now (a daily backup is automatic)
 ./scripts/server.sh update          # back up, then move to the newest release
 ```

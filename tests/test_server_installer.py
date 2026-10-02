@@ -249,3 +249,59 @@ def test_a_pre_release_runs_when_pinned(tmp_path: Path) -> None:
     assert "Release: v0.6.0-rc.1" in result.stdout
     assert _head(project, env) == "v0.6.0-rc.1"
     assert set(_pulled(tmp_path)) == {"0.6.0-rc.1"}
+
+
+def _listening_project(tmp_path: Path, addresses: tuple[str, ...] = ()) -> tuple[Path, dict]:
+    """An installed project whose stubs log docker calls and the URLs curl is asked for."""
+    project = tmp_path / "Iris"
+    _files(project, "0.9.1")
+    (project / "data").mkdir()
+    bin_dir = _docker_stub(tmp_path)
+    _stub(bin_dir, "curl", f'echo "$@" >> "{tmp_path}/curl.log"\nexit 0\n')
+    interfaces = "\n".join(f"2: eth{i}    inet {a}/24 brd 0.0.0.0 scope global eth{i}" for i, a in enumerate(addresses))
+    _stub(bin_dir, "ip", f"cat <<'EOF2'\n1: lo    inet 127.0.0.1/8 scope host lo\n{interfaces}\nEOF2\n")
+    env = _env(tmp_path, bin_dir)
+    _server(project, env, "install", "--cpu")
+    return project, env
+
+
+def _env_value(project: Path, key: str) -> str | None:
+    lines = [line.split("=", 1)[1] for line in (project / ".env").read_text().splitlines() if line.startswith(f"{key}=")]
+    return lines[-1] if lines else None
+
+
+def test_listen_on_an_address_of_this_host(tmp_path: Path) -> None:
+    project, env = _listening_project(tmp_path, addresses=("100.99.1.2",))
+    assert _env_value(project, "IRIS_BIND") == "127.0.0.1"
+
+    result = _server(project, env, "listen", "100.99.1.2")
+    assert _env_value(project, "IRIS_BIND") == "100.99.1.2"
+    assert "plain HTTP" in result.stdout
+    # Health is checked where Iris now listens.
+    assert "http://100.99.1.2:8501/healthz" in (tmp_path / "curl.log").read_text().splitlines()[-1]
+
+
+def test_listen_refuses_an_address_this_host_does_not_have(tmp_path: Path) -> None:
+    project, env = _listening_project(tmp_path, addresses=("100.99.1.2",))
+    result = _server(project, env, "listen", "100.99.1.3", ok=False)
+    assert "No network interface" in result.stderr
+    assert _env_value(project, "IRIS_BIND") == "127.0.0.1"
+
+
+def test_listening_on_every_network_needs_saying_so(tmp_path: Path) -> None:
+    project, env = _listening_project(tmp_path)
+    refused = _server(project, env, "listen", "0.0.0.0", ok=False)
+    assert "--all-interfaces" in refused.stderr
+    assert _env_value(project, "IRIS_BIND") == "127.0.0.1"
+
+    _server(project, env, "listen", "0.0.0.0", "--all-interfaces")
+    assert _env_value(project, "IRIS_BIND") == "0.0.0.0"
+    assert "http://127.0.0.1:8501/healthz" in (tmp_path / "curl.log").read_text().splitlines()[-1]
+
+
+def test_listen_warns_when_the_cookie_setting_blocks_browser_sign_in(tmp_path: Path) -> None:
+    project, env = _listening_project(tmp_path, addresses=("192.168.1.20",))
+    (project / ".env").write_text((project / ".env").read_text().replace(
+        "IRIS_SESSION_HTTPS_ONLY=auto", "IRIS_SESSION_HTTPS_ONLY=true"))
+    result = _server(project, env, "listen", "192.168.1.20")
+    assert "cannot sign in over plain HTTP" in result.stderr

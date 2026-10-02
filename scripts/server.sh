@@ -143,11 +143,11 @@ choose_image() {
 print_setup_instructions() {
     local code_file="data/setup_code"
     if [ ! -f "$code_file" ]; then
-        echo "Setup is complete. Sign in at http://127.0.0.1:$(configured_port)/"
+        echo "Setup is complete. Sign in at $(local_url)/"
         return
     fi
     echo
-    echo "Finish setup in the browser: http://127.0.0.1:$(configured_port)/setup"
+    echo "Finish setup in the browser: $(local_url)/setup"
     echo "Installation code: $(head -n 1 "$code_file")"
     echo "(Show it again with: ./scripts/server.sh setup-code)"
 }
@@ -176,6 +176,62 @@ configured_port() {
     printf '%s' "8501"
 }
 
+configured_bind() {
+    local configured
+    configured="$(env_value IRIS_BIND)"
+    printf '%s' "${configured:-127.0.0.1}"
+}
+
+local_url() {
+    # Where this host reaches Iris: the listening address, or loopback when it is all of them.
+    local host
+    host="$(configured_bind)"
+    [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
+    printf 'http://%s:%s' "$host" "$(configured_port)"
+}
+
+host_has_address() {
+    command -v ip >/dev/null 2>&1 || return 0  # cannot check here; Docker will refuse an absent one
+    ip -o -4 addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -qxF "$1"
+}
+
+set_listen() {
+    local address="$1" option="${2:-}"
+    [ "$address" = "localhost" ] && address="127.0.0.1"
+    if ! [[ "$address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        echo "Give an IPv4 address: 127.0.0.1 (default), an address of this host, or 0.0.0.0." >&2
+        exit 2
+    fi
+    if [ "$address" = "0.0.0.0" ] && [ "$option" != "--all-interfaces" ]; then
+        echo "0.0.0.0 opens Iris on every network this host is on, the local network included." >&2
+        echo "If that is the decision, run: $0 listen 0.0.0.0 --all-interfaces" >&2
+        exit 2
+    fi
+    if [ "$address" != "0.0.0.0" ] && [ "${address%%.*}" != "127" ] && ! host_has_address "$address"; then
+        echo "No network interface of this host has $address. Check it with: ip -4 addr" >&2
+        exit 2
+    fi
+    prepare_env
+    if grep -q '^IRIS_BIND=' .env; then
+        sed -i "s/^IRIS_BIND=.*/IRIS_BIND=$address/" .env
+    else
+        printf '\nIRIS_BIND=%s\n' "$address" >> .env
+    fi
+    start_server
+    wait_for_health
+    echo "Iris listens on $address:$(configured_port)."
+    if [ "${address%%.*}" = "127" ]; then
+        echo "Only this host reaches it; put a mesh VPN, a tunnel or a reverse proxy in front of it."
+        return
+    fi
+    echo "Devices that reach $address connect over plain HTTP: use it only on a network you"
+    echo "trust or one that encrypts traffic itself (a mesh VPN), and confirm HTTP in the app."
+    if [ "$(env_value IRIS_SESSION_HTTPS_ONLY)" = "true" ]; then
+        echo "IRIS_SESSION_HTTPS_ONLY=true in .env: browsers cannot sign in over plain HTTP." >&2
+        echo "Set it to auto (Secure cookie only over HTTPS) and run: $0 update" >&2
+    fi
+}
+
 set_port() {
     local port="$1"
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
@@ -190,7 +246,7 @@ set_port() {
     fi
     start_server
     wait_for_health
-    echo "Iris is now available locally at http://127.0.0.1:$port"
+    echo "Iris is now available at $(local_url)"
     echo "To reach it from other devices, put a private layer in front of that"
     echo "address — a mesh VPN, a tunnel, or a reverse proxy with TLS."
     echo "With Tailscale, for example:"
@@ -283,11 +339,9 @@ restore_snapshot() {
 
 wait_for_health() {
     local attempt
-    local port
-    port="$(configured_port)"
     for attempt in $(seq 1 30); do
         # Connection errors are expected while the server starts; only the outcome matters.
-        if curl --fail --silent "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
+        if curl --fail --silent "$(local_url)/healthz" >/dev/null 2>&1; then
             return 0
         fi
         sleep 2
@@ -343,7 +397,7 @@ case "${1:-}" in
     status)
         require_compose
         docker compose ps
-        curl --fail --silent "http://127.0.0.1:$(configured_port)/healthz"; echo
+        curl --fail --silent "$(local_url)/healthz"; echo
         ;;
     logs)
         require_compose
@@ -388,13 +442,18 @@ case "${1:-}" in
         prepare_env
         show_storage
         ;;
+    listen)
+        require_compose
+        [ "$#" -ge 2 ] || { echo "Usage: $0 listen <127.0.0.1|host address|0.0.0.0 --all-interfaces>" >&2; exit 2; }
+        set_listen "$2" "${3:-}"
+        ;;
     port)
         require_compose
         [ "$#" -eq 2 ] || { echo "Usage: $0 port <1024-65535>" >&2; exit 2; }
         set_port "$2"
         ;;
     *)
-        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>}" >&2
+        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>|listen <address>}" >&2
         exit 2
         ;;
 esac

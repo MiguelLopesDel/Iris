@@ -11,7 +11,7 @@ services:
         IRIS_COMMIT: ${IRIS_COMMIT:-}
     user: "${IRIS_UID:-1000}:${IRIS_GID:-1000}"
     ports:
-      - "127.0.0.1:${IRIS_PORT:-8501}:8501"
+      - "${IRIS_BIND:-127.0.0.1}:${IRIS_PORT:-8501}:8501"
     volumes:
       - ./data:/app/data
       - ./media:/app/media
@@ -24,7 +24,7 @@ services:
       PYTHONPATH: /app
       IRIS_MULTIUSER: ${IRIS_MULTIUSER:-auto}
       IRIS_SERVER_MODE: ${IRIS_SERVER_MODE:-private}
-      IRIS_SESSION_HTTPS_ONLY: ${IRIS_SESSION_HTTPS_ONLY:-true}
+      IRIS_SESSION_HTTPS_ONLY: ${IRIS_SESSION_HTTPS_ONLY:-auto}
       IRIS_ENGINE_CACHE_SIZE: ${IRIS_ENGINE_CACHE_SIZE:-1}
       IRIS_SEARCH_WORKERS: ${IRIS_SEARCH_WORKERS:-2}
       IRIS_LOAD_MODEL: ${IRIS_LOAD_MODEL:-1}
