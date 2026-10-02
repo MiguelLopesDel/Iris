@@ -270,20 +270,43 @@ def _account_media_roots(users_db: Path, sqlite_options: str) -> dict[int, Path]
         return {int(uid): Path(root) for uid, root in connection.execute("SELECT id, media_root FROM users")}
 
 
-def _preflight_originals(
-    roots: dict[str, Path], previous: tuple[Path, Manifest] | None
-) -> list[str]:
-    """Check the live catalogues before copying anything; return the absent originals.
+ACCEPTED_MISSING_FILE = "backup_accepted_missing.json"
 
-    An original missing now is only reported when it cannot have been lost by
-    the backup's absence: it is in no earlier snapshot (an item that never had
-    its file, say from an imported catalogue). One that the previous snapshot
-    held and is gone now, or a catalogue none of whose originals is found (a
-    media disk that did not mount), stops the backup at once.
+
+def _accepted_missing(data: Path) -> set[str]:
+    try:
+        payload = json.loads((data / ACCEPTED_MISSING_FILE).read_text())
+        return {str(key) for key in payload.get("accepted", [])}
+    except (FileNotFoundError, ValueError, AttributeError):
+        return set()
+
+
+def _record_accepted_missing(data: Path, keys: set[str]) -> None:
+    path = data / ACCEPTED_MISSING_FILE
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(
+        {"accepted": sorted(keys), "updated_at": datetime.now(UTC).isoformat()}, indent=1
+    ))
+    os.replace(temporary, path)
+
+
+def _preflight_originals(
+    roots: dict[str, Path], previous: tuple[Path, Manifest] | None, *, accept_missing: bool = False
+) -> list[str]:
+    """Check the live catalogues before copying anything; return the accepted absent originals.
+
+    A missing original is never accepted silently: a disk that mounted only in
+    part, or files deleted before the first backup, look exactly like items
+    whose file never existed. The administrator accepts the current absences
+    once (``accept_missing``, recorded in ``data/`` and so in the backup);
+    accepted ones are then reported, and any new absence fails again, as does
+    an original the previous snapshot held. Everything is decided before a
+    single byte is copied.
     """
     data = roots["data"]
     media_roots = _account_media_roots(data / "users.db", "mode=ro")
-    previously_missing = set(previous[1].missing_originals) if previous else set()
+    recorded = _accepted_missing(data)
+    accepted = recorded | (set(previous[1].missing_originals) if previous else set())
     previously_held = {entry.root + "/" + entry.path for entry in previous[1].files} if previous else set()
 
     def held_before(candidate: Path) -> bool:
@@ -293,6 +316,8 @@ def _preflight_originals(
         return copied is not None and copied.relative_to(previous[0]).as_posix() in previously_held
 
     missing: list[str] = []
+    unaccepted: list[tuple[str, object, bool]] = []  # key, example, held by the previous snapshot
+    unmounted: list[str] = []
     for database in sorted(data.glob("users/*/iris.db")):
         try:
             user_id = int(database.parent.name)
@@ -300,24 +325,37 @@ def _preflight_originals(
             continue
         media_root = media_roots.get(user_id, data / "users" / str(user_id) / "media")
         total = absent = 0
-        example = None
         for key, candidates, caminho in _catalogue_originals(database, media_root, "mode=ro"):
             total += 1
             if any(candidate.is_file() for candidate in candidates):
                 continue
             absent += 1
-            example = example or caminho or candidates
-            if key not in previously_missing and any(held_before(c) for c in candidates):
-                raise BackupError(
-                    f"original que estava no backup anterior sumiu ({database.relative_to(data)}): "
-                    f"{caminho or candidates}"
-                )
-            missing.append(key)
+            if key in accepted:
+                missing.append(key)
+            else:
+                unaccepted.append((key, caminho or candidates, any(held_before(c) for c in candidates)))
         if total and absent == total:
-            raise BackupError(
-                f"nenhum dos {total} originais de {database.relative_to(data)} foi encontrado "
-                f"(por exemplo {example}): o disco de mídia está montado?"
-            )
+            unmounted.append(f"{database.relative_to(data)} ({total} itens)")
+
+    if unaccepted and not accept_missing:
+        example = unaccepted[0][1]
+        vanished = [item for item in unaccepted if item[2]]
+        if vanished:
+            reason = (f"{len(vanished)} originais que estavam no backup anterior sumiram "
+                      f"(por exemplo {vanished[0][1]}); restaure-os desse backup")
+        elif unmounted:
+            reason = (f"nenhum original de {', '.join(unmounted)} foi encontrado (por exemplo {example}): "
+                      "o disco de mídia está montado?")
+        else:
+            reason = (f"{len(unaccepted)} originais do catálogo não foram encontrados em lugar nenhum "
+                      f"(por exemplo {example})")
+        raise BackupError(
+            f"{reason}. Se esses arquivos já estavam perdidos e você aceita backups sem eles, rode "
+            "./scripts/server.sh backup --accept-missing (vale só para os ausentes de agora)."
+        )
+    if unaccepted:
+        _record_accepted_missing(data, recorded | {key for key, _, _ in unaccepted})
+        missing.extend(key for key, _, _ in unaccepted)
     return missing
 
 
@@ -493,18 +531,23 @@ def create(
     *,
     now: datetime | None = None,
     retention: str = POLICY,
+    accept_missing: bool = False,
 ) -> Summary:
-    """Write one complete snapshot of ``roots`` under ``dest``."""
+    """Write one complete snapshot of ``roots`` under ``dest``.
+
+    ``accept_missing`` accepts the catalogued originals absent right now
+    (see :func:`_preflight_originals`); later backups keep accepting those only.
+    """
     if retention not in (POLICY, PINNED):
         raise BackupError(f"retenção desconhecida: {retention}")
     dest.mkdir(parents=True, exist_ok=True)
     _check_roots(roots, dest)
     with _exclusive(dest):
-        return _create(roots, dest, now, retention)
+        return _create(roots, dest, now, retention, accept_missing)
 
 
 def _create(
-    roots: dict[str, Path], dest: Path, now: datetime | None, retention: str
+    roots: dict[str, Path], dest: Path, now: datetime | None, retention: str, accept_missing: bool = False
 ) -> Summary:
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
     # Two backups in the same second (a manual one right after the scheduled
@@ -533,11 +576,11 @@ def _create(
         )
         # Before copying anything: a vanished original or an unmounted media disk
         # should fail in seconds, not after the whole library was copied.
-        manifest.missing_originals = _preflight_originals(roots, previous)
+        manifest.missing_originals = _preflight_originals(roots, previous, accept_missing=accept_missing)
         if manifest.missing_originals:
             manifest.warnings.append(
-                f"{len(manifest.missing_originals)} itens do catálogo sem o arquivo original em lugar "
-                "nenhum (já ausentes antes; listados em missing_originals no manifesto)"
+                f"{len(manifest.missing_originals)} itens do catálogo sem o arquivo original, aceitos "
+                "pelo administrador (listados em missing_originals no manifesto)"
             )
         copied = linked = 0
         # Content already in the destination, by (sha256, size): the previous

@@ -305,18 +305,25 @@ O Iris só publica o backup depois de conferir os arquivos, a integridade dos
 bancos e os originais referenciados pelos catálogos. A execução aparece como
 **falha** no painel, e não aciona a retenção, quando:
 
-- um original que **estava no backup anterior sumiu** (apagado fora do Iris, ou
-  um disco que não montou);
-- **nenhum** original de um catálogo é encontrado, o que costuma ser um disco de
-  mídia desmontado;
+- um original catalogado não é encontrado em lugar nenhum: sumiu desde o backup
+  anterior (apagado fora do Iris), um disco montou só em parte ou não montou, ou
+  o arquivo já estava perdido antes (comum em catálogos antigos importados). O
+  backup não tem como distinguir esses casos, então nunca aceita a ausência
+  sozinho;
 - um original está fora das raízes configuradas;
 - bancos ou arquivos mudam durante a captura.
 
-Esses casos são conferidos antes de copiar qualquer arquivo, então aparecem em
-segundos. Já um item do catálogo cujo arquivo não existia em lugar nenhum e nunca
-entrou num backup (comum em catálogos antigos importados) não impede o backup: ele
-é publicado com um aviso, e os itens ficam listados em `missing_originals` no
-`manifest.json`. Corrija o caminho ou tente novamente quando os envios terminarem.
+Os originais são conferidos antes de copiar qualquer arquivo, então a falha
+aparece em segundos, com a quantidade e um exemplo. Se os arquivos já estavam
+perdidos e você aceita backups sem eles:
+
+```bash
+./scripts/server.sh backup --accept-missing
+```
+
+Isso registra os ausentes **de agora** como aceitos (em `data/`, de modo que a
+decisão entra no próprio backup) e conclui o backup com um aviso; os itens ficam
+listados em `missing_originals` no `manifest.json`. Corrija o caminho ou tente novamente quando os envios terminarem.
 Se `IRIS_SECRET_KEY` vier do ambiente, o backup guarda o valor efetivo como
 `data/secret_key`; após restaurar, confira se o `.env` não o substitui por
 outro valor. Proteja o destino do backup como protegeria as fotos e senhas.

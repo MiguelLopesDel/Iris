@@ -201,16 +201,16 @@ class BackupService:
     def running(self) -> bool:
         return self._running.locked()
 
-    def run(self, trigger: str, *, pinned: bool = False) -> Run:
+    def run(self, trigger: str, *, pinned: bool = False, accept_missing: bool = False) -> Run:
         """Back up, then prune; always leaves a finished row in the history."""
         if not self._running.acquire(blocking=False):
             raise BackupError("já existe um backup em andamento")
         try:
-            return self._run_locked(trigger, pinned)
+            return self._run_locked(trigger, pinned, accept_missing)
         finally:
             self._running.release()
 
-    def _run_locked(self, trigger: str, pinned: bool) -> Run:
+    def _run_locked(self, trigger: str, pinned: bool, accept_missing: bool = False) -> Run:
         connection = _connect(self.users_db)
         try:
             with connection:
@@ -225,6 +225,7 @@ class BackupService:
                 summary = instance_backup.create(
                     self.roots, self.dest, now=self._clock(),
                     retention=instance_backup.PINNED if pinned else instance_backup.POLICY,
+                    accept_missing=accept_missing,
                 )
                 snapshot = summary.snapshot.name
                 message = "; ".join(summary.warnings)
@@ -324,12 +325,16 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     now = commands.add_parser("run", help="backup agora, com a mesma retenção do agendado")
     now.add_argument("--pin", action="store_true", help="guardar este para sempre")
+    now.add_argument(
+        "--accept-missing", action="store_true",
+        help="aceitar os originais do catálogo ausentes agora (já perdidos); novos ausentes voltam a falhar",
+    )
     args = parser.parse_args(argv)
 
     service = from_environment()
     if args.command == "run":
         # Recorded as manual: it never counts as the day's scheduled backup.
-        run = service.run("manual", pinned=args.pin)
+        run = service.run("manual", pinned=args.pin, accept_missing=args.accept_missing)
         print(f"{run.status}: {run.snapshot or '-'}"
               f" ({run.pruned} backup(s) antigos apagados pela política)")
         if run.message:

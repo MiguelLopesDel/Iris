@@ -309,17 +309,50 @@ def _point_alice_at(instance: dict[str, Path], path: Path) -> None:
         connection.execute("UPDATE memes SET caminho = ? WHERE arquivo = 'alice.jpg'", (str(path),))
 
 
-def test_an_original_that_never_existed_is_reported_not_fatal(
+def _no_copying(monkeypatch: pytest.MonkeyPatch) -> None:
+    def copying(*_: object) -> str:
+        raise AssertionError("nothing may be copied once an original is missing unaccepted")
+
+    monkeypatch.setattr(instance_backup, "_copy_hashing", copying)
+
+
+def test_a_missing_original_is_never_accepted_silently(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Part of a catalogue missing on the first backup: lost just now, or long ago? Ask."""
+    gone = instance["data"] / "users" / "1" / "media" / "gone.jpg"
+    _point_alice_at(instance, gone)  # alice's legacy photo is still there
+    dest = tmp_path / "backups"
+    _no_copying(monkeypatch)
+    with pytest.raises(BackupError, match=r"1 originais.*gone\.jpg.*--accept-missing"):
+        instance_backup.create(_roots(instance), dest, now=T0)
+    assert list(dest.glob("iris-backup-*")) == [] and list(dest.glob(".incomplete-*")) == []
+    assert not (instance["data"] / instance_backup.ACCEPTED_MISSING_FILE).exists()
+
+
+def test_accepted_absences_are_reported_and_new_ones_fail_again(
     instance: dict[str, Path], tmp_path: Path
 ) -> None:
-    """An imported catalogue may list items whose file was lost long before Iris."""
     gone = instance["data"] / "users" / "1" / "media" / "gone.jpg"
     _point_alice_at(instance, gone)
-    summary = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0)
+    dest = tmp_path / "backups"
+    accepted = instance_backup.create(_roots(instance), dest, now=T0, accept_missing=True)
 
-    assert _manifest(summary.snapshot)["missing_originals"] == [f"users/1/iris.db:{gone}"]
-    assert any("1 itens do catálogo sem o arquivo" in warning for warning in summary.warnings)
-    assert instance_backup.verify(summary.snapshot) == []
+    assert _manifest(accepted.snapshot)["missing_originals"] == [f"users/1/iris.db:{gone}"]
+    assert any("1 itens do catálogo sem o arquivo original, aceitos" in w for w in accepted.warnings)
+    # The decision is part of the instance, so it travels with the backup.
+    assert (accepted.snapshot / "data" / instance_backup.ACCEPTED_MISSING_FILE).is_file()
+    assert instance_backup.verify(accepted.snapshot) == []
+
+    later = instance_backup.create(_roots(instance), dest, now=T0 + timedelta(hours=1))
+    assert _manifest(later.snapshot)["missing_originals"] == [f"users/1/iris.db:{gone}"]
+
+    # A new absence is a new decision.
+    with sqlite3.connect(instance["data"] / "users" / "1" / "iris.db") as connection:
+        connection.execute("INSERT INTO memes (arquivo, caminho, embedding) VALUES ('new.jpg', ?, ?)",
+                           (str(gone.with_name("new.jpg")), b"\0" * 16))
+    with pytest.raises(BackupError, match=r"new\.jpg"):
+        instance_backup.create(_roots(instance), dest, now=T0 + timedelta(hours=2))
 
 
 def test_an_original_held_by_the_previous_backup_that_vanished_stops_it_before_copying(
@@ -328,15 +361,14 @@ def test_an_original_held_by_the_previous_backup_that_vanished_stops_it_before_c
     dest = tmp_path / "backups"
     instance_backup.create(_roots(instance), dest, now=T0)
     (instance["data"] / "users" / "1" / "media" / "alice.jpg").unlink()  # deleted outside Iris
-
-    def copying(*_: object) -> str:
-        raise AssertionError("nothing may be copied once an original is known to have vanished")
-
-    monkeypatch.setattr(instance_backup, "_copy_hashing", copying)
-    with pytest.raises(BackupError, match="sumiu.*alice.jpg"):
-        instance_backup.create(_roots(instance), dest, now=T0 + timedelta(hours=1))
+    with monkeypatch.context() as patched:
+        _no_copying(patched)
+        with pytest.raises(BackupError, match=r"sumiram.*alice\.jpg.*restaure"):
+            instance_backup.create(_roots(instance), dest, now=T0 + timedelta(hours=1))
     assert len(list(dest.glob("iris-backup-*"))) == 1
-    assert list(dest.glob(".incomplete-*")) == []
+    # Accepting the loss is still possible, explicitly.
+    accepted = instance_backup.create(_roots(instance), dest, now=T0 + timedelta(hours=2), accept_missing=True)
+    assert instance_backup.verify(accepted.snapshot) == []
 
 
 def test_a_catalogue_with_no_original_at_all_looks_like_an_unmounted_disk(
@@ -344,21 +376,9 @@ def test_a_catalogue_with_no_original_at_all_looks_like_an_unmounted_disk(
 ) -> None:
     (instance["data"] / "users" / "2" / "media" / "bob.jpg").unlink()
     dest = tmp_path / "backups"
-    with pytest.raises(BackupError, match="nenhum dos 1 originais de users/2/iris.db.*bob.jpg.*montado"):
+    with pytest.raises(BackupError, match=r"nenhum original de users/2/iris.db.*bob\.jpg.*montado"):
         instance_backup.create(_roots(instance), dest, now=T0)
     assert list(dest.glob("iris-backup-*")) == []
-
-
-def test_an_item_missing_before_stays_reported_in_the_next_backups(
-    instance: dict[str, Path], tmp_path: Path
-) -> None:
-    gone = instance["data"] / "users" / "1" / "media" / "gone.jpg"
-    _point_alice_at(instance, gone)
-    dest = tmp_path / "backups"
-    instance_backup.create(_roots(instance), dest, now=T0)
-    second = instance_backup.create(_roots(instance), dest, now=T0 + timedelta(hours=1))
-    assert _manifest(second.snapshot)["missing_originals"] == [f"users/1/iris.db:{gone}"]
-    assert instance_backup.verify(second.snapshot) == []
 
 
 def test_relinked_library_path_takes_precedence_over_stale_legacy_path(

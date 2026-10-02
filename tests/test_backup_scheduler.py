@@ -252,3 +252,25 @@ def test_housekeeping_runs_at_most_hourly_and_never_stops_backups(tmp_path: Path
     clock.advance(minutes=2)
     service.maintain()
     assert len(calls) == 2
+
+
+def test_the_administrator_can_accept_originals_that_are_already_lost(setup) -> None:
+    service, clock, data = setup
+    database = data / "users" / "1" / "iris.db"
+    init_db(database).close()
+    present = data / "users" / "1" / "media" / "a.jpg"
+    lost = data / "users" / "1" / "media" / "lost-long-ago.jpg"
+    with sqlite3.connect(database) as connection:
+        connection.executemany(
+            "INSERT INTO memes (arquivo, caminho, embedding) VALUES (?, ?, ?)",
+            [(present.name, str(present), b"\0" * 16), (lost.name, str(lost), b"\0" * 16)],
+        )
+    refused = service.run("manual")
+    assert refused.status == "failed" and "--accept-missing" in refused.message
+
+    clock.advance(minutes=1)
+    accepted = service.run("manual", accept_missing=True)
+    assert accepted.status == "ok" and "aceitos" in accepted.message
+    clock.advance(minutes=1)
+    assert service.run("manual").status == "ok"
+
