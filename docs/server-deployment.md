@@ -302,10 +302,21 @@ fora só o que ele reconstrói sozinho: índices FAISS, vetores, miniaturas e
 envios pela metade.
 
 O Iris só publica o backup depois de conferir os arquivos, a integridade dos
-bancos e os originais referenciados pelos catálogos. Se algum original estiver
-fora das raízes configuradas, estiver ausente, ou se bancos/arquivos mudarem
-durante a captura, a execução aparece como **falha** no painel e não aciona a
-retenção. Corrija o caminho ou tente novamente quando os envios terminarem.
+bancos e os originais referenciados pelos catálogos. A execução aparece como
+**falha** no painel, e não aciona a retenção, quando:
+
+- um original que **estava no backup anterior sumiu** (apagado fora do Iris, ou
+  um disco que não montou);
+- **nenhum** original de um catálogo é encontrado, o que costuma ser um disco de
+  mídia desmontado;
+- um original está fora das raízes configuradas;
+- bancos ou arquivos mudam durante a captura.
+
+Esses casos são conferidos antes de copiar qualquer arquivo, então aparecem em
+segundos. Já um item do catálogo cujo arquivo não existia em lugar nenhum e nunca
+entrou num backup (comum em catálogos antigos importados) não impede o backup: ele
+é publicado com um aviso, e os itens ficam listados em `missing_originals` no
+`manifest.json`. Corrija o caminho ou tente novamente quando os envios terminarem.
 Se `IRIS_SECRET_KEY` vier do ambiente, o backup guarda o valor efetivo como
 `data/secret_key`; após restaurar, confira se o `.env` não o substitui por
 outro valor. Proteja o destino do backup como protegeria as fotos e senhas.
@@ -315,8 +326,10 @@ separada dessas configurações para reconstruir a instalação após perda do h
 Cada backup é uma pasta completa, que dá para abrir sem o Iris, com um
 `manifest.json` que registra o hash de cada arquivo e a versão do Iris que o
 gravou. Uma foto que não mudou desde o backup anterior vira um hard link para
-ele: ocupa o disco uma vez só. Em discos sem hard link (exFAT, FAT) o arquivo é
-copiado. Um backup interrompido fica como `.incomplete-*` e nunca é usado.
+ele: ocupa o disco uma vez só. O reaproveitamento é pelo conteúdo, não só pelo
+caminho: uma foto que mudou de pasta (uma biblioteca anexada a uma conta, por
+exemplo) ou que duplica outra também vira hard link. Em discos sem hard link
+(exFAT, FAT) o arquivo é copiado. Um backup interrompido fica como `.incomplete-*` e nunca é usado.
 
 ### Retenção
 
