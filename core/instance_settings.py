@@ -97,6 +97,16 @@ def _positive_int(maximum: int | None = None) -> Callable[[str], int]:
     return parse
 
 
+def _addresses(raw: str) -> str:
+    """Addresses devices may use to reach the server, normalised and space-separated."""
+    from core.pairing import PairingError, parse_addresses
+
+    try:
+        return " ".join(parse_addresses(raw))
+    except PairingError as exc:
+        raise SettingError(str(exc)) from exc
+
+
 @dataclass(frozen=True)
 class Setting:
     key: str
@@ -122,6 +132,8 @@ SETTINGS: dict[str, Setting] = {
         Setting("backup_keep_monthly", "IRIS_BACKUP_KEEP_MONTHLY", 6, _count(_MAX_KEEP)),
         # Use an NVIDIA GPU when the installation can see one (core.compute_device).
         Setting("gpu", "IRIS_GPU", "on", _choice("on", "off")),
+        # Offered to devices by the pairing code, after the address the browser is using.
+        Setting("pairing_addresses", "IRIS_PAIRING_ADDRESSES", "", _addresses),
     )
 }
 

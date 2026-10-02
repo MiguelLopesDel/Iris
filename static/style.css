@@ -4148,3 +4148,59 @@ a.btn {
 [data-account-import][hidden] {
   display: none;
 }
+
+.pairing-body {
+  display: grid;
+  gap: 10px;
+}
+
+.pairing-qr {
+  justify-self: center;
+  width: min(280px, 100%);
+  line-height: 0;
+}
+
+.pairing-qr svg {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.pairing-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.pairing-addresses {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.pairing-fingerprint {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.pairing-link input {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+#pairing-settings textarea {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+#pairing-open {
+  margin-top: 12px;
+}
+
+#pairing-settings .file-button {
+  display: inline-flex;
+  width: auto;
+  margin: 8px 8px 0 0;
+}

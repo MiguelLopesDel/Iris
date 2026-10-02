@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=56">
+  <link rel="stylesheet" href="/static/style.css?v=57">
 </head>
 <body>
 
@@ -500,6 +500,29 @@
         <h4>Dispositivos conectados</h4>
         <p class="system-hint">Celulares e navegadores com acesso à sua conta. Desconectar encerra a sessão daquele dispositivo na hora.</p>
         <ul id="devices-list" class="devices-list"></ul>
+        <button id="pairing-open" class="btn btn-primary" type="button">Conectar um celular</button>
+      </section>
+
+      <section id="pairing-settings" class="detail-panel system-card" data-settings-section hidden>
+        <span class="eyebrow">CELULARES</span>
+        <h4>Pareamento</h4>
+        <p class="system-hint">O código "Conectar um celular" oferece o endereço desta página e os endereços abaixo,
+          nessa ordem. Endereços locais (127.0.0.1) ficam de fora: um celular não os alcança.</p>
+        <label>Outros endereços de acesso (um por linha)
+          <textarea rows="3" spellcheck="false" placeholder="https://iris.exemplo&#10;http://100.64.0.10:8501" data-setting="pairing_addresses"></textarea>
+          <small class="instance-source" data-source-for="pairing_addresses"></small>
+        </label>
+        <button class="btn btn-primary" type="button" data-save-settings>Salvar endereços</button>
+        <span class="system-status" data-settings-status></span>
+        <hr>
+        <p class="system-hint">Autoridade de certificado: para servidores com certificado de uma CA privada
+          (a interna de um proxy, por exemplo). O código leva a impressão digital dela, e o app passa a confiar
+          nela para este servidor depois de conferi-la.</p>
+        <p id="pairing-ca-status" class="system-hint"></p>
+        <label class="btn btn-subtle file-button">Enviar certificado da CA (.crt / .pem)
+          <input id="pairing-ca-file" type="file" accept=".crt,.pem,.cer,application/x-x509-ca-cert,application/x-pem-file" hidden>
+        </label>
+        <button id="pairing-ca-remove" class="btn btn-subtle" type="button" hidden>Remover certificado</button>
       </section>
 
       <section id="account-management" class="detail-panel system-card" hidden>
@@ -839,7 +862,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=72"></script>
+<script type="module" src="/static/app.js?v=73"></script>
 
 </body>
 </html>
