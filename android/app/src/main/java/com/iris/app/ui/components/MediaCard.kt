@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Sync
@@ -151,26 +152,28 @@ fun MediaCard(
  * Without this the grid gives no way to tell an item that exists in two places
  * from one that exists in exactly one, which is precisely what a user needs to
  * know before freeing space on the phone.
+ *
+ * Every state has a badge, including "in both places". Leaving that ordinary
+ * case unbadged read as "this item has no state" rather than "it is synced".
+ * Its badge is dimmer than the others, so the states that need attention
+ * still stand out.
  */
 @Composable
 private fun OriginBadge(origin: MediaOrigin, modifier: Modifier = Modifier) {
-    // An item present in both places is the ordinary case: badging it too would
-    // put an icon on every single cell and stop meaning anything.
-    if (origin == MediaOrigin.ON_DEVICE) return
-
     val (icon, description) = when (origin) {
         MediaOrigin.DEVICE_ONLY -> Icons.Outlined.PhoneAndroid to stringResource(R.string.origin_device_only)
         MediaOrigin.IRIS_ONLY -> Icons.Outlined.Cloud to stringResource(R.string.origin_iris_only)
         MediaOrigin.UPLOADING -> Icons.Outlined.CloudUpload to stringResource(R.string.origin_uploading)
         MediaOrigin.PROCESSING -> Icons.Outlined.Sync to stringResource(R.string.origin_processing)
         MediaOrigin.FAILED -> Icons.Outlined.CloudOff to stringResource(R.string.origin_failed)
-        MediaOrigin.ON_DEVICE -> return
+        MediaOrigin.ON_DEVICE -> Icons.Outlined.CloudDone to stringResource(R.string.origin_on_device)
     }
+    val quiet = origin == MediaOrigin.ON_DEVICE
 
     Box(
         modifier = modifier
             .size(24.dp)
-            .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+            .background(Color.Black.copy(alpha = if (quiet) 0.35f else 0.6f), CircleShape),
         contentAlignment = Alignment.Center
     ) {
         Icon(
@@ -179,7 +182,7 @@ private fun OriginBadge(origin: MediaOrigin, modifier: Modifier = Modifier) {
             tint = if (origin == MediaOrigin.FAILED) {
                 MaterialTheme.colorScheme.errorContainer
             } else {
-                Color.White
+                Color.White.copy(alpha = if (quiet) 0.7f else 1f)
             },
             modifier = Modifier.size(15.dp)
         )

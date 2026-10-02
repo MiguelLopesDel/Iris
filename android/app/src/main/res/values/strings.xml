@@ -22,6 +22,7 @@
     <string name="sync_videos_lowercase">vídeos</string>
     <string name="sync_photos_lowercase">fotos</string>
     <string name="sync_media_permission_required">Permita acesso às fotos e vídeos para listar as pastas</string>
+    <string name="origin_on_device">No aparelho e no Iris</string>
     <string name="origin_iris_only">Só no Iris, não está neste aparelho</string>
     <string name="origin_device_only">Só neste aparelho</string>
     <string name="origin_uploading">Enviando para o Iris</string>
