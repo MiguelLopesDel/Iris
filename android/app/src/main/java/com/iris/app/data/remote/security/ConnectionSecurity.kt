@@ -90,9 +90,22 @@ class CleartextNotPermittedException(val origin: ServerOrigin) :
  */
 open class ConnectionSecurity(
     private val store: ServerSecurityStore,
-    systemTrust: X509TrustManager = defaultTrustManager(null),
-    deviceCaStore: () -> KeyStore? = ::androidCaStore,
+    private val systemTrust: X509TrustManager = defaultTrustManager(null),
+    private val deviceCaStore: () -> KeyStore? = ::androidCaStore,
 ) {
+    /**
+     * A throwaway copy that applies [candidate] to [origin] and the saved policy
+     * elsewhere, with nothing persisted: to try a policy before committing to it.
+     */
+    fun trying(origin: ServerOrigin, candidate: ServerSecurity): ConnectionSecurity {
+        val overlay = object : ServerSecurityStore {
+            override fun get(origin2: ServerOrigin) = if (origin2 == origin) candidate else store.get(origin2)
+            override fun put(origin2: ServerOrigin, security: ServerSecurity) =
+                throw UnsupportedOperationException("A trial policy is never saved")
+        }
+        return ConnectionSecurity(overlay, systemTrust, deviceCaStore)
+    }
+
     private val rejected = ConcurrentHashMap<String, RejectedChain>()
     private val trustManager = PolicyTrustManager(
         policyFor = ::securityFor,

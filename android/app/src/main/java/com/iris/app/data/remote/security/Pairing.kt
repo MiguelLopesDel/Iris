@@ -47,7 +47,10 @@ data class PairingCode(
                 ?: throw PairingCodeException("Código incompleto: falta o identificador do servidor.")
             val addresses = all("u").map { address ->
                 val url = address.toHttpUrlOrNull()
-                if (url == null || url.encodedPath != "/" || url.query != null) {
+                // Credentials in an address would be sent to whoever answers it.
+                if (url == null || url.encodedPath != "/" || url.query != null || url.fragment != null ||
+                    url.username.isNotEmpty() || url.password.isNotEmpty()
+                ) {
                     throw PairingCodeException("Endereço inválido no código: $address")
                 }
                 address.trimEnd('/')
@@ -93,9 +96,6 @@ class PairingConnector(
     private val security: ConnectionSecurity,
     private val timeoutSeconds: Long = 8,
 ) {
-    private val client: OkHttpClient by lazy {
-        security.apply(baseBuilder()).build()
-    }
 
     // Used only to fetch the CA certificate, whose bytes are checked against the code.
     private val unverifiedClient: OkHttpClient by lazy {
@@ -131,29 +131,34 @@ class PairingConnector(
                 outcomes += AddressOutcome.Skipped(address, "HTTP sem criptografia não foi permitido")
                 continue
             }
-            security.update(origin) { current ->
-                when {
-                    https && authority != null ->
-                        current.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(authority))
-                    !https -> current.copy(cleartextAllowed = true)
-                    else -> current
-                }
+            val current = security.securityFor(origin)
+            val candidate = when {
+                https && authority != null ->
+                    current.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(authority))
+                !https -> current.copy(cleartextAllowed = true)
+                else -> current
             }
+            // The address must prove it is this server under the candidate policy
+            // before that policy is saved: nothing is stored for any other address.
+            val trial = security.trying(origin, candidate)
             val outcome = try {
-                if (instanceAt(address) == code.instanceId) AddressOutcome.Connected(address)
+                if (instanceAt(address, trial) == code.instanceId) AddressOutcome.Connected(address)
                 else AddressOutcome.OtherServer(address)
             } catch (error: IOException) {
-                AddressOutcome.Failed(address, ConnectionProblem.from(error, origin, security), error.message.orEmpty())
+                AddressOutcome.Failed(address, ConnectionProblem.from(error, origin, trial), error.message.orEmpty())
             }
             outcomes += outcome
-            if (outcome is AddressOutcome.Connected) return PairingResult(address, outcomes)
+            if (outcome is AddressOutcome.Connected) {
+                security.update(origin) { candidate }
+                return PairingResult(address, outcomes)
+            }
         }
         return PairingResult(null, outcomes)
     }
 
-    private fun instanceAt(address: String): String? {
+    private fun instanceAt(address: String, trial: ConnectionSecurity): String? {
         val request = Request.Builder().url("$address/healthz").build()
-        client.newCall(request).execute().use { response ->
+        trial.apply(baseBuilder()).build().newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
             val body = response.body?.string().orEmpty()
             return Regex("\"instance_id\"\\s*:\\s*\"([0-9a-f]{32})\"").find(body)?.groupValues?.get(1)

@@ -167,11 +167,15 @@ os endereços e a impressão digital e pede confirmação. Ao confirmar:
    `/api/pairing/ca.pem` e só o aceita se o SHA-256 for o do código. O download não
    envia credencial nenhuma, e a impressão digital veio de uma tela em que você já
    confiava, então um intermediário na rede não consegue trocar o certificado.
-2. A autoridade passa a ser confiável para os endereços `https://` do código, e
-   HTTP fica permitido para os endereços `http://` (o aviso aparece na confirmação).
-3. O app tenta os endereços em ordem e usa o primeiro que responder com o mesmo
-   identificador de instalação. Um endereço em que outro servidor responde é
-   ignorado.
+2. O app tenta os endereços em ordem. Cada um é testado com a política que
+   receberia (a autoridade do código, para `https://`; HTTP permitido, para
+   `http://`, conforme o aviso da confirmação) sem que ela seja gravada.
+3. O primeiro que responder com o mesmo identificador de instalação é o usado, e
+   só ele recebe essa política. Um endereço em que outro servidor responde, ou que
+   não responde, fica exatamente como estava.
+
+Endereços com usuário e senha embutidos (`https://usuario:senha@host`) são
+recusados, no servidor e no app: as credenciais iriam para quem respondesse.
 
 O código não é segredo e não dá acesso a nada: endereços, identificador e
 certificado de autoridade são públicos por natureza. Depois do pareamento, entrar

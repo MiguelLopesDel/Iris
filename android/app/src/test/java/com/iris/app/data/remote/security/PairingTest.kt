@@ -69,6 +69,8 @@ class PairingTest {
             "https://iris.example", "iris://pair?v=2&id=$id&u=https%3A%2F%2Fx", "iris://pair?v=1&u=https%3A%2F%2Fx",
             "iris://pair?v=1&id=$id", "iris://pair?v=1&id=$id&u=ftp%3A%2F%2Fx", "iris://pair?v=1&id=$id&u=https%3A%2F%2Fx%2Fapp",
             "iris://pair?v=1&id=$id&u=https%3A%2F%2Fx&ca=zz",
+            "iris://pair?v=1&id=$id&u=https%3A%2F%2Fuser%3Asecret%40x", "iris://pair?v=1&id=$id&u=https%3A%2F%2Fuser%40x",
+            "iris://pair?v=1&id=$id&u=https%3A%2F%2Fx%23frag",
         )) {
             try {
                 PairingCode.parse(bad); fail("accepted $bad")
@@ -111,6 +113,21 @@ class PairingTest {
         assertTrue(result.outcomes[0] is AddressOutcome.OtherServer)
         assertTrue(result.outcomes[1] is AddressOutcome.Failed)
         assertTrue(result.outcomes[2] is AddressOutcome.Connected)
+        // Only the address that proved to be this server keeps the code's authority.
+        assertEquals(ServerSecurity(), store.get(ServerOrigin.of(other.url("/"))))
+        assertEquals(ServerSecurity(), store.get(ServerOrigin.of(unreachable)!!))
+        assertEquals(TrustMode.PINNED, store.get(ServerOrigin.of(right.url("/"))).trustMode)
+    }
+
+    @Test
+    fun `a failed pairing leaves every address as it was`() {
+        val other = server("f".repeat(32))
+        val plainOther = server("e".repeat(32), https = false)
+        val result = PairingConnector(security, timeoutSeconds = 2)
+            .connect(code(address(other), address(plainOther, https = false)), allowCleartext = true)
+        assertNull(result.address)
+        assertEquals(ServerSecurity(), store.get(ServerOrigin.of(other.url("/"))))
+        assertEquals("http stays refused where pairing failed", ServerSecurity(), store.get(ServerOrigin.of(plainOther.url("/"))))
     }
 
     @Test

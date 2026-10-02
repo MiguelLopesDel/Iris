@@ -34,7 +34,8 @@ def test_addresses_are_normalised_to_scheme_host_and_port() -> None:
     assert pairing.normalize_address("100.64.1.2:8501") == "http://100.64.1.2:8501"
     assert pairing.normalize_address("http://nas.lan:80") == "http://nas.lan"
     assert pairing.normalize_address("https://[fd00::1]:8443") == "https://[fd00::1]:8443"
-    for bad in ("ftp://x", "https://iris.example/app", "https://user@iris.example", "http://:80", "https://x:99999"):
+    for bad in ("ftp://x", "https://iris.example/app", "https://user@iris.example",
+                "https://user:secret@iris.example", "http://:80", "https://x:99999", "https://iris.example#x"):
         with pytest.raises(pairing.PairingError):
             pairing.normalize_address(bad)
 

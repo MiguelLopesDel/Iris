@@ -271,13 +271,13 @@ fun PairingConfirmDialog(code: PairingCode, onConfirm: () -> Unit, onCancel: () 
                 Text("O app vai usar o primeiro destes endereços que responder como este servidor:", fontSize = 13.sp)
                 code.addresses.forEach { Text("• $it", fontSize = 13.sp, fontFamily = FontFamily.Monospace) }
                 code.caSha256?.let { sha ->
-                    Text("Autoridade de certificado (SHA-256), que passa a ser confiável para os endereços https:",
+                    Text("Autoridade de certificado (SHA-256), que passa a ser confiável para o endereço https que responder como este servidor:",
                         fontSize = 12.sp, color = IrisTextMuted)
                     Text(sha.uppercase().chunked(2).joinToString(":"), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 }
                 if (code.usesCleartext) {
                     Text(
-                        "Os endereços http:// trafegam sem criptografia. Ao parear, você permite HTTP para eles; " +
+                        "Os endereços http:// trafegam sem criptografia. Se um deles for o usado, você permite HTTP para ele; " +
                             "faça isso só numa rede de confiança ou que já criptografa o tráfego.",
                         fontSize = 12.sp,
                         color = IrisDanger,
