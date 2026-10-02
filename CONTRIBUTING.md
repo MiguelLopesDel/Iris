@@ -45,12 +45,15 @@ dentro de `.iris-dev/`.
 
 ## Trabalhar em uma mudança
 
+O que se espera de cada commit, pull request e tag, e como uma mudança passa por
+homologação até chegar à produção, está em [docs/process.md](docs/process.md).
+
 1. Atualize `main` e crie uma branch curta para uma tarefa. Use nomes como
    `fix/android-gallery-scroll`, `feat/server-invites` ou
    `docs/deployment-guide`.
 2. Antes de editar, procure o contrato e os testes da área em `docs/` e
-   `tests/` (ou `android/app/src/test`). Preserve os limites de conta e dispositivo
-   descritos em `AGENTS.md`.
+   `tests/` (ou `android/app/src/test`). Preserve os invariantes de conta,
+   dispositivo e originais descritos em [docs/process.md](docs/process.md).
 3. Faça commits pequenos, cada um com uma intenção, usando
    [Conventional Commits](https://www.conventionalcommits.org/):
    `fix(sync): retry interrupted uploads` ou `docs(server): clarify backup flow`.

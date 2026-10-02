@@ -20,6 +20,11 @@ exista; confira também os contratos e testes da área antes de alterar código.
 
 ## Desenvolver e validar
 
+- [Processo de desenvolvimento e de lançamento](process.md) — ambientes
+  (desenvolvimento, homologação, produção), o que é um commit, um PR e uma tag,
+  onde entra cada teste e os invariantes do projeto.
+- [Lições técnicas de campo](engineering-lessons.md) — regras aprendidas com
+  erros reais de memória, cache e ranqueamento.
 - [Mapa para novos contribuidores](developer-onboarding.md) — caminhos atuais
   de inicialização, galeria, sincronização e backups.
 - [Contribuir e configurar o ambiente](../CONTRIBUTING.md).
