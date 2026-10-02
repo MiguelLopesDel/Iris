@@ -73,6 +73,8 @@ ENDPOINTS: dict[str, str] = {
 # de erro do sistema de arquivos dele. Já aconteceu: sem mascarar `backup_dir` a
 # fixture capturou "/home/<usuário>/Iris_Backup" e o erro de permissão junto.
 _VOLATILE_KEYS = {
+    # Random per installation (and absent until a private server first starts).
+    "instance_id",
     "resolved_path",
     "caminho",
     "thumbnail_url",

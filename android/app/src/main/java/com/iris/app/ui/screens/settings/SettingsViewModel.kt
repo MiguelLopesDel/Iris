@@ -14,7 +14,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.iris.app.data.remote.security.AddressOutcome
 import com.iris.app.data.remote.security.ConnectionProblem
+import com.iris.app.data.remote.security.PairingCode
+import com.iris.app.data.remote.security.PairingCodeException
+import com.iris.app.data.remote.security.PairingConnector
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.ServerOrigin
 import com.iris.app.data.remote.security.ServerSecurity
@@ -35,6 +39,10 @@ data class SettingsUiState(
     /** How the app talks to the server being tested. */
     val security: SecuritySummary? = null,
     val securityMessage: String? = null,
+    /** A pairing code read and waiting for the user to confirm it. */
+    val pendingPairing: PairingCode? = null,
+    val isPairing: Boolean = false,
+    val pairingMessage: String? = null,
 )
 
 data class SecuritySummary(
@@ -49,13 +57,23 @@ data class SecuritySummary(
 
 class SettingsViewModel(
     private val settingsRepository: ServerSettingsRepository,
-    private val irisRepository: IrisRepository
+    private val irisRepository: IrisRepository,
+    private val pairingRequests: MutableStateFlow<String?> = MutableStateFlow(null),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
+        // Links opened from outside the app (camera, QR reader) arrive here.
+        viewModelScope.launch {
+            pairingRequests.collect { link ->
+                if (link != null) {
+                    pairingRequests.value = null
+                    readPairingCode(link)
+                }
+            }
+        }
         viewModelScope.launch {
             val currentUrl = settingsRepository.serverUrl.first()
             _uiState.update { it.copy(serverUrl = currentUrl) }
@@ -248,13 +266,66 @@ class SettingsViewModel(
                 "servidor não usa TLS."
     }
 
+    /** Reads a pairing link and asks the user to confirm it; nothing changes yet. */
+    fun readPairingCode(text: String) {
+        try {
+            val code = PairingCode.parse(text)
+            _uiState.update { it.copy(pendingPairing = code, pairingMessage = null) }
+        } catch (error: PairingCodeException) {
+            _uiState.update { it.copy(pendingPairing = null, pairingMessage = error.message) }
+        }
+    }
+
+    fun cancelPairing() = _uiState.update { it.copy(pendingPairing = null) }
+
+    fun dismissPairingMessage() = _uiState.update { it.copy(pairingMessage = null) }
+
+    /** Applies the confirmed code. Confirming a code with http:// addresses is the consent to HTTP for them. */
+    fun confirmPairing() {
+        val code = _uiState.value.pendingPairing ?: return
+        _uiState.update { it.copy(pendingPairing = null, isPairing = true, pairingMessage = null) }
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { PairingConnector(security).connect(code, allowCleartext = code.usesCleartext) }
+            }
+            val result = outcome.getOrNull()
+            if (result?.address != null) {
+                settingsRepository.updateServerUrl(result.address)
+                irisRepository.apiClient.updateBaseUrl(result.address)
+                withContext(Dispatchers.IO) { irisRepository.apiClient.resetConnections() }
+                _uiState.update {
+                    it.copy(isPairing = false, serverUrl = result.address,
+                        pairingMessage = "Pareado com o servidor em ${result.address}. Entre com a sua conta.")
+                }
+                testConnection()
+            } else {
+                _uiState.update {
+                    it.copy(isPairing = false, pairingMessage = outcome.exceptionOrNull()?.message
+                        ?: describe(result?.outcomes.orEmpty()))
+                }
+            }
+            refreshSecuritySummary()
+        }
+    }
+
+    private fun describe(outcomes: List<AddressOutcome>): String =
+        "Nenhum endereço do código respondeu como este servidor:\n" + outcomes.joinToString("\n") { outcome ->
+            "• ${outcome.address}: " + when (outcome) {
+                is AddressOutcome.Connected -> "conectado"
+                is AddressOutcome.OtherServer -> "respondeu, mas é outro servidor"
+                is AddressOutcome.Skipped -> outcome.reason
+                is AddressOutcome.Failed -> outcome.problem?.let(::describe) ?: "não respondeu"
+            }
+        }
+
     class Factory(
         private val settingsRepository: ServerSettingsRepository,
-        private val irisRepository: IrisRepository
+        private val irisRepository: IrisRepository,
+        private val pairingRequests: MutableStateFlow<String?> = MutableStateFlow(null),
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SettingsViewModel(settingsRepository, irisRepository) as T
+            return SettingsViewModel(settingsRepository, irisRepository, pairingRequests) as T
         }
     }
 }

@@ -50,6 +50,7 @@ from core import (
     instance_lock,
     instance_settings,
     library_trash,
+    pairing,
     session_cookie,
     space_catalog,
 )
@@ -122,6 +123,7 @@ from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.backup import BackupRouteOperations
 from routers.backup import router as backup_router
+from routers.pairing import router as pairing_router
 from routers.records import RecordRouteOperations
 from routers.records import router as records_router
 from routers.setup import router as setup_router
@@ -596,6 +598,8 @@ async def lifespan(app: FastAPI):
         pass
     # Maintenance commands (scripts/attach_library.py) refuse while this is held.
     server_lock = instance_lock.hold_for_server(_DATA_DIR) if app.state.multiuser_enabled else None
+    if app.state.multiuser_enabled:
+        pairing.instance_id(_DATA_DIR)  # the identifier pairing codes and /healthz report
     if app.state.setup_required:
         # Whoever completes setup becomes the administrator; the code proves
         # they can read this console or the data folder, not just reach the page.
@@ -720,7 +724,7 @@ async def authenticate_library_request(request: Request, call_next):
         return Response(status_code=413, content='{"detail":"Requisição excede o limite configurado"}', media_type="application/json")
     path = request.url.path
     public = (
-        path in {"/login", "/setup", "/api/setup", "/healthz", "/favicon.ico", "/api/auth/login", "/api/auth/devices/login", "/api/auth/devices/refresh"}
+        path in {"/login", "/setup", "/api/setup", "/healthz", "/favicon.ico", "/api/auth/login", "/api/auth/devices/login", "/api/auth/devices/refresh", "/api/pairing/ca.pem"}
         or path.startswith("/static/")
     )
     if public:
@@ -863,6 +867,7 @@ app.include_router(auth_router)
 app.include_router(sync_router)
 app.include_router(spaces_router)
 app.include_router(admin_router)
+app.include_router(pairing_router)
 app.include_router(backup_router)
 app.include_router(records_router)
 app.include_router(setup_router)
@@ -1447,6 +1452,9 @@ async def healthz():
     return {
         "status": "setup_required" if _setup_required() else "ok",
         "mode": "multiuser" if _multiuser_enabled() else "legacy",
+        # A random identifier: lets a paired device recognise this server at any address.
+        # Created at startup; a probe only reads it.
+        "instance_id": pairing.read_instance_id(_DATA_DIR),
     }
 
 

@@ -16,9 +16,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -28,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.data.remote.security.ConnectionProblem
 import com.iris.app.data.remote.security.ConnectionSecurity
+import com.iris.app.data.remote.security.PairingCode
 import com.iris.app.data.remote.security.TrustMode
 import com.iris.app.ui.theme.IrisAccentInk
 import com.iris.app.ui.theme.IrisAccentLime
@@ -218,4 +224,70 @@ fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
             }
         }
     }
+}
+
+/** Read a pairing code: scan the QR, or paste the link shown under it. */
+@Composable
+fun PairingEntryDialog(onScan: () -> Unit, onPaste: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Parear com código") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "No navegador, em Sistema → Dispositivos conectados → Conectar um celular, o Iris mostra " +
+                        "um código QR. Leia o código ou cole o texto que aparece embaixo dele.",
+                    fontSize = 13.sp,
+                )
+                ChoiceButton("Ler código QR", primary = true, onClick = onScan)
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Ou cole o código (iris://pair…)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onPaste(text) }, enabled = text.isNotBlank()) { Text("Continuar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
+/** What the code will do, before anything changes. */
+@Composable
+fun PairingConfirmDialog(code: PairingCode, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Parear com este servidor?") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("O app vai usar o primeiro destes endereços que responder como este servidor:", fontSize = 13.sp)
+                code.addresses.forEach { Text("• $it", fontSize = 13.sp, fontFamily = FontFamily.Monospace) }
+                code.caSha256?.let { sha ->
+                    Text("Autoridade de certificado (SHA-256), que passa a ser confiável para o endereço https que responder como este servidor:",
+                        fontSize = 12.sp, color = IrisTextMuted)
+                    Text(sha.uppercase().chunked(2).joinToString(":"), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+                if (code.usesCleartext) {
+                    Text(
+                        "Os endereços http:// trafegam sem criptografia. Se um deles for o usado, você permite HTTP para ele; " +
+                            "faça isso só numa rede de confiança ou que já criptografa o tráfego.",
+                        fontSize = 12.sp,
+                        color = IrisDanger,
+                    )
+                }
+                Text("Parear não dá acesso à conta: depois, entre com o seu usuário e senha.",
+                    fontSize = 12.sp, color = IrisTextMuted)
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Parear") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancelar") } },
+    )
 }

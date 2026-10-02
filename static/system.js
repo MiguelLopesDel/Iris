@@ -23,6 +23,7 @@ import {
 } from './api.js?v=46';
 import { confirmModal } from './ui.js?v=5';
 import { loadDevices } from './devices.js?v=1';
+import { bindPairingAuthority, loadPairingAuthority, showPairing } from './pairing.js?v=1';
 import { uploadFiles } from './web_upload.js?v=1';
 
 let initialized = false;
@@ -45,7 +46,10 @@ export function initSystem() {
       browseFolder(document.getElementById('import-folder').value);
     }
     pollImportStatus();
-    if (info.multiuser && info.current_user?.is_admin) loadInstanceSettings();
+    if (info.multiuser && info.current_user?.is_admin) {
+      loadInstanceSettings();
+      loadPairingAuthority();
+    }
   });
   if (initialized) return;
   initialized = true;
@@ -60,6 +64,8 @@ export function initSystem() {
   });
   document.getElementById('import-start').addEventListener('click', runImport);
   document.getElementById('import-stop').addEventListener('click', () => accountUpload?.abort());
+  document.getElementById('pairing-open').addEventListener('click', showPairing);
+  bindPairingAuthority();
   document.getElementById('backup-config-save').addEventListener('click', saveBackupSettings);
   document.getElementById('snapshot-now').addEventListener('click', runSnapshot);
   document.getElementById('media-reconcile').addEventListener('click', runReconcile);
@@ -94,6 +100,7 @@ async function loadSystemInfo() {
     const administrator = !!(info.multiuser && info.current_user?.is_admin);
     document.getElementById('account-management').hidden = !administrator;
     document.getElementById('instance-settings').hidden = !administrator;
+    document.getElementById('pairing-settings').hidden = !administrator;
     document.getElementById('backup-settings').hidden = !administrator;
     document.getElementById('gpu-settings').hidden = !administrator;
     const privateHealth = document.getElementById('private-library-health');
@@ -545,6 +552,8 @@ function scaleOf(input) {
 }
 
 function displayValue(input, value) {
+  // Lists are stored space-separated and edited one per line.
+  if (input.tagName === 'TEXTAREA') return String(value).split(/\s+/).filter(Boolean).join('\n');
   const scaled = Number(value) / scaleOf(input);
   if (input.type !== 'number') return String(value);
   return Number.isInteger(scaled) ? String(scaled) : scaled.toFixed(2);
@@ -616,6 +625,7 @@ function changedSettings(section) {
   for (const input of section.querySelectorAll('[data-setting]')) {
     const key = input.dataset.setting;
     let value = input.value.trim();
+    if (input.tagName === 'TEXTAREA') value = value.split(/\s+/).filter(Boolean).join(' ');
     if (input.type === 'number') {
       if (value === '' || Number.isNaN(Number(value))) throw new Error('Preencha os campos numéricos.');
       value = Math.round(Number(value) * scaleOf(input));

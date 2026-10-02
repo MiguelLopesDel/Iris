@@ -52,6 +52,9 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
 
     private lateinit var connectionSecurityStore: PreferencesServerSecurityStore
 
+    /** Pairing links received from outside the app, waiting for the Settings screen to show them. */
+    val pairingRequests = MutableStateFlow<String?>(null)
+
     lateinit var dbHelper: UploadDatabaseHelper
         private set
 
