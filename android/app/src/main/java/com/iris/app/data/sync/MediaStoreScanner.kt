@@ -26,7 +26,9 @@ import java.util.TimeZone
 class MediaStoreScanner(
     private val contentResolver: ContentResolver,
     private val uploadManager: SyncUploadManager,
-    private val performanceMonitor: PerformanceMonitor? = null
+    private val performanceMonitor: PerformanceMonitor? = null,
+    /** MediaStore's version per volume ([MediaStoreVersions.read]); empty where the platform has none. */
+    private val mediaStoreVersions: () -> Map<String, String> = { emptyMap() },
 ) {
 
     /** How far a scan is: media items looked at, out of those the account's folders include. */
@@ -65,6 +67,8 @@ class MediaStoreScanner(
         policy: MediaScanPolicy = MediaScanPolicy(),
         isSessionCurrent: () -> Boolean = { true },
         onNewJobEnqueued: suspend () -> Unit = {},
+        /** Whether this run may start the weekly full verification (it hashes everything). */
+        allowFullVerification: Boolean = false,
     ): Int = withContext(Dispatchers.IO) {
         val finishScan = performanceMonitor?.begin(Metric.SyncMediaScan) ?: {}
         try {
@@ -73,6 +77,8 @@ class MediaStoreScanner(
             val total = (if (policy.includeImages) countIncluded(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image", policy) else 0) +
                 (if (policy.includeVideos) countIncluded(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", policy) else 0)
             val progress = ProgressCounter(total)
+            val versions = mediaStoreVersions()
+            val verificationStartedAt = uploadManager.beginScan(accountKey, versions, allowFullVerification)
             var count = 0
             if (policy.includeImages) {
                 count += scanCollection(
@@ -83,6 +89,7 @@ class MediaStoreScanner(
                     onNewJobEnqueued,
                     isSessionCurrent,
                     progress,
+                    verificationStartedAt,
                 )
             }
             if (policy.includeVideos) {
@@ -94,8 +101,12 @@ class MediaStoreScanner(
                     onNewJobEnqueued,
                     isSessionCurrent,
                     progress,
+                    verificationStartedAt,
                 )
             }
+            // Reached only when every item was examined: an interrupted scan
+            // leaves a running verification to resume next time.
+            uploadManager.finishScan(accountKey, versions, verificationStartedAt)
             count
         } finally {
             _scanProgress.value = null
@@ -145,6 +156,7 @@ class MediaStoreScanner(
         add(MediaStore.MediaColumns.DISPLAY_NAME)
         add(MediaStore.MediaColumns.SIZE)
         add(MediaStore.MediaColumns.DATE_ADDED)
+        add(MediaStore.MediaColumns.DATE_MODIFIED)
         add(MediaStore.MediaColumns.DATE_TAKEN)
         add(MediaStore.MediaColumns.BUCKET_ID)
         add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
@@ -190,6 +202,7 @@ class MediaStoreScanner(
         onNewJobEnqueued: suspend () -> Unit,
         isSessionCurrent: () -> Boolean,
         progress: ProgressCounter,
+        verificationStartedAt: Long?,
     ): Int {
         val selection = "${MediaStore.MediaColumns.SIZE} > 0"
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
@@ -207,6 +220,7 @@ class MediaStoreScanner(
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
             val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
             val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+            val dateModifiedColumn = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
             val dateTakenColumn = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
             val bucketIdColumn = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
             val bucketNameColumn = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
@@ -233,24 +247,36 @@ class MediaStoreScanner(
                 if (!policy.includes(sourceId, mediaKind)) continue
 
                 val itemUri = ContentUris.withAppendedId(collectionUri, id)
-                val jobId = uploadManager.enqueueMedia(
+                val generation = if (generationColumn >= 0) cursor.getLong(generationColumn) else 0L
+                val outcome = uploadManager.reconcileMedia(
                     accountKey = accountKey,
                     uri = itemUri,
                     filename = name,
-                    size = size,
                     capturedAtIso = capturedAtIso,
+                    fingerprint = MediaFingerprint(
+                        size = size,
+                        dateModifiedSeconds = if (dateModifiedColumn >= 0 && !cursor.isNull(dateModifiedColumn)) {
+                            cursor.getLong(dateModifiedColumn)
+                        } else {
+                            0L
+                        },
+                        generation = generation,
+                    ),
+                    fullVerificationStartedAt = verificationStartedAt,
                     source = UploadSource(
                         id = sourceId,
                         name = cursor.stringOrEmpty(bucketNameColumn, "Unknown source"),
                         relativePath = cursor.stringOrEmpty(relativePathColumn, ""),
                         volume = volume,
                         mediaStoreId = id.toString(),
-                        generation = if (generationColumn >= 0) cursor.getLong(generationColumn) else 0L,
+                        generation = generation,
                         mediaKind = mediaKind
                     ),
                     isSessionCurrent = isSessionCurrent,
                 )
-                if (jobId > 0) {
+                if (outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW ||
+                    outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW_VERSION
+                ) {
                     enqueued++
                     onNewJobEnqueued()
                 }

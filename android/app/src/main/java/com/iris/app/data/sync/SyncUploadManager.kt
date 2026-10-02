@@ -95,6 +95,132 @@ class SyncUploadManager(
         )
     }
 
+    /** What reconciling one scanned item with the queue did. */
+    enum class ScanOutcome {
+        /** Not queued before: hashed and queued. */
+        QUEUED_NEW,
+        /** Its bytes changed since they were hashed: the new content is queued. */
+        QUEUED_NEW_VERSION,
+        /** Nothing to upload: known with the same content. */
+        UNCHANGED,
+        /** Changed, but its row is being sent right now; the next scan picks it up. */
+        DEFERRED,
+    }
+
+    /**
+     * Brings the queue in line with one item the scanner found, hashing only
+     * when [MediaChangePolicy] says the cheap fingerprint is not enough.
+     */
+    suspend fun reconcileMedia(
+        accountKey: String,
+        uri: Uri,
+        filename: String,
+        capturedAtIso: String,
+        source: UploadSource?,
+        fingerprint: MediaFingerprint,
+        fullVerificationStartedAt: Long?,
+        isSessionCurrent: () -> Boolean = { true },
+        now: () -> Long = System::currentTimeMillis,
+    ): ScanOutcome = withContext(Dispatchers.IO) {
+        require(accountKey.isNotBlank()) { "An account key is required to enqueue media" }
+        ensureSession(isSessionCurrent)
+        val uriStr = uri.toString()
+        val known = dbHelper.knownMedia(accountKey, uriStr)
+        when (MediaChangePolicy.decide(known, fingerprint, fullVerificationStartedAt)) {
+            MediaChangePolicy.Verdict.UNCHANGED -> ScanOutcome.UNCHANGED
+            MediaChangePolicy.Verdict.ADOPT_FINGERPRINT -> {
+                dbHelper.recordVerifiedFingerprint(accountKey, known!!.jobId, fingerprint, filename, source, verifiedAt = null)
+                ScanOutcome.UNCHANGED
+            }
+            MediaChangePolicy.Verdict.NEW -> {
+                val hash = hash(uri)
+                ensureSession(isSessionCurrent)
+                val id = dbHelper.insertOrIgnoreJob(
+                    accountKey = accountKey,
+                    localUri = uriStr,
+                    filename = filename,
+                    byteSize = fingerprint.size,
+                    sha256 = hash,
+                    capturedAt = capturedAtIso,
+                    source = source,
+                    dateModifiedSeconds = fingerprint.dateModifiedSeconds,
+                    verifiedAt = now(),
+                )
+                if (id > 0L) ScanOutcome.QUEUED_NEW else ScanOutcome.UNCHANGED
+            }
+            MediaChangePolicy.Verdict.VERIFY -> {
+                val hash = hash(uri)
+                ensureSession(isSessionCurrent)
+                when {
+                    // Renamed, moved or touched: same bytes, nothing to send.
+                    hash.equals(known!!.sha256, ignoreCase = true) -> {
+                        dbHelper.recordVerifiedFingerprint(accountKey, known.jobId, fingerprint, filename, source, now())
+                        ScanOutcome.UNCHANGED
+                    }
+                    dbHelper.replaceWithNewVersion(
+                        accountKey, known.jobId, hash, fingerprint, filename, capturedAtIso, source, now(),
+                    ) -> ScanOutcome.QUEUED_NEW_VERSION
+                    else -> ScanOutcome.DEFERRED
+                }
+            }
+        }
+    }
+
+    /**
+     * Starts this account's scan: returns when the running full verification
+     * began, or null when none runs. One starts when MediaStore was rebuilt on
+     * a known volume (its ids may now name other items), or, when [allowPeriodic],
+     * once a week to catch changes MediaStore never reported.
+     */
+    suspend fun beginScan(
+        accountKey: String,
+        mediaStoreVersions: Map<String, String>,
+        allowPeriodic: Boolean,
+        now: Long = System.currentTimeMillis(),
+    ): Long? {
+        val state = dbHelper.scanState(accountKey)
+        state.fullVerificationStartedAt?.let { return it }
+        val due = when {
+            MediaChangePolicy.mediaStoreRebuilt(state.mediaStoreVersions, mediaStoreVersions) -> true
+            !allowPeriodic -> false
+            else -> state.lastFullVerificationAt?.let {
+                now - it >= MediaChangePolicy.FULL_VERIFICATION_INTERVAL_MILLIS
+            } ?: false
+        }
+        if (!due) return null
+        dbHelper.saveScanState(accountKey, state.copy(fullVerificationStartedAt = now))
+        return now
+    }
+
+    /** Records a scan that went through every item: versions seen, and a finished verification. */
+    suspend fun finishScan(
+        accountKey: String,
+        mediaStoreVersions: Map<String, String>,
+        fullVerificationStartedAt: Long?,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        val state = dbHelper.scanState(accountKey)
+        dbHelper.saveScanState(
+            accountKey,
+            UploadDatabaseHelper.ScanState(
+                // A card that is not mounted now keeps its last known version.
+                mediaStoreVersions = state.mediaStoreVersions + mediaStoreVersions,
+                fullVerificationStartedAt = null,
+                // The first scan is the baseline the weekly verification counts from.
+                lastFullVerificationAt = if (fullVerificationStartedAt != null) now else state.lastFullVerificationAt ?: now,
+            ),
+        )
+    }
+
+    private suspend fun hash(uri: Uri): String {
+        val finishHash = performanceMonitor?.begin(Metric.SyncMediaHash) ?: {}
+        return try {
+            mediaPayloadSource.computeSha256(uri)
+        } finally {
+            finishHash()
+        }
+    }
+
     /**
      * Returns false when an item needs retry. One item's transient failure does
      * not stop the pass: that item is set aside until the next pass and the rest

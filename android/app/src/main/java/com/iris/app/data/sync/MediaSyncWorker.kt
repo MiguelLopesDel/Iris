@@ -161,6 +161,8 @@ class MediaSyncWorker(
                                         )
                                     },
                                     onNewJobEnqueued = onNewJobEnqueued,
+                                    // Hashing the whole library is long; do it only on the charger.
+                                    allowFullVerification = isCharging(applicationContext),
                                 )
                             },
                             drainQueue = { workSignal ->
