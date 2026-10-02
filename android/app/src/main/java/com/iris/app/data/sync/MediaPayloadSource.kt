@@ -38,10 +38,20 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
             }
         }
 
-    fun computeSha256(uri: Uri): String {
+    fun computeSha256(uri: Uri): String = computeContent(uri).sha256
+
+    /** The hash and size of the bytes as they are read, which is what an upload sends. */
+    data class Content(val sha256: String, val size: Long)
+
+    /**
+     * Hashes the file and counts its bytes in one read. The count, not
+     * MediaStore's SIZE, is what the upload declares: an app can rewrite a
+     * file without MediaStore noticing, and its SIZE then trails the real file.
+     */
+    fun computeContent(uri: Uri): Content {
         val digest = MessageDigest.getInstance("SHA-256")
         val descriptor = openFileDescriptor(uri)
-        if (descriptor != null) {
+        val size = if (descriptor != null) {
             descriptor.use { fileDescriptor ->
                 FileInputStream(fileDescriptor.fileDescriptor).use { stream ->
                     updateDigest(stream, digest)
@@ -50,9 +60,16 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
         } else {
             contentResolver.openInputStream(uri)?.use { stream ->
                 updateDigest(stream, digest)
-            } ?: return ""
+            } ?: return Content("", 0L)
         }
-        return digest.digest().toHex()
+        return Content(digest.digest().toHex(), size)
+    }
+
+    /** The file's current size without reading it, or null when unknown. */
+    fun sizeOf(uri: Uri): Long? = try {
+        contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize.takeIf { size -> size >= 0 } }
+    } catch (_: Exception) {
+        null
     }
 
     /**
@@ -100,12 +117,15 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
         }
     }
 
-    private fun updateDigest(stream: InputStream, digest: MessageDigest) {
+    private fun updateDigest(stream: InputStream, digest: MessageDigest): Long {
         val buffer = ByteArray(BUFFER_SIZE_BYTES)
         var count: Int
+        var total = 0L
         while (stream.read(buffer).also { count = it } != -1) {
             digest.update(buffer, 0, count)
+            total += count
         }
+        return total
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }

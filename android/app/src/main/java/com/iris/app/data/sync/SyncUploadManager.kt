@@ -77,22 +77,165 @@ class SyncUploadManager(
         if (dbHelper.isUriEnqueued(accountKey, uriStr)) {
             return@withContext -1L
         }
-        val finishHash = performanceMonitor?.begin(Metric.SyncMediaHash) ?: {}
-        val hash = try {
-            mediaPayloadSource.computeSha256(uri)
-        } finally {
-            finishHash()
-        }
+        val content = hash(uri)
         ensureSession(isSessionCurrent)
         dbHelper.insertOrIgnoreJob(
             accountKey = accountKey,
             localUri = uriStr,
             filename = filename,
-            byteSize = size,
-            sha256 = hash,
+            byteSize = content.size,
+            sourceSize = size,
+            sha256 = content.sha256,
             capturedAt = capturedAtIso,
             source = source
         )
+    }
+
+    /** What reconciling one scanned item with the queue did. */
+    enum class ScanOutcome {
+        /** Not queued before: hashed and queued. */
+        QUEUED_NEW,
+        /** Its bytes changed since they were hashed: the new content is queued. */
+        QUEUED_NEW_VERSION,
+        /** Nothing to upload: known with the same content. */
+        UNCHANGED,
+        /** Changed, but its row is being sent right now; the next scan picks it up. */
+        DEFERRED,
+    }
+
+    /**
+     * Brings the queue in line with one item the scanner found, hashing only
+     * when [MediaChangePolicy] says the cheap fingerprint is not enough.
+     */
+    suspend fun reconcileMedia(
+        accountKey: String,
+        uri: Uri,
+        filename: String,
+        capturedAtIso: String,
+        source: UploadSource?,
+        fingerprint: MediaFingerprint,
+        fullVerificationStartedAt: Long?,
+        isSessionCurrent: () -> Boolean = { true },
+        now: () -> Long = System::currentTimeMillis,
+    ): ScanOutcome = withContext(Dispatchers.IO) {
+        require(accountKey.isNotBlank()) { "An account key is required to enqueue media" }
+        ensureSession(isSessionCurrent)
+        val uriStr = uri.toString()
+        val known = dbHelper.knownMedia(accountKey, uriStr)
+        when (MediaChangePolicy.decide(known, fingerprint, fullVerificationStartedAt)) {
+            MediaChangePolicy.Verdict.UNCHANGED -> ScanOutcome.UNCHANGED
+            MediaChangePolicy.Verdict.ADOPT_FINGERPRINT -> {
+                dbHelper.recordVerifiedFingerprint(accountKey, known!!.jobId, fingerprint, filename, source, verifiedAt = null)
+                ScanOutcome.UNCHANGED
+            }
+            MediaChangePolicy.Verdict.NEW -> {
+                val content = hash(uri)
+                ensureSession(isSessionCurrent)
+                val id = dbHelper.insertOrIgnoreJob(
+                    accountKey = accountKey,
+                    localUri = uriStr,
+                    filename = filename,
+                    byteSize = content.size,
+                    sourceSize = fingerprint.size,
+                    sha256 = content.sha256,
+                    capturedAt = capturedAtIso,
+                    source = source,
+                    dateModifiedSeconds = fingerprint.dateModifiedSeconds,
+                    verifiedAt = now(),
+                )
+                if (id > 0L) ScanOutcome.QUEUED_NEW else ScanOutcome.UNCHANGED
+            }
+            MediaChangePolicy.Verdict.VERIFY -> {
+                val content = hash(uri)
+                ensureSession(isSessionCurrent)
+                when {
+                    // Renamed, moved or touched: same bytes, nothing to send.
+                    content.sha256.equals(known!!.sha256, ignoreCase = true) -> {
+                        dbHelper.recordVerifiedFingerprint(accountKey, known.jobId, fingerprint, filename, source, now())
+                        ScanOutcome.UNCHANGED
+                    }
+                    dbHelper.replaceWithNewVersion(
+                        accountKey, known.jobId, content.sha256, content.size, fingerprint, filename,
+                        capturedAtIso, source, now(),
+                    ) -> ScanOutcome.QUEUED_NEW_VERSION
+                    else -> ScanOutcome.DEFERRED
+                }
+            }
+        }
+    }
+
+    /**
+     * Starts this account's scan: returns when the running full verification
+     * began, or null when none runs. One starts when MediaStore was rebuilt on
+     * a known volume (its ids may now name other items), or, when [allowPeriodic],
+     * once a week to catch changes MediaStore never reported.
+     */
+    suspend fun beginScan(
+        accountKey: String,
+        mediaStoreVersions: Map<String, String>,
+        allowPeriodic: Boolean,
+        now: Long = System.currentTimeMillis(),
+    ): Long? {
+        val state = dbHelper.scanState(accountKey)
+        state.fullVerificationStartedAt?.let { return it }
+        val due = when {
+            MediaChangePolicy.mediaStoreRebuilt(state.mediaStoreVersions, mediaStoreVersions) -> true
+            !allowPeriodic -> false
+            else -> state.lastFullVerificationAt?.let {
+                now - it >= MediaChangePolicy.FULL_VERIFICATION_INTERVAL_MILLIS
+            } ?: false
+        }
+        if (!due) return null
+        dbHelper.saveScanState(accountKey, state.copy(fullVerificationStartedAt = now))
+        return now
+    }
+
+    /** Records a scan that went through every item: versions seen, and a finished verification. */
+    suspend fun finishScan(
+        accountKey: String,
+        mediaStoreVersions: Map<String, String>,
+        fullVerificationStartedAt: Long?,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        val state = dbHelper.scanState(accountKey)
+        dbHelper.saveScanState(
+            accountKey,
+            state.copy(
+                // A card that is not mounted now keeps its last known version.
+                mediaStoreVersions = state.mediaStoreVersions + mediaStoreVersions,
+                fullVerificationStartedAt = null,
+                // The first scan is the baseline the weekly verification counts from.
+                lastFullVerificationAt = if (fullVerificationStartedAt != null) now else state.lastFullVerificationAt ?: now,
+            ),
+        )
+    }
+
+    /**
+     * Ties this account's queue to the server installation it describes.
+     * When [instanceId] differs from the one recorded, the queue's states
+     * belong to another installation and are requeued. With none recorded
+     * (a queue from before this check) they are requeued too: it cannot tell
+     * which installation they describe, and requeuing costs only reservations,
+     * which the server answers "duplicate" for what it has. A new account has
+     * nothing to requeue. A server too old to report an id is left alone.
+     * Returns how many items were requeued.
+     */
+    suspend fun bindServerInstance(accountKey: String, instanceId: String?): Int {
+        if (instanceId.isNullOrBlank()) return 0
+        val state = dbHelper.scanState(accountKey)
+        if (state.serverInstanceId == instanceId) return 0
+        val requeued = dbHelper.requeueForNewServer(accountKey)
+        dbHelper.saveScanState(accountKey, state.copy(serverInstanceId = instanceId))
+        return requeued
+    }
+
+    private suspend fun hash(uri: Uri): MediaPayloadSource.Content {
+        val finishHash = performanceMonitor?.begin(Metric.SyncMediaHash) ?: {}
+        return try {
+            mediaPayloadSource.computeContent(uri)
+        } finally {
+            finishHash()
+        }
     }
 
     /**

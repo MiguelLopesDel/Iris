@@ -209,7 +209,15 @@ data class LocalUploadJob(
     val chunkSize: Int = 32 * 1024 * 1024,
     val state: UploadJobState = UploadJobState.QUEUED,
     val errorMessage: String? = null,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    /** MediaStore DATE_MODIFIED when the hash was taken; null on rows from before it was recorded. */
+    val sourceDateModified: Long? = null,
+    /** The hash this row had before the local file was edited, if it was. */
+    val previousSha256: String? = null,
+    /** When the hash was last confirmed against the file. */
+    val verifiedAt: Long? = null,
+    /** MediaStore's SIZE when hashed, part of the fingerprint; byteSize is the real file size sent. */
+    val sourceSize: Long? = null,
 )
 
 /** Um mês do acervo e onde ele começa na listagem ordenada por data. */

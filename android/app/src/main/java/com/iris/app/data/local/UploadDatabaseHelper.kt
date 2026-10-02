@@ -52,6 +52,7 @@ class UploadDatabaseHelper(
         createUploadJobsTable(db)
         createSyncCursorsTable(db)
         createSyncRunsTable(db)
+        createScanStateTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -122,6 +123,211 @@ class UploadDatabaseHelper(
         } else if (oldVersion < 6) {
             db.execSQL("ALTER TABLE sync_runs ADD COLUMN foreground_service INTEGER")
         }
+        if (oldVersion < 7) {
+            // Steps 3 and 4 rebuild upload_jobs with the current columns, so an
+            // upgrade from before them already has these.
+            addColumnIfMissing(db, "upload_jobs", "source_date_modified", "INTEGER")
+            addColumnIfMissing(db, "upload_jobs", "previous_sha256", "TEXT")
+            addColumnIfMissing(db, "upload_jobs", "verified_at", "INTEGER")
+            createScanStateTable(db)
+        }
+        if (oldVersion < 8) {
+            addColumnIfMissing(db, "upload_jobs", "source_size", "INTEGER")
+            // Uploads the server refused because the bytes did not match the
+            // declared hash were failed for good. They were sent at MediaStore's
+            // SIZE, which can trail a file rewritten without MediaStore noticing;
+            // uploads now measure the real file, so give them another chance.
+            db.execSQL(
+                "UPDATE upload_jobs SET state = 'QUEUED', upload_id = NULL, next_byte_offset = 0, " +
+                    "error_message = NULL WHERE state = 'FAILED' AND error_message LIKE '%Hash do arquivo%'"
+            )
+        }
+        if (oldVersion < 9) {
+            addColumnIfMissing(db, "scan_state", "server_instance_id", "TEXT")
+        }
+    }
+
+    /** What the queue knows about [localUri] for this account, or null when it is not queued. */
+    suspend fun knownMedia(accountKey: String, localUri: String): com.iris.app.data.sync.KnownMedia? =
+        withContext(Dispatchers.IO) {
+            require(accountKey.isNotBlank()) { "An account key is required to inspect upload jobs" }
+            readableDatabase.rawQuery(
+                "SELECT id, sha256, COALESCE(source_size, byte_size), source_date_modified, source_generation, verified_at " +
+                    "FROM upload_jobs WHERE account_key = ? AND local_uri = ? LIMIT 1",
+                arrayOf(accountKey, localUri)
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                com.iris.app.data.sync.KnownMedia(
+                    jobId = cursor.getLong(0),
+                    sha256 = cursor.getString(1),
+                    fingerprint = com.iris.app.data.sync.MediaFingerprint(
+                        size = cursor.getLong(2),
+                        dateModifiedSeconds = if (cursor.isNull(3)) null else cursor.getLong(3),
+                        generation = cursor.getLong(4),
+                    ),
+                    verifiedAt = if (cursor.isNull(5)) null else cursor.getLong(5),
+                )
+            }
+        }
+
+    /**
+     * Records that the file behind job [id] still has the hash it was queued
+     * with: renamed, moved or touched, but the same bytes. Its upload state is
+     * untouched.
+     */
+    suspend fun recordVerifiedFingerprint(
+        accountKey: String,
+        id: Long,
+        fingerprint: com.iris.app.data.sync.MediaFingerprint,
+        filename: String,
+        source: com.iris.app.data.model.UploadSource?,
+        verifiedAt: Long?,
+    ) = withContext(Dispatchers.IO) {
+        writableDatabase.update(
+            "upload_jobs",
+            ContentValues().apply {
+                put("source_size", fingerprint.size)
+                put("source_date_modified", fingerprint.dateModifiedSeconds)
+                put("source_generation", fingerprint.generation)
+                put("filename", filename)
+                putSource(source)
+                if (verifiedAt != null) put("verified_at", verifiedAt)
+            },
+            "id = ? AND account_key = ?",
+            arrayOf(id.toString(), accountKey)
+        )
+    }
+
+    /**
+     * The file behind job [id] now holds other bytes (edited in place, or the
+     * id was reused after MediaStore was rebuilt): queue the new content in the
+     * same row, keeping the old hash in previous_sha256. A job being sent right
+     * now is left alone; the next scan finds the change again. Returns whether
+     * the row was replaced.
+     */
+    suspend fun replaceWithNewVersion(
+        accountKey: String,
+        id: Long,
+        sha256: String,
+        byteSize: Long,
+        fingerprint: com.iris.app.data.sync.MediaFingerprint,
+        filename: String,
+        capturedAt: String,
+        source: com.iris.app.data.model.UploadSource?,
+        verifiedAt: Long,
+    ): Boolean = runInWriteTransaction { db ->
+        db.execSQL(
+            "UPDATE upload_jobs SET previous_sha256 = sha256 " +
+                "WHERE id = ? AND account_key = ? AND state != 'UPLOADING' AND sha256 != ?",
+            arrayOf<Any>(id, accountKey, sha256)
+        )
+        db.update(
+            "upload_jobs",
+            ContentValues().apply {
+                put("sha256", sha256)
+                put("byte_size", byteSize)
+                put("source_size", fingerprint.size)
+                put("source_date_modified", fingerprint.dateModifiedSeconds)
+                put("source_generation", fingerprint.generation)
+                put("filename", filename)
+                put("captured_at", capturedAt)
+                putSource(source)
+                putNull("upload_id")
+                put("next_byte_offset", 0L)
+                put("state", UploadJobState.QUEUED.name)
+                putNull("error_message")
+                put("verified_at", verifiedAt)
+                put("updated_at", System.currentTimeMillis())
+            },
+            "id = ? AND account_key = ? AND state != 'UPLOADING'",
+            arrayOf(id.toString(), accountKey)
+        ) > 0
+    }
+
+    /**
+     * The bytes behind job [id] are not the ones it declared (its file was
+     * rewritten since it was hashed): record what they are now and start its
+     * upload over. Not a new version of the media, so previous_sha256 stays.
+     */
+    suspend fun setContent(accountKey: String, id: Long, sha256: String, byteSize: Long) = withContext(Dispatchers.IO) {
+        writableDatabase.update(
+            "upload_jobs",
+            ContentValues().apply {
+                put("sha256", sha256)
+                put("byte_size", byteSize)
+                putNull("upload_id")
+                put("next_byte_offset", 0L)
+                put("verified_at", System.currentTimeMillis())
+                put("updated_at", System.currentTimeMillis())
+            },
+            "id = ? AND account_key = ?",
+            arrayOf(id.toString(), accountKey)
+        )
+    }
+
+    /** This account's scan bookkeeping: MediaStore versions and full verification times. */
+    suspend fun scanState(accountKey: String): ScanState = withContext(Dispatchers.IO) {
+        readableDatabase.rawQuery(
+            "SELECT media_store_versions, full_verification_started_at, last_full_verification_at, server_instance_id " +
+                "FROM scan_state WHERE account_key = ?",
+            arrayOf(accountKey)
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return@use ScanState()
+            ScanState(
+                mediaStoreVersions = decodeVersions(cursor.getString(0).orEmpty()),
+                fullVerificationStartedAt = if (cursor.isNull(1)) null else cursor.getLong(1),
+                lastFullVerificationAt = if (cursor.isNull(2)) null else cursor.getLong(2),
+                serverInstanceId = cursor.getString(3),
+            )
+        }
+    }
+
+    suspend fun saveScanState(accountKey: String, state: ScanState) = withContext(Dispatchers.IO) {
+        writableDatabase.insertWithOnConflict(
+            "scan_state",
+            null,
+            ContentValues().apply {
+                put("account_key", accountKey)
+                put("media_store_versions", encodeVersions(state.mediaStoreVersions))
+                put("full_verification_started_at", state.fullVerificationStartedAt)
+                put("last_full_verification_at", state.lastFullVerificationAt)
+                put("server_instance_id", state.serverInstanceId)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE
+        )
+    }
+
+    data class ScanState(
+        val mediaStoreVersions: Map<String, String> = emptyMap(),
+        val fullVerificationStartedAt: Long? = null,
+        val lastFullVerificationAt: Long? = null,
+        /** The server installation this account's queue states describe. */
+        val serverInstanceId: String? = null,
+    )
+
+    /**
+     * The account's queue described another server installation (reinstalled,
+     * or a fresh one at the same address with the same user id): what it marked
+     * uploaded or already present says nothing about this server. Every item
+     * goes back to the queue with its hash kept, so nothing is read again; the
+     * server answers "duplicate" for what it already has. The change-feed
+     * cursor belonged to the old installation too.
+     */
+    suspend fun requeueForNewServer(accountKey: String): Int = runInWriteTransaction { db ->
+        val requeued = db.update(
+            "upload_jobs",
+            ContentValues().apply {
+                put("state", UploadJobState.QUEUED.name)
+                putNull("upload_id")
+                put("next_byte_offset", 0L)
+                putNull("error_message")
+                put("updated_at", System.currentTimeMillis())
+            },
+            "account_key = ? AND NOT (state = 'QUEUED' AND upload_id IS NULL)",
+            arrayOf(accountKey)
+        )
+        db.delete("sync_cursors", "account_key = ?", arrayOf(accountKey))
+        requeued
     }
 
     suspend fun insertOrIgnoreJob(
@@ -131,7 +337,10 @@ class UploadDatabaseHelper(
         byteSize: Long,
         sha256: String,
         capturedAt: String,
-        source: com.iris.app.data.model.UploadSource? = null
+        source: com.iris.app.data.model.UploadSource? = null,
+        dateModifiedSeconds: Long? = null,
+        verifiedAt: Long? = null,
+        sourceSize: Long? = null,
     ): Long = withContext(Dispatchers.IO) {
         require(accountKey.isNotBlank()) { "An account key is required for every upload job" }
         writableDatabase.let { db ->
@@ -149,6 +358,9 @@ class UploadDatabaseHelper(
                 put("source_media_store_id", source?.mediaStoreId)
                 put("source_generation", source?.generation ?: 0L)
                 put("source_media_kind", source?.mediaKind)
+                put("source_date_modified", dateModifiedSeconds)
+                put("source_size", sourceSize)
+                put("verified_at", verifiedAt)
                 put("state", UploadJobState.QUEUED.name)
                 put("updated_at", System.currentTimeMillis())
             }
@@ -541,16 +753,31 @@ class UploadDatabaseHelper(
                 UploadJobState.QUEUED
             },
             errorMessage = cursor.getString(10),
-            updatedAt = cursor.getLong(11)
+            updatedAt = cursor.getLong(11),
+            // Present only in queries built from JOB_COLUMNS.
+            sourceDateModified = if (cursor.columnCount > 19 && !cursor.isNull(19)) cursor.getLong(19) else null,
+            previousSha256 = if (cursor.columnCount > 20) cursor.getString(20) else null,
+            verifiedAt = if (cursor.columnCount > 21 && !cursor.isNull(21)) cursor.getLong(21) else null,
+            sourceSize = if (cursor.columnCount > 22 && !cursor.isNull(22)) cursor.getLong(22) else null,
         )
+    }
+
+    private fun ContentValues.putSource(source: com.iris.app.data.model.UploadSource?) {
+        if (source == null) return
+        put("source_id", source.id)
+        put("source_name", source.name)
+        put("source_relative_path", source.relativePath)
+        put("source_volume", source.volume)
+        put("source_media_store_id", source.mediaStoreId)
+        put("source_media_kind", source.mediaKind)
     }
 
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
-        const val DATABASE_VERSION = 6
+        const val DATABASE_VERSION = 9
         const val SYNC_RUN_HISTORY_LIMIT = 50
         private const val JOB_COLUMNS =
-            "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind FROM upload_jobs"
+            "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind, source_date_modified, previous_sha256, verified_at, source_size FROM upload_jobs"
 
         private fun createUploadJobsTable(db: SQLiteDatabase) {
             db.execSQL(
@@ -570,6 +797,10 @@ class UploadDatabaseHelper(
                     source_media_store_id TEXT,
                     source_generation INTEGER NOT NULL DEFAULT 0,
                     source_media_kind TEXT,
+                    source_date_modified INTEGER,
+                    previous_sha256 TEXT,
+                    verified_at INTEGER,
+                    source_size INTEGER,
                     upload_id TEXT,
                     next_byte_offset INTEGER NOT NULL DEFAULT 0,
                     chunk_size INTEGER NOT NULL DEFAULT 33554432,
@@ -614,6 +845,35 @@ class UploadDatabaseHelper(
             )
             db.execSQL("CREATE INDEX idx_sync_runs_account_id ON sync_runs(account_key, id)")
         }
+
+        private fun createScanStateTable(db: SQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS scan_state (
+                    account_key TEXT PRIMARY KEY NOT NULL,
+                    media_store_versions TEXT NOT NULL DEFAULT '',
+                    full_verification_started_at INTEGER,
+                    last_full_verification_at INTEGER,
+                    server_instance_id TEXT
+                )
+                """.trimIndent()
+            )
+        }
+
+        private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, type: String) {
+            val exists = db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                generateSequence { if (cursor.moveToNext()) cursor.getString(nameIndex) else null }.any { it == column }
+            }
+            if (!exists) db.execSQL("ALTER TABLE $table ADD COLUMN $column $type")
+        }
+
+        // Volume names and MediaStore versions contain neither '=' nor '\n'.
+        internal fun encodeVersions(versions: Map<String, String>): String =
+            versions.entries.sortedBy { it.key }.joinToString("\n") { "${it.key}=${it.value}" }
+
+        internal fun decodeVersions(text: String): Map<String, String> =
+            text.lineSequence().filter { '=' in it }.associate { it.substringBefore('=') to it.substringAfter('=') }
 
         private fun createSyncCursorsTable(db: SQLiteDatabase) {
             db.execSQL(

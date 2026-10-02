@@ -58,16 +58,43 @@ internal class ResumableUploadTransfer(
      * retried: it can never succeed, and retrying it stopped the whole queue on
      * every run, so one deleted photo halted the backup for good.
      */
-    suspend fun execute(job: LocalUploadJob): ItemResult = withContext(Dispatchers.IO) {
+    suspend fun execute(queued: LocalUploadJob): ItemResult = withContext(Dispatchers.IO) {
         var readFailed = false
-        val result = transfer(job) { readFailed = true }
+        val job = try {
+            withCurrentContent(queued)
+        } catch (_: IOException) {
+            readFailed = true
+            null
+        }
+        val result = if (job == null) ItemResult.RETRY else transfer(job) { readFailed = true }
         when {
             // A deleted file surfaces as the same IOException as a dropped
             // link; only its absence on the device tells the two apart.
             result == ItemResult.RETRY && readFailed &&
-                !context.mediaPayloadSource.isAvailable(Uri.parse(job.localUri)) -> markSourceMissing(job)
+                !context.mediaPayloadSource.isAvailable(Uri.parse(queued.localUri)) -> markSourceMissing(queued)
             else -> result
         }
+    }
+
+    /**
+     * A job not yet reserved declares its hash and size to the server, and
+     * both must describe the file as it is now. An app can rewrite a file
+     * after it was hashed, without MediaStore noticing; the upload then sent
+     * the old size, the server got different bytes and refused them. A
+     * changed size is cheap to see, and the file is hashed again only then.
+     */
+    private suspend fun withCurrentContent(job: LocalUploadJob): LocalUploadJob {
+        if (!job.uploadId.isNullOrBlank()) return job
+        val uri = Uri.parse(job.localUri)
+        val size = context.mediaPayloadSource.sizeOf(uri) ?: return job
+        if (size == job.byteSize) return job
+        return refreshContent(job)
+    }
+
+    private suspend fun refreshContent(job: LocalUploadJob): LocalUploadJob {
+        val content = context.mediaPayloadSource.computeContent(Uri.parse(job.localUri))
+        context.dbHelper.setContent(context.accountKey, job.id, content.sha256, content.size)
+        return job.copy(sha256 = content.sha256, byteSize = content.size, uploadId = null, nextByteOffset = 0L)
     }
 
     private suspend fun markSourceMissing(job: LocalUploadJob): ItemResult {
@@ -201,6 +228,25 @@ internal class ResumableUploadTransfer(
             if (failure.statusCode == 404) {
                 db.resetUploadProgress(accountKey, job.id)
                 ItemResult.RETRY
+            } else if (failure.statusCode == HASH_MISMATCH_STATUS) {
+                // The bytes sent are not the ones hashed: the file changed in
+                // between. Hash it again and send it from the start.
+                val before = job.sha256
+                val refreshed = try {
+                    refreshContent(job)
+                } catch (_: IOException) {
+                    onIoFailure()
+                    return@withContext ItemResult.RETRY
+                }
+                if (refreshed.sha256 == before && refreshed.byteSize == job.byteSize) {
+                    // Same bytes on a second read: not a changed file. Retrying would loop.
+                    db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
+                        failure.message ?: "O servidor recebeu bytes diferentes do arquivo")
+                    ItemResult.FAILED
+                } else {
+                    db.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                    ItemResult.RETRY
+                }
             } else if (failure.statusCode != 401 && failure.statusCode != 409 && !isTransientHttpStatus(failure.statusCode)) {
                 db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
                     failure.message ?: "Falha ao concluir o envio")
@@ -262,6 +308,9 @@ internal class ResumableUploadTransfer(
          * Other 4xx (400, 413, 415...) reject the item itself and stay final.
          */
         fun isTransientHttpStatus(code: Int): Boolean = code == 408 || code == 429 || code >= 500
+
+        /** The server's answer when the received bytes do not match the declared hash. */
+        const val HASH_MISMATCH_STATUS = 422
 
         const val SOURCE_MISSING_MESSAGE = "O arquivo não existe mais no aparelho"
     }

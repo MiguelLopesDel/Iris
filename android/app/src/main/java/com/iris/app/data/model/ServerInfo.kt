@@ -30,6 +30,8 @@ data class ServerInfo(
 @Serializable
 data class HealthResponse(
     @SerialName("status") val status: String = "ok",
-    @SerialName("mode") val mode: String = "legacy"
+    @SerialName("mode") val mode: String = "legacy",
+    /** This installation's identifier; it changes when the server is reinstalled. Null on old servers. */
+    @SerialName("instance_id") val instanceId: String? = null
 )
 
