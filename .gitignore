@@ -156,7 +156,6 @@ tmp_test_images/
 # AI assistant context files
 CLAUDE.md
 AGENTS.md
-!/AGENTS.md
 GEMINI.md
 
 # Guia interno de engenharia & boas práticas (não versionado)
