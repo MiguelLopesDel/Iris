@@ -118,6 +118,19 @@ class MediaOriginIndexTest {
     }
 
     @Test
+    fun `a gallery cell matches its upload although the two name the photo with different URIs`() {
+        // The scanner queues the typed URI; the device gallery pages the files collection.
+        val uploaded = job("abc", UploadJobState.DUPLICATE, id = 1000208078L)
+        val record = MediaRecord(
+            index = -42,
+            arquivo = "Screenshot.jpg",
+            deviceUri = "content://media/external/file/1000208078",
+        )
+
+        assertEquals(MediaOrigin.ON_DEVICE, MediaOriginIndex.from(listOf(uploaded)).originOf(record))
+    }
+
+    @Test
     fun `processing and finished hashes indicate that Iris has a copy`() {
         val processing = MediaOriginIndex.from(listOf(job("abc", UploadJobState.PROCESSING)))
         val finished = MediaOriginIndex.from(listOf(job("def", UploadJobState.READY)))

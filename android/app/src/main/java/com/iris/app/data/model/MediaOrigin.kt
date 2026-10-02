@@ -48,7 +48,7 @@ class MediaOriginIndex(
     }
 
     fun originOf(record: MediaRecord): MediaOrigin = record.deviceUri?.let { uri ->
-        stateByLocalUri[uri] ?: MediaOrigin.DEVICE_ONLY
+        stateByLocalUri[MediaStoreKey.of(uri)] ?: MediaOrigin.DEVICE_ONLY
     } ?: originOf(record.contentHash)
 
     /** Processing and finished jobs mean the server has already accepted the bytes. */
@@ -65,7 +65,7 @@ class MediaOriginIndex(
             val stateByLocalUri = mutableMapOf<String, MediaOrigin>()
             for (job in jobs) {
                 val candidate = job.state.toOrigin()
-                val localUri = job.localUri
+                val localUri = job.localUri.let { if (it.isBlank()) it else MediaStoreKey.of(it) }
                 val localCurrent = stateByLocalUri[localUri]
                 if (localUri.isNotBlank() && (localCurrent == null || candidate.rank() > localCurrent.rank())) {
                     stateByLocalUri[localUri] = candidate
