@@ -50,6 +50,7 @@ from core import (
     instance_lock,
     instance_settings,
     library_trash,
+    session_cookie,
     space_catalog,
 )
 from core import backup as backup_mod
@@ -839,6 +840,7 @@ async def log_request(request: Request, call_next):
 # and is a no-op for already-compressed media/thumbnails (own content types).
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 if app.state.multiuser_enabled:
+    _cookie_mode = session_cookie.https_only_mode(os.environ)
     # Must be outermost so the authentication middleware can read request.session.
     app.add_middleware(
         SessionMiddleware,
@@ -846,9 +848,10 @@ if app.state.multiuser_enabled:
         session_cookie="iris_session",
         max_age=60 * 60 * 24 * 14,
         same_site="lax",
-        https_only=os.environ.get("IRIS_SESSION_HTTPS_ONLY", str(_private_server_requested)).lower()
-        in {"1", "true", "yes", "on"},
+        https_only=_cookie_mode == session_cookie.ALWAYS,
     )
+    if _cookie_mode == session_cookie.AUTO:
+        app.add_middleware(session_cookie.SecureCookieOverHttps, cookie_name="iris_session")
 
 # Static assets
 static_dir = Path(__file__).parent / "static"
