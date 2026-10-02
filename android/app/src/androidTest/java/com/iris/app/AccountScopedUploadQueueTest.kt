@@ -85,6 +85,7 @@ class AccountScopedUploadQueueTest {
     private val uploadIdFilenames = ConcurrentHashMap<String, String>()
     private val rejectChunksForFilenames = ConcurrentHashMap.newKeySet<String>()
     private val loseUploadOnceForFilenames = ConcurrentHashMap.newKeySet<String>()
+    private val unavailableOnceForFilenames = ConcurrentHashMap.newKeySet<String>()
 
     private fun initializedMediaCount(recorded: List<RecordedRequest>): Int = recorded.sumOf { request ->
         when (request.path) {
@@ -242,6 +243,9 @@ class AccountScopedUploadQueueTest {
                         // A 404 means the server lost the upload session: a transient failure.
                         if (filename != null && loseUploadOnceForFilenames.remove(filename)) {
                             return MockResponse().setResponseCode(404)
+                        }
+                        if (filename != null && unavailableOnceForFilenames.remove(filename)) {
+                            return MockResponse().setResponseCode(503)
                         }
                         MockResponse().setHeader("Content-Type", "application/json")
                             .setBody(
@@ -1491,6 +1495,25 @@ class AccountScopedUploadQueueTest {
             assertEquals("READY", jobs.getValue(flaky.filename).state.name)
         } finally {
             (listOf(flaky) + others).forEach { app.contentResolver.delete(it.uri, null, null) }
+        }
+    }
+
+    @Test
+    fun server_unavailable_while_sending_a_chunk_is_retried_not_failed() = runBlocking {
+        val (accountKey, sessionIdentity, manager) = signedInManager("unavailable")
+        val stamp = System.nanoTime()
+        val item = createMediaStoreBenchmarkItem(app.contentResolver, "unavailable-$stamp.jpg", false, 96 * 1024, stamp)
+        unavailableOnceForFilenames += item.filename
+        try {
+            assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+
+            assertFalse(manager.processQueue(accountKey, sessionIdentity))
+            assertEquals("QUEUED", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+            assertEquals("READY", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+        } finally {
+            app.contentResolver.delete(item.uri, null, null)
         }
     }
 

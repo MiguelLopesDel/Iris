@@ -170,7 +170,7 @@ internal class ResumableUploadTransfer(
                             }
                         }
                     }
-                    response.code() == 401 -> return@withContext ItemResult.RETRY
+                    response.code() == 401 || isTransientHttpStatus(response.code()) -> return@withContext ItemResult.RETRY
                     response.code() == 404 -> { db.resetUploadProgress(accountKey, job.id); return@withContext ItemResult.RETRY }
                     else -> {
                         val error = response.errorBody()?.string() ?: "Erro HTTP ${response.code()}"
@@ -201,7 +201,7 @@ internal class ResumableUploadTransfer(
             if (failure.statusCode == 404) {
                 db.resetUploadProgress(accountKey, job.id)
                 ItemResult.RETRY
-            } else if (failure.statusCode != 401 && failure.statusCode != 409 && failure.statusCode < 500) {
+            } else if (failure.statusCode != 401 && failure.statusCode != 409 && !isTransientHttpStatus(failure.statusCode)) {
                 db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
                     failure.message ?: "Falha ao concluir o envio")
                 ItemResult.FAILED
@@ -222,7 +222,7 @@ internal class ResumableUploadTransfer(
             if (failure.code() == 404 && remoteUploadStarted) {
                 db.resetUploadProgress(accountKey, job.id)
                 ItemResult.RETRY
-            } else if (failure.code() == 401 || failure.code() == 409) {
+            } else if (failure.code() == 401 || failure.code() == 409 || isTransientHttpStatus(failure.code())) {
                 db.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
                 ItemResult.RETRY
             } else {
@@ -255,6 +255,14 @@ internal class ResumableUploadTransfer(
     }
 
     companion object {
+        /**
+         * A status that says "not now" rather than "never": a timeout, rate
+         * limiting or a server error. Marking those items failed left them out
+         * of every later pass, although the next attempt would likely succeed.
+         * Other 4xx (400, 413, 415...) reject the item itself and stay final.
+         */
+        fun isTransientHttpStatus(code: Int): Boolean = code == 408 || code == 429 || code >= 500
+
         const val SOURCE_MISSING_MESSAGE = "O arquivo não existe mais no aparelho"
     }
 }
