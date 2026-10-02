@@ -22,18 +22,23 @@ from core.first_setup import (
     find_legacy_library,
     summarize_legacy_library,
 )
+from core.password_policy import PasswordRejected, check_new_password, recommendations
 from core.users_db import has_users
 
 _PASSWORD_ATTEMPTS = 3
 
 
-def _read_password() -> str:
+def _read_password(username: str) -> str:
     """Prompt until the password is valid and confirmed, instead of failing with a traceback."""
     for _ in range(_PASSWORD_ATTEMPTS):
-        password = getpass.getpass("Senha do administrador (mínimo 12 caracteres): ")
-        if len(password) < 12:
-            print("A senha precisa ter pelo menos 12 caracteres. Tente de novo.", file=sys.stderr)
+        password = getpass.getpass("Senha do administrador (mínimo 8 caracteres, recomendado 12+): ")
+        try:
+            check_new_password(password, username)
+        except PasswordRejected as exc:
+            print(f"{exc}. Tente de novo.", file=sys.stderr)
             continue
+        for advice in recommendations(password):
+            print(advice, file=sys.stderr)
         if getpass.getpass("Repita a senha: ") != password:
             print("As senhas não conferem. Tente de novo.", file=sys.stderr)
             continue
@@ -68,7 +73,7 @@ def main() -> int:
             "e não serão movidos."
         )
 
-    password = _read_password()
+    password = _read_password(args.username)
     if args.dry_run:
         action = (
             f"moveria {legacy.db} e {legacy.media_root}" if legacy.has_db else "criaria uma biblioteca vazia"
