@@ -40,6 +40,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -1515,6 +1516,39 @@ class AccountScopedUploadQueueTest {
         } finally {
             app.contentResolver.delete(item.uri, null, null)
         }
+    }
+
+    @Test
+    fun a_pass_can_set_aside_more_items_than_sqlite_bound_variables() = runBlocking {
+        // Older SQLite versions allow 999 bound variables per statement. Setting
+        // items aside must not grow the claim query with the number of failures.
+        val accountKey = "server|user:77"
+        val count = 1_200
+        repeat(count) { index ->
+            assertTrue(dbHelper.insertOrIgnoreJob(
+                accountKey = accountKey,
+                localUri = "content://media/external/images/media/${10_000 + index}",
+                filename = "deferred-$index.jpg",
+                byteSize = 20L,
+                sha256 = index.toString().padStart(64, '0'),
+                capturedAt = "2026-10-02T00:00:00Z",
+            ) > 0L)
+        }
+
+        var lastClaimedId = 0L
+        var claimed = 0
+        while (true) {
+            val job = dbHelper.claimNextPendingJob(accountKey, lastClaimedId) ?: break
+            assertTrue("Claims advance in id order", job.id > lastClaimedId)
+            lastClaimedId = job.id
+            // Every item fails transiently and goes back to the queue.
+            dbHelper.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+            claimed++
+        }
+
+        assertEquals(count, claimed)
+        // The next pass starts over and finds them all again.
+        assertNotNull(dbHelper.claimNextPendingJob(accountKey))
     }
 
     private fun signedInManager(name: String): Triple<String, String, SyncUploadManager> {

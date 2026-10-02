@@ -135,9 +135,10 @@ class SyncUploadManager(
         try {
             val retryRequested = AtomicBoolean(false)
             val firstUploadJobClaimed = AtomicBoolean(false)
-            val activeJobIds = mutableSetOf<Long>()
-            // Items that failed transiently in this pass; not claimed again until the next one.
-            val deferredJobIds = mutableSetOf<Long>()
+            // The pass claims in id order: jobs being sent, and those that failed
+            // transiently and wait for the next pass, all sit at or below this id.
+            var lastClaimedId = 0L
+            val anyDeferred = AtomicBoolean(false)
             val transientFailures = TransientFailureStreak(MAX_CONSECUTIVE_TRANSIENT_FAILURES)
             val claimMutex = Mutex()
 
@@ -188,8 +189,8 @@ class SyncUploadManager(
                                     if (retryRequested.get()) {
                                         null
                                     } else {
-                                        dbHelper.claimNextPendingJob(accountKey, activeJobIds + deferredJobIds)?.also { job ->
-                                            activeJobIds += job.id
+                                        dbHelper.claimNextPendingJob(accountKey, lastClaimedId)?.also { job ->
+                                            lastClaimedId = job.id
                                             updateProgress(job.id, job.byteSize, job.nextByteOffset)
                                         }
                                     }
@@ -220,7 +221,7 @@ class SyncUploadManager(
                                         }
                                         ResumableUploadTransfer.ItemResult.FAILED -> Unit
                                         ResumableUploadTransfer.ItemResult.RETRY -> {
-                                            claimMutex.withLock { deferredJobIds += nextJob.id }
+                                            anyDeferred.set(true)
                                             // Back in the queue, not shown as sending; it
                                             // resumes from its committed offset.
                                             dbHelper.updateJobState(accountKey, nextJob.id, UploadJobState.QUEUED)
@@ -234,7 +235,6 @@ class SyncUploadManager(
                                     }
                                 } finally {
                                     claimMutex.withLock {
-                                        activeJobIds.remove(nextJob.id)
                                         removeProgress(nextJob.id)
                                     }
                                 }
@@ -251,7 +251,7 @@ class SyncUploadManager(
                     completionBatcher.close()
                 }
             }
-            !retryRequested.get() && claimMutex.withLock { deferredJobIds.isEmpty() }
+            !retryRequested.get() && !anyDeferred.get()
         } finally {
             speedMeter.finishRun()
             onQueueRunFinished(speedMeter.snapshot())
