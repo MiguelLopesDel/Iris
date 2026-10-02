@@ -814,7 +814,8 @@ private fun QueueSummary(counts: Map<UploadJobState, Int>) {
         stringResource(R.string.queue_state_pending) to summary.queued,
         stringResource(R.string.queue_state_sending) to summary.uploading,
         stringResource(R.string.queue_state_processing) to summary.processing,
-        stringResource(R.string.queue_state_done) to summary.finished,
+        stringResource(R.string.queue_state_uploaded) to summary.uploaded,
+        stringResource(R.string.queue_state_already_on_server) to summary.alreadyOnServer,
         stringResource(R.string.queue_state_failed) to summary.failed
     ).filter { it.second > 0 }
 

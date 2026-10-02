@@ -54,7 +54,8 @@
     <string name="queue_state_pending">Queued</string>
     <string name="queue_state_sending">Uploading</string>
     <string name="queue_state_processing">Processing on the server</string>
-    <string name="queue_state_done">Finished</string>
+    <string name="queue_state_uploaded">Uploaded</string>
+    <string name="queue_state_already_on_server">Already on the server</string>
     <string name="queue_state_failed">Failed</string>
     <!-- Sync speed and history -->
     <string name="sync_speed_now">Now: %1$s</string>

@@ -60,7 +60,8 @@
     <string name="queue_state_pending">Na fila</string>
     <string name="queue_state_sending">Enviando</string>
     <string name="queue_state_processing">Processando no servidor</string>
-    <string name="queue_state_done">Concluídos</string>
+    <string name="queue_state_uploaded">Enviados</string>
+    <string name="queue_state_already_on_server">Já estavam no servidor</string>
     <string name="queue_state_failed">Com falha</string>
     <string name="cloud_connection_unavailable">Sem conexão com a nuvem. Suas mídias locais continuam no aparelho; o Iris tentará reconectar e sincronizar automaticamente em segundo plano.</string>
     <string name="cloud_sync_retrying">Servidor acessível, mas a sincronização não terminou. O Iris tentará novamente em segundo plano.</string>

@@ -116,9 +116,18 @@ data class UploadQueueSummary(
     val queued: Int = 0,
     val uploading: Int = 0,
     val processing: Int = 0,
-    val finished: Int = 0,
+    /** Sent by this device. */
+    val uploaded: Int = 0,
+    /**
+     * Never sent: the server already had the same bytes. Shown apart from
+     * [uploaded] because on a new server or a reinstall nearly everything lands
+     * here, and one "done" number made thousands look uploaded in seconds.
+     */
+    val alreadyOnServer: Int = 0,
     val failed: Int = 0
 ) {
+    /** Items the server holds, sent now or before. */
+    val finished: Int get() = uploaded + alreadyOnServer
     val total: Int get() = queued + uploading + processing + finished + failed
 
     companion object {
@@ -131,7 +140,8 @@ data class UploadQueueSummary(
                     UploadJobState.PENDING_PROCESSING,
                     UploadJobState.PROCESSING
                 ),
-                finished = count(UploadJobState.READY, UploadJobState.DUPLICATE),
+                uploaded = count(UploadJobState.READY),
+                alreadyOnServer = count(UploadJobState.DUPLICATE),
                 failed = count(UploadJobState.FAILED, UploadJobState.FAILED_PROCESSING)
             )
         }
