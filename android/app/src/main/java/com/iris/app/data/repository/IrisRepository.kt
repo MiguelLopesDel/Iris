@@ -65,7 +65,9 @@ class IrisRepository(
         username: String,
         password: String,
         deviceName: String
-    ): Result<DeviceLoginResponse> = runCatchingCancellable {
+    ): Result<DeviceLoginResponse> = serverCall {
+        // serverCall shows the server's own message, such as how long to wait
+        // after too many attempts, instead of a bare "HTTP 429".
         val response = apiClient.apiService.deviceLogin(
             username = username,
             password = password,

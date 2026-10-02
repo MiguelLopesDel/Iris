@@ -1,12 +1,15 @@
 """Invite-only account and session endpoints."""
 from __future__ import annotations
 
+import math
 import sqlite3
 
 from fastapi import APIRouter, Form, HTTPException, Request
 
 from core.auth import hash_password, verify_password
 from core.device_tokens import issue_access_token, new_refresh_token, token_hash
+from core.login_throttle import LoginThrottle
+from core.password_policy import PasswordRejected, check_new_password
 from core.users_db import (
     create_device,
     create_user,
@@ -41,12 +44,44 @@ def _device_tokens(request: Request, user, device) -> dict:
     }
 
 
+def _throttle(request: Request) -> LoginThrottle:
+    throttle = getattr(request.app.state, "login_throttle", None)
+    if throttle is None:
+        throttle = LoginThrottle()
+        request.app.state.login_throttle = throttle
+    return throttle
+
+
+def _check_credentials(request: Request, username: str, password: str):
+    """The user for these credentials, or an HTTP error; failures slow the next attempt."""
+    throttle = _throttle(request)
+    wait = throttle.retry_after(username)
+    if wait > 0:
+        seconds = math.ceil(wait)
+        raise HTTPException(
+            429,
+            f"Muitas tentativas de login com esse usuário. Tente de novo em {_wait_text(seconds)}.",
+            headers={"Retry-After": str(seconds)},
+        )
+    user = get_user_by_username(request.app.state.users_db_path, username)
+    if user is None or not verify_password(password, user.password_hash):
+        throttle.record_failure(username)
+        raise HTTPException(401, "Usuário ou senha inválidos")
+    throttle.record_success(username)
+    return user
+
+
+def _wait_text(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds} segundo{'s' if seconds != 1 else ''}"
+    minutes = math.ceil(seconds / 60)
+    return f"{minutes} minuto{'s' if minutes != 1 else ''}"
+
+
 @router.post("/login")
 async def login(request: Request, username: str = Form(...), password: str = Form(...)):
     users_path = request.app.state.users_db_path
-    user = get_user_by_username(users_path, username)
-    if user is None or not verify_password(password, user.password_hash):
-        raise HTTPException(401, "Usuário ou senha inválidos")
+    user = _check_credentials(request, username, password)
     start_web_session(request.session, users_path, user, request.headers.get("user-agent", ""))
     return {"ok": True, "user": _public_user(user)}
 
@@ -59,9 +94,7 @@ async def device_login(
     device_name: str = Form(...),
     platform: str = Form("android"),
 ):
-    user = get_user_by_username(request.app.state.users_db_path, username)
-    if user is None or not verify_password(password, user.password_hash):
-        raise HTTPException(401, "Usuário ou senha inválidos")
+    user = _check_credentials(request, username, password)
     refresh = new_refresh_token()
     device = create_device(request.app.state.users_db_path, user.id, device_name, platform, token_hash(refresh))
     return {
@@ -110,6 +143,10 @@ async def create_invited_user(
     actor = getattr(request.state, "iris_user", None)
     if actor is None or not actor.is_admin:
         raise HTTPException(403, "Apenas administradores podem criar contas")
+    try:
+        check_new_password(password, username)
+    except PasswordRejected as exc:
+        raise HTTPException(400, str(exc)) from exc
     try:
         user = create_user(
             request.app.state.users_db_path,

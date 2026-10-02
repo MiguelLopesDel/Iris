@@ -19,10 +19,10 @@
       </label>
       <label>Usuário <input name="username" autocomplete="username" required minlength="2" maxlength="63"></label>
       <label>Seu nome <input name="display_name" autocomplete="name"></label>
-      <label>Senha <input name="password" type="password" autocomplete="new-password" required minlength="12">
-        <small class="setup-hint">Pelo menos 12 caracteres.</small>
+      <label>Senha <input name="password" type="password" autocomplete="new-password" required minlength="8">
+        <small class="setup-hint" id="setup-password-hint">Pelo menos 8 caracteres. Recomendamos 12 ou mais: uma frase curta é fácil de lembrar e difícil de adivinhar.</small>
       </label>
-      <label>Repita a senha <input name="confirm" type="password" autocomplete="new-password" required minlength="12"></label>
+      <label>Repita a senha <input name="confirm" type="password" autocomplete="new-password" required minlength="8"></label>
       <p id="setup-error" class="form-error" hidden></p>
       <button type="submit">Criar administrador</button>
     </form>

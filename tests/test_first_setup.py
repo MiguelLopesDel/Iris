@@ -175,7 +175,7 @@ def test_terminal_bootstrap_reprompts_a_short_password_instead_of_crashing(tmp_p
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Traceback" not in result.stderr
-    assert "pelo menos 12 caracteres" in result.stderr
+    assert "pelo menos 8 caracteres" in result.stderr
     assert "Conta administradora criada: admin" in result.stdout
 
 
