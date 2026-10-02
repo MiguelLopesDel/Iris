@@ -103,9 +103,10 @@ o endereço:
 
 A classificação é feita pelo endereço digitado, sem consultar DNS.
 
-HTTP no app não basta para o navegador: o servidor só envia o cookie de sessão por
-HTTPS enquanto `IRIS_SESSION_HTTPS_ONLY=true`. Quem decide servir a interface web
-por HTTP numa rede privada precisa desligar essa opção no `.env` do servidor.
+No navegador, o cookie de sessão segue a conexão: com `IRIS_SESSION_HTTPS_ONLY=auto`
+(o padrão) ele é marcado `Secure` quando a requisição chega por HTTPS, direto ou por
+um proxy que informe `X-Forwarded-Proto: https`, e o login funciona também por HTTP
+numa rede privada. Com `true`, o navegador só faz login por HTTPS.
 
 Servidores que já eram usados por HTTP antes de esta confirmação existir continuam
 funcionando sem perguntar, sincronização em segundo plano incluída. Só endereços
@@ -135,13 +136,50 @@ um redirecionamento para HTTP não autorizado é recusado, e uma conexão reapro
 | "respondeu, mas não com HTTPS" | algo atende nessa porta, mas fala HTTP | conferir a porta ou usar `http://` |
 | "Failed to connect" / tempo esgotado | nada atende nesse endereço e porta | conferir se o proxy, o túnel ou a malha estão no ar; o Iris sozinho não atende na rede |
 
+## Escutar direto numa rede privada
+
+Sem proxy nem túnel, o servidor pode escutar num endereço do host, por exemplo o
+da interface de uma malha privada: `./scripts/server.sh listen <endereço>`. O guia
+de instalação do servidor descreve o comando e os cuidados (tráfego em HTTP,
+ordem de subida da interface em relação ao Docker, `0.0.0.0`).
+
+## Pareamento por código
+
+Em vez de digitar o endereço e conferir certificados no celular, uma sessão do
+navegador gera um código de pareamento: **Sistema → Dispositivos conectados →
+Conectar um celular**. O código é um QR e também um link de texto
+(`iris://pair?...`) que leva:
+
+- **o identificador da instalação**, para o app reconhecer o mesmo servidor em
+  qualquer endereço;
+- **os endereços que o celular pode usar**, em ordem: primeiro o endereço pelo
+  qual a página foi aberta (se não for local, como `127.0.0.1`), depois os
+  cadastrados pelo administrador em **Sistema → Pareamento**;
+- **opcionalmente, a impressão digital de uma autoridade de certificado**, que o
+  administrador envia no mesmo lugar (por exemplo, a CA interna do proxy).
+
+No celular, o código pode ser aberto pela câmera ou por qualquer leitor de QR (o
+link abre o Iris), pelo leitor do próprio app ou colando o texto em
+**Configurações → Parear com código**. Antes de mudar qualquer coisa, o app mostra
+os endereços e a impressão digital e pede confirmação. Ao confirmar:
+
+1. Se o código traz uma autoridade, o app baixa o certificado dela de
+   `/api/pairing/ca.pem` e só o aceita se o SHA-256 for o do código. O download não
+   envia credencial nenhuma, e a impressão digital veio de uma tela em que você já
+   confiava, então um intermediário na rede não consegue trocar o certificado.
+2. A autoridade passa a ser confiável para os endereços `https://` do código, e
+   HTTP fica permitido para os endereços `http://` (o aviso aparece na confirmação).
+3. O app tenta os endereços em ordem e usa o primeiro que responder com o mesmo
+   identificador de instalação. Um endereço em que outro servidor responde é
+   ignorado.
+
+O código não é segredo e não dá acesso a nada: endereços, identificador e
+certificado de autoridade são públicos por natureza. Depois do pareamento, entrar
+na conta continua exigindo usuário e senha.
+
 ## Próximas etapas
 
-- **Exposição configurável no servidor:** escolher em qual endereço o servidor
-  escuta (por exemplo, só na interface de uma malha privada) e informar quais
-  proxies são confiáveis para cabeçalhos `X-Forwarded-*`, com o cookie de sessão
-  seguindo o modo escolhido.
-- **Pareamento por QR code:** a interface web gera um código com os endereços do
-  servidor, um identificador da instância e, opcionalmente, a CA a confiar. O app
-  lê o código e já sai configurado. Com vários endereços (rede local, malha,
-  público), o app usa o primeiro que responder como o mesmo servidor.
+- **Troca automática de endereço:** hoje o pareamento escolhe um endereço. Com
+  vários (rede local em casa, malha ou endereço público fora), o app passaria a
+  usar o primeiro que responder em cada momento, mantendo a sessão, já que todos
+  pertencem ao mesmo servidor pareado.
