@@ -202,7 +202,7 @@ class MediaChangeDetectionTest {
     }
 
     @Test
-    fun upgrading_a_version_6_queue_adds_the_new_columns() {
+    fun upgrading_a_version_6_queue_adds_the_new_columns_and_retries_hash_mismatches() {
         val name = "iris_change_v6_${System.nanoTime()}.db"
         val legacy = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name), null)
         legacy.execSQL(
@@ -223,6 +223,10 @@ class MediaChangeDetectionTest {
             "INSERT INTO upload_jobs (account_key, local_uri, filename, byte_size, sha256, captured_at, state, updated_at) " +
                 "VALUES ('$accountKey', 'content://media/external/images/media/1', 'a.jpg', 10, '${"a".repeat(64)}', 'x', 'READY', 1)"
         )
+        legacy.execSQL(
+            "INSERT INTO upload_jobs (account_key, local_uri, filename, byte_size, sha256, captured_at, state, error_message, upload_id, updated_at) " +
+                "VALUES ('$accountKey', 'content://media/external/images/media/2', 'b.jpg', 10, '${"b".repeat(64)}', 'x', 'FAILED', 'Hash do arquivo não confere', 'u-2', 1)"
+        )
         legacy.execSQL("CREATE TABLE sync_cursors (account_key TEXT PRIMARY KEY NOT NULL, last_cursor INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)")
         legacy.execSQL(
             "CREATE TABLE sync_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, account_key TEXT NOT NULL, started_at INTEGER NOT NULL, " +
@@ -236,9 +240,15 @@ class MediaChangeDetectionTest {
         val upgraded = UploadDatabaseHelper(context, name)
         try {
             runBlocking {
-                val row = upgraded.getAllJobs(accountKey).single()
+                val rows = upgraded.getAllJobs(accountKey).associateBy { it.filename }
+                val row = rows.getValue("a.jpg")
                 assertNull(row.sourceDateModified)
                 assertEquals(UploadJobState.READY, row.state)
+                // Refused for a hash mismatch before uploads measured the real file: retried.
+                val refused = rows.getValue("b.jpg")
+                assertEquals(UploadJobState.QUEUED, refused.state)
+                assertNull(refused.uploadId)
+                assertNull(refused.errorMessage)
                 assertNotNull(upgraded.knownMedia(accountKey, "content://media/external/images/media/1"))
                 assertEquals(emptyMap<String, String>(), upgraded.scanState(accountKey).mediaStoreVersions)
             }

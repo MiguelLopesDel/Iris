@@ -131,6 +131,17 @@ class UploadDatabaseHelper(
             addColumnIfMissing(db, "upload_jobs", "verified_at", "INTEGER")
             createScanStateTable(db)
         }
+        if (oldVersion < 8) {
+            addColumnIfMissing(db, "upload_jobs", "source_size", "INTEGER")
+            // Uploads the server refused because the bytes did not match the
+            // declared hash were failed for good. They were sent at MediaStore's
+            // SIZE, which can trail a file rewritten without MediaStore noticing;
+            // uploads now measure the real file, so give them another chance.
+            db.execSQL(
+                "UPDATE upload_jobs SET state = 'QUEUED', upload_id = NULL, next_byte_offset = 0, " +
+                    "error_message = NULL WHERE state = 'FAILED' AND error_message LIKE '%Hash do arquivo%'"
+            )
+        }
     }
 
     /** What the queue knows about [localUri] for this account, or null when it is not queued. */
@@ -138,7 +149,7 @@ class UploadDatabaseHelper(
         withContext(Dispatchers.IO) {
             require(accountKey.isNotBlank()) { "An account key is required to inspect upload jobs" }
             readableDatabase.rawQuery(
-                "SELECT id, sha256, byte_size, source_date_modified, source_generation, verified_at " +
+                "SELECT id, sha256, COALESCE(source_size, byte_size), source_date_modified, source_generation, verified_at " +
                     "FROM upload_jobs WHERE account_key = ? AND local_uri = ? LIMIT 1",
                 arrayOf(accountKey, localUri)
             ).use { cursor ->
@@ -172,7 +183,7 @@ class UploadDatabaseHelper(
         writableDatabase.update(
             "upload_jobs",
             ContentValues().apply {
-                put("byte_size", fingerprint.size)
+                put("source_size", fingerprint.size)
                 put("source_date_modified", fingerprint.dateModifiedSeconds)
                 put("source_generation", fingerprint.generation)
                 put("filename", filename)
@@ -195,6 +206,7 @@ class UploadDatabaseHelper(
         accountKey: String,
         id: Long,
         sha256: String,
+        byteSize: Long,
         fingerprint: com.iris.app.data.sync.MediaFingerprint,
         filename: String,
         capturedAt: String,
@@ -210,7 +222,8 @@ class UploadDatabaseHelper(
             "upload_jobs",
             ContentValues().apply {
                 put("sha256", sha256)
-                put("byte_size", fingerprint.size)
+                put("byte_size", byteSize)
+                put("source_size", fingerprint.size)
                 put("source_date_modified", fingerprint.dateModifiedSeconds)
                 put("source_generation", fingerprint.generation)
                 put("filename", filename)
@@ -226,6 +239,27 @@ class UploadDatabaseHelper(
             "id = ? AND account_key = ? AND state != 'UPLOADING'",
             arrayOf(id.toString(), accountKey)
         ) > 0
+    }
+
+    /**
+     * The bytes behind job [id] are not the ones it declared (its file was
+     * rewritten since it was hashed): record what they are now and start its
+     * upload over. Not a new version of the media, so previous_sha256 stays.
+     */
+    suspend fun setContent(accountKey: String, id: Long, sha256: String, byteSize: Long) = withContext(Dispatchers.IO) {
+        writableDatabase.update(
+            "upload_jobs",
+            ContentValues().apply {
+                put("sha256", sha256)
+                put("byte_size", byteSize)
+                putNull("upload_id")
+                put("next_byte_offset", 0L)
+                put("verified_at", System.currentTimeMillis())
+                put("updated_at", System.currentTimeMillis())
+            },
+            "id = ? AND account_key = ?",
+            arrayOf(id.toString(), accountKey)
+        )
     }
 
     /** This account's scan bookkeeping: MediaStore versions and full verification times. */
@@ -274,6 +308,7 @@ class UploadDatabaseHelper(
         source: com.iris.app.data.model.UploadSource? = null,
         dateModifiedSeconds: Long? = null,
         verifiedAt: Long? = null,
+        sourceSize: Long? = null,
     ): Long = withContext(Dispatchers.IO) {
         require(accountKey.isNotBlank()) { "An account key is required for every upload job" }
         writableDatabase.let { db ->
@@ -292,6 +327,7 @@ class UploadDatabaseHelper(
                 put("source_generation", source?.generation ?: 0L)
                 put("source_media_kind", source?.mediaKind)
                 put("source_date_modified", dateModifiedSeconds)
+                put("source_size", sourceSize)
                 put("verified_at", verifiedAt)
                 put("state", UploadJobState.QUEUED.name)
                 put("updated_at", System.currentTimeMillis())
@@ -690,6 +726,7 @@ class UploadDatabaseHelper(
             sourceDateModified = if (cursor.columnCount > 19 && !cursor.isNull(19)) cursor.getLong(19) else null,
             previousSha256 = if (cursor.columnCount > 20) cursor.getString(20) else null,
             verifiedAt = if (cursor.columnCount > 21 && !cursor.isNull(21)) cursor.getLong(21) else null,
+            sourceSize = if (cursor.columnCount > 22 && !cursor.isNull(22)) cursor.getLong(22) else null,
         )
     }
 
@@ -705,10 +742,10 @@ class UploadDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
-        const val DATABASE_VERSION = 7
+        const val DATABASE_VERSION = 8
         const val SYNC_RUN_HISTORY_LIMIT = 50
         private const val JOB_COLUMNS =
-            "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind, source_date_modified, previous_sha256, verified_at FROM upload_jobs"
+            "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind, source_date_modified, previous_sha256, verified_at, source_size FROM upload_jobs"
 
         private fun createUploadJobsTable(db: SQLiteDatabase) {
             db.execSQL(
@@ -731,6 +768,7 @@ class UploadDatabaseHelper(
                     source_date_modified INTEGER,
                     previous_sha256 TEXT,
                     verified_at INTEGER,
+                    source_size INTEGER,
                     upload_id TEXT,
                     next_byte_offset INTEGER NOT NULL DEFAULT 0,
                     chunk_size INTEGER NOT NULL DEFAULT 33554432,

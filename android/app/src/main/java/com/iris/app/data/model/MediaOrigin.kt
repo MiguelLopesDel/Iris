@@ -97,7 +97,7 @@ class MediaOriginIndex(
                         jobId = job.id,
                         sha256 = job.sha256,
                         fingerprint = MediaFingerprint(
-                            size = job.byteSize,
+                            size = job.sourceSize ?: job.byteSize,
                             dateModifiedSeconds = job.sourceDateModified,
                             generation = job.source?.generation ?: 0L,
                         ),

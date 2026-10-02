@@ -77,19 +77,15 @@ class SyncUploadManager(
         if (dbHelper.isUriEnqueued(accountKey, uriStr)) {
             return@withContext -1L
         }
-        val finishHash = performanceMonitor?.begin(Metric.SyncMediaHash) ?: {}
-        val hash = try {
-            mediaPayloadSource.computeSha256(uri)
-        } finally {
-            finishHash()
-        }
+        val content = hash(uri)
         ensureSession(isSessionCurrent)
         dbHelper.insertOrIgnoreJob(
             accountKey = accountKey,
             localUri = uriStr,
             filename = filename,
-            byteSize = size,
-            sha256 = hash,
+            byteSize = content.size,
+            sourceSize = size,
+            sha256 = content.sha256,
             capturedAt = capturedAtIso,
             source = source
         )
@@ -133,14 +129,15 @@ class SyncUploadManager(
                 ScanOutcome.UNCHANGED
             }
             MediaChangePolicy.Verdict.NEW -> {
-                val hash = hash(uri)
+                val content = hash(uri)
                 ensureSession(isSessionCurrent)
                 val id = dbHelper.insertOrIgnoreJob(
                     accountKey = accountKey,
                     localUri = uriStr,
                     filename = filename,
-                    byteSize = fingerprint.size,
-                    sha256 = hash,
+                    byteSize = content.size,
+                    sourceSize = fingerprint.size,
+                    sha256 = content.sha256,
                     capturedAt = capturedAtIso,
                     source = source,
                     dateModifiedSeconds = fingerprint.dateModifiedSeconds,
@@ -149,16 +146,17 @@ class SyncUploadManager(
                 if (id > 0L) ScanOutcome.QUEUED_NEW else ScanOutcome.UNCHANGED
             }
             MediaChangePolicy.Verdict.VERIFY -> {
-                val hash = hash(uri)
+                val content = hash(uri)
                 ensureSession(isSessionCurrent)
                 when {
                     // Renamed, moved or touched: same bytes, nothing to send.
-                    hash.equals(known!!.sha256, ignoreCase = true) -> {
+                    content.sha256.equals(known!!.sha256, ignoreCase = true) -> {
                         dbHelper.recordVerifiedFingerprint(accountKey, known.jobId, fingerprint, filename, source, now())
                         ScanOutcome.UNCHANGED
                     }
                     dbHelper.replaceWithNewVersion(
-                        accountKey, known.jobId, hash, fingerprint, filename, capturedAtIso, source, now(),
+                        accountKey, known.jobId, content.sha256, content.size, fingerprint, filename,
+                        capturedAtIso, source, now(),
                     ) -> ScanOutcome.QUEUED_NEW_VERSION
                     else -> ScanOutcome.DEFERRED
                 }
@@ -212,10 +210,10 @@ class SyncUploadManager(
         )
     }
 
-    private suspend fun hash(uri: Uri): String {
+    private suspend fun hash(uri: Uri): MediaPayloadSource.Content {
         val finishHash = performanceMonitor?.begin(Metric.SyncMediaHash) ?: {}
         return try {
-            mediaPayloadSource.computeSha256(uri)
+            mediaPayloadSource.computeContent(uri)
         } finally {
             finishHash()
         }
