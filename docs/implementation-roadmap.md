@@ -146,7 +146,8 @@ latencias e erros sao registrados com carga e hardware conhecidos.
    duas contas/servidores, retomada offline e origem dos itens na galeria.
 3. Executar `scripts/test_release.sh` depois que a arvore estiver limpa; ele
    valida a versao registrada em `HEAD`, nao mudancas locais.
-4. Revisar os seis limites de responsabilidade anotados no `AGENTS.md` em
+4. Revisar os seis limites de responsabilidade levantados na auditoria de
+   2026-09-29 em
    mudancas pequenas, preservando os contratos e testes ja registrados.
 
 Nao migrar automaticamente albuns pessoais ou arquivos privados para um
