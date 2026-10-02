@@ -200,7 +200,7 @@ class SyncUploadManager(
         val state = dbHelper.scanState(accountKey)
         dbHelper.saveScanState(
             accountKey,
-            UploadDatabaseHelper.ScanState(
+            state.copy(
                 // A card that is not mounted now keeps its last known version.
                 mediaStoreVersions = state.mediaStoreVersions + mediaStoreVersions,
                 fullVerificationStartedAt = null,
@@ -208,6 +208,25 @@ class SyncUploadManager(
                 lastFullVerificationAt = if (fullVerificationStartedAt != null) now else state.lastFullVerificationAt ?: now,
             ),
         )
+    }
+
+    /**
+     * Ties this account's queue to the server installation it describes.
+     * When [instanceId] differs from the one recorded, the queue's states
+     * belong to another installation and are requeued. With none recorded
+     * (a queue from before this check) they are requeued too: it cannot tell
+     * which installation they describe, and requeuing costs only reservations,
+     * which the server answers "duplicate" for what it has. A new account has
+     * nothing to requeue. A server too old to report an id is left alone.
+     * Returns how many items were requeued.
+     */
+    suspend fun bindServerInstance(accountKey: String, instanceId: String?): Int {
+        if (instanceId.isNullOrBlank()) return 0
+        val state = dbHelper.scanState(accountKey)
+        if (state.serverInstanceId == instanceId) return 0
+        val requeued = dbHelper.requeueForNewServer(accountKey)
+        dbHelper.saveScanState(accountKey, state.copy(serverInstanceId = instanceId))
+        return requeued
     }
 
     private suspend fun hash(uri: Uri): MediaPayloadSource.Content {

@@ -179,6 +179,36 @@ class MediaChangeDetectionTest {
     }
 
     @Test
+    fun a_reinstalled_server_at_the_same_address_requeues_the_account_without_rehashing() = runBlocking {
+        val item = createImage("reinstalled", bytes(8))
+        scan(item)
+        markUploaded(item)
+        val hash = job(item).sha256
+        dbHelper.saveSyncCursor(accountKey, 42L)
+
+        // A queue with no installation recorded (from before this check) is
+        // reconciled once: requeued, with its hashes kept.
+        assertEquals(1, manager.bindServerInstance(accountKey, "a".repeat(32)))
+        dbHelper.updateJobState(accountKey, job(item).id, UploadJobState.DUPLICATE)
+        assertEquals(0, manager.bindServerInstance(accountKey, "a".repeat(32)))
+        assertEquals(UploadJobState.DUPLICATE, job(item).state)
+
+        // Same address and user id, another installation: its states are void.
+        dbHelper.saveSyncCursor(accountKey, 42L)
+        assertEquals(1, manager.bindServerInstance(accountKey, "b".repeat(32)))
+        val requeued = job(item)
+        assertEquals(UploadJobState.QUEUED, requeued.state)
+        assertNull(requeued.uploadId)
+        assertEquals(hash, requeued.sha256)
+        assertEquals(0L, dbHelper.getLastSyncCursor(accountKey))
+
+        // A server too old to report an id changes nothing.
+        dbHelper.updateJobState(accountKey, requeued.id, UploadJobState.READY)
+        assertEquals(0, manager.bindServerInstance(accountKey, null))
+        assertEquals(UploadJobState.READY, job(item).state)
+    }
+
+    @Test
     fun a_row_from_before_fingerprints_adopts_one_without_rehashing() = runBlocking {
         val item = createImage("legacy", bytes(7))
         // Queued by an older version: no modification time, no verification.

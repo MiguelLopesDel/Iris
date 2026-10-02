@@ -142,6 +142,9 @@ class UploadDatabaseHelper(
                     "error_message = NULL WHERE state = 'FAILED' AND error_message LIKE '%Hash do arquivo%'"
             )
         }
+        if (oldVersion < 9) {
+            addColumnIfMissing(db, "scan_state", "server_instance_id", "TEXT")
+        }
     }
 
     /** What the queue knows about [localUri] for this account, or null when it is not queued. */
@@ -265,7 +268,7 @@ class UploadDatabaseHelper(
     /** This account's scan bookkeeping: MediaStore versions and full verification times. */
     suspend fun scanState(accountKey: String): ScanState = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery(
-            "SELECT media_store_versions, full_verification_started_at, last_full_verification_at " +
+            "SELECT media_store_versions, full_verification_started_at, last_full_verification_at, server_instance_id " +
                 "FROM scan_state WHERE account_key = ?",
             arrayOf(accountKey)
         ).use { cursor ->
@@ -274,6 +277,7 @@ class UploadDatabaseHelper(
                 mediaStoreVersions = decodeVersions(cursor.getString(0).orEmpty()),
                 fullVerificationStartedAt = if (cursor.isNull(1)) null else cursor.getLong(1),
                 lastFullVerificationAt = if (cursor.isNull(2)) null else cursor.getLong(2),
+                serverInstanceId = cursor.getString(3),
             )
         }
     }
@@ -287,6 +291,7 @@ class UploadDatabaseHelper(
                 put("media_store_versions", encodeVersions(state.mediaStoreVersions))
                 put("full_verification_started_at", state.fullVerificationStartedAt)
                 put("last_full_verification_at", state.lastFullVerificationAt)
+                put("server_instance_id", state.serverInstanceId)
             },
             SQLiteDatabase.CONFLICT_REPLACE
         )
@@ -296,7 +301,34 @@ class UploadDatabaseHelper(
         val mediaStoreVersions: Map<String, String> = emptyMap(),
         val fullVerificationStartedAt: Long? = null,
         val lastFullVerificationAt: Long? = null,
+        /** The server installation this account's queue states describe. */
+        val serverInstanceId: String? = null,
     )
+
+    /**
+     * The account's queue described another server installation (reinstalled,
+     * or a fresh one at the same address with the same user id): what it marked
+     * uploaded or already present says nothing about this server. Every item
+     * goes back to the queue with its hash kept, so nothing is read again; the
+     * server answers "duplicate" for what it already has. The change-feed
+     * cursor belonged to the old installation too.
+     */
+    suspend fun requeueForNewServer(accountKey: String): Int = runInWriteTransaction { db ->
+        val requeued = db.update(
+            "upload_jobs",
+            ContentValues().apply {
+                put("state", UploadJobState.QUEUED.name)
+                putNull("upload_id")
+                put("next_byte_offset", 0L)
+                putNull("error_message")
+                put("updated_at", System.currentTimeMillis())
+            },
+            "account_key = ? AND NOT (state = 'QUEUED' AND upload_id IS NULL)",
+            arrayOf(accountKey)
+        )
+        db.delete("sync_cursors", "account_key = ?", arrayOf(accountKey))
+        requeued
+    }
 
     suspend fun insertOrIgnoreJob(
         accountKey: String,
@@ -742,7 +774,7 @@ class UploadDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
-        const val DATABASE_VERSION = 8
+        const val DATABASE_VERSION = 9
         const val SYNC_RUN_HISTORY_LIMIT = 50
         private const val JOB_COLUMNS =
             "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind, source_date_modified, previous_sha256, verified_at, source_size FROM upload_jobs"
@@ -821,7 +853,8 @@ class UploadDatabaseHelper(
                     account_key TEXT PRIMARY KEY NOT NULL,
                     media_store_versions TEXT NOT NULL DEFAULT '',
                     full_verification_started_at INTEGER,
-                    last_full_verification_at INTEGER
+                    last_full_verification_at INTEGER,
+                    server_instance_id TEXT
                 )
                 """.trimIndent()
             )
