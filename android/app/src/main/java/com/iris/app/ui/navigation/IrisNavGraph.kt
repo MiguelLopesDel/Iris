@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -85,6 +86,14 @@ fun IrisNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
     val navigationFinishes = remember { mutableMapOf<String, () -> Unit>() }
+
+    // A pairing link opened from outside the app is confirmed in Settings.
+    val pendingPairing by application.pairingRequests.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingPairing) {
+        if (pendingPairing != null && currentDestination?.route != NavRoute.Settings.route) {
+            navController.navigate(NavRoute.Settings.route) { launchSingleTop = true }
+        }
+    }
     val previousSession = remember(application.credentialsStore) {
         mutableStateOf(application.credentialsStore.sessionIdentity.value)
     }
@@ -407,7 +416,8 @@ fun IrisNavGraph(
                 val viewModel: SettingsViewModel = viewModel(
                     factory = SettingsViewModel.Factory(
                         application.settingsRepository,
-                        application.irisRepository
+                        application.irisRepository,
+                        application.pairingRequests,
                     )
                 )
                 SettingsScreen(

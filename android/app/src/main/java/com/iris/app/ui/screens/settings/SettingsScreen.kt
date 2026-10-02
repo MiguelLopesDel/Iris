@@ -47,6 +47,12 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.OutlinedButton
+import com.journeyapps.barcodescanner.ScanOptions
+import com.journeyapps.barcodescanner.ScanContract
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -97,6 +103,40 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 },
                 dismiss = viewModel::dismissConnectionProblem,
             ),
+        )
+    }
+    var choosingPairing by remember { mutableStateOf(false) }
+    val qrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let(viewModel::readPairingCode)
+    }
+    if (choosingPairing) {
+        PairingEntryDialog(
+            onScan = {
+                choosingPairing = false
+                qrScanner.launch(
+                    ScanOptions()
+                        .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        .setPrompt("Aponte para o código em Conectar um celular")
+                        .setBeepEnabled(false)
+                        .setOrientationLocked(false)
+                )
+            },
+            onPaste = { text ->
+                choosingPairing = false
+                viewModel.readPairingCode(text)
+            },
+            onDismiss = { choosingPairing = false },
+        )
+    }
+    uiState.pendingPairing?.let { code ->
+        PairingConfirmDialog(code, onConfirm = viewModel::confirmPairing, onCancel = viewModel::cancelPairing)
+    }
+    uiState.pairingMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissPairingMessage,
+            title = { Text("Pareamento") },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = viewModel::dismissPairingMessage) { Text("OK") } },
         )
     }
     uiState.securityMessage?.let { message ->
@@ -226,6 +266,22 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                     Text("Testando conexão…", fontWeight = FontWeight.Bold)
                 } else {
                     Text("Salvar e Testar Conexão", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { choosingPairing = true },
+                enabled = !uiState.isPairing,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                if (uiState.isPairing) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Pareando…")
+                } else {
+                    Text("Parear com código")
                 }
             }
 
