@@ -12,6 +12,8 @@ import coil.memory.MemoryCache
 import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.remote.IrisApiClient
+import com.iris.app.data.remote.security.ConnectionSecurity
+import com.iris.app.data.remote.security.PreferencesServerSecurityStore
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.DefaultGalleryDataSource
 import com.iris.app.data.repository.GalleryDataSource
@@ -47,6 +49,8 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
 
     lateinit var credentialsStore: DeviceCredentialsStore
         private set
+
+    private lateinit var connectionSecurityStore: PreferencesServerSecurityStore
 
     lateinit var dbHelper: UploadDatabaseHelper
         private set
@@ -119,9 +123,11 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
 
         val catalogStore = SqliteCatalogStore(this)
 
+        connectionSecurityStore = PreferencesServerSecurityStore(this)
         apiClient = IrisApiClient(
             credentialsStore = credentialsStore,
-            performanceMonitor = performanceMonitor
+            performanceMonitor = performanceMonitor,
+            connectionSecurity = ConnectionSecurity(connectionSecurityStore),
         )
 
         syncUploadManager = SyncUploadManager(
@@ -178,6 +184,7 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
         // Observe server URL changes from DataStore
         applicationScope.launch {
             val initialUrl = settingsRepository.serverUrl.first()
+            connectionSecurityStore.grandfatherCleartext(initialUrl)
             apiClient.updateBaseUrl(initialUrl)
             isServerConfigurationReady.value = true
 

@@ -4,7 +4,9 @@ import com.iris.app.data.local.DeviceAuthStore
 import com.iris.app.performance.IrisPerformanceEventListener
 import com.iris.app.performance.PerformanceMonitor
 import kotlinx.serialization.json.Json
+import com.iris.app.data.remote.security.ConnectionSecurity
 import okhttp3.Authenticator
+import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -25,8 +27,13 @@ import java.util.concurrent.TimeUnit
 class IrisApiClient(
     initialBaseUrl: String = "http://10.0.2.2:8000/",
     private val credentialsStore: DeviceAuthStore? = null,
-    private val performanceMonitor: PerformanceMonitor? = null
+    private val performanceMonitor: PerformanceMonitor? = null,
+    /** Per-server TLS trust and HTTP consent. The app passes its persisted policy; tests may omit it. */
+    val connectionSecurity: ConnectionSecurity = ConnectionSecurity.Unrestricted,
 ) {
+    // One pool for every client, so a change of trust can drop all open connections at once.
+    private val connectionPool = ConnectionPool()
+
     @Volatile
     var baseUrl: String = normalizeBaseUrl(initialBaseUrl)
         private set
@@ -134,9 +141,14 @@ class IrisApiClient(
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            .connectionPool(connectionPool)
+            .applyConnectionSecurity()
             .applyPerformanceMonitor()
             .build()
     }
+
+    /** Close every open connection: the next request handshakes again under the current policy. */
+    fun resetConnections() = connectionPool.evictAll()
 
     @Volatile
     private var lastRefreshFailedAt = 0L
@@ -255,6 +267,8 @@ class IrisApiClient(
         .authenticator(tokenAuthenticator(expectedSessionIdentity))
         // Keep the same request concurrency limit as the browsing client.
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
+        .connectionPool(connectionPool)
+        .applyConnectionSecurity()
         .applyPerformanceMonitor()
         .build()
 
@@ -344,6 +358,9 @@ class IrisApiClient(
             .build()
             .create(IrisApiService::class.java)
     }
+
+    private fun OkHttpClient.Builder.applyConnectionSecurity(): OkHttpClient.Builder =
+        connectionSecurity.apply(this)
 
     private fun OkHttpClient.Builder.applyPerformanceMonitor(): OkHttpClient.Builder = apply {
         performanceMonitor?.let { eventListenerFactory(IrisPerformanceEventListener.factory(it)) }

@@ -11,7 +11,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.iris.app.data.remote.security.ConnectionProblem
+import com.iris.app.data.remote.security.ConnectionSecurity
+import com.iris.app.data.remote.security.ServerOrigin
+import com.iris.app.data.remote.security.ServerSecurity
+import com.iris.app.data.remote.security.TrustMode
 
 data class SettingsUiState(
     val serverUrl: String = "",
@@ -22,8 +29,23 @@ data class SettingsUiState(
     val isDeviceLoggedIn: Boolean = false,
     val loggedInUsername: String = "",
     val deviceId: String = "",
-    val serverInfo: ServerInfo? = null
+    val serverInfo: ServerInfo? = null,
+    /** A connection-security problem the user can resolve from a dialog. */
+    val connectionProblem: ConnectionProblem? = null,
+    /** How the app talks to the server being tested. */
+    val security: SecuritySummary? = null,
+    val securityMessage: String? = null,
 )
+
+data class SecuritySummary(
+    val origin: String,
+    val usesHttps: Boolean,
+    val trustMode: TrustMode,
+    val pinnedFingerprints: List<String>,
+    val cleartextAllowed: Boolean,
+) {
+    val isDefault: Boolean get() = trustMode == TrustMode.SYSTEM && !cleartextAllowed
+}
 
 class SettingsViewModel(
     private val settingsRepository: ServerSettingsRepository,
@@ -107,22 +129,123 @@ class SettingsViewModel(
                         isServerOnline = true,
                         serverMode = health.mode,
                         serverInfo = info,
-                        connectionTestResult = "Servidor online e acessível (modo: ${health.mode})"
+                        connectionTestResult = "Servidor online e acessível (modo: ${health.mode})",
+                        connectionProblem = null,
                     )
                 }
             } else {
-                val err = healthResult.exceptionOrNull()?.localizedMessage ?: "Servidor inacessível"
+                val failure = healthResult.exceptionOrNull()
+                val origin = currentOrigin()
+                val problem = if (failure != null && origin != null) {
+                    ConnectionProblem.from(failure, origin, security)
+                } else null
+                val err = failure?.localizedMessage ?: "Servidor inacessível"
                 _uiState.update {
                     it.copy(
                         isTestingConnection = false,
                         isServerOnline = false,
                         serverMode = null,
                         serverInfo = null,
-                        connectionTestResult = "Servidor inacessível: $err"
+                        connectionProblem = problem,
+                        connectionTestResult = problem?.let(::describe) ?: "Servidor inacessível: $err"
                     )
                 }
             }
+            refreshSecuritySummary()
         }
+    }
+
+    private val security: ConnectionSecurity get() = irisRepository.apiClient.connectionSecurity
+
+    /** The server actually being contacted, which is the saved address, not the text being edited. */
+    private fun currentOrigin(): ServerOrigin? = ServerOrigin.of(irisRepository.apiClient.baseUrl)
+
+    private fun refreshSecuritySummary() {
+        val origin = currentOrigin() ?: return
+        val current = security.securityFor(origin)
+        _uiState.update {
+            it.copy(
+                security = SecuritySummary(
+                    origin = origin.key,
+                    usesHttps = irisRepository.apiClient.baseUrl.startsWith("https://"),
+                    trustMode = current.trustMode,
+                    pinnedFingerprints = current.pinnedCertificates.mapNotNull { der ->
+                        ConnectionSecurity.parseCertificates(der).firstOrNull()?.let(ConnectionSecurity::sha256)
+                    },
+                    cleartextAllowed = current.cleartextAllowed,
+                )
+            )
+        }
+    }
+
+    fun dismissConnectionProblem() = _uiState.update { it.copy(connectionProblem = null) }
+
+    fun allowCleartext() = changeSecurity { it.copy(cleartextAllowed = true) }
+
+    fun trustDeviceCertificates() =
+        changeSecurity { it.copy(trustMode = TrustMode.DEVICE_CAS, pinnedCertificates = emptyList()) }
+
+    /** Pins the self-signed top of the chain the server presented. */
+    fun trustPresentedCertificate() {
+        val problem = _uiState.value.connectionProblem as? ConnectionProblem.UntrustedCertificate ?: return
+        if (!problem.canTrustPresentedCertificate) return
+        changeSecurity {
+            it.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(problem.chain.last().encoded))
+        }
+    }
+
+    /** Pins an authority from a certificate file, if it is the one the server's chain leads to. */
+    fun importAuthority(bytes: ByteArray) {
+        val origin = currentOrigin() ?: return
+        val certificates = runCatching { ConnectionSecurity.parseCertificates(bytes) }.getOrDefault(emptyList())
+        if (certificates.isEmpty()) {
+            _uiState.update { it.copy(securityMessage = "O arquivo não contém um certificado X.509 (PEM ou DER).") }
+            return
+        }
+        val anchor = certificates.firstOrNull { security.anchorsLastRejected(origin, it) }
+        if (anchor == null) {
+            _uiState.update {
+                it.copy(
+                    securityMessage = "Esse certificado não é a autoridade que emitiu o certificado do servidor. " +
+                        "Nada foi alterado."
+                )
+            }
+            return
+        }
+        changeSecurity { it.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(anchor.encoded)) }
+    }
+
+    /** Back to the strictest policy: public authorities only, no HTTP. */
+    fun resetSecurity() = changeSecurity { ServerSecurity() }
+
+    fun dismissSecurityMessage() = _uiState.update { it.copy(securityMessage = null) }
+
+    private fun changeSecurity(change: (ServerSecurity) -> ServerSecurity) {
+        val origin = currentOrigin() ?: return
+        _uiState.update { it.copy(connectionProblem = null, securityMessage = null) }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                security.update(origin, change)
+                // Connections already open were accepted under the previous policy. Closing
+                // a TLS connection writes to the network, so never on the main thread.
+                irisRepository.apiClient.resetConnections()
+            }
+            refreshSecuritySummary()
+            testConnection()
+        }
+    }
+
+    private fun describe(problem: ConnectionProblem): String = when (problem) {
+        is ConnectionProblem.CleartextNotAllowed ->
+            "Este endereço usa HTTP, sem criptografia, e ainda não foi autorizado neste aparelho."
+        is ConnectionProblem.UntrustedCertificate ->
+            "O certificado do servidor não foi emitido por uma autoridade em que este aparelho confia."
+        is ConnectionProblem.NameMismatch ->
+            "O certificado é válido, mas não foi emitido para ${problem.origin.host}. Use o endereço que " +
+                "consta no certificado ou emita um certificado que inclua este."
+        is ConnectionProblem.NotHttps ->
+            "Algo respondeu em ${problem.origin}, mas não com HTTPS. Confira a porta, ou use http:// se o " +
+                "servidor não usa TLS."
     }
 
     class Factory(
