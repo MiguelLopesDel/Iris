@@ -12,6 +12,7 @@ import com.iris.app.data.model.SyncRun
 import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.ServerSettingsRepository
+import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.ServerSpeedTest
 import com.iris.app.data.sync.SyncRunRecorder
@@ -19,10 +20,12 @@ import com.iris.app.data.sync.UploadSpeedSnapshot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -47,6 +50,10 @@ data class SyncUiState(
     val queueRefreshFailed: Boolean = false,
     val cloudSyncStatus: CloudSyncStatus = CloudSyncStatus(),
     val isSyncing: Boolean = false,
+    /** Media examined so far by the running scan, out of the selected folders' total; null when none runs. */
+    val scanProgress: MediaStoreScanner.ScanProgress? = null,
+    /** A sync that did not finish is waiting to be retried automatically. */
+    val retryPending: Boolean = false,
     val currentProgress: Float = 0f,
     val syncWifiOnly: Boolean = false,
     val syncChargingOnly: Boolean = false,
@@ -78,7 +85,8 @@ data class SyncUiState(
 class SyncViewModel(
     private val repository: IrisRepository,
     private val settingsRepository: ServerSettingsRepository,
-    private val credentialsStore: DeviceCredentialsStore
+    private val credentialsStore: DeviceCredentialsStore,
+    private val syncRetryPending: Flow<Boolean> = flowOf(false),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -214,6 +222,16 @@ class SyncViewModel(
         viewModelScope.launch {
             repository.uploadManager.isUploading.collect { uploading ->
                 _uiState.update { it.copy(isSyncing = uploading) }
+            }
+        }
+        viewModelScope.launch {
+            repository.mediaScanner.scanProgress.collect { progress ->
+                _uiState.update { it.copy(scanProgress = progress) }
+            }
+        }
+        viewModelScope.launch {
+            syncRetryPending.collect { pending ->
+                _uiState.update { it.copy(retryPending = pending) }
             }
         }
         viewModelScope.launch {
@@ -528,11 +546,12 @@ class SyncViewModel(
     class Factory(
         private val repository: IrisRepository,
         private val settingsRepository: ServerSettingsRepository,
-        private val credentialsStore: DeviceCredentialsStore
+        private val credentialsStore: DeviceCredentialsStore,
+        private val syncRetryPending: Flow<Boolean> = flowOf(false),
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SyncViewModel(repository, settingsRepository, credentialsStore) as T
+            return SyncViewModel(repository, settingsRepository, credentialsStore, syncRetryPending) as T
         }
     }
 }

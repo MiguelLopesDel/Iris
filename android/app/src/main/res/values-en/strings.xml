@@ -56,6 +56,12 @@
     <string name="queue_state_processing">Processing on the server</string>
     <string name="queue_state_uploaded">Uploaded</string>
     <string name="queue_state_already_on_server">Already on the server</string>
+    <string name="sync_status_scanning">Checking device media: %1$d of %2$d</string>
+    <string name="sync_status_uploading">Uploading media in the background…</string>
+    <string name="sync_status_retry_pending">The last sync did not finish. Iris will try again on its own shortly.</string>
+    <string name="sync_status_idle">Ready to sync</string>
+    <string name="sync_action_sync">Sync</string>
+    <string name="sync_action_retry_now">Try now</string>
     <string name="queue_state_failed">Failed</string>
     <!-- Sync speed and history -->
     <string name="sync_speed_now">Now: %1$s</string>

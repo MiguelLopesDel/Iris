@@ -480,16 +480,27 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 15.sp
                                 )
+                                val activity = SyncActivity.of(uiState)
+                                val scan = uiState.scanProgress
                                 Text(
-                                    text = if (uiState.isSyncing) "Enviando mídias em segundo plano…" else "Pronto para sincronizar",
+                                    text = when (activity) {
+                                        SyncActivity.SCANNING -> stringResource(
+                                            R.string.sync_status_scanning,
+                                            scan?.examined ?: 0,
+                                            scan?.total ?: 0,
+                                        )
+                                        SyncActivity.UPLOADING -> stringResource(R.string.sync_status_uploading)
+                                        SyncActivity.RETRY_PENDING -> stringResource(R.string.sync_status_retry_pending)
+                                        SyncActivity.IDLE -> stringResource(R.string.sync_status_idle)
+                                    },
                                     fontSize = 12.sp,
-                                    color = if (uiState.isSyncing) IrisAccentLime else IrisTextSoft
+                                    color = if (activity.isRunning) IrisAccentLime else IrisTextSoft
                                 )
                             }
 
                             Button(
                                 onClick = { viewModel.triggerManualSync(context) },
-                                enabled = uiState.isLoggedIn && !uiState.isSyncing,
+                                enabled = uiState.isLoggedIn && !SyncActivity.of(uiState).isRunning,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = IrisAccentLime,
@@ -502,11 +513,29 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Sincronizar", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(
+                                    text = stringResource(
+                                        if (SyncActivity.of(uiState) == SyncActivity.RETRY_PENDING) R.string.sync_action_retry_now
+                                        else R.string.sync_action_sync
+                                    ),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
                             }
                         }
 
-                        if (uiState.isSyncing && uiState.currentProgress > 0f) {
+                        val scanProgress = uiState.scanProgress
+                        if (scanProgress != null && scanProgress.total > 0) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            LinearProgressIndicator(
+                                progress = { scanProgress.examined.toFloat() / scanProgress.total },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp),
+                                color = IrisAccentLime,
+                                trackColor = IrisDarkSurfaceBright
+                            )
+                        } else if (uiState.isSyncing && uiState.currentProgress > 0f) {
                             Spacer(modifier = Modifier.height(12.dp))
                             LinearProgressIndicator(
                                 progress = { uiState.currentProgress },

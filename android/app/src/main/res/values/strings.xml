@@ -62,6 +62,12 @@
     <string name="queue_state_processing">Processando no servidor</string>
     <string name="queue_state_uploaded">Enviados</string>
     <string name="queue_state_already_on_server">Já estavam no servidor</string>
+    <string name="sync_status_scanning">Analisando fotos do aparelho: %1$d de %2$d</string>
+    <string name="sync_status_uploading">Enviando mídias em segundo plano…</string>
+    <string name="sync_status_retry_pending">A última sincronização não terminou. O Iris tenta de novo sozinho em instantes.</string>
+    <string name="sync_status_idle">Pronto para sincronizar</string>
+    <string name="sync_action_sync">Sincronizar</string>
+    <string name="sync_action_retry_now">Tentar agora</string>
     <string name="queue_state_failed">Com falha</string>
     <string name="cloud_connection_unavailable">Sem conexão com a nuvem. Suas mídias locais continuam no aparelho; o Iris tentará reconectar e sincronizar automaticamente em segundo plano.</string>
     <string name="cloud_sync_retrying">Servidor acessível, mas a sincronização não terminou. O Iris tentará novamente em segundo plano.</string>

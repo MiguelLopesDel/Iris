@@ -24,6 +24,8 @@ import com.iris.app.data.model.SyncRunOutcome
 import com.iris.app.data.model.SyncRunTrigger
 import com.iris.app.data.repository.ServerSettingsRepository.AccountSyncSettings
 import com.iris.app.performance.Metric
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -364,6 +366,21 @@ class MediaSyncWorker(
 
             override suspend fun replace(request: OneTimeWorkRequest) {
                 workManager.enqueueUniqueWork(ONE_TIME_WORK_TAG, ExistingWorkPolicy.REPLACE, request).await()
+            }
+        }
+
+        /**
+         * True while a sync that did not finish waits for WorkManager's backoff
+         * before running again. The sync button must say so: it starts one at
+         * once, while the automatic retry may be minutes away.
+         */
+        fun retryPending(context: Context): Flow<Boolean> {
+            val workManager = WorkManager.getInstance(context)
+            return combine(
+                workManager.getWorkInfosForUniqueWorkFlow(ONE_TIME_WORK_TAG),
+                workManager.getWorkInfosForUniqueWorkFlow(PERIODIC_WORK_TAG),
+            ) { oneTime, periodic ->
+                (oneTime + periodic).any { it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0 }
             }
         }
 
