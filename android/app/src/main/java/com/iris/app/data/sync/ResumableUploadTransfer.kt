@@ -44,9 +44,12 @@ internal class ResumableUploadTransfer(
     enum class ItemResult {
         /** The server has the item (uploaded, already present, or processing). */
         CONFIRMED,
-        /** The media left the device before it was uploaded; the item is failed and the queue moves on. */
-        SOURCE_MISSING,
-        /** A transient failure: stop claiming work and let WorkManager retry from committed offsets. */
+        /**
+         * The item can never succeed as it is (the server rejected it, or its
+         * media left the device): it is marked failed and the queue moves on.
+         */
+        FAILED,
+        /** A transient failure: the item resumes from its committed offset on a later pass. */
         RETRY,
     }
 
@@ -57,13 +60,13 @@ internal class ResumableUploadTransfer(
      */
     suspend fun execute(job: LocalUploadJob): ItemResult = withContext(Dispatchers.IO) {
         var readFailed = false
-        val handled = transfer(job) { readFailed = true }
+        val result = transfer(job) { readFailed = true }
         when {
-            handled -> ItemResult.CONFIRMED
             // A deleted file surfaces as the same IOException as a dropped
             // link; only its absence on the device tells the two apart.
-            readFailed && !context.mediaPayloadSource.isAvailable(Uri.parse(job.localUri)) -> markSourceMissing(job)
-            else -> ItemResult.RETRY
+            result == ItemResult.RETRY && readFailed &&
+                !context.mediaPayloadSource.isAvailable(Uri.parse(job.localUri)) -> markSourceMissing(job)
+            else -> result
         }
     }
 
@@ -71,10 +74,15 @@ internal class ResumableUploadTransfer(
         context.dbHelper.updateJobState(
             context.accountKey, job.id, UploadJobState.FAILED, SOURCE_MISSING_MESSAGE,
         )
-        return ItemResult.SOURCE_MISSING
+        return ItemResult.FAILED
     }
 
-    private suspend fun transfer(job: LocalUploadJob, onIoFailure: () -> Unit): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * A job marked FAILED here is final and reported as [ItemResult.FAILED], so
+     * the caller moves on; reporting it as a retry halted the whole queue for
+     * an item that could not succeed anyway.
+     */
+    private suspend fun transfer(job: LocalUploadJob, onIoFailure: () -> Unit): ItemResult = withContext(Dispatchers.IO) {
         val accountKey = context.accountKey
         val db = context.dbHelper
         val api = context.apiServiceProvider(context.sessionIdentity)
@@ -107,7 +115,11 @@ internal class ResumableUploadTransfer(
                             "O servidor informa que este envio está em estado ${init.state}",
                         )
                     }
-                    return@withContext init.state in setOf("ready", "duplicate", "pending_processing")
+                    return@withContext if (init.state in setOf("ready", "duplicate", "pending_processing")) {
+                        ItemResult.CONFIRMED
+                    } else {
+                        ItemResult.FAILED
+                    }
                 }
                 uploadId = init.uploadId
                 offset = init.offset
@@ -143,14 +155,14 @@ internal class ResumableUploadTransfer(
                         if (++conflicts > 3) {
                             db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
                                 "Conflito persistente de offset no upload (409)")
-                            return@withContext false
+                            return@withContext ItemResult.FAILED
                         }
                         val status = api.getUploadStatus(uploadId)
                         context.ensureSession()
                         when (status.state) {
-                            "ready" -> { db.updateJobState(accountKey, job.id, UploadJobState.READY); return@withContext true }
-                            "duplicate" -> { db.updateJobState(accountKey, job.id, UploadJobState.DUPLICATE); return@withContext true }
-                            "pending_processing" -> { db.updateJobState(accountKey, job.id, UploadJobState.PENDING_PROCESSING); return@withContext true }
+                            "ready" -> { db.updateJobState(accountKey, job.id, UploadJobState.READY); return@withContext ItemResult.CONFIRMED }
+                            "duplicate" -> { db.updateJobState(accountKey, job.id, UploadJobState.DUPLICATE); return@withContext ItemResult.CONFIRMED }
+                            "pending_processing" -> { db.updateJobState(accountKey, job.id, UploadJobState.PENDING_PROCESSING); return@withContext ItemResult.CONFIRMED }
                             else -> {
                                 offset = status.offset
                                 db.updateOffsetTransactionally(accountKey, job.id, offset)
@@ -158,12 +170,12 @@ internal class ResumableUploadTransfer(
                             }
                         }
                     }
-                    response.code() == 401 -> return@withContext false
-                    response.code() == 404 -> { db.resetUploadProgress(accountKey, job.id); return@withContext false }
+                    response.code() == 401 -> return@withContext ItemResult.RETRY
+                    response.code() == 404 -> { db.resetUploadProgress(accountKey, job.id); return@withContext ItemResult.RETRY }
                     else -> {
                         val error = response.errorBody()?.string() ?: "Erro HTTP ${response.code()}"
                         db.updateJobState(accountKey, job.id, UploadJobState.FAILED, error)
-                        return@withContext false
+                        return@withContext ItemResult.FAILED
                     }
                 }
             }
@@ -177,21 +189,28 @@ internal class ResumableUploadTransfer(
             when (completion.state) {
                 "pending_processing", "processing" -> db.updateJobState(accountKey, job.id, UploadJobState.PENDING_PROCESSING)
                 "duplicate" -> db.updateJobState(accountKey, job.id, UploadJobState.DUPLICATE)
-                "failed_processing" -> db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
-                    completion.errorMessage ?: "O servidor não conseguiu processar a mídia enviada")
+                "failed_processing" -> {
+                    db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
+                        completion.errorMessage ?: "O servidor não conseguiu processar a mídia enviada")
+                    return@withContext ItemResult.FAILED
+                }
                 else -> db.updateJobState(accountKey, job.id, UploadJobState.READY)
             }
-            true
+            ItemResult.CONFIRMED
         } catch (failure: UploadCompleteBatchItemException) {
-            if (failure.statusCode == 404) db.resetUploadProgress(accountKey, job.id)
-            else if (failure.statusCode != 401 && failure.statusCode != 409 && failure.statusCode < 500) {
+            if (failure.statusCode == 404) {
+                db.resetUploadProgress(accountKey, job.id)
+                ItemResult.RETRY
+            } else if (failure.statusCode != 401 && failure.statusCode != 409 && failure.statusCode < 500) {
                 db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
                     failure.message ?: "Falha ao concluir o envio")
+                ItemResult.FAILED
+            } else {
+                ItemResult.RETRY
             }
-            false
         } catch (failure: IOException) {
             onIoFailure()
-            false
+            ItemResult.RETRY
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) { db.updateJobState(accountKey, job.id, UploadJobState.QUEUED) }
             throw cancelled
@@ -200,11 +219,17 @@ internal class ResumableUploadTransfer(
                 withContext(NonCancellable) { db.updateJobState(accountKey, job.id, UploadJobState.QUEUED) }
                 throw CancellationException("Device session changed during media sync")
             }
-            if (failure.code() == 404 && remoteUploadStarted) db.resetUploadProgress(accountKey, job.id)
-            else if (failure.code() == 401 || failure.code() == 409) db.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
-            else db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
-                failure.localizedMessage ?: "Erro HTTP ${failure.code()} durante envio")
-            false
+            if (failure.code() == 404 && remoteUploadStarted) {
+                db.resetUploadProgress(accountKey, job.id)
+                ItemResult.RETRY
+            } else if (failure.code() == 401 || failure.code() == 409) {
+                db.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                ItemResult.RETRY
+            } else {
+                db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
+                    failure.localizedMessage ?: "Erro HTTP ${failure.code()} durante envio")
+                ItemResult.FAILED
+            }
         } catch (failure: Exception) {
             if (!context.isSessionCurrent()) {
                 withContext(NonCancellable) { db.updateJobState(accountKey, job.id, UploadJobState.QUEUED) }
@@ -212,7 +237,7 @@ internal class ResumableUploadTransfer(
             }
             db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
                 failure.localizedMessage ?: "Erro desconhecido durante envio")
-            false
+            ItemResult.FAILED
         }
     }
 

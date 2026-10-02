@@ -96,7 +96,14 @@ class SyncUploadManager(
     }
 
     /**
-     * Returns false when an item needs retry. A second runner waits for the one
+     * Returns false when an item needs retry. One item's transient failure does
+     * not stop the pass: that item is set aside until the next pass and the rest
+     * keep going, so a single slow video no longer halts thousands of photos the
+     * server could take (or already has). Only a run of consecutive transient
+     * failures, which points at the link or the server, stops claiming work.
+     * Items the server rejected for good are failed and never stop the queue.
+     *
+     * A second runner waits for the one
      * that owns the queue instead of returning: items its own scan enqueued may
      * arrive after the first runner stopped claiming, and leaving them would
      * strand them until the next scheduled sync.
@@ -129,6 +136,9 @@ class SyncUploadManager(
             val retryRequested = AtomicBoolean(false)
             val firstUploadJobClaimed = AtomicBoolean(false)
             val activeJobIds = mutableSetOf<Long>()
+            // Items that failed transiently in this pass; not claimed again until the next one.
+            val deferredJobIds = mutableSetOf<Long>()
+            val transientFailures = TransientFailureStreak(MAX_CONSECUTIVE_TRANSIENT_FAILURES)
             val claimMutex = Mutex()
 
             coroutineScope {
@@ -178,7 +188,7 @@ class SyncUploadManager(
                                     if (retryRequested.get()) {
                                         null
                                     } else {
-                                        dbHelper.claimNextPendingJob(accountKey, activeJobIds)?.also { job ->
+                                        dbHelper.claimNextPendingJob(accountKey, activeJobIds + deferredJobIds)?.also { job ->
                                             activeJobIds += job.id
                                             updateProgress(job.id, job.byteSize, job.nextByteOffset)
                                         }
@@ -202,17 +212,25 @@ class SyncUploadManager(
                                 }
 
                                 try {
-                                    val result = transfer.execute(nextJob)
-                                    if (result == ResumableUploadTransfer.ItemResult.CONFIRMED) {
-                                        confirmedItems.incrementAndGet()
-                                        speedMeter.recordConfirmedItem()
-                                    } else if (result == ResumableUploadTransfer.ItemResult.RETRY) {
-                                        // Stop claiming more work on any transient
-                                        // failure. Other already-active jobs may
-                                        // finish, then WorkManager retries the
-                                        // durable queue from committed offsets.
-                                        retryRequested.set(true)
-                                        workSignal?.stopWorkers()
+                                    when (transfer.execute(nextJob)) {
+                                        ResumableUploadTransfer.ItemResult.CONFIRMED -> {
+                                            transientFailures.reset()
+                                            confirmedItems.incrementAndGet()
+                                            speedMeter.recordConfirmedItem()
+                                        }
+                                        ResumableUploadTransfer.ItemResult.FAILED -> Unit
+                                        ResumableUploadTransfer.ItemResult.RETRY -> {
+                                            claimMutex.withLock { deferredJobIds += nextJob.id }
+                                            // Back in the queue, not shown as sending; it
+                                            // resumes from its committed offset.
+                                            dbHelper.updateJobState(accountKey, nextJob.id, UploadJobState.QUEUED)
+                                            if (transientFailures.recordFailure()) {
+                                                // Other already-active jobs may finish, then
+                                                // WorkManager retries from committed offsets.
+                                                retryRequested.set(true)
+                                                workSignal?.stopWorkers()
+                                            }
+                                        }
                                     }
                                 } finally {
                                     claimMutex.withLock {
@@ -233,7 +251,7 @@ class SyncUploadManager(
                     completionBatcher.close()
                 }
             }
-            !retryRequested.get()
+            !retryRequested.get() && claimMutex.withLock { deferredJobIds.isEmpty() }
         } finally {
             speedMeter.finishRun()
             onQueueRunFinished(speedMeter.snapshot())
@@ -285,6 +303,7 @@ class SyncUploadManager(
 
     internal companion object {
         const val MAX_CONCURRENT_UPLOADS = 16
+        const val MAX_CONSECUTIVE_TRANSIENT_FAILURES = 3
         const val MAX_SUPPORTED_UPLOADS = 16
         const val COMPLETION_LOCK_STRIPES = 16
     }
