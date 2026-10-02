@@ -86,7 +86,9 @@ def test_restore_recreates_container_after_atomic_root_swap():
 def test_server_port_is_configurable_without_exposing_the_container():
     compose = (ROOT / "docker-compose.yml").read_text()
     script = (ROOT / "scripts" / "server.sh").read_text()
-    assert '"127.0.0.1:${IRIS_PORT:-8501}:8501"' in compose
+    # Configurable, but loopback unless the administrator chooses otherwise.
+    assert '"${IRIS_BIND:-127.0.0.1}:${IRIS_PORT:-8501}:8501"' in compose
+    assert "\nIRIS_BIND=127.0.0.1\n" in (ROOT / ".env.example").read_text()
     assert "port <1024-65535>" in script
 
 

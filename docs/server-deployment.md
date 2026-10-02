@@ -192,9 +192,10 @@ As miniaturas são geradas de novo conforme a galeria abre.
 
 ## Acesso remoto privado
 
-O Iris usa a porta `8501` por padrão, mas ela é configurável no servidor. A porta
-continua privada em `127.0.0.1`; isso não abre acesso pela rede local ou Internet.
-Para trocar, use:
+O Iris usa a porta `8501` por padrão, mas ela é configurável no servidor. Por
+padrão ela fica privada em `127.0.0.1`, sem acesso pela rede local ou pela
+Internet (veja "Escutar numa rede privada" abaixo para mudar isso). Para trocar a
+porta, use:
 
 ```bash
 ./scripts/server.sh port 8751
@@ -220,10 +221,10 @@ tailscale serve status
 ```
 
 Use o endereço `https://<servidor>.<tailnet>.ts.net` que ele mostrar, no
-navegador ou como URL do servidor no app Android. Não use o IP da malha seguido de
-`:8501`: o Docker atende deliberadamente só no host local. Em ZeroTier ou Nebula,
-onde não há equivalente do `serve`, ligue o Docker à interface da malha em vez de
-`127.0.0.1` — ali o alcance já está limitado a quem entrou na rede.
+navegador ou como URL do servidor no app Android. O IP da malha seguido de `:8501`
+só funciona se o Iris escutar nesse endereço (próxima seção). Em ZeroTier ou
+Nebula, onde não há equivalente do `serve`, escutar na interface da malha é o
+caminho: ali o alcance já está limitado a quem entrou na rede.
 
 **Túnel próprio (WireGuard, SSH).** Encaminhe uma porta local do aparelho para
 `127.0.0.1:8501` do servidor. Nada muda no Iris.
@@ -234,9 +235,37 @@ então trate como serviço público: certificado válido, rate limiting, e um pl
 para quando aparecer tráfego indesejado. Não é o modo para o qual este guia foi
 escrito.
 
-Seja qual for o caminho, **não** troque o mapeamento do Docker para `0.0.0.0`
-sem antes decidir conscientemente por exposição pública, TLS e recuperação de
-incidentes — isso abre a porta para toda a rede local de uma vez.
+### Escutar numa rede privada
+
+Sem proxy nem túnel, o Iris pode escutar direto num endereço do host, por
+exemplo o da interface de uma malha privada ou da rede local:
+
+```bash
+ip -4 addr                                  # os endereços deste host
+./scripts/server.sh listen 100.101.102.103  # escutar só nesse endereço
+./scripts/server.sh listen 127.0.0.1        # voltar ao padrão
+```
+
+O comando recusa um endereço que nenhuma interface do host tenha, grava
+`IRIS_BIND` no `.env`, reinicia o Iris e confere a saúde nesse endereço. O que
+muda:
+
+- **O tráfego é HTTP puro.** Só faz sentido numa rede de confiança ou que já
+  criptografa o tráfego, como uma malha WireGuard. O app Android pede confirmação
+  para usar HTTP com o servidor (veja o guia de conectividade).
+- **O login pelo navegador funciona por HTTP.** Com `IRIS_SESSION_HTTPS_ONLY=auto`,
+  o padrão, o cookie de sessão é marcado `Secure` só quando a requisição chega por
+  HTTPS, seja direto ou por um proxy que informe `X-Forwarded-Proto: https`. Com
+  `true`, o navegador só faz login por HTTPS; o `listen` avisa quando é esse o caso.
+- **O endereço precisa existir quando o Docker sobe.** Uma interface criada por
+  um serviço (a de uma malha, por exemplo) pode aparecer depois do Docker na
+  inicialização do host, e aí o container não sobe. Ordene os serviços (no
+  systemd, `After=` e `Wants=` do serviço da malha num drop-in do `docker.service`)
+  ou volte a `127.0.0.1` com um proxy ou túnel na frente.
+
+Escutar em **todas** as redes (`0.0.0.0`) abre o Iris para a rede local inteira de
+uma vez, e o comando exige `--all-interfaces` para isso. Só use com uma decisão
+consciente por exposição, TLS e recuperação de incidentes.
 
 ## Backup, restauração e atualização
 

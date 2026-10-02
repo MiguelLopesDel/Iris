@@ -11,7 +11,7 @@ services:
         IRIS_COMMIT: ${IRIS_COMMIT:-}
     user: "${IRIS_UID:-1000}:${IRIS_GID:-1000}"
     ports:
-      - "127.0.0.1:${IRIS_PORT:-8501}:8501"
+      - "${IRIS_BIND:-127.0.0.1}:${IRIS_PORT:-8501}:8501"
     volumes:
       - ./data:/app/data
       - ./media:/app/media
