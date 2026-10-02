@@ -453,7 +453,7 @@ case "${1:-}" in
         set_port "$2"
         ;;
     *)
-        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>|listen <address>}" >&2
+        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin] [--accept-missing]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>|listen <address>}" >&2
         exit 2
         ;;
 esac

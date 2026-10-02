@@ -20,7 +20,10 @@ out: it would double the size and be stale on restore anyway.
 Snapshots are incremental the way ``rsync --link-dest`` is: a file whose size,
 mtime, ctime and inode match the previous snapshot is hard-linked instead of copied,
 so each snapshot is complete and browsable while an unchanged photo occupies
-the destination disk once. Backup files are made read-only because a hard
+the destination disk once. Content is reused, not only paths: a file at a new
+path (moved into an account, a renamed folder) or duplicating another is
+hashed and, when the destination already holds those bytes, linked to them.
+Only files whose size matches something already backed up are hashed first. Backup files are made read-only because a hard
 link shared by several snapshots must never be edited in place.
 
 A snapshot is written under a temporary name and renamed only when complete;
@@ -99,6 +102,10 @@ class Manifest:
     roots: dict[str, str]
     files: list[Entry] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Catalogue entries whose original existed nowhere when the snapshot was
+    # taken, as "users/<id>/iris.db:<path>": reported, not fatal (see
+    # _preflight_originals), and accepted by verify for this snapshot only.
+    missing_originals: list[str] = field(default_factory=list)
     iris_version: str | None = None
     iris_commit: str | None = None
     # None: written before the retention policy existed, so never pruned.
@@ -211,6 +218,147 @@ def _snapshot_file(
     return None
 
 
+_ORIGINAL_COLUMNS = ("caminho", "relative_path", "storage_path", "library_id")
+
+
+def _catalogue_originals(
+    database: Path, media_root: Path, sqlite_options: str
+) -> Iterator[tuple[str, list[Path], str | None]]:
+    """Each catalogued item of ``database`` as (key, candidate paths, recorded path).
+
+    The candidates are where the server looks for the original, in its order:
+    the library root plus storage path, the account media plus relative path,
+    then the recorded absolute path and its file name under the account media.
+    """
+    label = f"users/{database.parent.name}/iris.db"
+    with sqlite3.connect(database.resolve().as_uri() + f"?{sqlite_options}", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(memes)")}
+        selected = [name for name in _ORIGINAL_COLUMNS if name in columns]
+        if not selected:
+            return
+        roots: dict[int, Path] = {}
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_libraries'"
+        ).fetchone():
+            roots = {
+                int(lib_id): Path(root)
+                for lib_id, root in connection.execute("SELECT id, root_path FROM media_libraries")
+                if root
+            }
+        for row in connection.execute(f"SELECT {', '.join(selected)} FROM memes").fetchall():
+            candidates: list[Path] = []
+            if "storage_path" in columns and "library_id" in columns and row["storage_path"] and row["library_id"] in roots:
+                candidates.append(roots[row["library_id"]] / row["storage_path"])
+            if "relative_path" in columns and row["relative_path"]:
+                candidates.append(media_root / row["relative_path"])
+            caminho = row["caminho"] if "caminho" in columns else None
+            if caminho:
+                path = Path(caminho)
+                candidates.append(path if path.is_absolute() else Path.cwd() / path)
+                candidates.append(media_root / path.name)
+            recorded = caminho or (row["relative_path"] if "relative_path" in columns else None) or (
+                row["storage_path"] if "storage_path" in columns else None
+            )
+            yield f"{label}:{recorded}", candidates, caminho
+
+
+def _account_media_roots(users_db: Path, sqlite_options: str) -> dict[int, Path]:
+    if not users_db.is_file():
+        return {}
+    with sqlite3.connect(users_db.resolve().as_uri() + f"?{sqlite_options}", uri=True) as connection:
+        return {int(uid): Path(root) for uid, root in connection.execute("SELECT id, media_root FROM users")}
+
+
+ACCEPTED_MISSING_FILE = "backup_accepted_missing.json"
+
+
+def _accepted_missing(data: Path) -> set[str]:
+    try:
+        payload = json.loads((data / ACCEPTED_MISSING_FILE).read_text())
+        return {str(key) for key in payload.get("accepted", [])}
+    except (FileNotFoundError, ValueError, AttributeError):
+        return set()
+
+
+def _record_accepted_missing(data: Path, keys: set[str]) -> None:
+    path = data / ACCEPTED_MISSING_FILE
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(
+        {"accepted": sorted(keys), "updated_at": datetime.now(UTC).isoformat()}, indent=1
+    ))
+    os.replace(temporary, path)
+
+
+def _preflight_originals(
+    roots: dict[str, Path], previous: tuple[Path, Manifest] | None, *, accept_missing: bool = False
+) -> list[str]:
+    """Check the live catalogues before copying anything; return the accepted absent originals.
+
+    A missing original is never accepted silently: a disk that mounted only in
+    part, or files deleted before the first backup, look exactly like items
+    whose file never existed. The administrator accepts the current absences
+    once (``accept_missing``, recorded in ``data/`` and so in the backup);
+    accepted ones are then reported, and any new absence fails again, as does
+    an original the previous snapshot held. Everything is decided before a
+    single byte is copied.
+    """
+    data = roots["data"]
+    media_roots = _account_media_roots(data / "users.db", "mode=ro")
+    recorded = _accepted_missing(data)
+    accepted = recorded | (set(previous[1].missing_originals) if previous else set())
+    previously_held = {entry.root + "/" + entry.path for entry in previous[1].files} if previous else set()
+
+    def held_before(candidate: Path) -> bool:
+        if previous is None:
+            return False
+        copied = _snapshot_file(candidate, previous[1], previous[0], resolve_source=False)
+        return copied is not None and copied.relative_to(previous[0]).as_posix() in previously_held
+
+    missing: list[str] = []
+    unaccepted: list[tuple[str, object, bool]] = []  # key, example, held by the previous snapshot
+    unmounted: list[str] = []
+    for database in sorted(data.glob("users/*/iris.db")):
+        try:
+            user_id = int(database.parent.name)
+        except ValueError:
+            continue
+        media_root = media_roots.get(user_id, data / "users" / str(user_id) / "media")
+        total = absent = 0
+        for key, candidates, caminho in _catalogue_originals(database, media_root, "mode=ro"):
+            total += 1
+            if any(candidate.is_file() for candidate in candidates):
+                continue
+            absent += 1
+            if key in accepted:
+                missing.append(key)
+            else:
+                unaccepted.append((key, caminho or candidates, any(held_before(c) for c in candidates)))
+        if total and absent == total:
+            unmounted.append(f"{database.relative_to(data)} ({total} itens)")
+
+    if unaccepted and not accept_missing:
+        example = unaccepted[0][1]
+        vanished = [item for item in unaccepted if item[2]]
+        if vanished:
+            reason = (f"{len(vanished)} originais que estavam no backup anterior sumiram "
+                      f"(por exemplo {vanished[0][1]}); restaure-os desse backup")
+        elif unmounted:
+            reason = (f"nenhum original de {', '.join(unmounted)} foi encontrado (por exemplo {example}): "
+                      "o disco de mídia está montado?")
+        else:
+            reason = (f"{len(unaccepted)} originais do catálogo não foram encontrados em lugar nenhum "
+                      f"(por exemplo {example})")
+        raise BackupError(
+            f"{reason}. Se esses arquivos já estavam perdidos e você aceita backups sem eles, rode "
+            "./scripts/server.sh backup --accept-missing (vale só para os ausentes de agora)."
+        )
+    if unaccepted:
+        _record_accepted_missing(data, recorded | {key for key, _, _ in unaccepted})
+        missing.extend(key for key, _, _ in unaccepted)
+    return missing
+
+
 def _check_references(manifest: Manifest, snapshot: Path, *, check_source: bool = True) -> None:
     """Refuse a snapshot whose copied catalogues cannot find their originals."""
     data_root = snapshot / "data"
@@ -240,59 +388,36 @@ def _check_references(manifest: Manifest, snapshot: Path, *, check_source: bool 
                     ):
                         raise BackupError(f"{label} da conta {user_id} ausente no backup: {source}")
 
+    accepted_missing = set(manifest.missing_originals)
     for database in sorted(data_root.glob("users/*/iris.db")):
         try:
             user_id = int(database.parent.name)
         except ValueError:
             continue
         media_root = media_roots.get(user_id, Path(manifest.roots["data"]) / "users" / str(user_id) / "media")
-        with sqlite3.connect(database.resolve().as_uri() + f"?{sqlite_options}", uri=True) as connection:
-            connection.row_factory = sqlite3.Row
-            columns = {row[1] for row in connection.execute("PRAGMA table_info(memes)")}
-            if not columns:
-                continue
-            selected = [name for name in ("caminho", "relative_path", "storage_path", "library_id") if name in columns]
-            if not selected:
-                continue
-            roots = {}
-            if connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_libraries'"
-            ).fetchone():
-                roots = {
-                    int(lib_id): Path(root)
-                    for lib_id, root in connection.execute("SELECT id, root_path FROM media_libraries")
-                    if root
-                }
-            for row in connection.execute(f"SELECT {', '.join(selected)} FROM memes"):
-                candidates: list[Path] = []
-                if "storage_path" in columns and "library_id" in columns and row["storage_path"] and row["library_id"] in roots:
-                    candidates.append(roots[row["library_id"]] / row["storage_path"])
-                if "relative_path" in columns and row["relative_path"]:
-                    candidates.append(media_root / row["relative_path"])
-                caminho = row["caminho"] if "caminho" in columns else None
-                if caminho:
-                    path = Path(caminho)
-                    candidates.append(path if path.is_absolute() else Path.cwd() / path)
-                    candidates.append(media_root / path.name)
-                source = next(
-                    (
-                        candidate for candidate in candidates
-                        if (candidate.is_file() if check_source else (
-                            (copied := _snapshot_file(
-                                candidate, manifest, snapshot, resolve_source=False
-                            )) is not None
-                            and copied.relative_to(snapshot).as_posix() in registered
-                        ))
-                    ),
-                    None,
-                )
-                if source is None:
-                    raise BackupError(f"original indisponível em {database.relative_to(data_root)}: {caminho or candidates}")
-                copied = _snapshot_file(source, manifest, snapshot, resolve_source=check_source)
-                if (copied is None or not copied.is_file()
-                        or copied.relative_to(snapshot).as_posix() not in registered):
-                    raise BackupError(f"original fora do backup em {database.relative_to(data_root)}: {source}")
+        for key, candidates, caminho in _catalogue_originals(database, media_root, sqlite_options):
+            source = next(
+                (
+                    candidate for candidate in candidates
+                    if (candidate.is_file() if check_source else (
+                        (copied := _snapshot_file(
+                            candidate, manifest, snapshot, resolve_source=False
+                        )) is not None
+                        and copied.relative_to(snapshot).as_posix() in registered
+                    ))
+                ),
+                None,
+            )
+            if source is None:
+                if key in accepted_missing:
+                    continue  # absent before this snapshot; recorded in the manifest
+                raise BackupError(f"original indisponível em {database.relative_to(data_root)}: {caminho or candidates}")
+            copied = _snapshot_file(source, manifest, snapshot, resolve_source=check_source)
+            if (copied is None or not copied.is_file()
+                    or copied.relative_to(snapshot).as_posix() not in registered):
+                raise BackupError(f"original fora do backup em {database.relative_to(data_root)}: {source}")
 
+        with sqlite3.connect(database.resolve().as_uri() + f"?{sqlite_options}", uri=True) as connection:
             if connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='library_trash'"
             ).fetchone():
@@ -406,18 +531,23 @@ def create(
     *,
     now: datetime | None = None,
     retention: str = POLICY,
+    accept_missing: bool = False,
 ) -> Summary:
-    """Write one complete snapshot of ``roots`` under ``dest``."""
+    """Write one complete snapshot of ``roots`` under ``dest``.
+
+    ``accept_missing`` accepts the catalogued originals absent right now
+    (see :func:`_preflight_originals`); later backups keep accepting those only.
+    """
     if retention not in (POLICY, PINNED):
         raise BackupError(f"retenção desconhecida: {retention}")
     dest.mkdir(parents=True, exist_ok=True)
     _check_roots(roots, dest)
     with _exclusive(dest):
-        return _create(roots, dest, now, retention)
+        return _create(roots, dest, now, retention, accept_missing)
 
 
 def _create(
-    roots: dict[str, Path], dest: Path, now: datetime | None, retention: str
+    roots: dict[str, Path], dest: Path, now: datetime | None, retention: str, accept_missing: bool = False
 ) -> Summary:
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
     # Two backups in the same second (a manual one right after the scheduled
@@ -444,7 +574,25 @@ def _create(
             iris_commit=iris_commit(),
             retention=retention,
         )
+        # Before copying anything: a vanished original or an unmounted media disk
+        # should fail in seconds, not after the whole library was copied.
+        manifest.missing_originals = _preflight_originals(roots, previous, accept_missing=accept_missing)
+        if manifest.missing_originals:
+            manifest.warnings.append(
+                f"{len(manifest.missing_originals)} itens do catálogo sem o arquivo original, aceitos "
+                "pelo administrador (listados em missing_originals no manifesto)"
+            )
         copied = linked = 0
+        # Content already in the destination, by (sha256, size): the previous
+        # snapshot's files and this run's copies. A file that moved (a library
+        # attached to an account, a folder renamed) or that duplicates another is
+        # linked to that copy instead of being written again.
+        by_content: dict[tuple[str, int], Path] = {}
+        if previous is not None:
+            for item in previous[1].files:
+                if item.kind == "file":
+                    by_content.setdefault((item.sha256, item.size), previous[0] / item.root / item.path)
+        known_sizes = {size for _, size in by_content}
         observed: dict[Path, tuple[int, int, int, int, int]] = {}
         copied_databases: list[tuple[Path, str]] = []
         scanned: set[Path] = set()
@@ -477,11 +625,24 @@ def _create(
                         entry = known
                         linked += 1
                     else:
-                        digest = _copy_hashing(source, target)
-                        entry = Entry(name, relative.as_posix(), target.stat().st_size,
+                        # Hashing first costs a read; only worth it when some copy
+                        # already in the destination has this size.
+                        reused = None
+                        if stat.st_size in known_sizes:
+                            digest = _sha256(source)
+                            existing = by_content.get((digest, stat.st_size))
+                            if existing is not None and _link(existing, target):
+                                reused = digest
+                        if reused is None:
+                            digest = _copy_hashing(source, target)
+                            by_content.setdefault((digest, stat.st_size), target)
+                            known_sizes.add(stat.st_size)
+                            copied += 1
+                        else:
+                            linked += 1
+                        entry = Entry(name, relative.as_posix(), stat.st_size,
                                       stat.st_mtime_ns, digest, "file", stat.st_ctime_ns,
                                       stat.st_ino, stat.st_dev)
-                        copied += 1
                     state = _identity(source)
                     if state != before:
                         raise BackupError(f"arquivo mudou durante o backup: {source}")

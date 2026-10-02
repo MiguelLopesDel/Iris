@@ -302,10 +302,28 @@ fora só o que ele reconstrói sozinho: índices FAISS, vetores, miniaturas e
 envios pela metade.
 
 O Iris só publica o backup depois de conferir os arquivos, a integridade dos
-bancos e os originais referenciados pelos catálogos. Se algum original estiver
-fora das raízes configuradas, estiver ausente, ou se bancos/arquivos mudarem
-durante a captura, a execução aparece como **falha** no painel e não aciona a
-retenção. Corrija o caminho ou tente novamente quando os envios terminarem.
+bancos e os originais referenciados pelos catálogos. A execução aparece como
+**falha** no painel, e não aciona a retenção, quando:
+
+- um original catalogado não é encontrado em lugar nenhum: sumiu desde o backup
+  anterior (apagado fora do Iris), um disco montou só em parte ou não montou, ou
+  o arquivo já estava perdido antes (comum em catálogos antigos importados). O
+  backup não tem como distinguir esses casos, então nunca aceita a ausência
+  sozinho;
+- um original está fora das raízes configuradas;
+- bancos ou arquivos mudam durante a captura.
+
+Os originais são conferidos antes de copiar qualquer arquivo, então a falha
+aparece em segundos, com a quantidade e um exemplo. Se os arquivos já estavam
+perdidos e você aceita backups sem eles:
+
+```bash
+./scripts/server.sh backup --accept-missing
+```
+
+Isso registra os ausentes **de agora** como aceitos (em `data/`, de modo que a
+decisão entra no próprio backup) e conclui o backup com um aviso; os itens ficam
+listados em `missing_originals` no `manifest.json`. Corrija o caminho ou tente novamente quando os envios terminarem.
 Se `IRIS_SECRET_KEY` vier do ambiente, o backup guarda o valor efetivo como
 `data/secret_key`; após restaurar, confira se o `.env` não o substitui por
 outro valor. Proteja o destino do backup como protegeria as fotos e senhas.
@@ -315,8 +333,10 @@ separada dessas configurações para reconstruir a instalação após perda do h
 Cada backup é uma pasta completa, que dá para abrir sem o Iris, com um
 `manifest.json` que registra o hash de cada arquivo e a versão do Iris que o
 gravou. Uma foto que não mudou desde o backup anterior vira um hard link para
-ele: ocupa o disco uma vez só. Em discos sem hard link (exFAT, FAT) o arquivo é
-copiado. Um backup interrompido fica como `.incomplete-*` e nunca é usado.
+ele: ocupa o disco uma vez só. O reaproveitamento é pelo conteúdo, não só pelo
+caminho: uma foto que mudou de pasta (uma biblioteca anexada a uma conta, por
+exemplo) ou que duplica outra também vira hard link. Em discos sem hard link
+(exFAT, FAT) o arquivo é copiado. Um backup interrompido fica como `.incomplete-*` e nunca é usado.
 
 ### Retenção
 
