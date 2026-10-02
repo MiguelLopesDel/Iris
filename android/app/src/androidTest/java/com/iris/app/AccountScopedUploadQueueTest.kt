@@ -257,12 +257,14 @@ class AccountScopedUploadQueueTest {
             app.settingsRepository.updateServerUrl(server.url("/").toString())
         }
         app.apiClient.updateBaseUrl(server.url("/").toString())
+        app.allowCleartext(server)
         app.credentialsStore.clearCredentials()
     }
 
     @After
     fun tearDown() {
         app.credentialsStore.clearCredentials()
+        app.allowCleartext(server, allowed = false)
         dbHelper.close()
         app.deleteDatabase(testDatabaseName)
         server.shutdown()

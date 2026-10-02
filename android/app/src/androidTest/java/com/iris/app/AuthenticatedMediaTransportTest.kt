@@ -50,6 +50,7 @@ class AuthenticatedMediaTransportTest {
             }
         }
         app.apiClient.updateBaseUrl(serverUrl)
+        app.allowCleartext(server)
         app.credentialsStore.saveSession(
             deviceId = "instrumentation-device",
             accessToken = "video-token",
@@ -63,6 +64,7 @@ class AuthenticatedMediaTransportTest {
     @After
     fun tearDown() {
         app.credentialsStore.clearCredentials()
+        app.allowCleartext(server, allowed = false)
         server.shutdown()
     }
 

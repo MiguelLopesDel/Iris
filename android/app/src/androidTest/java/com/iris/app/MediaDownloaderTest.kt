@@ -47,6 +47,7 @@ class MediaDownloaderTest {
         runBlocking { withTimeout(10_000) { app.isServerConfigurationReady.first { it } } }
         val serverUrl = server.url("/").toString()
         app.apiClient.updateBaseUrl(serverUrl)
+        app.allowCleartext(server)
         app.credentialsStore.saveSession(
             deviceId = "instrumentation-device",
             accessToken = "download-token",
@@ -61,6 +62,7 @@ class MediaDownloaderTest {
     fun tearDown() {
         created.forEach { it.delete() }
         app.credentialsStore.clearCredentials()
+        app.allowCleartext(server, allowed = false)
         server.shutdown()
     }
 
