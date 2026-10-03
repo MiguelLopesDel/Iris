@@ -53,6 +53,7 @@ class MediaLocationOriginalTest {
 
         assertEquals("The upload must hash (and send) the file as it is", sha256(original), content.sha256)
         assertEquals(original.size.toLong(), content.size)
+        assertTrue("Recorded as the original, so its chunks read the same", content.original)
     }
 
     /**

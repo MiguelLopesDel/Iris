@@ -32,22 +32,24 @@ object MediaLocationAccess {
         }
 }
 
-/** The platform refused the original file; the read is retried later, consistently. */
+/** The original file could not be read for an upload pinned to it; the item is re-hashed and retried. */
 class OriginalRefusedException(cause: Throwable) : java.io.IOException("Original media refused", cause)
 
 /**
- * Chooses between the original and the redacted file for each media item.
+ * Which version of an item to read: the original (with location) or the
+ * redacted file Android serves without ACCESS_MEDIA_LOCATION.
  *
- * Deciding per open let one upload hash the original and send a chunk of the
- * redacted file after a passing refusal. The server rejected the mix, a
- * re-read of the original matched the declared hash, and the item was failed
- * for good. Now a refusal fails that read with [OriginalRefusedException] (an
- * IOException: the item is retried) and marks only that item. Its reads use
- * the redacted file until the mark expires, so its next attempt hashes and
- * sends the same bytes; other items keep their location. After the mark
- * expires, the original is tried again. If the declared hash then describes
- * the other version, the server refuses it (422) and the upload re-hashes the
- * file and starts over: it converges and never fails for good.
+ * Every upload is pinned to the version its hash was computed from: a job
+ * records it, and its chunks read that version strictly ([openExact]). One
+ * upload can therefore never declare one version's hash and send the other's
+ * bytes. Mixing them made the server refuse the upload, a re-read matched the
+ * declared hash, and the item was failed for good.
+ *
+ * Hashing reads the preferred version ([openPreferred]): the original, unless
+ * this item refused it recently. A refusal marks only that item, for a while,
+ * so other items keep their location and a passing refusal does not cost this
+ * item its location forever. The mark only chooses the version of the next
+ * hash; it never changes the version of an upload in progress.
  */
 internal class OriginalReads(
     private val allowed: () -> Boolean,
@@ -61,8 +63,28 @@ internal class OriginalReads(
         return until > clock()
     }
 
-    fun <U : Any, T> open(plain: U, original: (U) -> U, opener: (U) -> T): T {
-        if (!allowed() || isRefused(plain)) return opener(plain)
+    /** Reads the preferred version; returns the result and whether it was the original. */
+    fun <U : Any, T> openPreferred(plain: U, original: (U) -> U, opener: (U) -> T): Pair<T, Boolean> {
+        if (!allowed() || isRefused(plain)) return opener(plain) to false
+        return try {
+            opener(original(plain)) to true
+        } catch (failure: SecurityException) {
+            refuse(plain)
+            opener(plain) to false
+        } catch (failure: UnsupportedOperationException) {
+            refuse(plain)
+            opener(plain) to false
+        }
+    }
+
+    /**
+     * Reads exactly the version an upload was hashed from. The original that
+     * can no longer be read fails with [OriginalRefusedException]; the caller
+     * re-hashes the item (which then picks the redacted file) and starts over.
+     */
+    fun <U : Any, T> openExact(plain: U, original: (U) -> U, wantOriginal: Boolean, opener: (U) -> T): T {
+        if (!wantOriginal) return opener(plain)
+        if (!allowed()) throw OriginalRefusedException(SecurityException("ACCESS_MEDIA_LOCATION not granted"))
         return try {
             opener(original(plain))
         } catch (failure: SecurityException) {

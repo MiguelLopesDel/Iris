@@ -218,6 +218,8 @@ data class LocalUploadJob(
     val verifiedAt: Long? = null,
     /** MediaStore's SIZE when hashed, part of the fingerprint; byteSize is the real file size sent. */
     val sourceSize: Long? = null,
+    /** Whether [sha256] is of the original file (with location) or the redacted one; chunks read the same. */
+    val hashedOriginal: Boolean = false,
 )
 
 /** Um mês do acervo e onde ele começa na listagem ordenada por data. */
