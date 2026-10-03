@@ -125,6 +125,45 @@ class InterfaceSmokeTest {
     }
 
     @Test
+    fun a_photo_taken_while_the_gallery_is_open_appears_without_refreshing() {
+        fixture.emptyRecords = true
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            instrumentation.uiAutomation.adoptShellPermissionIdentity(
+                android.Manifest.permission.READ_MEDIA_IMAGES,
+                android.Manifest.permission.READ_MEDIA_VIDEO,
+                android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            )
+            shellMediaPermissionsAdopted = true
+        } else {
+            runShellCommand(instrumentation, "pm grant ${app.packageName} ${android.Manifest.permission.READ_EXTERNAL_STORAGE}")
+            runShellCommand(instrumentation, "pm grant ${app.packageName} ${android.Manifest.permission.WRITE_EXTERNAL_STORAGE}")
+        }
+        // Let the gallery load what exists now, with media access in place.
+        compose.onNodeWithContentDescription("Atualizar").performClick()
+        compose.waitForIdle()
+        // A finished background sync also reloads the gallery; keep it out so
+        // only the MediaStore observer can make the new photo appear.
+        androidx.work.WorkManager.getInstance(app).cancelAllWork().result.get()
+        Thread.sleep(1_500)
+        val name = "live-${System.nanoTime()}.jpg"
+
+        // Saved by "another app" while the gallery is on screen; nobody taps refresh.
+        localFixtureUri = insertLocalPhoto(name)
+
+        try {
+            // The newest item sorts first, so it appears at the top of the grid.
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithContentDescription(name, substring = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (error: androidx.compose.ui.test.ComposeTimeoutException) {
+            compose.onRoot().printToLog("IrisGalleryLiveFailure")
+            throw error
+        }
+    }
+
+    @Test
     fun gallery_shows_device_media_when_server_library_is_empty() {
         fixture.emptyRecords = true
         val instrumentation = InstrumentationRegistry.getInstrumentation()

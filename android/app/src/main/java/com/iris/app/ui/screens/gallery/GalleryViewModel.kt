@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 data class GalleryUiState(
@@ -51,6 +52,8 @@ class GalleryViewModel(
     val performanceMonitor: PerformanceMonitor,
     private val galleryDataSource: GalleryDataSource,
     private val settingsRepository: ServerSettingsRepository? = null,
+    /** MediaStore changes ([com.iris.app.data.local.DeviceMediaChanges]); none in tests by default. */
+    deviceMediaChanges: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GalleryUiState())
@@ -79,6 +82,13 @@ class GalleryViewModel(
         refreshDeviceMedia()
         refreshOrigins()
         checkServerAndLoad()
+        viewModelScope.launch {
+            // New media appears as in the system gallery, without a manual refresh.
+            deviceMediaChanges.debounce(DEVICE_CHANGE_DEBOUNCE_MILLIS).collect {
+                reloadLoadedDevicePages()
+                refreshOrigins()
+            }
+        }
         settingsRepository?.let { settings ->
             viewModelScope.launch {
                 repository.credentialsStore.accountIdentity.collectLatest { accountKey ->
@@ -218,6 +228,47 @@ class GalleryViewModel(
     }
 
     /** Reads a small MediaStore page independently from account/server state. */
+    private fun withQueueHashes(records: List<MediaRecord>): List<MediaRecord> = records.map { record ->
+        val hash = queueOrigins.verifiedHashOf(record)
+        if (hash != null) record.copy(contentHash = hash) else record
+    }
+
+    /**
+     * Rereads every device page loaded so far and replaces them at once, so a
+     * change seen while the user is scrolled down neither drops the pages
+     * below nor leaves a deleted item behind.
+     */
+    private fun reloadLoadedDevicePages() {
+        devicePageLoadJob?.cancel()
+        devicePageLoadJob = viewModelScope.launch {
+            val mediaType = _uiState.value.mediaType
+            val loaded = _uiState.value.devicePage.coerceAtLeast(1)
+            val fresh = mutableListOf<MediaRecord>()
+            var last: com.iris.app.data.local.DeviceGalleryPage? = null
+            for (page in 1..loaded) {
+                val result = runCatching { galleryDataSource.devicePage(page, PAGE_SIZE, mediaType) }.getOrNull()
+                    ?: return@launch
+                if (!result.permissionGranted) return@launch
+                fresh += result.records
+                last = result
+                if (page >= result.totalPages) break
+            }
+            val total = last ?: return@launch
+            deviceRecords = withQueueHashes(fresh).distinctBy { it.deviceUri }
+            deviceTotalRecords = total.total
+            _uiState.update { current ->
+                val devicePages = total.totalPages.coerceAtLeast(1)
+                current.copy(
+                    records = recordMerger.merge(serverRecords, deviceRecords),
+                    deviceTotalRecords = total.total,
+                    deviceTotalPages = devicePages,
+                    totalPages = maxOf(current.serverTotalPages, devicePages),
+                    totalRecords = totalRecordEstimate()
+                )
+            }
+        }
+    }
+
     fun refreshDeviceMedia(page: Int = 1) {
         devicePageLoadJob?.cancel()
         devicePageLoadJob = viewModelScope.launch {
@@ -244,10 +295,7 @@ class GalleryViewModel(
             // A fresh page carries no hashes; reapply the queue's. Otherwise a
             // page arriving after refreshOrigins undid it, and media the server
             // already holds showed twice (its server copy and the device one).
-            val hashed = devicePage.records.map { record ->
-                val hash = queueOrigins.verifiedHashOf(record)
-                if (hash != null) record.copy(contentHash = hash) else record
-            }
+            val hashed = withQueueHashes(devicePage.records)
             deviceRecords = if (page == 1) {
                 hashed
             } else {
@@ -523,6 +571,8 @@ class GalleryViewModel(
         /** Enough to fill the first screens while the network catches up. */
         const val MIRROR_FIRST_PAINT = 60
         const val PAGE_SIZE = 24
+        /** A camera shot is several MediaStore notifications; reload once they settle. */
+        const val DEVICE_CHANGE_DEBOUNCE_MILLIS = 700L
     }
 
     class Factory(
@@ -530,10 +580,11 @@ class GalleryViewModel(
         private val performanceMonitor: PerformanceMonitor,
         private val galleryDataSource: GalleryDataSource,
         private val settingsRepository: ServerSettingsRepository? = null,
+        private val deviceMediaChanges: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return GalleryViewModel(repository, performanceMonitor, galleryDataSource, settingsRepository) as T
+            return GalleryViewModel(repository, performanceMonitor, galleryDataSource, settingsRepository, deviceMediaChanges) as T
         }
     }
 }

@@ -226,7 +226,8 @@ fun IrisNavGraph(
                         application.irisRepository,
                         application.performanceMonitor,
                         application.galleryDataSource,
-                        application.settingsRepository
+                        application.settingsRepository,
+                        com.iris.app.data.local.DeviceMediaChanges.of(application.contentResolver),
                     )
                 )
                 GalleryScreen(
