@@ -62,3 +62,24 @@ def test_opening_a_library_repairs_device_uploads_dated_by_arrival(tmp_path: Pat
     assert dates["already-right.jpg"] == SEPT_29
     assert dates["no-capture-time.jpg"] == arrival
     assert dates["host-import.jpg"] == arrival
+
+
+def test_the_gallery_backend_repairs_a_library_before_loading_it(tmp_path: Path):
+    from core.auth import hash_password
+    from core.backend_registry import BackendRegistry
+    from core.users_db import create_user
+
+    data = tmp_path / "data"
+    user = create_user(data / "users.db", data, username="ana", password_hash=hash_password("lua cheia no mar"))
+    conn = init_db(user.db_path)
+    device = conn.execute(
+        "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('device-uploads', '/media', 'x')"
+    ).lastrowid
+    _insert(conn, device, "dated-by-arrival.jpg", UPLOADED.timestamp(), "2026-09-29T22:07:22Z")
+    conn.commit()
+    conn.close()
+
+    BackendRegistry(data / "users.db", load_model=False).get(user.id)
+
+    stored = sqlite3.connect(user.db_path).execute("SELECT file_mtime FROM memes").fetchone()[0]
+    assert stored == SEPT_29

@@ -6,6 +6,7 @@ from collections import OrderedDict
 
 from core.backend import SearchBackend, create_backend
 from core.embedding_models import resolve_embedding_model
+from core.indexer_db import init_db
 from core.users_db import IrisUser, get_user_by_id
 
 
@@ -31,6 +32,10 @@ class BackendRegistry:
             user = self.get_user(user_id)
             if user is None:
                 raise KeyError(user_id)
+            # Bring the library's schema and data repairs up to date before the
+            # backend reads it: the gallery is often the first thing to open an
+            # account after an upgrade, and the catalog it loads is cached.
+            init_db(user.db_path).close()
             backend = create_backend(
                 db_path=str(user.db_path), media_root=str(user.media_root),
                 model_name=resolve_embedding_model(user.model_name),
