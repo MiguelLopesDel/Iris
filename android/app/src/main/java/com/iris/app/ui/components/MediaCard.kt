@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.HourglassEmpty
+import androidx.compose.material.icons.outlined.Pending
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -167,6 +168,7 @@ private fun OriginBadge(origin: MediaOrigin, modifier: Modifier = Modifier) {
         MediaOrigin.PROCESSING -> Icons.Outlined.Sync to stringResource(R.string.origin_processing)
         MediaOrigin.FAILED -> Icons.Outlined.CloudOff to stringResource(R.string.origin_failed)
         MediaOrigin.ON_DEVICE -> Icons.Outlined.CloudDone to stringResource(R.string.origin_on_device)
+        MediaOrigin.CHECKING -> Icons.Outlined.Pending to stringResource(R.string.origin_checking)
     }
     val quiet = origin == MediaOrigin.ON_DEVICE
 

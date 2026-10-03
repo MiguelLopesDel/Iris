@@ -26,6 +26,7 @@ import com.iris.app.data.sync.BackgroundSyncPolicy
 import com.iris.app.data.sync.AccountSyncSession
 import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.MediaStoreScanner
+import com.iris.app.data.sync.MediaStoreVersions
 import com.iris.app.data.sync.SyncUploadManager
 import com.iris.app.performance.PerformanceMonitor
 import kotlinx.coroutines.CoroutineScope
@@ -143,7 +144,8 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
         mediaStoreScanner = MediaStoreScanner(
             contentResolver = contentResolver,
             uploadManager = syncUploadManager,
-            performanceMonitor = performanceMonitor
+            performanceMonitor = performanceMonitor,
+            mediaStoreVersions = { MediaStoreVersions.read(this) },
         )
 
         changeFeedSyncManager = ChangeFeedSyncManager(

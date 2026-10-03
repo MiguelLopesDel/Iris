@@ -60,8 +60,9 @@ class DeviceGalleryReader(
                 MediaStore.MediaColumns.SIZE,
                 MediaStore.MediaColumns.DATE_TAKEN,
                 MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.MediaColumns.DATE_MODIFIED,
                 MediaStore.Files.FileColumns.MEDIA_TYPE
-            )
+            ) + if (android.os.Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray()
 
             try {
                 val total = contentResolver.query(
@@ -103,6 +104,8 @@ class DeviceGalleryReader(
         val sizeIndex = getColumnIndex(MediaStore.MediaColumns.SIZE)
         val takenIndex = getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
         val addedIndex = getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
+        val modifiedIndex = getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+        val generationIndex = getColumnIndex(MediaStore.MediaColumns.GENERATION_MODIFIED)
         val typeIndex = getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
         return buildList {
             while (moveToNext()) {
@@ -119,7 +122,16 @@ class DeviceGalleryReader(
                         fileMtime = timestampSeconds.toDouble(),
                         mediaType = if (type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) "video" else "image",
                         deviceUri = ContentUris.withAppendedId(collection, id).toString(),
-                        mimeType = if (mimeIndex >= 0) getString(mimeIndex) else null
+                        mimeType = if (mimeIndex >= 0) getString(mimeIndex) else null,
+                        deviceFingerprint = if (sizeIndex >= 0) {
+                            com.iris.app.data.sync.MediaFingerprint(
+                                size = getLong(sizeIndex),
+                                dateModifiedSeconds = if (modifiedIndex >= 0) getLong(modifiedIndex) else 0L,
+                                generation = if (generationIndex >= 0) getLong(generationIndex) else 0L,
+                            )
+                        } else {
+                            null
+                        }
                     )
                 )
             }

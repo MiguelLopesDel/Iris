@@ -39,7 +39,9 @@ data class MediaRecord(
     @SerialName("concepts") val concepts: List<MediaConceptRef> = emptyList(),
     /** Device-only gallery data; these fields never cross the server JSON boundary. */
     @kotlinx.serialization.Transient val deviceUri: String? = null,
-    @kotlinx.serialization.Transient val mimeType: String? = null
+    @kotlinx.serialization.Transient val mimeType: String? = null,
+    /** What MediaStore says about the device file now, to spot changes since it was hashed. */
+    @kotlinx.serialization.Transient val deviceFingerprint: com.iris.app.data.sync.MediaFingerprint? = null
 ) {
     val isVideo: Boolean
         get() = mediaType.equals("video", ignoreCase = true)

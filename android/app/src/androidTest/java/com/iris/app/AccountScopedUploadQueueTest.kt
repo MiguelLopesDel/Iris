@@ -40,6 +40,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -87,6 +88,7 @@ class AccountScopedUploadQueueTest {
     private val rejectChunksForFilenames = ConcurrentHashMap.newKeySet<String>()
     private val loseUploadOnceForFilenames = ConcurrentHashMap.newKeySet<String>()
     private val unavailableOnceForFilenames = ConcurrentHashMap.newKeySet<String>()
+    private val hashMismatchOnceForFilenames = ConcurrentHashMap.newKeySet<String>()
 
     private fun initializedMediaCount(recorded: List<RecordedRequest>): Int = recorded.sumOf { request ->
         when (request.path) {
@@ -152,12 +154,17 @@ class AccountScopedUploadQueueTest {
                     val results = JSONArray()
                     for (index in 0 until uploads.length()) {
                         val uploadId = uploads.getJSONObject(index).getString("upload_id")
+                        val mismatch = uploadIdFilenames[uploadId]?.let(hashMismatchOnceForFilenames::remove) == true
                         results.put(
                             JSONObject()
                                 .put("upload_id", uploadId)
-                                .put("state", if (uploadId == "stale-upload") null else "ready")
+                                .put("state", if (uploadId == "stale-upload" || mismatch) null else "ready")
                                 .apply {
                                     if (uploadId == "stale-upload") put("error_code", 404)
+                                    if (mismatch) {
+                                        put("error_code", 422)
+                                        put("error_message", "Hash do arquivo não confere")
+                                    }
                                 },
                         )
                     }
@@ -1549,6 +1556,76 @@ class AccountScopedUploadQueueTest {
         assertEquals(count, claimed)
         // The next pass starts over and finds them all again.
         assertNotNull(dbHelper.claimNextPendingJob(accountKey))
+    }
+
+    @Test
+    fun an_upload_declares_the_real_file_size_when_media_store_trails_it() = runBlocking {
+        val (accountKey, sessionIdentity, manager) = signedInManager("stale-size")
+        val stamp = System.nanoTime()
+        val item = createMediaStoreBenchmarkItem(app.contentResolver, "stale-size-$stamp.jpg", false, 96 * 1024, stamp)
+        try {
+            assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+            // What a file rewritten without MediaStore noticing looks like to the queue:
+            // the size recorded at scan time is smaller than the file now.
+            val job = dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }
+            dbHelper.writableDatabase.execSQL("UPDATE upload_jobs SET byte_size = ? WHERE id = ?", arrayOf<Any>(item.sizeBytes - 170, job.id))
+            requests.clear()
+
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+
+            val declared = requests.filter { it.path == "/api/sync/uploads/batch" }
+                .flatMap { request ->
+                    val uploads = JSONObject(request.body.clone().readUtf8()).getJSONArray("uploads")
+                    (0 until uploads.length()).map { uploads.getJSONObject(it) }
+                }
+                .single { it.getString("filename") == item.filename }
+            assertEquals(item.sizeBytes, declared.getLong("size"))
+            val sent = requests.filter { it.method == "PUT" }.sumOf { it.bodySize }
+            assertEquals(item.sizeBytes, sent)
+            assertEquals("READY", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+        } finally {
+            app.contentResolver.delete(item.uri, null, null)
+        }
+    }
+
+    @Test
+    fun a_hash_mismatch_for_a_rewritten_file_is_hashed_again_and_resent() = runBlocking {
+        val (accountKey, sessionIdentity, manager) = signedInManager("mismatch")
+        val stamp = System.nanoTime()
+        val item = createMediaStoreBenchmarkItem(app.contentResolver, "mismatch-$stamp.jpg", false, 96 * 1024, stamp)
+        try {
+            assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+            val originalHash = dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.sha256
+            // The file is rewritten after it was hashed; the server sees other bytes.
+            app.contentResolver.openOutputStream(item.uri, "wt")!!.use { it.write(ByteArray(96 * 1024) { 7 }) }
+            hashMismatchOnceForFilenames += item.filename
+
+            assertFalse(manager.processQueue(accountKey, sessionIdentity))
+            val retried = dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }
+            assertEquals("QUEUED", retried.state.name)
+            assertNotEquals(originalHash, retried.sha256)
+
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+            assertEquals("READY", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+        } finally {
+            app.contentResolver.delete(item.uri, null, null)
+        }
+    }
+
+    @Test
+    fun a_hash_mismatch_with_an_unchanged_file_fails_instead_of_looping() = runBlocking {
+        val (accountKey, sessionIdentity, manager) = signedInManager("mismatch-same")
+        val stamp = System.nanoTime()
+        val item = createMediaStoreBenchmarkItem(app.contentResolver, "mismatch-same-$stamp.jpg", false, 96 * 1024, stamp)
+        try {
+            assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+            hashMismatchOnceForFilenames += item.filename
+
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+            assertEquals("FAILED", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+        } finally {
+            app.contentResolver.delete(item.uri, null, null)
+        }
     }
 
     private fun signedInManager(name: String): Triple<String, String, SyncUploadManager> {

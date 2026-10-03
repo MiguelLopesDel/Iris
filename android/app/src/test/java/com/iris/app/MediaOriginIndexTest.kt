@@ -5,6 +5,7 @@ import com.iris.app.data.model.MediaOrigin
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.UploadJobState
+import com.iris.app.data.sync.MediaFingerprint
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -128,6 +129,59 @@ class MediaOriginIndexTest {
         )
 
         assertEquals(MediaOrigin.ON_DEVICE, MediaOriginIndex.from(listOf(uploaded)).originOf(record))
+    }
+
+    @Test
+    fun `a device file changed since it was hashed reads as checking`() {
+        val uploaded = job("abc", UploadJobState.READY, id = 7L).copy(sourceDateModified = 1_700_000_000L)
+        val index = MediaOriginIndex.from(listOf(uploaded))
+        fun record(size: Long, modified: Long) = MediaRecord(
+            index = -7,
+            arquivo = "IMG_7.jpg",
+            deviceUri = "content://media/external/file/7",
+            deviceFingerprint = MediaFingerprint(size = size, dateModifiedSeconds = modified, generation = 0L),
+        )
+
+        assertEquals(MediaOrigin.ON_DEVICE, index.originOf(record(uploaded.byteSize, 1_700_000_000L)))
+        assertEquals(MediaOrigin.CHECKING, index.originOf(record(uploaded.byteSize + 1, 1_700_000_000L)))
+        assertEquals(MediaOrigin.CHECKING, index.originOf(record(uploaded.byteSize, 1_700_000_500L)))
+    }
+
+    @Test
+    fun `a changed device file does not lend its old hash to the gallery merge`() {
+        val uploaded = job("abc", UploadJobState.READY, id = 7L).copy(sourceDateModified = 1_700_000_000L)
+        val index = MediaOriginIndex.from(listOf(uploaded))
+        fun record(size: Long) = MediaRecord(
+            index = -7,
+            arquivo = "IMG_7.jpg",
+            deviceUri = "content://media/external/file/7",
+            deviceFingerprint = MediaFingerprint(size = size, dateModifiedSeconds = 1_700_000_000L, generation = 0L),
+        )
+
+        assertEquals("abc", index.verifiedHashOf(record(uploaded.byteSize)))
+        // Edited: no hash, so it is not merged away and shows as checking.
+        assertEquals(null, index.verifiedHashOf(record(uploaded.byteSize + 1)))
+        assertEquals(MediaOrigin.CHECKING, index.originOf(record(uploaded.byteSize + 1)))
+    }
+
+    @Test
+    fun `an edited local photo stays in the gallery next to the old server copy`() {
+        val uploaded = job("abc", UploadJobState.READY, id = 7L).copy(sourceDateModified = 1_700_000_000L)
+        val index = MediaOriginIndex.from(listOf(uploaded))
+        val edited = MediaRecord(
+            index = -7,
+            arquivo = "IMG_7.jpg",
+            deviceUri = "content://media/external/file/7",
+            deviceFingerprint = MediaFingerprint(size = uploaded.byteSize + 1, dateModifiedSeconds = 1_700_000_000L, generation = 0L),
+        )
+        val serverCopy = MediaRecord(index = 3, arquivo = "IMG_7.jpg", contentHash = "abc")
+
+        val merged = com.iris.app.ui.screens.gallery.GalleryRecordMerger().merge(
+            listOf(serverCopy),
+            listOf(edited.copy(contentHash = index.verifiedHashOf(edited))),
+        )
+
+        assertEquals(2, merged.size)
     }
 
     @Test

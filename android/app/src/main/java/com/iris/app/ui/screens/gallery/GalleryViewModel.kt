@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.model.MediaOriginIndex
-import com.iris.app.data.model.MediaStoreKey
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.model.CloudConnectionState
@@ -145,10 +144,10 @@ class GalleryViewModel(
             }
             if (currentSessionKey() != requestedSessionKey) return@launch
             val originIndex = MediaOriginIndex.from(jobs)
-            val hashesByUri = jobs.filter { it.sha256.isNotBlank() }
-                .associate { MediaStoreKey.of(it.localUri) to it.sha256 }
+            // A file changed since it was hashed keeps no hash: it stays visible
+            // as a local item ("checking") instead of merging into the old copy.
             deviceRecords = deviceRecords.map { record ->
-                record.copy(contentHash = record.deviceUri?.let { hashesByUri[MediaStoreKey.of(it)] }.orEmpty().ifBlank { null })
+                record.copy(contentHash = originIndex.verifiedHashOf(record)?.ifBlank { null })
             }
             _uiState.update {
                 it.copy(

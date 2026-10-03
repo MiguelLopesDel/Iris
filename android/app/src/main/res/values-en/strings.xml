@@ -18,6 +18,7 @@
     <string name="sync_photos_lowercase">photos</string>
     <string name="sync_media_permission_required">Allow photo and video access to list device folders</string>
     <string name="origin_on_device">On this device and in Iris</string>
+    <string name="origin_checking">File changed on this device, checking</string>
     <string name="origin_iris_only">In Iris only, not on this device</string>
     <string name="origin_uploading">Uploading to Iris</string>
     <string name="origin_processing">In Iris, still processing</string>

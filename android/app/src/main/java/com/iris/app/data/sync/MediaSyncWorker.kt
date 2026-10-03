@@ -103,6 +103,8 @@ class MediaSyncWorker(
                 return Result.retry()
             }
             app.settingsRepository.markCloudConnected(accountKey)
+            val requeued = app.syncUploadManager.bindServerInstance(accountKey, healthResult.getOrNull()?.instanceId)
+            if (requeued > 0) Log.i(TAG, "Server installation changed; requeued=$requeued")
 
             val canRunMediaWork = !isPeriodic || BackgroundSyncPolicy.shouldRunMediaWork(
                 wifiOnly = syncSettings.wifiOnly,
@@ -161,6 +163,8 @@ class MediaSyncWorker(
                                         )
                                     },
                                     onNewJobEnqueued = onNewJobEnqueued,
+                                    // Hashing the whole library is long; do it only on the charger.
+                                    allowFullVerification = isCharging(applicationContext),
                                 )
                             },
                             drainQueue = { workSignal ->

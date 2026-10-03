@@ -1,5 +1,9 @@
 package com.iris.app.data.model
 
+import com.iris.app.data.sync.KnownMedia
+import com.iris.app.data.sync.MediaChangePolicy
+import com.iris.app.data.sync.MediaFingerprint
+
 /**
  * Where the item the user is looking at actually lives.
  *
@@ -25,7 +29,14 @@ enum class MediaOrigin {
     ON_DEVICE,
 
     /** Upload attempt ended badly; the original is still only on the phone. */
-    FAILED
+    FAILED,
+
+    /**
+     * The file changed since it was hashed (edited, overwritten, or its id now
+     * names another item): what the server holds is unknown until the next scan
+     * hashes it again.
+     */
+    CHECKING
 }
 
 /**
@@ -39,7 +50,9 @@ enum class MediaOrigin {
  */
 class MediaOriginIndex(
     private val stateByHash: Map<String, MediaOrigin>,
-    private val stateByLocalUri: Map<String, MediaOrigin>
+    private val stateByLocalUri: Map<String, MediaOrigin>,
+    /** The fingerprint each local item had when hashed, keyed like [stateByLocalUri]. */
+    private val knownByLocalUri: Map<String, KnownMedia> = emptyMap(),
 ) {
 
     fun originOf(contentHash: String?): MediaOrigin {
@@ -48,8 +61,34 @@ class MediaOriginIndex(
     }
 
     fun originOf(record: MediaRecord): MediaOrigin = record.deviceUri?.let { uri ->
-        stateByLocalUri[MediaStoreKey.of(uri)] ?: MediaOrigin.DEVICE_ONLY
+        val key = MediaStoreKey.of(uri)
+        val origin = stateByLocalUri[key] ?: return@let MediaOrigin.DEVICE_ONLY
+        val current = record.deviceFingerprint
+        val known = knownByLocalUri[key]
+        if (current != null && known != null &&
+            MediaChangePolicy.decide(known, current, null) == MediaChangePolicy.Verdict.VERIFY
+        ) {
+            MediaOrigin.CHECKING
+        } else {
+            origin
+        }
     } ?: originOf(record.contentHash)
+
+    /**
+     * The queued hash of a device record, but only while the file still has
+     * the fingerprint it had when hashed. A file changed since then holds
+     * other bytes; its old hash must not merge it with the server's old copy,
+     * or the gallery would show only that copy and never "checking".
+     */
+    fun verifiedHashOf(record: MediaRecord): String? {
+        val key = record.deviceUri?.let(MediaStoreKey::of) ?: return null
+        val known = knownByLocalUri[key] ?: return null
+        val current = record.deviceFingerprint
+        if (current != null && MediaChangePolicy.decide(known, current, null) == MediaChangePolicy.Verdict.VERIFY) {
+            return null
+        }
+        return known.sha256
+    }
 
     /** Processing and finished jobs mean the server has already accepted the bytes. */
     fun hasServerCopy(contentHash: String?): Boolean = when (originOf(contentHash)) {
@@ -63,12 +102,23 @@ class MediaOriginIndex(
         fun from(jobs: List<LocalUploadJob>): MediaOriginIndex {
             val stateByHash = mutableMapOf<String, MediaOrigin>()
             val stateByLocalUri = mutableMapOf<String, MediaOrigin>()
+            val knownByLocalUri = mutableMapOf<String, KnownMedia>()
             for (job in jobs) {
                 val candidate = job.state.toOrigin()
                 val localUri = job.localUri.let { if (it.isBlank()) it else MediaStoreKey.of(it) }
                 val localCurrent = stateByLocalUri[localUri]
                 if (localUri.isNotBlank() && (localCurrent == null || candidate.rank() > localCurrent.rank())) {
                     stateByLocalUri[localUri] = candidate
+                    knownByLocalUri[localUri] = KnownMedia(
+                        jobId = job.id,
+                        sha256 = job.sha256,
+                        fingerprint = MediaFingerprint(
+                            size = job.sourceSize ?: job.byteSize,
+                            dateModifiedSeconds = job.sourceDateModified,
+                            generation = job.source?.generation ?: 0L,
+                        ),
+                        verifiedAt = job.verifiedAt,
+                    )
                 }
                 val hash = job.sha256.lowercase()
                 if (hash.isBlank()) continue
@@ -82,13 +132,14 @@ class MediaOriginIndex(
                     stateByHash[hash] = candidate
                 }
             }
-            return MediaOriginIndex(stateByHash, stateByLocalUri)
+            return MediaOriginIndex(stateByHash, stateByLocalUri, knownByLocalUri)
         }
 
         private fun MediaOrigin.rank(): Int = when (this) {
             MediaOrigin.ON_DEVICE -> 5
             MediaOrigin.PROCESSING -> 4
             MediaOrigin.UPLOADING -> 3
+            MediaOrigin.CHECKING -> 2
             MediaOrigin.FAILED -> 2
             MediaOrigin.DEVICE_ONLY -> 1
             MediaOrigin.IRIS_ONLY -> 0
