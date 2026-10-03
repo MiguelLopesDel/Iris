@@ -78,11 +78,7 @@ class DeviceGalleryReader(
                 val queryArgs = Bundle().apply {
                     putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
                     putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
-                    putStringArray(
-                        ContentResolver.QUERY_ARG_SORT_COLUMNS,
-                        arrayOf(MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.DATE_ADDED)
-                    )
-                    putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
+                    putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, NEWEST_FIRST)
                     putInt(ContentResolver.QUERY_ARG_LIMIT, pageSize)
                     putInt(ContentResolver.QUERY_ARG_OFFSET, (page - 1).coerceAtLeast(0) * pageSize)
                 }
@@ -152,6 +148,19 @@ class DeviceGalleryReader(
         }
     }
 }
+
+/**
+ * Newest first by the date the gallery shows: when it was taken, or when it
+ * was added for media without a capture date (downloads, WhatsApp). Sorting
+ * Same rule as the record's fileMtime (a zero capture date counts as absent).
+ * Sorting by the two columns with QUERY_ARG_SORT_DIRECTION produced
+ * "datetaken, date_added DESC": only date_added descended, so media without a
+ * capture date came first and photos followed oldest first, and a photo
+ * just taken landed on the last page, never loaded.
+ */
+internal val NEWEST_FIRST =
+    "CASE WHEN ${MediaStore.MediaColumns.DATE_TAKEN} > 0 THEN ${MediaStore.MediaColumns.DATE_TAKEN} " +
+        "ELSE ${MediaStore.MediaColumns.DATE_ADDED} * 1000 END DESC, ${MediaStore.MediaColumns._ID} DESC"
 
 data class DeviceGalleryPage(
     val records: List<MediaRecord> = emptyList(),

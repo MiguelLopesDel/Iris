@@ -77,6 +77,48 @@ class MediaChangeDetectionTest {
     }
 
     @Test
+    fun the_gallery_lists_device_media_newest_first_with_and_without_capture_dates() = runBlocking {
+        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
+            context.packageName, android.Manifest.permission.READ_MEDIA_IMAGES,
+        )
+        // A download: no capture date, added now.
+        val download = createImage("no-date", bytes(10))
+        // A photo taken years ago, copied in now.
+        val old = createImage("taken-2020", bytes(11))
+        resolver.update(old, ContentValues().apply { put(MediaStore.MediaColumns.DATE_TAKEN, 1_590_000_000_000L) }, null, null)
+
+        val records = com.iris.app.data.local.DeviceGalleryReader(context).page(1, 200, "all").records
+        val times = records.map { it.fileMtime ?: 0.0 }
+        assertEquals("Newest first: $times", times.sortedDescending(), times)
+        val names = records.map { it.arquivo }
+        val downloadName = resolver.query(download, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)!!
+            .use { it.moveToFirst(); it.getString(0) }
+        assertTrue("The item added now is on the first page", downloadName in names)
+    }
+
+    @Test
+    fun the_newest_first_order_handles_media_with_and_without_capture_dates() {
+        // The rows a real phone had: a download (no capture date), a WhatsApp
+        // video (zero), an old photo and one just taken.
+        val db = android.database.sqlite.SQLiteDatabase.create(null)
+        db.execSQL("CREATE TABLE files (_id INTEGER PRIMARY KEY, name TEXT, datetaken INTEGER, date_added INTEGER)")
+        db.execSQL("INSERT INTO files VALUES (1, 'download', NULL, 1791038060)")
+        db.execSQL("INSERT INTO files VALUES (2, 'whatsapp-video', 0, 1791039875)")
+        db.execSQL("INSERT INTO files VALUES (3, 'old-photo', 1590000000000, 1790000000)")
+        db.execSQL("INSERT INTO files VALUES (4, 'just-taken', 1791054654123, 1791054654)")
+        fun order(sort: String) = db.rawQuery("SELECT name FROM files ORDER BY $sort", null)
+            .use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.toList() }
+
+        assertEquals(
+            listOf("just-taken", "whatsapp-video", "download", "old-photo"),
+            order(com.iris.app.data.local.NEWEST_FIRST),
+        )
+        // What QUERY_ARG_SORT_COLUMNS + DESC produced: the photo just taken came last.
+        assertEquals("just-taken", order("datetaken, date_added DESC").last())
+        db.close()
+    }
+
+    @Test
     fun the_gallery_and_the_scanner_name_an_item_folder_the_same_way() = runBlocking {
         // The gallery lists device media only with the media permission.
         InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
