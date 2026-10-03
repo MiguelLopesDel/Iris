@@ -368,7 +368,7 @@ fun GalleryScreen(
                                         MediaCard(
                                             record = record,
                                             performanceMonitor = viewModel.performanceMonitor,
-                                            origin = uiState.origins.originOf(record),
+                                            origin = uiState.origins.originOf(record, uiState.backupPolicy),
                                             onClick = {
                                                 val localUri = record.deviceUri
                                                 if (localUri != null) onDeviceMediaClick(localUri)

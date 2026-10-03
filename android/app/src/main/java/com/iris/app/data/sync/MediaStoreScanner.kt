@@ -299,7 +299,7 @@ class MediaStoreScanner(
     }
 
     private fun sourceId(volume: String, bucketId: String, mediaKind: String): String =
-        "$volume:$bucketId:$mediaKind"
+        DeviceFolders.sourceId(volume, bucketId, mediaKind)
 
     private suspend fun ensureSession(isSessionCurrent: () -> Boolean) {
         currentCoroutineContext().ensureActive()

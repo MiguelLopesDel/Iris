@@ -48,6 +48,7 @@ import com.iris.app.ui.screens.detail.MediaDetailViewModel
 import com.iris.app.ui.screens.gallery.GalleryScreen
 import com.iris.app.ui.screens.gallery.GalleryViewModel
 import com.iris.app.ui.screens.gallery.LocalMediaViewerScreen
+import com.iris.app.ui.screens.gallery.rememberNotInBackupNotice
 import com.iris.app.ui.screens.persons.PersonMediaScreen
 import com.iris.app.ui.screens.persons.PersonMediaViewModel
 import com.iris.app.ui.screens.persons.PersonsScreen
@@ -249,9 +250,11 @@ fun IrisNavGraph(
                 route = NavRoute.LocalMediaDetail.route,
                 arguments = listOf(navArgument("mediaUri") { type = NavType.StringType })
             ) { backStackEntry ->
+                val mediaUri = backStackEntry.arguments?.getString("mediaUri").orEmpty()
                 LocalMediaViewerScreen(
-                    mediaUri = backStackEntry.arguments?.getString("mediaUri").orEmpty(),
-                    onBack = { navController.popBackStack() }
+                    mediaUri = mediaUri,
+                    onBack = { navController.popBackStack() },
+                    notInBackup = rememberNotInBackupNotice(application, mediaUri),
                 )
             }
 

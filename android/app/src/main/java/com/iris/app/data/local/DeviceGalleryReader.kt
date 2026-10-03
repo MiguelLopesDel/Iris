@@ -61,8 +61,11 @@ class DeviceGalleryReader(
                 MediaStore.MediaColumns.DATE_TAKEN,
                 MediaStore.MediaColumns.DATE_ADDED,
                 MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.BUCKET_ID,
+                MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
                 MediaStore.Files.FileColumns.MEDIA_TYPE
-            ) + if (android.os.Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray()
+            ) + (if (android.os.Build.VERSION.SDK_INT >= 29) arrayOf(MediaStore.MediaColumns.VOLUME_NAME) else emptyArray()) +
+                (if (android.os.Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray())
 
             try {
                 val total = contentResolver.query(
@@ -106,6 +109,11 @@ class DeviceGalleryReader(
         val addedIndex = getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
         val modifiedIndex = getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
         val generationIndex = getColumnIndex(MediaStore.MediaColumns.GENERATION_MODIFIED)
+        val bucketIdIndex = getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
+        val bucketNameIndex = getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+        val volumeIndex = getColumnIndex(MediaStore.MediaColumns.VOLUME_NAME)
+        fun textAt(index: Int, fallback: String): String =
+            if (index >= 0 && !isNull(index)) getString(index).orEmpty().ifBlank { fallback } else fallback
         val typeIndex = getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
         return buildList {
             while (moveToNext()) {
@@ -123,6 +131,12 @@ class DeviceGalleryReader(
                         mediaType = if (type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) "video" else "image",
                         deviceUri = ContentUris.withAppendedId(collection, id).toString(),
                         mimeType = if (mimeIndex >= 0) getString(mimeIndex) else null,
+                        deviceSourceId = com.iris.app.data.sync.DeviceFolders.sourceId(
+                            textAt(volumeIndex, "external"),
+                            textAt(bucketIdIndex, "unknown"),
+                            if (type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) "video" else "image",
+                        ),
+                        deviceFolder = textAt(bucketNameIndex, "").ifBlank { null },
                         deviceFingerprint = if (sizeIndex >= 0) {
                             com.iris.app.data.sync.MediaFingerprint(
                                 size = getLong(sizeIndex),

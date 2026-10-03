@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.model.MediaOriginIndex
+import com.iris.app.data.sync.DeviceFolders
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.model.CloudConnectionState
@@ -36,6 +37,8 @@ data class GalleryUiState(
     val isServerChecking: Boolean = false,
     val cloudSyncStatus: CloudSyncStatus = CloudSyncStatus(),
     val origins: MediaOriginIndex = MediaOriginIndex.EMPTY,
+    /** The account's folder selection; device media outside it is marked "not in backup". */
+    val backupPolicy: com.iris.app.data.model.MediaScanPolicy? = null,
     val deviceMediaPermissionGranted: Boolean = false,
     val deviceTotalRecords: Int = 0,
     val deviceTotalPages: Int = 1,
@@ -75,6 +78,17 @@ class GalleryViewModel(
         refreshOrigins()
         checkServerAndLoad()
         settingsRepository?.let { settings ->
+            viewModelScope.launch {
+                repository.credentialsStore.accountIdentity.collectLatest { accountKey ->
+                    if (accountKey == null) {
+                        _uiState.update { it.copy(backupPolicy = null) }
+                        return@collectLatest
+                    }
+                    settings.syncSettingsForAccount(accountKey).collect { syncSettings ->
+                        _uiState.update { it.copy(backupPolicy = DeviceFolders.policyOf(syncSettings)) }
+                    }
+                }
+            }
             viewModelScope.launch {
                 repository.credentialsStore.accountIdentity.collectLatest { accountKey ->
                     var previousSuccessfulSyncAt: Long? = null

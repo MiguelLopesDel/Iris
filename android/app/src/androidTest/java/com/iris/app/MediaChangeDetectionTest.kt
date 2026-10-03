@@ -77,6 +77,25 @@ class MediaChangeDetectionTest {
     }
 
     @Test
+    fun the_gallery_and_the_scanner_name_an_item_folder_the_same_way() = runBlocking {
+        // The gallery lists device media only with the media permission.
+        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
+            context.packageName, android.Manifest.permission.READ_MEDIA_IMAGES,
+        )
+        val item = createImage("folder", bytes(9))
+        val fromScanner = sourceIdOf(item)
+        val fromLookup = com.iris.app.data.sync.DeviceFolders.of(resolver, item)
+        assertEquals(fromScanner, fromLookup?.sourceId)
+        assertEquals("IrisChangeDetection", fromLookup?.name)
+
+        // The gallery reads the files collection, newest first.
+        val record = com.iris.app.data.local.DeviceGalleryReader(context).page(1, 200, "all").records
+            .single { com.iris.app.data.model.MediaStoreKey.of(it.deviceUri!!) == com.iris.app.data.model.MediaStoreKey.of(item.toString()) }
+        assertEquals(fromScanner, record.deviceSourceId)
+        assertEquals("IrisChangeDetection", record.deviceFolder)
+    }
+
+    @Test
     fun an_unchanged_item_is_not_hashed_or_queued_again() {
         val item = createImage("same", bytes(1))
         assertEquals(1, scan(item))
