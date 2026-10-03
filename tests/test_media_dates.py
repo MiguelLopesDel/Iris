@@ -94,30 +94,34 @@ def test_the_repair_reaches_device_uploads_indexed_with_ai(tmp_path: Path):
     media = conn.execute(
         "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('media', '/media', 'x')"
     ).lastrowid
+    computer = conn.execute(
+        "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('fotos-do-computador', '/pc', 'x')"
+    ).lastrowid
     arrival = UPLOADED.timestamp() + 2.0
-    for name, digest in (("from-phone.jpg", "a" * 64), ("host-import.jpg", "b" * 64)):
+    rows = (
+        ("from-phone.jpg", "/media/from-phone.jpg", media, "a" * 64),
+        ("host-import.jpg", "/pc/host-import.jpg", computer, "b" * 64),
+    )
+    for name, path, library, digest in rows:
         conn.execute(
             "INSERT INTO memes (arquivo, caminho, library_id, imported_at, file_mtime, content_hash, embedding) "
             "VALUES (?, ?, ?, ?, ?, ?, NULL)",
-            (name, f"/media/{name}", media, UPLOADED.isoformat(), arrival, digest),
+            (name, path, library, UPLOADED.isoformat(), arrival, digest),
         )
-    phone = conn.execute("SELECT id FROM memes WHERE arquivo = 'from-phone.jpg'").fetchone()[0]
-    conn.execute(
+    upload = (
         "INSERT INTO sync_uploads (id, device_id, filename, expected_size, expected_hash, captured_at, "
-        "state, temp_path, created_at, updated_at) VALUES ('u1', 'phone', 'from-phone.jpg', 1, ?, "
-        "'2026-09-29T22:07:22Z', 'ready', '/tmp/x', 'x', 'x')",
-        ("a" * 64,),
+        "state, temp_path, final_path, created_at, updated_at) "
+        "VALUES (?, 'phone', ?, 1, ?, '2026-09-29T22:07:22Z', ?, '/tmp/t', ?, 'x', 'x')"
     )
+    # The upload that created the phone's item: ready, its file is the item.
+    conn.execute(upload, ("u1", "from-phone.jpg", "a" * 64, "ready", "/media/from-phone.jpg"))
+    # The phone later presented the computer's photo: answered "duplicate",
+    # with its own capture date and an origin recorded against the import.
+    conn.execute(upload, ("u2", "host-import.jpg", "b" * 64, "duplicate", ""))
+    host = conn.execute("SELECT id FROM memes WHERE arquivo = 'host-import.jpg'").fetchone()[0]
     conn.execute(
         "INSERT INTO media_origins (media_id, device_id, source_id, created_at) VALUES (?, 'phone', 'camera', 'x')",
-        (phone,),
-    )
-    # The host import shares the capture time of an upload by hash, but has no device origin.
-    conn.execute(
-        "INSERT INTO sync_uploads (id, device_id, filename, expected_size, expected_hash, captured_at, "
-        "state, temp_path, created_at, updated_at) VALUES ('u2', 'phone', 'x.jpg', 1, ?, "
-        "'2026-09-29T22:07:22Z', 'ready', '/tmp/y', 'x', 'x')",
-        ("b" * 64,),
+        (host,),
     )
     conn.commit()
     conn.close()

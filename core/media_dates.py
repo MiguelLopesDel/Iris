@@ -59,24 +59,29 @@ def _repair_indexed_device_uploads(conn: sqlite3.Connection) -> int:
     """The same repair for uploads indexed with AI enabled.
 
     Those land in the shared "media" library through the indexer, with no
-    capture time in their metadata. A device upload is told apart by its
-    origin record (media_origins), and its capture time comes from the
-    upload that delivered it (sync_uploads, matched by content hash). Host
-    imports have no origin record and are left alone.
+    capture time in their metadata. Only the upload that created the item may
+    date it: one in state "ready" whose stored file is the item's path
+    (final_path = caminho). A device that later presented the same bytes
+    (state "duplicate", no file of its own) proves nothing: the item may be a
+    host import, which keeps its own date even though a phone's origin was
+    recorded against it.
     """
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    if not {"sync_uploads", "media_origins"} <= tables:
+    if "sync_uploads" not in tables:
+        return 0
+    upload_columns = {row[1] for row in conn.execute("PRAGMA table_info(sync_uploads)")}
+    if "final_path" not in upload_columns:
         return 0
     captured = (
         "(SELECT CAST(strftime('%s', u.captured_at) AS REAL) FROM sync_uploads u "
-        "WHERE u.expected_hash = memes.content_hash AND strftime('%s', u.captured_at) IS NOT NULL "
+        "WHERE u.state = 'ready' AND u.final_path = memes.caminho "
+        "AND u.expected_hash = memes.content_hash AND strftime('%s', u.captured_at) IS NOT NULL "
         "ORDER BY u.updated_at DESC LIMIT 1)"
     )
     cursor = conn.execute(
         f"""
         UPDATE memes SET file_mtime = {captured}
-        WHERE id IN (SELECT media_id FROM media_origins)
-          AND content_hash IS NOT NULL
+        WHERE content_hash IS NOT NULL
           AND imported_at IS NOT NULL
           AND ABS(file_mtime - CAST(strftime('%s', imported_at) AS REAL)) < 300
           AND {captured} IS NOT NULL
