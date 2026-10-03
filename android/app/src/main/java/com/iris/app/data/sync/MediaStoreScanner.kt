@@ -79,6 +79,7 @@ class MediaStoreScanner(
             val progress = ProgressCounter(total)
             val versions = mediaStoreVersions()
             val verificationStartedAt = uploadManager.beginScan(accountKey, versions, allowFullVerification)
+            val deferred = java.util.concurrent.atomic.AtomicInteger(0)
             var count = 0
             if (policy.includeImages) {
                 count += scanCollection(
@@ -90,6 +91,7 @@ class MediaStoreScanner(
                     isSessionCurrent,
                     progress,
                     verificationStartedAt,
+                    deferred,
                 )
             }
             if (policy.includeVideos) {
@@ -102,11 +104,15 @@ class MediaStoreScanner(
                     isSessionCurrent,
                     progress,
                     verificationStartedAt,
+                    deferred,
                 )
             }
             // Reached only when every item was examined: an interrupted scan
             // leaves a running verification to resume next time.
-            uploadManager.finishScan(accountKey, versions, verificationStartedAt)
+            // A changed item that was being sent could not be requeued: keep
+            // the verification open so the next scan checks it again. Once
+            // closed, ordinary scans trust its unchanged fingerprint and skip it.
+            uploadManager.finishScan(accountKey, versions, verificationStartedAt, verificationComplete = deferred.get() == 0)
             count
         } finally {
             _scanProgress.value = null
@@ -203,6 +209,7 @@ class MediaStoreScanner(
         isSessionCurrent: () -> Boolean,
         progress: ProgressCounter,
         verificationStartedAt: Long?,
+        deferred: java.util.concurrent.atomic.AtomicInteger,
     ): Int {
         val selection = "${MediaStore.MediaColumns.SIZE} > 0"
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
@@ -274,6 +281,7 @@ class MediaStoreScanner(
                     ),
                     isSessionCurrent = isSessionCurrent,
                 )
+                if (outcome == SyncUploadManager.ScanOutcome.DEFERRED) deferred.incrementAndGet()
                 if (outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW ||
                     outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW_VERSION
                 ) {

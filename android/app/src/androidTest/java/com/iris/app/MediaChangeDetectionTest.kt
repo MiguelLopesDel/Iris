@@ -146,6 +146,34 @@ class MediaChangeDetectionTest {
     }
 
     @Test
+    fun a_verification_stays_open_while_a_changed_item_is_being_sent() = runBlocking {
+        val item = createImage("in-flight", bytes(12))
+        scan(item)
+        // The bytes differ from the queued hash, and the row is uploading
+        // right now, so the scan cannot requeue it yet.
+        val stale = sha256(bytes(98))
+        dbHelper.writableDatabase.execSQL(
+            "UPDATE upload_jobs SET sha256 = ?, state = 'UPLOADING' WHERE id = ?",
+            arrayOf<Any>(stale, job(item).id),
+        )
+
+        versions = mapOf("external_primary" to "v2")
+        scan(item)
+        assertEquals(stale, job(item).sha256)
+        assertNotNull(
+            "The deferred item keeps the verification open",
+            dbHelper.scanState(accountKey).fullVerificationStartedAt,
+        )
+
+        // The upload ends; the next ordinary scan (same fingerprint) still checks it.
+        dbHelper.updateJobState(accountKey, job(item).id, UploadJobState.READY)
+        assertEquals(1, scan(item))
+        assertEquals(sha256(bytes(12)), job(item).sha256)
+        assertEquals(UploadJobState.QUEUED, job(item).state)
+        assertNull(dbHelper.scanState(accountKey).fullVerificationStartedAt)
+    }
+
+    @Test
     fun a_rebuilt_media_store_leaves_unchanged_content_uploaded() {
         val item = createImage("kept", bytes(5))
         scan(item)

@@ -190,12 +190,19 @@ class SyncUploadManager(
         return now
     }
 
-    /** Records a scan that went through every item: versions seen, and a finished verification. */
+    /**
+     * Records a scan that went through every item: versions seen, and a
+     * finished verification. With [verificationComplete] false (a changed item
+     * could not be requeued because it was being sent), a running
+     * verification stays open: the next scan checks again what this one
+     * could not settle.
+     */
     suspend fun finishScan(
         accountKey: String,
         mediaStoreVersions: Map<String, String>,
         fullVerificationStartedAt: Long?,
         now: Long = System.currentTimeMillis(),
+        verificationComplete: Boolean = true,
     ) {
         val state = dbHelper.scanState(accountKey)
         dbHelper.saveScanState(
@@ -203,9 +210,13 @@ class SyncUploadManager(
             state.copy(
                 // A card that is not mounted now keeps its last known version.
                 mediaStoreVersions = state.mediaStoreVersions + mediaStoreVersions,
-                fullVerificationStartedAt = null,
+                fullVerificationStartedAt = if (verificationComplete) null else fullVerificationStartedAt,
                 // The first scan is the baseline the weekly verification counts from.
-                lastFullVerificationAt = if (fullVerificationStartedAt != null) now else state.lastFullVerificationAt ?: now,
+                lastFullVerificationAt = when {
+                    fullVerificationStartedAt == null -> state.lastFullVerificationAt ?: now
+                    verificationComplete -> now
+                    else -> state.lastFullVerificationAt
+                },
             ),
         )
     }
