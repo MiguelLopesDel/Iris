@@ -80,8 +80,9 @@ uso real. Um merge na `main` não muda nada na produção.
 
 - **Barreira automática:** cada merge publica a imagem `:main` e o APK `lab`
   **(a construir)**. A homologação recebe essa versão com
-  `./scripts/server.sh staging update` **(a construir)**, um comando manual: você
-  decide quando.
+  `./scripts/staging.sh update`, rodado no servidor, dentro do checkout da
+  homologação: um comando manual, você decide quando (ver
+  [O comando da homologação](#o-comando-da-homologação)).
 
 ### Homologação
 
@@ -175,9 +176,38 @@ que estou fazendo, ou é grave?**
 - **Testar junto, fazer merge separado.** Para testar vários PRs abertos ao
   mesmo tempo (no servidor de homologação e no celular), monta-se uma branch de
   integração só para teste, que junta os PRs escolhidos. Ela nunca vai para o
-  GitHub nem para a `main`; os PRs continuam independentes e entram um a um
-  **(a construir: `./scripts/staging.sh`, que monta essa branch, atualiza a
-  homologação e gera o APK combinado)**.
+  GitHub nem para a `main`; os PRs continuam independentes e entram um a um.
+  No servidor, `./scripts/staging.sh update --pr N --pr M` monta essa versão. O
+  APK combinado para o celular ainda se gera à mão **(a construir)**.
+
+### O comando da homologação
+
+`scripts/staging.sh` roda no servidor, dentro do checkout da homologação:
+
+```bash
+./scripts/staging.sh status                       # o que está rodando, montagens, versão anterior
+./scripts/staging.sh update                       # a main
+./scripts/staging.sh update --pr 25 --pr 26       # a main mais esses PRs, só para teste
+./scripts/staging.sh update --ref <commit>        # um commit específico
+./scripts/staging.sh update --pr 25 --dry-run     # só verifica e mostra o plano
+./scripts/staging.sh rollback                     # volta para a versão anterior
+```
+
+Ele só age sobre a própria homologação. Antes de mudar qualquer coisa, recusa se:
+
+- o `COMPOSE_PROJECT_NAME` do `.env` não contém `staging`; vazio, ele seria o
+  da produção;
+- a pasta de dados, mídia ou backup está montada num contêiner de outra
+  instalação, ou a porta está publicada por outra;
+- `/app/data` e `/app/media` não estão montados em pastas do servidor;
+- há arquivos versionados alterados no checkout.
+
+Ao agir, só usa `build` e `up` do serviço `iris` do próprio projeto: nunca
+`down`, `rm`, `prune` nem volumes, nunca apaga pastas nem descarta trabalho do
+git. A versão com PRs é um commit de merge local, nunca enviado. Um PR que não
+entra limpo ou um build que falha devolvem o checkout ao commit anterior, sem
+tocar no contêiner em execução. A versão anterior fica guardada em
+`refs/staging/previous`, para o `rollback`.
 
 ## Onde entra cada teste
 
