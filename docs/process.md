@@ -51,8 +51,10 @@ precisa estar correta e explicada.
 - Um assunto por commit: não misture comportamento, refatoração, dependências e
   implantação.
 - **Barreira, antes do commit:** lint limpo e os testes da área mexida passando.
-  Todo commit da `main` precisa compilar e passar nos testes, para que qualquer
-  ponto da história funcione e o `git bisect` sirva.
+  Isso leva segundos; a suíte completa é trabalho da CI (ver
+  [Onde entra cada teste](#onde-entra-cada-teste)). Todo commit da `main` precisa
+  compilar e passar nos testes, para que qualquer ponto da história funcione e o
+  `git bisect` sirva.
 
 ### Pull request
 
@@ -127,12 +129,63 @@ pode construir uma imagem local com a etiqueta de um release que não existe.
 Branch a partir da tag em produção, PR para a `main`, tag de correção
 (`vX.Y.(Z+1)`), sem esperar o que mais estiver na `main`.
 
+## Fluxo de trabalho: descobertas, PRs e espera
+
+Corrigir uma coisa revela outra; é sinal de que se está testando de verdade. O
+fluxo só fica lento ou bagunçado pelo que se faz com cada descoberta e pelo
+tempo gasto esperando.
+
+### Descobrir não é fazer
+
+O que aparece no meio de outro trabalho vira primeiro **uma anotação**: um issue
+no GitHub com o sintoma e como reproduzir. Depois, uma pergunta só: **bloqueia o
+que estou fazendo, ou é grave?**
+
+- **Não:** fica no issue, e o trabalho atual continua.
+- **Sim** (perda de dados, falha de segurança, algo que impede o trabalho
+  atual): vira o próximo trabalho, num PR **próprio**, nunca misturado ao PR em
+  andamento.
+
+### Pare de começar, comece a terminar
+
+- **No máximo 3 PRs abertos.** Bateu o limite, não se abre outro: revisa-se e
+  faz-se o merge de um dos que existem. PR aberto é trabalho que ainda não
+  entregou nada, e cada um deixa os próximos mais difíceis.
+- **PRs pequenos, merge assim que validados:** CI verde, diff revisado e
+  homologação quando fizer sentido. Não se espera juntar vários.
+- **Branch sempre a partir da `main` atualizada.** Empilhar uma branch sobre
+  outra só quando mexem no mesmo código e não há como evitar; nesse caso, o
+  merge do PR de baixo vem antes de começar o de cima.
+- **Primeiro deixe a mudança fácil, depois faça a mudança fácil.** Se, para
+  fazer algo, é preciso mexer em outro lugar, essa preparação é um PR separado e
+  anterior.
+- **Funcionalidade grande entra em partes**, desligada por uma configuração até
+  estar completa, em vez de viver meses numa branch.
+
+### Não esperar parado
+
+- Enquanto um PR está na CI ou em revisão, o próximo trabalho independente já
+  começa, numa branch nova a partir da `main`. Ficam várias coisas em
+  andamento, cada uma num estágio: uma sendo escrita, uma em CI ou revisão,
+  uma esperando merge.
+- A revisão é assíncrona: o que ela encontra entra como commit pequeno no PR,
+  sem refazer o ciclo inteiro.
+- **Merge automático** do GitHub: aprovado, o merge acontece sozinho quando a CI
+  fica verde **(a construir: ativar no repositório)**.
+- **Testar junto, fazer merge separado.** Para testar vários PRs abertos ao
+  mesmo tempo (no servidor de homologação e no celular), monta-se uma branch de
+  integração só para teste, que junta os PRs escolhidos. Ela nunca vai para o
+  GitHub nem para a `main`; os PRs continuam independentes e entram um a um
+  **(a construir: `./scripts/staging.sh`, que monta essa branch, atualiza a
+  homologação e gera o APK combinado)**.
+
 ## Onde entra cada teste
 
 | Momento | O quê | Quem |
 |---|---|---|
-| antes do commit | lint e testes rápidos da área mexida | quem desenvolve |
-| no PR | suíte completa, navegador, Android JVM e build, smoke da instalação | CI |
+| antes do commit | lint e testes rápidos da área mexida (segundos, não a suíte inteira) | quem desenvolve |
+| no PR | suíte completa do servidor, navegador, Android JVM e build, smoke da instalação | CI (GitHub Actions) |
+| antes do push de um PR do app | testes instrumentados no emulador | quem desenvolve, enquanto não estão na CI |
 | depois do merge, antes da tag | comportamento real: homologação e app `lab` | quem lança, pela checklist |
 | depois da tag | conferência da produção | quem administra |
 
@@ -145,6 +198,11 @@ Teste na camada certa:
 - **comportamento de tela**: emulador ou navegador real (Playwright);
 - o que depende de serviço externo (busca reversa, LLM) fica atrás de uma costura
   injetável e é validado ao vivo, não na CI.
+
+A CI ainda **compila, mas não executa** os testes instrumentados do Android;
+até estarem nela **(a construir)**, quem abre um PR do app os roda no emulador
+antes do push. A suíte do servidor também pode ficar mais rápida na CI rodando
+em paralelo (`pytest -n auto`) **(a construir)**.
 
 Um build que passa não substitui um teste de comportamento. Quando uma verificação
 não pôde ser feita (sem dispositivo, sem rede), isso é dito no PR.
@@ -200,6 +258,10 @@ Uma mudança está pronta para o PR quando:
 - Testar rede ou serviço externo real na CI em vez de usar uma costura.
 - Deixar dívida de lint para depois.
 - Testar na produção o que deveria ter passado pela homologação.
+- Corrigir no PR atual um problema que se descobriu no caminho e que não tem a
+  ver com ele.
+- Deixar PRs abertos se acumularem, ou empilhar branches sem necessidade.
+- Rodar localmente, antes de cada commit, a suíte inteira que a CI já roda.
 
 Lições técnicas aprendidas em campo (memória, caches, ranqueamento) estão em
 [engineering-lessons.md](engineering-lessons.md).
