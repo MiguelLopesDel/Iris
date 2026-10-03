@@ -11,7 +11,18 @@ import java.security.MessageDigest
 import kotlin.math.min
 
 /** Reads media bytes from a provider with bounded memory for hashing and upload. */
-internal class MediaPayloadSource(private val contentResolver: ContentResolver) {
+internal class MediaPayloadSource(
+    private val contentResolver: ContentResolver,
+    /** Whether originals (with location metadata) may be opened; see [MediaLocationAccess]. */
+    private val canReadOriginals: () -> Boolean = { false },
+) {
+
+    /**
+     * Every read goes through the original when allowed: the hash, the size
+     * and the uploaded bytes must all describe the same file, and the
+     * redacted one has its GPS coordinates zeroed.
+     */
+    private fun readable(uri: Uri): Uri = MediaLocationAccess.originalOf(uri, canReadOriginals())
 
     fun createChunkRequestBody(uri: Uri, offset: Long, length: Long): RequestBody =
         object : RequestBody() {
@@ -31,7 +42,7 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
                     return
                 }
 
-                contentResolver.openInputStream(uri)?.use { stream ->
+                openStream(uri)?.use { stream ->
                     skipFully(stream, offset)
                     copyRange(stream, sink, length)
                 } ?: throw java.io.IOException("Não foi possível abrir o arquivo da mídia local")
@@ -58,7 +69,7 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
                 }
             }
         } else {
-            contentResolver.openInputStream(uri)?.use { stream ->
+            openStream(uri)?.use { stream ->
                 updateDigest(stream, digest)
             } ?: return Content("", 0L)
         }
@@ -67,7 +78,7 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
 
     /** The file's current size without reading it, or null when unknown. */
     fun sizeOf(uri: Uri): Long? = try {
-        contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize.takeIf { size -> size >= 0 } }
+        openDescriptorOrNull(uri)?.use { it.statSize.takeIf { size -> size >= 0 } }
     } catch (_: Exception) {
         null
     }
@@ -78,7 +89,7 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
      * fixed by granting access, not by giving up on the item.
      */
     fun isAvailable(uri: Uri): Boolean = try {
-        contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
+        openDescriptorOrThrow(uri)?.use { true } ?: false
     } catch (_: java.io.FileNotFoundException) {
         false
     } catch (_: Exception) {
@@ -86,8 +97,35 @@ internal class MediaPayloadSource(private val contentResolver: ContentResolver) 
         true
     }
 
+    /**
+     * Opens the original when allowed. A device that refuses it anyway (an OEM
+     * provider, a permission revoked mid-run) falls back to the redacted file
+     * rather than failing the upload.
+     */
+    private fun <T> withOriginal(uri: Uri, open: (Uri) -> T): T {
+        val original = readable(uri)
+        if (original == uri) return open(uri)
+        return try {
+            open(original)
+        } catch (_: SecurityException) {
+            open(uri)
+        } catch (_: UnsupportedOperationException) {
+            open(uri)
+        }
+    }
+
+    private fun openStream(uri: Uri): InputStream? = withOriginal(uri) { contentResolver.openInputStream(it) }
+
+    private fun openDescriptorOrThrow(uri: Uri) = withOriginal(uri) { contentResolver.openFileDescriptor(it, "r") }
+
+    private fun openDescriptorOrNull(uri: Uri) = try {
+        openDescriptorOrThrow(uri)
+    } catch (_: Exception) {
+        null
+    }
+
     private fun openFileDescriptor(uri: Uri) = try {
-        contentResolver.openFileDescriptor(uri, "r")
+        openDescriptorOrThrow(uri)
     } catch (_: Exception) {
         null
     }

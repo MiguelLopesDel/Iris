@@ -11,15 +11,26 @@ internal enum class MediaLibraryAccess {
     DENIED
 }
 
+/**
+ * Media access plus, on Android 10+, ACCESS_MEDIA_LOCATION. Requested
+ * together, the system grants the location access with the media access and
+ * shows no extra dialog; without it every photo is read with its GPS removed.
+ */
 internal fun mediaPermissionsForSdk(sdk: Int): Array<String> = when {
     sdk >= 34 -> arrayOf(
         Manifest.permission.READ_MEDIA_IMAGES,
         Manifest.permission.READ_MEDIA_VIDEO,
-        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+        Manifest.permission.ACCESS_MEDIA_LOCATION
     )
     sdk >= 33 -> arrayOf(
         Manifest.permission.READ_MEDIA_IMAGES,
-        Manifest.permission.READ_MEDIA_VIDEO
+        Manifest.permission.READ_MEDIA_VIDEO,
+        Manifest.permission.ACCESS_MEDIA_LOCATION
+    )
+    sdk >= 29 -> arrayOf(
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+        Manifest.permission.ACCESS_MEDIA_LOCATION
     )
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 }

@@ -112,17 +112,21 @@ fun GalleryScreen(
         viewModel.refreshDeviceMedia()
     }
     val requestedMediaPermissions = remember {
-        when {
-            Build.VERSION.SDK_INT >= 34 -> arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
-            )
-            Build.VERSION.SDK_INT >= 33 -> arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO
-            )
-            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        com.iris.app.ui.screens.sync.mediaPermissionsForSdk(Build.VERSION.SDK_INT)
+    }
+    // Installs from before ACCESS_MEDIA_LOCATION was requested already hold the
+    // media permission; ask for the location one alone so new uploads keep GPS.
+    val galleryContext = androidx.compose.ui.platform.LocalContext.current
+    val mediaLocationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    LaunchedEffect(Unit) {
+        val mediaGranted = com.iris.app.ui.screens.sync.currentMediaLibraryAccess(galleryContext) !=
+            com.iris.app.ui.screens.sync.MediaLibraryAccess.DENIED
+        if (Build.VERSION.SDK_INT >= 29 && mediaGranted &&
+            !com.iris.app.data.sync.MediaLocationAccess.granted(galleryContext)
+        ) {
+            mediaLocationLauncher.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
         }
     }
     // The real cost of a denser grid was the server generating thumbnails
