@@ -93,8 +93,14 @@ internal class ResumableUploadTransfer(
 
     private suspend fun refreshContent(job: LocalUploadJob): LocalUploadJob {
         val content = context.mediaPayloadSource.computeContent(Uri.parse(job.localUri))
-        context.dbHelper.setContent(context.accountKey, job.id, content.sha256, content.size)
-        return job.copy(sha256 = content.sha256, byteSize = content.size, uploadId = null, nextByteOffset = 0L)
+        context.dbHelper.setContent(context.accountKey, job.id, content.sha256, content.size, content.original)
+        return job.copy(
+            sha256 = content.sha256,
+            byteSize = content.size,
+            hashedOriginal = content.original,
+            uploadId = null,
+            nextByteOffset = 0L,
+        )
     }
 
     private suspend fun markSourceMissing(job: LocalUploadJob): ItemResult {
@@ -160,7 +166,8 @@ internal class ResumableUploadTransfer(
             while (offset < job.byteSize) {
                 context.ensureSession()
                 val bytesToRead = min(job.byteSize - offset, chunkSize.toLong())
-                val body = context.mediaPayloadSource.createChunkRequestBody(uri, offset, bytesToRead)
+                // The same version the declared hash was computed from.
+                val body = context.mediaPayloadSource.createChunkRequestBody(uri, offset, bytesToRead, job.hashedOriginal)
                 val finishRequest = observer.beginPayloadRequest()
                 val response = try {
                     api.uploadChunk(uploadId, offset, body)
@@ -254,6 +261,16 @@ internal class ResumableUploadTransfer(
             } else {
                 ItemResult.RETRY
             }
+        } catch (refused: OriginalRefusedException) {
+            // The original this upload was hashed from cannot be read now. Hash
+            // the file again (the preferred version is now the redacted one) and
+            // start over, rather than send bytes of a version it did not declare.
+            try {
+                refreshContent(job)
+            } catch (_: IOException) {
+                onIoFailure()
+            }
+            ItemResult.RETRY
         } catch (failure: IOException) {
             onIoFailure()
             ItemResult.RETRY

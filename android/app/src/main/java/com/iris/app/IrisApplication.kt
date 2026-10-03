@@ -26,6 +26,7 @@ import com.iris.app.data.sync.BackgroundSyncPolicy
 import com.iris.app.data.sync.AccountSyncSession
 import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.MediaStoreScanner
+import com.iris.app.data.sync.MediaLocationAccess
 import com.iris.app.data.sync.MediaStoreVersions
 import com.iris.app.data.sync.SyncUploadManager
 import com.iris.app.performance.PerformanceMonitor
@@ -138,7 +139,8 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
             contentResolver = contentResolver,
             dbHelper = dbHelper,
             apiServiceProvider = { sessionIdentity -> apiClient.apiServiceForSession(sessionIdentity) },
-            performanceMonitor = performanceMonitor
+            performanceMonitor = performanceMonitor,
+            canReadOriginals = { MediaLocationAccess.granted(this) }
         )
 
         mediaStoreScanner = MediaStoreScanner(

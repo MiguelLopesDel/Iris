@@ -32,7 +32,7 @@ class MediaPayloadSourceTest {
             val offset = 65_531
             val length = 131_077
             val sink = Buffer()
-            val requestBody = source.createChunkRequestBody(uri, offset.toLong(), length.toLong())
+            val requestBody = source.createChunkRequestBody(uri, offset.toLong(), length.toLong(), original = false)
             requestBody.writeTo(sink)
 
             assertEquals(length.toLong(), requestBody.contentLength())

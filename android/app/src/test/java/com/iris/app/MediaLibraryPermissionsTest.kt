@@ -15,7 +15,8 @@ class MediaLibraryPermissionsTest {
             arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+                Manifest.permission.ACCESS_MEDIA_LOCATION
             ),
             mediaPermissionsForSdk(34)
         )
@@ -24,9 +25,22 @@ class MediaLibraryPermissionsTest {
     @Test
     fun android13_requests_image_and_video_permissions() {
         assertArrayEquals(
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO),
+            arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.ACCESS_MEDIA_LOCATION
+            ),
             mediaPermissionsForSdk(33)
         )
+    }
+
+    @Test
+    fun every_android_version_that_redacts_location_asks_for_media_location() {
+        // From Android 10 on, photos are read with GPS zeroed without this permission.
+        for (sdk in 29..35) {
+            assert(Manifest.permission.ACCESS_MEDIA_LOCATION in mediaPermissionsForSdk(sdk)) { "API $sdk" }
+        }
+        assert(Manifest.permission.ACCESS_MEDIA_LOCATION !in mediaPermissionsForSdk(28))
     }
 
     @Test

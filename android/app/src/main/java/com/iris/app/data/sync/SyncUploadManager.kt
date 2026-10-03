@@ -36,6 +36,8 @@ class SyncUploadManager(
     private val uploadInitCoalesceWindowMillis: Long = UploadInitBatcher.COALESCE_WINDOW_MILLIS,
     /** Always-on throughput of the current or last queue run, for the sync screen and history. */
     val speedMeter: UploadSpeedMeter = UploadSpeedMeter(),
+    /** Whether photos may be read with their location metadata; see [MediaLocationAccess]. */
+    canReadOriginals: () -> Boolean = { false },
     private val apiServiceProvider: (String) -> IrisApiService
 ) {
 
@@ -46,7 +48,7 @@ class SyncUploadManager(
     }
 
     private val uploadMutex = Mutex()
-    private val mediaPayloadSource = MediaPayloadSource(contentResolver)
+    private val mediaPayloadSource = MediaPayloadSource(contentResolver, canReadOriginals)
     // Serialize completions for identical content hashes so this process
     // cannot race its own server-side deduplication, while unrelated media
     // can finalize concurrently up to the worker-pool limit.
@@ -85,6 +87,7 @@ class SyncUploadManager(
             filename = filename,
             byteSize = content.size,
             sourceSize = size,
+            hashedOriginal = content.original,
             sha256 = content.sha256,
             capturedAt = capturedAtIso,
             source = source
@@ -137,6 +140,7 @@ class SyncUploadManager(
                     filename = filename,
                     byteSize = content.size,
                     sourceSize = fingerprint.size,
+                    hashedOriginal = content.original,
                     sha256 = content.sha256,
                     capturedAt = capturedAtIso,
                     source = source,
@@ -156,7 +160,7 @@ class SyncUploadManager(
                     }
                     dbHelper.replaceWithNewVersion(
                         accountKey, known.jobId, content.sha256, content.size, fingerprint, filename,
-                        capturedAtIso, source, now(),
+                        capturedAtIso, source, now(), hashedOriginal = content.original,
                     ) -> ScanOutcome.QUEUED_NEW_VERSION
                     else -> ScanOutcome.DEFERRED
                 }
