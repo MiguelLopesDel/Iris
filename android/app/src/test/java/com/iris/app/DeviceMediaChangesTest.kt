@@ -37,6 +37,25 @@ class DeviceMediaChangesTest {
     }
 
     @Test
+    fun `a reload slower than the interval still completes while changes keep coming`() = runTest {
+        // The reload must be awaited by the collector (not launched and cancelled
+        // by the next change): every one that starts here also finishes.
+        val changes = flow { repeat(100) { emit(Unit); delay(100) } }
+        var started = 0
+        var finished = 0
+        val job = launch {
+            DeviceMediaChanges.reloadAtMostEvery(changes, 700) {
+                started++
+                delay(1_500)
+                finished++
+            }
+        }
+        advanceTimeBy(10_000)
+        job.cancel()
+        assertTrue("finished $finished of $started", finished >= 3 && started - finished <= 1)
+    }
+
+    @Test
     fun `no change means no reload`() = runTest {
         var reloads = 0
         DeviceMediaChanges.reloadAtMostEvery(flow { }, 700) { reloads++ }

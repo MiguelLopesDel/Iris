@@ -237,22 +237,28 @@ class GalleryViewModel(
      * change seen while the user is scrolled down neither drops the pages
      * below nor leaves a deleted item behind.
      */
-    private fun reloadLoadedDevicePages() {
-        devicePageLoadJob?.cancel()
-        devicePageLoadJob = viewModelScope.launch {
+    /**
+     * Runs to completion inside the change collector, which waits for it:
+     * changes arriving meanwhile fold into one next reload. Launching it and
+     * cancelling the previous one on every change meant that, with changes
+     * every 700 ms and a reread slower than that, no reload ever finished and
+     * the gallery kept showing old data while MediaStore stayed busy.
+     */
+    private suspend fun reloadLoadedDevicePages() {
+        run {
             val mediaType = _uiState.value.mediaType
             val loaded = _uiState.value.devicePage.coerceAtLeast(1)
             val fresh = mutableListOf<MediaRecord>()
             var last: com.iris.app.data.local.DeviceGalleryPage? = null
             for (page in 1..loaded) {
                 val result = runCatching { galleryDataSource.devicePage(page, PAGE_SIZE, mediaType) }.getOrNull()
-                    ?: return@launch
-                if (!result.permissionGranted) return@launch
+                    ?: return@run
+                if (!result.permissionGranted) return@run
                 fresh += result.records
                 last = result
                 if (page >= result.totalPages) break
             }
-            val total = last ?: return@launch
+            val total = last ?: return@run
             deviceRecords = withQueueHashes(fresh).distinctBy { it.deviceUri }
             deviceTotalRecords = total.total
             _uiState.update { current ->
