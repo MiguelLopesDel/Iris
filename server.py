@@ -9,6 +9,7 @@ import asyncio
 import contextvars
 import datetime as dt
 import hashlib
+import itertools
 import json
 import logging
 import mimetypes
@@ -282,18 +283,38 @@ def _invalidate_view_caches_for(db_path: Path | str) -> None:
     catalogue left everything added since out of the gallery (and out of the
     paths /media/ may serve) until the server restarted.
     """
-    db_key = str(db_path)
+    prefix = f"{db_path}#"
     for cache in (
         _sorted_records_cache, _missing_count_cache, _record_positions_by_db_id_cache,
         _allowed_media_paths_cache, _extension_counts_cache, _fingerprint_coverage_cache,
     ):
-        for key in [key for key in cache if (key[0] if isinstance(key, tuple) else key) == db_key]:
+        for key in [key for key in cache if str(key[0] if isinstance(key, tuple) else key).startswith(prefix)]:
             cache.pop(key, None)
 
 
+_backend_generations = itertools.count(1)
+_backend_generation_lock = threading.Lock()
+
+
 def _backend_cache_key(backend: SearchBackend) -> str:
+    """The view-cache key of one backend instance: its database and its generation.
+
+    A path alone is not enough. A request still holding the backend that was
+    just replaced can finish after the invalidation and store the old
+    catalogue's positions again; keyed by path, the new backend would read
+    them and miss everything added since. Each backend gets its own
+    generation, so results computed from one are never served for another.
+    """
     engine = getattr(backend, "engine", None)
-    return str(getattr(engine, "db_path", id(backend)))
+    db_path = str(getattr(engine, "db_path", "") or id(backend))
+    generation = getattr(backend, "_iris_view_cache_generation", None)
+    if generation is None:
+        with _backend_generation_lock:
+            generation = getattr(backend, "_iris_view_cache_generation", None)
+            if generation is None:
+                generation = next(_backend_generations)
+                backend._iris_view_cache_generation = generation
+    return f"{db_path}#{generation}"
 
 
 def _fingerprint_coverage(backend: SearchBackend) -> dict[str, Any]:
@@ -1488,9 +1509,8 @@ async def serve_index():
 
 
 def _missing_count(backend: SearchBackend, total: int) -> int:
-    """Count records whose file is gone. O(N) syscalls — cached per (db, total)."""
-    engine = getattr(backend, "engine", None)
-    key = (str(getattr(engine, "db_path", _active_config["db_path"])), total)
+    """Count records whose file is gone. O(N) syscalls — cached per (backend, total)."""
+    key = (_backend_cache_key(backend), total)
     cached = _missing_count_cache.get(key)
     if cached is not None:
         return cached
@@ -2137,9 +2157,7 @@ def _sorted_records(backend: SearchBackend, sort_by: str, sort_asc: int) -> list
     ±1 page); memoising it makes subsequent pages of the same view ~O(page). Safe
     because records are immutable between backend reloads (which clear the cache).
     """
-    engine = getattr(backend, "engine", None)
-    db_key = str(getattr(engine, "db_path", id(backend)))
-    key = (db_key, sort_by, int(bool(sort_asc)))
+    key = (_backend_cache_key(backend), sort_by, int(bool(sort_asc)))
     cached = _sorted_records_cache.get(key)
     if cached is not None:
         return cached
