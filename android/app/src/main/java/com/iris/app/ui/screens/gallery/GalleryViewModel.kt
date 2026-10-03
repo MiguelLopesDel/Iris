@@ -37,6 +37,8 @@ data class GalleryUiState(
     val isServerChecking: Boolean = false,
     val cloudSyncStatus: CloudSyncStatus = CloudSyncStatus(),
     val origins: MediaOriginIndex = MediaOriginIndex.EMPTY,
+    /** Why the app signed itself out (a reinstalled server), shown instead of the generic login text. */
+    val signOutReason: String? = null,
     /** The account's folder selection; device media outside it is marked "not in backup". */
     val backupPolicy: com.iris.app.data.model.MediaScanPolicy? = null,
     val deviceMediaPermissionGranted: Boolean = false,
@@ -81,6 +83,11 @@ class GalleryViewModel(
         refreshDeviceMedia()
         refreshOrigins()
         checkServerAndLoad()
+        viewModelScope.launch {
+            repository.credentialsStore.signOutReason.collect { reason ->
+                _uiState.update { it.copy(signOutReason = reason) }
+            }
+        }
         viewModelScope.launch {
             // New media appears as in the system gallery, without a manual refresh.
             com.iris.app.data.local.DeviceMediaChanges.reloadAtMostEvery(deviceMediaChanges, DEVICE_CHANGE_INTERVAL_MILLIS) {

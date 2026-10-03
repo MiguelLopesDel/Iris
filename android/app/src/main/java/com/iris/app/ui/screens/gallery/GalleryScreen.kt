@@ -268,7 +268,8 @@ fun GalleryScreen(
 
             if (uiState.error == "AUTH_REQUIRED" && uiState.records.any { it.deviceUri != null }) {
                 Text(
-                    text = "Fotos do aparelho. Entre para ver também as fotos do servidor Iris.",
+                    text = uiState.signOutReason?.let { "$it Enquanto isso, você vê as fotos do aparelho." }
+                        ?: "Fotos do aparelho. Entre para ver também as fotos do servidor Iris.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -296,7 +297,8 @@ fun GalleryScreen(
                         EmptyState(
                             icon = Icons.Default.Lock,
                             title = "Login Necessário",
-                            message = "Servidor conectado! Para visualizar sua biblioteca privada, autentique este dispositivo.",
+                            message = uiState.signOutReason
+                                ?: "Servidor conectado! Para visualizar sua biblioteca privada, autentique este dispositivo.",
                             actionLabel = "Fazer Login",
                             onAction = onLoginClick
                         )

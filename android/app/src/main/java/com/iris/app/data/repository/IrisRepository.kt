@@ -1,5 +1,7 @@
 package com.iris.app.data.repository
 
+import com.iris.app.data.remote.SessionServerCheck
+
 import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.model.DeviceLoginResponse
@@ -176,8 +178,26 @@ class IrisRepository(
         syncResult.scanResult
     }
 
+    /**
+     * Probes /healthz and checks that a saved session still belongs to the
+     * installation answering (see [SessionServerCheck]). A session made on
+     * another installation is ended here, for every caller at once.
+     */
     suspend fun checkServerHealth(): Result<com.iris.app.data.model.HealthResponse> = runCatchingCancellable {
-        apiClient.apiService.getHealth()
+        apiClient.apiService.getHealth().also { health ->
+            if (credentialsStore.sessionIdentity.value == null) return@also
+            when (SessionServerCheck.verdict(health, credentialsStore.serverInstanceId())) {
+                SessionServerCheck.Verdict.SAME -> Unit
+                SessionServerCheck.Verdict.RECORD -> health.instanceId?.let(credentialsStore::rememberServerInstance)
+                SessionServerCheck.Verdict.REPLACED -> credentialsStore.signOutBecause(
+                    if (health.status == "setup_required") {
+                        "O servidor foi reinstalado e ainda não tem contas. Crie a conta no servidor e pareie este aparelho de novo."
+                    } else {
+                        "O servidor foi reinstalado. Entre de novo ou pareie este aparelho."
+                    }
+                )
+            }
+        }
     }
 
     suspend fun getServerInfo(): Result<ServerInfo> = runCatchingCancellable {
