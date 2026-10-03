@@ -33,9 +33,13 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
     /** Stable across device re-logins; isolates durable work by server account. */
     val accountIdentity: StateFlow<String?> = _accountIdentity.asStateFlow()
 
-    private val _signOutReason = MutableStateFlow<String?>(null)
-    /** Why the app signed itself out, for the login screen; null after a normal logout or a new login. */
-    val signOutReason: StateFlow<String?> = _signOutReason.asStateFlow()
+    private val _serverReplaced = MutableStateFlow(false)
+    /**
+     * True after the app ended a session because the server was reinstalled;
+     * false after a normal logout or a new login. The wording shown for it
+     * depends on what the server needs now, so only the fact is kept.
+     */
+    val serverReplaced: StateFlow<Boolean> = _serverReplaced.asStateFlow()
 
     /** The server installation this session was made on, once known. */
     fun serverInstanceId(): String? = synchronized(lock) {
@@ -50,10 +54,10 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
         }
     }
 
-    /** Ends a session that belongs to another server installation, saying why. */
-    fun signOutBecause(reason: String) {
+    /** Ends a session that belongs to another server installation. */
+    fun signOutBecauseServerReplaced() {
         clearCredentials()
-        _signOutReason.value = reason
+        _serverReplaced.value = true
     }
 
     fun saveSession(
@@ -85,7 +89,7 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
         _accountIdentity.value = readAccountIdentity()
         _sessionIdentity.value = readSessionIdentity()
         _isLoggedIn.value = true
-        _signOutReason.value = null
+        _serverReplaced.value = false
     }
 
     override fun replaceTokensAtomically(accessToken: String, refreshToken: String, expiresInSeconds: Long) {

@@ -52,6 +52,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -106,6 +107,20 @@ fun GalleryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
+    val signedOutText = signedOutMessage(uiState.serverReplaced, uiState.serverNeedsSetup)
+    // While the server waits for its first account, notice it being created
+    // without a restart; only while the gallery is on screen.
+    val waitingForServerSetup = !uiState.isDeviceLoggedIn && uiState.serverNeedsSetup
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(waitingForServerSetup) {
+        if (!waitingForServerSetup) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                delay(SETUP_RECHECK_MILLIS)
+                viewModel.recheckServerSetup()
+            }
+        }
+    }
     val mediaPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
@@ -268,7 +283,7 @@ fun GalleryScreen(
 
             if (uiState.error == "AUTH_REQUIRED" && uiState.records.any { it.deviceUri != null }) {
                 Text(
-                    text = uiState.signOutReason?.let { "$it Enquanto isso, você vê as fotos do aparelho." }
+                    text = signedOutText?.let { "$it Enquanto isso, você vê as fotos do aparelho." }
                         ?: "Fotos do aparelho. Entre para ver também as fotos do servidor Iris.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
@@ -297,7 +312,7 @@ fun GalleryScreen(
                         EmptyState(
                             icon = Icons.Default.Lock,
                             title = "Login Necessário",
-                            message = uiState.signOutReason
+                            message = signedOutText
                                 ?: "Servidor conectado! Para visualizar sua biblioteca privada, autentique este dispositivo.",
                             actionLabel = "Fazer Login",
                             onAction = onLoginClick

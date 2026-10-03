@@ -10,8 +10,10 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -64,7 +66,7 @@ class ReplacedServerSessionTest {
 
         assertNotNull(app.credentialsStore.sessionIdentity.value)
         assertEquals("a".repeat(32), app.credentialsStore.serverInstanceId())
-        assertNull(app.credentialsStore.signOutReason.value)
+        assertFalse(app.credentialsStore.serverReplaced.value)
     }
 
     @Test
@@ -75,7 +77,7 @@ class ReplacedServerSessionTest {
         app.irisRepository.checkServerHealth()
 
         assertNull(app.credentialsStore.sessionIdentity.value)
-        assertNotNull(app.credentialsStore.signOutReason.value)
+        assertTrue(app.credentialsStore.serverReplaced.value)
     }
 
     @Test
@@ -86,9 +88,9 @@ class ReplacedServerSessionTest {
         app.irisRepository.checkServerHealth()
 
         assertNull(app.credentialsStore.sessionIdentity.value)
-        assertNotNull(app.credentialsStore.signOutReason.value)
-        // A new login clears the reason.
+        assertTrue(app.credentialsStore.serverReplaced.value)
+        // A new login clears the mark.
         app.credentialsStore.saveSession("d", "t", "r", 3600, "miguel", "", 1)
-        assertNull(app.credentialsStore.signOutReason.value)
+        assertFalse(app.credentialsStore.serverReplaced.value)
     }
 }

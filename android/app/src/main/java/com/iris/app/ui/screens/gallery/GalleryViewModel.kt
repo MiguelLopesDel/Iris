@@ -37,8 +37,10 @@ data class GalleryUiState(
     val isServerChecking: Boolean = false,
     val cloudSyncStatus: CloudSyncStatus = CloudSyncStatus(),
     val origins: MediaOriginIndex = MediaOriginIndex.EMPTY,
-    /** Why the app signed itself out (a reinstalled server), shown instead of the generic login text. */
-    val signOutReason: String? = null,
+    /** The app ended its session because the server was reinstalled. */
+    val serverReplaced: Boolean = false,
+    /** The server answers but has no account yet (`setup_required`). */
+    val serverNeedsSetup: Boolean = false,
     /** The account's folder selection; device media outside it is marked "not in backup". */
     val backupPolicy: com.iris.app.data.model.MediaScanPolicy? = null,
     val deviceMediaPermissionGranted: Boolean = false,
@@ -84,8 +86,8 @@ class GalleryViewModel(
         refreshOrigins()
         checkServerAndLoad()
         viewModelScope.launch {
-            repository.credentialsStore.signOutReason.collect { reason ->
-                _uiState.update { it.copy(signOutReason = reason) }
+            repository.credentialsStore.serverReplaced.collect { replaced ->
+                _uiState.update { it.copy(serverReplaced = replaced) }
             }
         }
         viewModelScope.launch {
@@ -340,6 +342,18 @@ class GalleryViewModel(
         }
     }
 
+    /**
+     * Re-reads only whether the server still waits for its first account, so
+     * the signed-out text follows the server without reloading the gallery.
+     */
+    fun recheckServerSetup() {
+        viewModelScope.launch {
+            repository.checkServerHealth().onSuccess { health ->
+                _uiState.update { it.copy(serverNeedsSetup = health.status == SETUP_REQUIRED) }
+            }
+        }
+    }
+
     fun checkServerAndLoad() {
         val requestedSessionKey = currentSessionKey()
         val requestedAccountKey = repository.credentialsStore.accountIdentity.value
@@ -384,6 +398,7 @@ class GalleryViewModel(
             _uiState.update {
                 it.copy(
                     isServerOnline = true,
+                    serverNeedsSetup = healthResult.getOrNull()?.status == SETUP_REQUIRED,
                     isDeviceLoggedIn = requestedSessionKey != null,
                     // Health is the connection decision. Library information is
                     // optional decoration and must never keep the gallery in a
@@ -590,6 +605,7 @@ class GalleryViewModel(
     }
 
     private companion object {
+        const val SETUP_REQUIRED = "setup_required"
         /** Enough to fill the first screens while the network catches up. */
         const val MIRROR_FIRST_PAINT = 60
         const val PAGE_SIZE = 24

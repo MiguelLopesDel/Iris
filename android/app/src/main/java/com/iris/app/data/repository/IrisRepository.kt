@@ -1,7 +1,5 @@
 package com.iris.app.data.repository
 
-import com.iris.app.data.remote.SessionServerCheck
-
 import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.model.DeviceLoginResponse
@@ -33,6 +31,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 import com.iris.app.data.remote.IrisApiClient
+import com.iris.app.data.remote.SessionServerCheck
 import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.SyncQueueCoordinator
@@ -189,13 +188,7 @@ class IrisRepository(
             when (SessionServerCheck.verdict(health, credentialsStore.serverInstanceId())) {
                 SessionServerCheck.Verdict.SAME -> Unit
                 SessionServerCheck.Verdict.RECORD -> health.instanceId?.let(credentialsStore::rememberServerInstance)
-                SessionServerCheck.Verdict.REPLACED -> credentialsStore.signOutBecause(
-                    if (health.status == "setup_required") {
-                        "O servidor foi reinstalado e ainda não tem contas. Crie a conta no servidor e pareie este aparelho de novo."
-                    } else {
-                        "O servidor foi reinstalado. Entre de novo ou pareie este aparelho."
-                    }
-                )
+                SessionServerCheck.Verdict.REPLACED -> credentialsStore.signOutBecauseServerReplaced()
             }
         }
     }
