@@ -23,6 +23,18 @@
     })
     .catch(() => {});
 
+  // Advice only: 8 characters are accepted, 12 or more are recommended.
+  const password = form?.querySelector('input[name="password"]');
+  const hint = document.querySelector('#setup-password-hint');
+  const advice = hint?.textContent;
+  password?.addEventListener('input', () => {
+    const length = password.value.length;
+    if (length === 0) hint.textContent = advice;
+    else if (length < 8) hint.textContent = `Faltam ${8 - length} caractere${8 - length === 1 ? '' : 's'} para o mínimo de 8.`;
+    else if (length < 12) hint.textContent = 'Aceita. Com 12 ou mais caracteres ela fica bem mais difícil de adivinhar.';
+    else hint.textContent = 'Boa senha.';
+  });
+
   form?.addEventListener('submit', async (event) => {
     event.preventDefault();
     error.hidden = true;

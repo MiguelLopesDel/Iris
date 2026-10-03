@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from core import first_setup
 from core.auth import hash_password
+from core.password_policy import check_new_password
 from core.users_db import has_users
 from core.web_sessions import start_web_session
 
@@ -79,6 +80,7 @@ async def complete_setup(request: Request, payload: SetupIn):
         logger.warning("setup_code_rejected")
         raise HTTPException(403, "Código de instalação incorreto")
     try:
+        check_new_password(payload.password, payload.username)
         password_hash = hash_password(payload.password)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

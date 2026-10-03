@@ -7,13 +7,19 @@ from pathlib import Path
 
 from pwdlib import PasswordHash
 
+from core.password_policy import check_length
+
 _password_hash = PasswordHash.recommended()
 _DUMMY_HASH = _password_hash.hash("iris-not-a-real-password")
 
 
 def hash_password(password: str) -> str:
-    if len(password) < 12:
-        raise ValueError("A senha precisa ter pelo menos 12 caracteres")
+    """Hashes a password of at least the minimum length.
+
+    Choosing a password also goes through
+    :func:`core.password_policy.check_new_password`, which refuses common ones.
+    """
+    check_length(password)
     return _password_hash.hash(password)
 
 
