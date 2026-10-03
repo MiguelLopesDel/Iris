@@ -7,6 +7,7 @@ from pathlib import Path
 from core.concepts import create_concept_tables
 from core.faces import create_face_tables
 from core.import_review import ensure_tables as ensure_import_review_tables
+from core.media_dates import repair_device_upload_dates
 from core.web_enrichment import create_web_enrichment_tables
 
 
@@ -33,6 +34,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     migrate_schema(conn)
     ensure_memes_indexes(conn)
     heal_library_roots(conn, db_path.parent / "library")
+    repair_device_upload_dates(conn)
     conn.commit()
     return conn
 

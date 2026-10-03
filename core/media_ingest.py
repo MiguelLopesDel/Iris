@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from core.media_dates import capture_timestamp
 from core.sync_db import now_iso
 from core.upload_catalog_writer import UploadCatalogWriter
 
@@ -99,7 +100,9 @@ def ingest_upload_without_ai(
                         library_id,
                         now_iso(),
                         stat.st_size,
-                        stat.st_mtime,
+                        # The stored copy's mtime is when it arrived; the gallery dates
+                        # media by when it was taken, as the device reported it.
+                        capture_timestamp(upload["captured_at"]) or stat.st_mtime,
                         upload["expected_hash"],
                         metadata,
                         now_iso(),

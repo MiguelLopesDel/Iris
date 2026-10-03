@@ -190,6 +190,12 @@ with TestClient(server.app) as client:
     assert completed_path.read_bytes() == body
     assert "must-not-be-used" not in str(completed_path)
     assert completed_path.name.endswith("-photo.jpg")
+    # Dated by when it was taken (the device's captured_at), not when it arrived.
+    dated = sqlite3.connect(data / "users" / "1" / "iris.db")
+    assert dated.execute(
+        "SELECT file_mtime FROM memes WHERE id = ?", (completed.json()["media_id"],)
+    ).fetchone()[0] == 1788955200.0
+    dated.close()
 
     # Simulate a crash after the durable filesystem move but before the
     # database row leaves `finalizing`. Replaying batch reservation must return
