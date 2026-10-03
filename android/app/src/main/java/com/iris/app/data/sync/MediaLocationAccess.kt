@@ -36,31 +36,52 @@ object MediaLocationAccess {
 class OriginalRefusedException(cause: Throwable) : java.io.IOException("Original media refused", cause)
 
 /**
- * Chooses between the original and the redacted file for every read of one
- * process, consistently.
+ * Chooses between the original and the redacted file for each media item.
  *
  * Deciding per open let one upload hash the original and send a chunk of the
- * redacted file after a passing refusal: the server rejected the mix, a
+ * redacted file after a passing refusal. The server rejected the mix, a
  * re-read of the original matched the declared hash, and the item was failed
- * for good. Now a refusal fails that read as an [OriginalRefusedException]
- * (an IOException: the item is retried), and every later read uses the
- * redacted file. The next attempt then hashes and sends the same bytes.
+ * for good. Now a refusal fails that read with [OriginalRefusedException] (an
+ * IOException: the item is retried) and marks only that item. Its reads use
+ * the redacted file until the mark expires, so its next attempt hashes and
+ * sends the same bytes; other items keep their location. After the mark
+ * expires, the original is tried again. If the declared hash then describes
+ * the other version, the server refuses it (422) and the upload re-hashes the
+ * file and starts over: it converges and never fails for good.
  */
-internal class OriginalReads(private val allowed: () -> Boolean) {
-    @Volatile
-    var refused: Boolean = false
-        private set
+internal class OriginalReads(
+    private val allowed: () -> Boolean,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val refusalMillis: Long = REFUSAL_MILLIS,
+) {
+    private val refusedUntil = java.util.concurrent.ConcurrentHashMap<Any, Long>()
 
-    fun <U, T> open(plain: U, original: (U) -> U, opener: (U) -> T): T {
-        if (refused || !allowed()) return opener(plain)
+    fun isRefused(item: Any): Boolean {
+        val until = refusedUntil[item] ?: return false
+        return until > clock()
+    }
+
+    fun <U : Any, T> open(plain: U, original: (U) -> U, opener: (U) -> T): T {
+        if (!allowed() || isRefused(plain)) return opener(plain)
         return try {
             opener(original(plain))
         } catch (failure: SecurityException) {
-            refused = true
+            refuse(plain)
             throw OriginalRefusedException(failure)
         } catch (failure: UnsupportedOperationException) {
-            refused = true
+            refuse(plain)
             throw OriginalRefusedException(failure)
         }
+    }
+
+    private fun refuse(item: Any) {
+        val now = clock()
+        if (refusedUntil.size >= MAX_TRACKED) refusedUntil.entries.removeIf { it.value <= now }
+        refusedUntil[item] = now + refusalMillis
+    }
+
+    private companion object {
+        const val REFUSAL_MILLIS = 60L * 60 * 1000
+        const val MAX_TRACKED = 1_000
     }
 }
