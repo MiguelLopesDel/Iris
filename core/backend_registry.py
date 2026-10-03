@@ -3,19 +3,32 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
+from pathlib import Path
 
 from core.backend import SearchBackend, create_backend
 from core.embedding_models import resolve_embedding_model
+from core.indexer_db import init_db
 from core.users_db import IrisUser, get_user_by_id
 
 
 class BackendRegistry:
     """Create one backend per account and retain only recently used instances."""
 
-    def __init__(self, users_db_path, *, cache_size: int = 1, load_model: bool = True):
+    def __init__(
+        self,
+        users_db_path,
+        *,
+        cache_size: int = 1,
+        load_model: bool = True,
+        on_new_backend: Callable[[Path], None] | None = None,
+    ):
         self.users_db_path = users_db_path
         self.cache_size = max(1, cache_size)
         self.load_model = load_model
+        # Told the library's database path whenever a backend is built for it,
+        # so caches keyed by that path drop what the previous backend saw.
+        self._on_new_backend = on_new_backend
         self._backends: OrderedDict[int, SearchBackend] = OrderedDict()
         self._lock = threading.RLock()
 
@@ -31,11 +44,17 @@ class BackendRegistry:
             user = self.get_user(user_id)
             if user is None:
                 raise KeyError(user_id)
+            # Bring the library's schema and data repairs up to date before the
+            # backend reads it: the gallery is often the first thing to open an
+            # account after an upgrade, and the catalog it loads is cached.
+            init_db(user.db_path).close()
             backend = create_backend(
                 db_path=str(user.db_path), media_root=str(user.media_root),
                 model_name=resolve_embedding_model(user.model_name),
                 load_model=self.load_model,
             )
+            if self._on_new_backend is not None:
+                self._on_new_backend(user.db_path)
             self._backends[user_id] = backend
             while len(self._backends) > self.cache_size:
                 # Do not manually close here. A request that already holds the object

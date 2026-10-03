@@ -274,6 +274,23 @@ def _invalidate_view_caches() -> None:
     _fingerprint_coverage_cache.clear()
 
 
+def _invalidate_view_caches_for(db_path: Path | str) -> None:
+    """Drops one library's view caches when its backend is replaced.
+
+    They are keyed by database path, which outlives a backend: an account's
+    backend is rebuilt after every upload, and positions cached for the old
+    catalogue left everything added since out of the gallery (and out of the
+    paths /media/ may serve) until the server restarted.
+    """
+    db_key = str(db_path)
+    for cache in (
+        _sorted_records_cache, _missing_count_cache, _record_positions_by_db_id_cache,
+        _allowed_media_paths_cache, _extension_counts_cache, _fingerprint_coverage_cache,
+    ):
+        for key in [key for key in cache if (key[0] if isinstance(key, tuple) else key) == db_key]:
+            cache.pop(key, None)
+
+
 def _backend_cache_key(backend: SearchBackend) -> str:
     engine = getattr(backend, "engine", None)
     return str(getattr(engine, "db_path", id(backend)))
@@ -692,7 +709,8 @@ if app.state.multiuser_enabled:
     except ValueError:
         engine_cache_size = 1
     app.state.backend_registry = BackendRegistry(
-        _USERS_DB, cache_size=engine_cache_size, load_model=_LOAD_MODEL
+        _USERS_DB, cache_size=engine_cache_size, load_model=_LOAD_MODEL,
+        on_new_backend=_invalidate_view_caches_for,
     )
     # Shared-space storage policy: the administrator's choice in the interface,
     # else the installer's .env, else the defaults. An impossible .env choice
