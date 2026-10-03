@@ -74,6 +74,22 @@ class MediaOriginIndex(
         }
     } ?: originOf(record.contentHash)
 
+    /**
+     * The queued hash of a device record, but only while the file still has
+     * the fingerprint it had when hashed. A file changed since then holds
+     * other bytes; its old hash must not merge it with the server's old copy,
+     * or the gallery would show only that copy and never "checking".
+     */
+    fun verifiedHashOf(record: MediaRecord): String? {
+        val key = record.deviceUri?.let(MediaStoreKey::of) ?: return null
+        val known = knownByLocalUri[key] ?: return null
+        val current = record.deviceFingerprint
+        if (current != null && MediaChangePolicy.decide(known, current, null) == MediaChangePolicy.Verdict.VERIFY) {
+            return null
+        }
+        return known.sha256
+    }
+
     /** Processing and finished jobs mean the server has already accepted the bytes. */
     fun hasServerCopy(contentHash: String?): Boolean = when (originOf(contentHash)) {
         MediaOrigin.ON_DEVICE, MediaOrigin.PROCESSING -> true

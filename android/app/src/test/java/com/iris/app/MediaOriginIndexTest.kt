@@ -148,6 +148,43 @@ class MediaOriginIndexTest {
     }
 
     @Test
+    fun `a changed device file does not lend its old hash to the gallery merge`() {
+        val uploaded = job("abc", UploadJobState.READY, id = 7L).copy(sourceDateModified = 1_700_000_000L)
+        val index = MediaOriginIndex.from(listOf(uploaded))
+        fun record(size: Long) = MediaRecord(
+            index = -7,
+            arquivo = "IMG_7.jpg",
+            deviceUri = "content://media/external/file/7",
+            deviceFingerprint = MediaFingerprint(size = size, dateModifiedSeconds = 1_700_000_000L, generation = 0L),
+        )
+
+        assertEquals("abc", index.verifiedHashOf(record(uploaded.byteSize)))
+        // Edited: no hash, so it is not merged away and shows as checking.
+        assertEquals(null, index.verifiedHashOf(record(uploaded.byteSize + 1)))
+        assertEquals(MediaOrigin.CHECKING, index.originOf(record(uploaded.byteSize + 1)))
+    }
+
+    @Test
+    fun `an edited local photo stays in the gallery next to the old server copy`() {
+        val uploaded = job("abc", UploadJobState.READY, id = 7L).copy(sourceDateModified = 1_700_000_000L)
+        val index = MediaOriginIndex.from(listOf(uploaded))
+        val edited = MediaRecord(
+            index = -7,
+            arquivo = "IMG_7.jpg",
+            deviceUri = "content://media/external/file/7",
+            deviceFingerprint = MediaFingerprint(size = uploaded.byteSize + 1, dateModifiedSeconds = 1_700_000_000L, generation = 0L),
+        )
+        val serverCopy = MediaRecord(index = 3, arquivo = "IMG_7.jpg", contentHash = "abc")
+
+        val merged = com.iris.app.ui.screens.gallery.GalleryRecordMerger().merge(
+            listOf(serverCopy),
+            listOf(edited.copy(contentHash = index.verifiedHashOf(edited))),
+        )
+
+        assertEquals(2, merged.size)
+    }
+
+    @Test
     fun `processing and finished hashes indicate that Iris has a copy`() {
         val processing = MediaOriginIndex.from(listOf(job("abc", UploadJobState.PROCESSING)))
         val finished = MediaOriginIndex.from(listOf(job("def", UploadJobState.READY)))
