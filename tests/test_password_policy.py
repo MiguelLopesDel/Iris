@@ -49,6 +49,16 @@ def test_the_username_and_a_repeated_character_are_refused():
         check_new_password("zzzzzzzzzz")
 
 
+@pytest.mark.parametrize("password", [" " * 8, "\t" * 8, " \t \n \t  "])
+def test_a_password_of_only_whitespace_is_refused(password):
+    with pytest.raises(PasswordRejected, match="só espaços"):
+        check_new_password(password)
+
+
+def test_spaces_inside_a_phrase_are_kept():
+    check_new_password("lua  cheia")
+
+
 def test_a_short_password_gets_advice_but_is_accepted():
     check_new_password("lua cheia")
     assert recommendations("lua cheia")

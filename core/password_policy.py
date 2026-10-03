@@ -35,6 +35,9 @@ def check_length(password: str) -> None:
 def check_new_password(password: str, username: str | None = None) -> None:
     """Raises :class:`PasswordRejected` with a message for the person choosing it."""
     check_length(password)
+    if not password.strip():
+        # Spaces inside a phrase are fine; a password of only whitespace is not one.
+        raise PasswordRejected("A senha não pode ser só espaços")
     lowered = password.strip().lower()
     if lowered in _common_passwords():
         raise PasswordRejected("Essa senha é uma das mais usadas e fácil de adivinhar; escolha outra")
