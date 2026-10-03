@@ -247,16 +247,22 @@ class GalleryViewModel(
     private suspend fun reloadLoadedDevicePages() {
         run {
             val mediaType = _uiState.value.mediaType
-            val loaded = _uiState.value.devicePage.coerceAtLeast(1)
             val fresh = mutableListOf<MediaRecord>()
             var last: com.iris.app.data.local.DeviceGalleryPage? = null
-            for (page in 1..loaded) {
+            var page = 1
+            // Up to the pages loaded *now*, read again after every page: the user
+            // may load more while this runs, and replacing them with fewer pages
+            // made items vanish while devicePage still counted them as loaded.
+            // The check and the publish below run with no suspension between
+            // them, so no page can be loaded in that gap.
+            while (page <= _uiState.value.devicePage.coerceAtLeast(1)) {
                 val result = runCatching { galleryDataSource.devicePage(page, PAGE_SIZE, mediaType) }.getOrNull()
                     ?: return@run
                 if (!result.permissionGranted || _uiState.value.mediaType != mediaType) return@run
                 fresh += result.records
                 last = result
                 if (page >= result.totalPages) break
+                page++
             }
             val total = last ?: return@run
             // Read for the filter current when it started. If the user switched
