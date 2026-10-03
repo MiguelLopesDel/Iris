@@ -20,9 +20,9 @@ internal class MediaPayloadSource(
     /**
      * Every read goes through the original when allowed: the hash, the size
      * and the uploaded bytes must all describe the same file, and the
-     * redacted one has its GPS coordinates zeroed.
+     * redacted one has its GPS coordinates zeroed. See [OriginalReads].
      */
-    private fun readable(uri: Uri): Uri = MediaLocationAccess.originalOf(uri, canReadOriginals())
+    private val originals = OriginalReads(canReadOriginals)
 
     fun createChunkRequestBody(uri: Uri, offset: Long, length: Long): RequestBody =
         object : RequestBody() {
@@ -97,22 +97,8 @@ internal class MediaPayloadSource(
         true
     }
 
-    /**
-     * Opens the original when allowed. A device that refuses it anyway (an OEM
-     * provider, a permission revoked mid-run) falls back to the redacted file
-     * rather than failing the upload.
-     */
-    private fun <T> withOriginal(uri: Uri, open: (Uri) -> T): T {
-        val original = readable(uri)
-        if (original == uri) return open(uri)
-        return try {
-            open(original)
-        } catch (_: SecurityException) {
-            open(uri)
-        } catch (_: UnsupportedOperationException) {
-            open(uri)
-        }
-    }
+    private fun <T> withOriginal(uri: Uri, open: (Uri) -> T): T =
+        originals.open(uri, { MediaLocationAccess.originalOf(it, granted = true) }, open)
 
     private fun openStream(uri: Uri): InputStream? = withOriginal(uri) { contentResolver.openInputStream(it) }
 
@@ -120,15 +106,14 @@ internal class MediaPayloadSource(
 
     private fun openDescriptorOrNull(uri: Uri) = try {
         openDescriptorOrThrow(uri)
+    } catch (refused: OriginalRefusedException) {
+        throw refused
     } catch (_: Exception) {
         null
     }
 
-    private fun openFileDescriptor(uri: Uri) = try {
-        openDescriptorOrThrow(uri)
-    } catch (_: Exception) {
-        null
-    }
+    // A refusal must fail the read, not fall through to a stream of the other file.
+    private fun openFileDescriptor(uri: Uri) = openDescriptorOrNull(uri)
 
     private fun copyRange(stream: InputStream, sink: BufferedSink, length: Long) {
         val buffer = ByteArray(BUFFER_SIZE_BYTES)
