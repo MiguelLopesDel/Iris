@@ -55,7 +55,9 @@ def _throttle(request: Request) -> LoginThrottle:
 def _check_credentials(request: Request, username: str, password: str):
     """The user for these credentials, or an HTTP error; failures slow the next attempt."""
     throttle = _throttle(request)
-    wait = throttle.retry_after(username)
+    user = get_user_by_username(request.app.state.users_db_path, username)
+    known = user is not None
+    wait = throttle.retry_after(username, known=known)
     if wait > 0:
         seconds = math.ceil(wait)
         raise HTTPException(
@@ -63,9 +65,8 @@ def _check_credentials(request: Request, username: str, password: str):
             f"Muitas tentativas de login com esse usuário. Tente de novo em {_wait_text(seconds)}.",
             headers={"Retry-After": str(seconds)},
         )
-    user = get_user_by_username(request.app.state.users_db_path, username)
     if user is None or not verify_password(password, user.password_hash):
-        throttle.record_failure(username)
+        throttle.record_failure(username, known=known)
         raise HTTPException(401, "Usuário ou senha inválidos")
     throttle.record_success(username)
     return user

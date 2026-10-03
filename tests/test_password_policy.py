@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 
 from core.auth import hash_password
-from core.login_throttle import FREE_ATTEMPTS, MAX_DELAY_SECONDS, LoginThrottle
+from core.login_throttle import (
+    FREE_ATTEMPTS,
+    MAX_DELAY_SECONDS,
+    MAX_TRACKED_UNKNOWN_NAMES,
+    LoginThrottle,
+)
 from core.password_policy import (
     MIN_LENGTH,
     PasswordRejected,
@@ -61,8 +66,8 @@ class _Clock:
 def test_a_few_typos_cost_nothing():
     throttle = LoginThrottle(clock=_Clock())
     for _ in range(FREE_ATTEMPTS - 1):
-        throttle.record_failure("alice")
-    assert throttle.retry_after("alice") == 0
+        throttle.record_failure("alice", known=True)
+    assert throttle.retry_after("alice", known=True) == 0
 
 
 def test_repeated_failures_wait_longer_each_time_up_to_a_cap():
@@ -70,23 +75,44 @@ def test_repeated_failures_wait_longer_each_time_up_to_a_cap():
     throttle = LoginThrottle(clock=clock)
     waits = []
     for _ in range(FREE_ATTEMPTS + 12):
-        throttle.record_failure("Alice")
-        waits.append(throttle.retry_after("alice"))
+        throttle.record_failure("Alice", known=True)
+        waits.append(throttle.retry_after("alice", known=True))
     blocked = [wait for wait in waits if wait > 0]
     assert blocked == sorted(blocked)
     assert blocked[-1] == MAX_DELAY_SECONDS
     clock.now += MAX_DELAY_SECONDS
-    assert throttle.retry_after("alice") == 0
+    assert throttle.retry_after("alice", known=True) == 0
 
 
 def test_a_success_clears_the_account_and_other_accounts_are_unaffected():
     throttle = LoginThrottle(clock=_Clock())
     for _ in range(FREE_ATTEMPTS + 2):
-        throttle.record_failure("alice")
-    assert throttle.retry_after("alice") > 0
-    assert throttle.retry_after("bob") == 0
+        throttle.record_failure("alice", known=True)
+    assert throttle.retry_after("alice", known=True) > 0
+    assert throttle.retry_after("bob", known=True) == 0
     throttle.record_success("alice")
-    assert throttle.retry_after("alice") == 0
+    assert throttle.retry_after("alice", known=True) == 0
+
+
+def test_a_spray_of_made_up_names_does_not_clear_a_real_account():
+    throttle = LoginThrottle(clock=_Clock())
+    for _ in range(FREE_ATTEMPTS + 1):
+        throttle.record_failure("admin", known=True)
+    blocked = throttle.retry_after("admin", known=True)
+    assert blocked > 0
+
+    for index in range(MAX_TRACKED_UNKNOWN_NAMES + 10):
+        throttle.record_failure(f"made-up-{index}", known=False)
+
+    assert throttle.retry_after("admin", known=True) == blocked
+
+
+def test_unknown_names_are_slowed_like_accounts_so_answers_do_not_reveal_which_exist():
+    throttle = LoginThrottle(clock=_Clock())
+    for _ in range(FREE_ATTEMPTS + 1):
+        throttle.record_failure("nobody", known=False)
+        throttle.record_failure("admin", known=True)
+    assert throttle.retry_after("nobody", known=False) == throttle.retry_after("admin", known=True) > 0
 
 
 def test_login_endpoints_throttle_guessing_and_new_accounts_refuse_common_passwords(tmp_path: Path):
