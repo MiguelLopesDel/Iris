@@ -83,3 +83,48 @@ def test_the_gallery_backend_repairs_a_library_before_loading_it(tmp_path: Path)
 
     stored = sqlite3.connect(user.db_path).execute("SELECT file_mtime FROM memes").fetchone()[0]
     assert stored == SEPT_29
+
+
+def test_the_repair_reaches_device_uploads_indexed_with_ai(tmp_path: Path):
+    from core.sync_db import ensure_tables
+
+    db = tmp_path / "iris.db"
+    conn = init_db(db)
+    ensure_tables(conn)
+    media = conn.execute(
+        "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('media', '/media', 'x')"
+    ).lastrowid
+    arrival = UPLOADED.timestamp() + 2.0
+    for name, digest in (("from-phone.jpg", "a" * 64), ("host-import.jpg", "b" * 64)):
+        conn.execute(
+            "INSERT INTO memes (arquivo, caminho, library_id, imported_at, file_mtime, content_hash, embedding) "
+            "VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            (name, f"/media/{name}", media, UPLOADED.isoformat(), arrival, digest),
+        )
+    phone = conn.execute("SELECT id FROM memes WHERE arquivo = 'from-phone.jpg'").fetchone()[0]
+    conn.execute(
+        "INSERT INTO sync_uploads (id, device_id, filename, expected_size, expected_hash, captured_at, "
+        "state, temp_path, created_at, updated_at) VALUES ('u1', 'phone', 'from-phone.jpg', 1, ?, "
+        "'2026-09-29T22:07:22Z', 'ready', '/tmp/x', 'x', 'x')",
+        ("a" * 64,),
+    )
+    conn.execute(
+        "INSERT INTO media_origins (media_id, device_id, source_id, created_at) VALUES (?, 'phone', 'camera', 'x')",
+        (phone,),
+    )
+    # The host import shares the capture time of an upload by hash, but has no device origin.
+    conn.execute(
+        "INSERT INTO sync_uploads (id, device_id, filename, expected_size, expected_hash, captured_at, "
+        "state, temp_path, created_at, updated_at) VALUES ('u2', 'phone', 'x.jpg', 1, ?, "
+        "'2026-09-29T22:07:22Z', 'ready', '/tmp/y', 'x', 'x')",
+        ("b" * 64,),
+    )
+    conn.commit()
+    conn.close()
+
+    for _ in range(2):  # idempotent
+        init_db(db).close()
+
+    dates = dict(sqlite3.connect(db).execute("SELECT arquivo, file_mtime FROM memes").fetchall())
+    assert dates["from-phone.jpg"] == SEPT_29
+    assert dates["host-import.jpg"] == arrival

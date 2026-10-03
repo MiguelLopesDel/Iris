@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from core.media_dates import capture_timestamp
 from core.upload_catalog_writer import UploadCatalogWriter
 
 
@@ -57,7 +58,7 @@ def ingest_upload_with_ai(
         with connection:
             catalog = UploadCatalogWriter(connection)
             upload = connection.execute(
-                """SELECT device_id, expected_hash, source_id, source_name,
+                """SELECT device_id, expected_hash, captured_at, source_id, source_name,
                           source_relative_path, source_volume, source_media_store_id,
                           source_generation, source_media_kind
                    FROM sync_uploads WHERE id = ? AND processing_lease_token = ?""",
@@ -68,6 +69,13 @@ def ingest_upload_with_ai(
             media_id = catalog.find_media_id_by_hash(
                 upload["expected_hash"], latest_first=True
             )
+            # The indexer dated the item by the received file's mtime, which is
+            # when it arrived; the gallery dates media by when it was taken.
+            captured = capture_timestamp(upload["captured_at"])
+            if media_id is not None and captured is not None:
+                connection.execute(
+                    "UPDATE memes SET file_mtime = ? WHERE id = ?", (captured, media_id)
+                )
             catalog.complete_upload(
                 upload=upload,
                 upload_id=upload_id,

@@ -153,6 +153,7 @@ def test_process_upload_with_ai_holds_lease_and_records_catalog_origin(
     _database_with_jobs(database, "upload-ai")
     conn = sqlite3.connect(database)
     conn.execute("ALTER TABLE memes ADD COLUMN content_hash TEXT")
+    conn.execute("ALTER TABLE memes ADD COLUMN file_mtime REAL")
     conn.execute(
         "UPDATE sync_uploads SET filename = ?, expected_size = ?, expected_hash = ?, "
         "temp_path = ?, captured_at = ?, source_id = ?, source_name = ?, "
@@ -185,8 +186,10 @@ def test_process_upload_with_ai_holds_lease_and_records_catalog_origin(
         assert job[0] == "processing"
         assert job[1]
         assert job[2] == 1
+        # The indexer dates the item by the received file's mtime (arrival).
         conn.execute(
-            "INSERT INTO memes (content_hash, file_size) VALUES (?, ?)", (digest, 11)
+            "INSERT INTO memes (content_hash, file_size, file_mtime) VALUES (?, ?, ?)",
+            (digest, 11, 1_791_000_000.0),
         )
         conn.commit()
         conn.close()
@@ -233,6 +236,10 @@ def test_process_upload_with_ai_holds_lease_and_records_catalog_origin(
     conn.close()
 
     assert upload == ("ready", 1, None)
+    # Dated by when the photo was taken (2026-09-29T10:00:00Z), not by arrival.
+    conn = sqlite3.connect(database)
+    assert conn.execute("SELECT file_mtime FROM memes").fetchone()[0] == 1_790_676_000.0
+    conn.close()
     assert origin == ("device", "camera", "media-42", 7, "Camera", "DCIM/Camera", "external", "image")
     assert [change[0] for change in changes] == [2, 3]
     assert '"state":"ready"' in changes[-1][1]

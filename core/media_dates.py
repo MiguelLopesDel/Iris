@@ -52,4 +52,38 @@ def repair_device_upload_dates(conn: sqlite3.Connection) -> int:
         """,
         (_EARLIEST, _MAX_FUTURE_SECONDS),
     )
+    return cursor.rowcount + _repair_indexed_device_uploads(conn)
+
+
+def _repair_indexed_device_uploads(conn: sqlite3.Connection) -> int:
+    """The same repair for uploads indexed with AI enabled.
+
+    Those land in the shared "media" library through the indexer, with no
+    capture time in their metadata. A device upload is told apart by its
+    origin record (media_origins), and its capture time comes from the
+    upload that delivered it (sync_uploads, matched by content hash). Host
+    imports have no origin record and are left alone.
+    """
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if not {"sync_uploads", "media_origins"} <= tables:
+        return 0
+    captured = (
+        "(SELECT CAST(strftime('%s', u.captured_at) AS REAL) FROM sync_uploads u "
+        "WHERE u.expected_hash = memes.content_hash AND strftime('%s', u.captured_at) IS NOT NULL "
+        "ORDER BY u.updated_at DESC LIMIT 1)"
+    )
+    cursor = conn.execute(
+        f"""
+        UPDATE memes SET file_mtime = {captured}
+        WHERE id IN (SELECT media_id FROM media_origins)
+          AND content_hash IS NOT NULL
+          AND imported_at IS NOT NULL
+          AND ABS(file_mtime - CAST(strftime('%s', imported_at) AS REAL)) < 300
+          AND {captured} IS NOT NULL
+          AND {captured} >= ?
+          AND {captured} <= CAST(strftime('%s', 'now') AS REAL) + ?
+          AND ABS(file_mtime - {captured}) >= 1
+        """,
+        (_EARLIEST, _MAX_FUTURE_SECONDS),
+    )
     return cursor.rowcount
