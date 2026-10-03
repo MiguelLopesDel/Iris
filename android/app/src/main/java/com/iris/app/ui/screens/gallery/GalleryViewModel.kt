@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 data class GalleryUiState(
@@ -84,7 +83,7 @@ class GalleryViewModel(
         checkServerAndLoad()
         viewModelScope.launch {
             // New media appears as in the system gallery, without a manual refresh.
-            deviceMediaChanges.debounce(DEVICE_CHANGE_DEBOUNCE_MILLIS).collect {
+            com.iris.app.data.local.DeviceMediaChanges.reloadAtMostEvery(deviceMediaChanges, DEVICE_CHANGE_INTERVAL_MILLIS) {
                 reloadLoadedDevicePages()
                 refreshOrigins()
             }
@@ -571,8 +570,8 @@ class GalleryViewModel(
         /** Enough to fill the first screens while the network catches up. */
         const val MIRROR_FIRST_PAINT = 60
         const val PAGE_SIZE = 24
-        /** A camera shot is several MediaStore notifications; reload once they settle. */
-        const val DEVICE_CHANGE_DEBOUNCE_MILLIS = 700L
+        /** A camera shot is several MediaStore notifications; fold them into one reload. */
+        const val DEVICE_CHANGE_INTERVAL_MILLIS = 700L
     }
 
     class Factory(
