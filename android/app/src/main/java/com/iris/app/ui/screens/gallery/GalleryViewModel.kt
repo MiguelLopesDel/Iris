@@ -62,6 +62,8 @@ class GalleryViewModel(
     private var devicePageLoadJob: Job? = null
     private var serverRecords: List<MediaRecord> = emptyList()
     private var deviceRecords: List<MediaRecord> = emptyList()
+    /** The upload queue as last read; device pages take their hashes from it. */
+    private var queueOrigins: MediaOriginIndex = MediaOriginIndex.EMPTY
     private var serverTotalRecords: Int = 0
     private var deviceTotalRecords: Int = 0
 
@@ -158,6 +160,7 @@ class GalleryViewModel(
             }
             if (currentSessionKey() != requestedSessionKey) return@launch
             val originIndex = MediaOriginIndex.from(jobs)
+            queueOrigins = originIndex
             // A file changed since it was hashed keeps no hash: it stays visible
             // as a local item ("checking") instead of merging into the old copy.
             deviceRecords = deviceRecords.map { record ->
@@ -238,10 +241,17 @@ class GalleryViewModel(
                 }
                 return@launch
             }
+            // A fresh page carries no hashes; reapply the queue's. Otherwise a
+            // page arriving after refreshOrigins undid it, and media the server
+            // already holds showed twice (its server copy and the device one).
+            val hashed = devicePage.records.map { record ->
+                val hash = queueOrigins.verifiedHashOf(record)
+                if (hash != null) record.copy(contentHash = hash) else record
+            }
             deviceRecords = if (page == 1) {
-                devicePage.records
+                hashed
             } else {
-                (deviceRecords + devicePage.records).distinctBy { it.deviceUri }
+                (deviceRecords + hashed).distinctBy { it.deviceUri }
             }
             deviceTotalRecords = devicePage.total
             _uiState.update { current ->
