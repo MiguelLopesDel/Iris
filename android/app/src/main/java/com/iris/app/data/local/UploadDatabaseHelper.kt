@@ -200,8 +200,9 @@ class UploadDatabaseHelper(
 
     /**
      * The file behind job [id] now holds other bytes (edited in place, or the
-     * id was reused after MediaStore was rebuilt): queue the new content in the
-     * same row, keeping the old hash in previous_sha256. A job being sent right
+     * id was reused after MediaStore was rebuilt): queue the new content,
+     * keeping the old hash in previous_sha256, under a new id (see
+     * [moveToNewestId]). A job being sent right
      * now is left alone; the next scan finds the change again. Returns whether
      * the row was replaced.
      */
@@ -241,7 +242,28 @@ class UploadDatabaseHelper(
             },
             "id = ? AND account_key = ? AND state != 'UPLOADING'",
             arrayOf(id.toString(), accountKey)
-        ) > 0
+        ).let { replaced ->
+            if (replaced > 0) moveToNewestId(db, id)
+            replaced > 0
+        }
+    }
+
+    /**
+     * Gives the row a new id above every existing one. Upload passes claim
+     * in id order above the last id they took, so a version requeued behind
+     * that cursor would wait for the next pass, which may never come: the
+     * pass itself reports success. A new id puts it ahead of any running
+     * pass, without letting a pass revisit what it already tried.
+     */
+    private fun moveToNewestId(db: SQLiteDatabase, id: Long) {
+        val sequence = db.rawQuery("SELECT seq FROM sqlite_sequence WHERE name = 'upload_jobs'", null)
+            .use { if (it.moveToFirst()) it.getLong(0) else 0L }
+        val highest = db.rawQuery("SELECT COALESCE(MAX(id), 0) FROM upload_jobs", null)
+            .use { if (it.moveToFirst()) it.getLong(0) else 0L }
+        val newId = maxOf(sequence, highest) + 1
+        db.execSQL("UPDATE upload_jobs SET id = ? WHERE id = ?", arrayOf<Any>(newId, id))
+        // Keep AUTOINCREMENT from ever handing this id out again.
+        db.execSQL("UPDATE sqlite_sequence SET seq = ? WHERE name = 'upload_jobs'", arrayOf<Any>(newId))
     }
 
     /**

@@ -105,6 +105,29 @@ class MediaChangeDetectionTest {
     }
 
     @Test
+    fun a_version_requeued_behind_a_running_pass_is_still_claimed_by_it() = runBlocking {
+        val edited = createImage("behind-cursor", bytes(13))
+        val later = createImage("ahead", bytes(14))
+        scan(edited)
+        scan(later)
+        markUploaded(edited)
+        markUploaded(later)
+        // A pass has claimed up to the newest row.
+        val cursor = maxOf(job(edited).id, job(later).id)
+
+        overwrite(edited, bytes(15))
+        assertEquals(1, scan(edited))
+
+        val next = dbHelper.claimNextPendingJob(accountKey, cursor)
+        assertEquals("The new version is ahead of the cursor", edited.toString(), next?.localUri)
+        assertEquals(sha256(bytes(15)), next?.sha256)
+        // The id it moved to is never handed out again.
+        val fresh = createImage("after-move", bytes(16))
+        assertEquals(1, scan(fresh))
+        assertTrue(job(fresh).id > next!!.id)
+    }
+
+    @Test
     fun a_rename_keeps_the_upload_and_records_the_new_name() {
         val item = createImage("before", bytes(3))
         scan(item)
