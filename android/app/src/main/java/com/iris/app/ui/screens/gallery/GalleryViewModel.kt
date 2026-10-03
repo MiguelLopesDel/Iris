@@ -253,12 +253,16 @@ class GalleryViewModel(
             for (page in 1..loaded) {
                 val result = runCatching { galleryDataSource.devicePage(page, PAGE_SIZE, mediaType) }.getOrNull()
                     ?: return@run
-                if (!result.permissionGranted) return@run
+                if (!result.permissionGranted || _uiState.value.mediaType != mediaType) return@run
                 fresh += result.records
                 last = result
                 if (page >= result.totalPages) break
             }
             val total = last ?: return@run
+            // Read for the filter current when it started. If the user switched
+            // filters meanwhile (Todas -> Vídeos), these records belong to the
+            // old one; setMediaType already loaded the new one, so drop them.
+            if (_uiState.value.mediaType != mediaType) return@run
             deviceRecords = withQueueHashes(fresh).distinctBy { it.deviceUri }
             deviceTotalRecords = total.total
             _uiState.update { current ->
