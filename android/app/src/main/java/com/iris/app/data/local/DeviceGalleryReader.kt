@@ -61,8 +61,11 @@ class DeviceGalleryReader(
                 MediaStore.MediaColumns.DATE_TAKEN,
                 MediaStore.MediaColumns.DATE_ADDED,
                 MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.BUCKET_ID,
+                MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
                 MediaStore.Files.FileColumns.MEDIA_TYPE
-            ) + if (android.os.Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray()
+            ) + (if (android.os.Build.VERSION.SDK_INT >= 29) arrayOf(MediaStore.MediaColumns.VOLUME_NAME) else emptyArray()) +
+                (if (android.os.Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray())
 
             try {
                 val total = contentResolver.query(
@@ -75,11 +78,7 @@ class DeviceGalleryReader(
                 val queryArgs = Bundle().apply {
                     putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
                     putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
-                    putStringArray(
-                        ContentResolver.QUERY_ARG_SORT_COLUMNS,
-                        arrayOf(MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.DATE_ADDED)
-                    )
-                    putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
+                    putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, NEWEST_FIRST)
                     putInt(ContentResolver.QUERY_ARG_LIMIT, pageSize)
                     putInt(ContentResolver.QUERY_ARG_OFFSET, (page - 1).coerceAtLeast(0) * pageSize)
                 }
@@ -106,6 +105,11 @@ class DeviceGalleryReader(
         val addedIndex = getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
         val modifiedIndex = getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
         val generationIndex = getColumnIndex(MediaStore.MediaColumns.GENERATION_MODIFIED)
+        val bucketIdIndex = getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
+        val bucketNameIndex = getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+        val volumeIndex = getColumnIndex(MediaStore.MediaColumns.VOLUME_NAME)
+        fun textAt(index: Int, fallback: String): String =
+            if (index >= 0 && !isNull(index)) getString(index).orEmpty().ifBlank { fallback } else fallback
         val typeIndex = getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
         return buildList {
             while (moveToNext()) {
@@ -123,6 +127,12 @@ class DeviceGalleryReader(
                         mediaType = if (type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) "video" else "image",
                         deviceUri = ContentUris.withAppendedId(collection, id).toString(),
                         mimeType = if (mimeIndex >= 0) getString(mimeIndex) else null,
+                        deviceSourceId = com.iris.app.data.sync.DeviceFolders.sourceId(
+                            textAt(volumeIndex, "external"),
+                            textAt(bucketIdIndex, "unknown"),
+                            if (type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) "video" else "image",
+                        ),
+                        deviceFolder = textAt(bucketNameIndex, "").ifBlank { null },
                         deviceFingerprint = if (sizeIndex >= 0) {
                             com.iris.app.data.sync.MediaFingerprint(
                                 size = getLong(sizeIndex),
@@ -138,6 +148,19 @@ class DeviceGalleryReader(
         }
     }
 }
+
+/**
+ * Newest first by the date the gallery shows: when it was taken, or when it
+ * was added for media without a capture date (downloads, WhatsApp). Sorting
+ * Same rule as the record's fileMtime (a zero capture date counts as absent).
+ * Sorting by the two columns with QUERY_ARG_SORT_DIRECTION produced
+ * "datetaken, date_added DESC": only date_added descended, so media without a
+ * capture date came first and photos followed oldest first, and a photo
+ * just taken landed on the last page, never loaded.
+ */
+internal val NEWEST_FIRST =
+    "CASE WHEN ${MediaStore.MediaColumns.DATE_TAKEN} > 0 THEN ${MediaStore.MediaColumns.DATE_TAKEN} " +
+        "ELSE ${MediaStore.MediaColumns.DATE_ADDED} * 1000 END DESC, ${MediaStore.MediaColumns._ID} DESC"
 
 data class DeviceGalleryPage(
     val records: List<MediaRecord> = emptyList(),

@@ -5,8 +5,18 @@ import android.graphics.Color as AndroidColor
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.MobileOff
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import com.iris.app.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -33,10 +43,20 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 
+/**
+ * Why a device item will not be backed up, with the action that fixes it.
+ * [message] already names the folder or media kind left out.
+ */
+data class NotInBackupNotice(val message: String, val onInclude: () -> Unit)
+
 /** Simple in-app viewer for media that exists only in the phone's MediaStore. */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun LocalMediaViewerScreen(mediaUri: String, onBack: () -> Unit) {
+fun LocalMediaViewerScreen(
+    mediaUri: String,
+    onBack: () -> Unit,
+    notInBackup: NotInBackupNotice? = null,
+) {
     val uri = remember(mediaUri) { Uri.parse(mediaUri) }
     val context = LocalContext.current
     val isVideo = remember(context, uri) { isVideo(context, uri) }
@@ -73,6 +93,38 @@ fun LocalMediaViewerScreen(mediaUri: String, onBack: () -> Unit) {
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
+            if (notInBackup != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Outlined.MobileOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = notInBackup.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 10.dp)
+                        )
+                        TextButton(onClick = notInBackup.onInclude) {
+                            Text(stringResource(R.string.local_media_include_folder))
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.HourglassEmpty
+import androidx.compose.material.icons.outlined.MobileOff
 import androidx.compose.material.icons.outlined.Pending
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.Icon
@@ -169,8 +170,10 @@ private fun OriginBadge(origin: MediaOrigin, modifier: Modifier = Modifier) {
         MediaOrigin.FAILED -> Icons.Outlined.CloudOff to stringResource(R.string.origin_failed)
         MediaOrigin.ON_DEVICE -> Icons.Outlined.CloudDone to stringResource(R.string.origin_on_device)
         MediaOrigin.CHECKING -> Icons.Outlined.Pending to stringResource(R.string.origin_checking)
+        MediaOrigin.NOT_IN_BACKUP -> Icons.Outlined.MobileOff to stringResource(R.string.origin_not_in_backup)
     }
-    val quiet = origin == MediaOrigin.ON_DEVICE
+    // Dimmed: the ordinary synced state, and a choice the user made.
+    val quiet = origin == MediaOrigin.ON_DEVICE || origin == MediaOrigin.NOT_IN_BACKUP
 
     Box(
         modifier = modifier

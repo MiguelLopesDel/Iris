@@ -19,6 +19,12 @@
     <string name="sync_media_permission_required">Allow photo and video access to list device folders</string>
     <string name="origin_on_device">On this device and in Iris</string>
     <string name="origin_checking">File changed on this device, checking</string>
+    <string name="origin_not_in_backup">Only on this device: its folder is not backed up</string>
+    <string name="local_media_not_in_backup">The folder “%1$s” is not backed up. This item exists only on this device.</string>
+    <string name="local_media_kind_not_in_backup">%1$s are not backed up. This item exists only on this device.</string>
+    <string name="local_media_kind_photos">Photos</string>
+    <string name="local_media_kind_videos">Videos</string>
+    <string name="local_media_include_folder">Back it up</string>
     <string name="origin_iris_only">In Iris only, not on this device</string>
     <string name="origin_uploading">Uploading to Iris</string>
     <string name="origin_processing">In Iris, still processing</string>

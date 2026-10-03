@@ -24,6 +24,12 @@
     <string name="sync_media_permission_required">Permita acesso às fotos e vídeos para listar as pastas</string>
     <string name="origin_on_device">No aparelho e no Iris</string>
     <string name="origin_checking">Arquivo alterado no aparelho, verificando</string>
+    <string name="origin_not_in_backup">Só neste aparelho: a pasta não está no backup</string>
+    <string name="local_media_not_in_backup">A pasta “%1$s” não está no backup. Esta mídia existe só neste aparelho.</string>
+    <string name="local_media_kind_not_in_backup">%1$s não estão no backup. Esta mídia existe só neste aparelho.</string>
+    <string name="local_media_kind_photos">Fotos</string>
+    <string name="local_media_kind_videos">Vídeos</string>
+    <string name="local_media_include_folder">Incluir no backup</string>
     <string name="origin_iris_only">Só no Iris, não está neste aparelho</string>
     <string name="origin_device_only">Só neste aparelho</string>
     <string name="origin_uploading">Enviando para o Iris</string>

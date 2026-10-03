@@ -41,7 +41,11 @@ data class MediaRecord(
     @kotlinx.serialization.Transient val deviceUri: String? = null,
     @kotlinx.serialization.Transient val mimeType: String? = null,
     /** What MediaStore says about the device file now, to spot changes since it was hashed. */
-    @kotlinx.serialization.Transient val deviceFingerprint: com.iris.app.data.sync.MediaFingerprint? = null
+    @kotlinx.serialization.Transient val deviceFingerprint: com.iris.app.data.sync.MediaFingerprint? = null,
+    /** The backup folder id of the device file (`volume:bucket:kind`). */
+    @kotlinx.serialization.Transient val deviceSourceId: String? = null,
+    /** The device folder's name, for telling the user which folder is meant. */
+    @kotlinx.serialization.Transient val deviceFolder: String? = null
 ) {
     val isVideo: Boolean
         get() = mediaType.equals("video", ignoreCase = true)

@@ -4,6 +4,7 @@ import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.MediaOrigin
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.model.MediaRecord
+import com.iris.app.data.model.MediaScanPolicy
 import com.iris.app.data.model.UploadJobState
 import com.iris.app.data.sync.MediaFingerprint
 import org.junit.Assert.assertEquals
@@ -182,6 +183,29 @@ class MediaOriginIndexTest {
         )
 
         assertEquals(2, merged.size)
+    }
+
+    @Test
+    fun `device media outside the backup folders is told apart from media not sent yet`() {
+        val selected = "external_primary:111:image"
+        val policy = MediaScanPolicy(mode = "selected", selectedSourceIds = setOf(selected))
+        fun record(sourceId: String?, video: Boolean = false) = MediaRecord(
+            index = -9,
+            arquivo = "x.jpg",
+            mediaType = if (video) "video" else "image",
+            deviceUri = "content://media/external/file/9",
+            deviceSourceId = sourceId,
+        )
+
+        assertEquals(MediaOrigin.DEVICE_ONLY, MediaOriginIndex.EMPTY.originOf(record(selected), policy))
+        assertEquals(MediaOrigin.NOT_IN_BACKUP, MediaOriginIndex.EMPTY.originOf(record("external_primary:222:image"), policy))
+        // A video from a selected bucket is left out when videos are off.
+        val noVideos = policy.copy(includeVideos = false)
+        assertEquals(MediaOrigin.NOT_IN_BACKUP, MediaOriginIndex.EMPTY.originOf(record("external_primary:111:video", video = true), noVideos))
+        assertEquals(MediaOrigin.DEVICE_ONLY, MediaOriginIndex.EMPTY.originOf(record("external_primary:222:image"), policy.copy(mode = "all")))
+        // Without the selection loaded, or without a known folder, nothing is claimed.
+        assertEquals(MediaOrigin.DEVICE_ONLY, MediaOriginIndex.EMPTY.originOf(record("external_primary:222:image"), null))
+        assertEquals(MediaOrigin.DEVICE_ONLY, MediaOriginIndex.EMPTY.originOf(record(null), policy))
     }
 
     @Test
