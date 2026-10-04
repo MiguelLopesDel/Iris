@@ -274,6 +274,15 @@ Uma mudança está pronta para o PR quando:
   mostra fotos sem modelos e sem GPU.
 - Senhas, tokens, bytes de mídia e caminhos absolutos privados nunca vão para logs.
   `.env`, mídia, bancos e configurações pessoais nunca vão para commits.
+- O repositório é público. Issues, PRs, mensagens de commit, comentários, docs e dados
+  de teste não levam dados pessoais ou privados de quem usa ou testa o Iris: nomes reais
+  de arquivos, datas de fotos, tamanho ou composição da biblioteca, nomes de pastas,
+  modelos de aparelho ou disco, caminhos de servidor, IPs, hostnames, detalhes da rede,
+  nomes de outras pessoas ou horários de uso. Achados são descritos de forma genérica
+  ("fotos da câmera", "perto da metade"), com exemplos sintéticos (`IMG_0001.jpg`) e
+  nomes neutros nos testes (`alice`, `bob`). Revise **antes** de publicar: o GitHub
+  guarda o histórico de edições de issues e PRs, e só apagar a issue remove o texto
+  antigo.
 - Apagar na biblioteca usa a lixeira recuperável do produto; nada de remoção direta
   de arquivo a partir da interface.
 - Migrações de banco são aditivas; abrir um banco novo deixa o sistema utilizável.
