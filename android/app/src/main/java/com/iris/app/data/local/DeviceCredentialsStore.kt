@@ -33,6 +33,33 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
     /** Stable across device re-logins; isolates durable work by server account. */
     val accountIdentity: StateFlow<String?> = _accountIdentity.asStateFlow()
 
+    private val _serverReplaced = MutableStateFlow(false)
+    /**
+     * True after the app ended a session because the server was reinstalled;
+     * false after a normal logout or a new login. The wording shown for it
+     * depends on what the server needs now, so only the fact is kept.
+     */
+    val serverReplaced: StateFlow<Boolean> = _serverReplaced.asStateFlow()
+
+    /** The server installation this session was made on, once known. */
+    fun serverInstanceId(): String? = synchronized(lock) {
+        sharedPreferences.getString(KEY_SERVER_INSTANCE, null)
+    }
+
+    fun rememberServerInstance(instanceId: String) {
+        synchronized(lock) {
+            if (readSessionIdentity() != null) {
+                sharedPreferences.edit().putString(KEY_SERVER_INSTANCE, instanceId).commit()
+            }
+        }
+    }
+
+    /** Ends a session that belongs to another server installation. */
+    fun signOutBecauseServerReplaced() {
+        clearCredentials()
+        _serverReplaced.value = true
+    }
+
     fun saveSession(
         deviceId: String,
         accessToken: String,
@@ -51,6 +78,8 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
                 .putLong(KEY_EXPIRY_TIMESTAMP, expiryTimestamp)
                 .putString(KEY_USERNAME, username)
                 .putString(KEY_SERVER_ORIGIN, serverOrigin)
+                // A new session: its installation is recorded on the next health check.
+                .remove(KEY_SERVER_INSTANCE)
                 .apply {
                     if (userId != null && userId > 0) putInt(KEY_USER_ID, userId)
                     else remove(KEY_USER_ID)
@@ -60,6 +89,7 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
         _accountIdentity.value = readAccountIdentity()
         _sessionIdentity.value = readSessionIdentity()
         _isLoggedIn.value = true
+        _serverReplaced.value = false
     }
 
     override fun replaceTokensAtomically(accessToken: String, refreshToken: String, expiresInSeconds: Long) {
@@ -187,6 +217,7 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
             .remove(KEY_USERNAME)
             .remove(KEY_SERVER_ORIGIN)
             .remove(KEY_USER_ID)
+            .remove(KEY_SERVER_INSTANCE)
             .commit()
         _sessionIdentity.value = null
         _accountIdentity.value = null
@@ -201,5 +232,6 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
         private const val KEY_USERNAME = "enc_username"
         private const val KEY_SERVER_ORIGIN = "enc_server_origin"
         private const val KEY_USER_ID = "enc_user_id"
+        private const val KEY_SERVER_INSTANCE = "enc_server_instance_id"
     }
 }

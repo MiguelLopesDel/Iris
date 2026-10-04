@@ -31,6 +31,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 import com.iris.app.data.remote.IrisApiClient
+import com.iris.app.data.remote.SessionServerCheck
 import com.iris.app.data.sync.ChangeFeedSyncManager
 import com.iris.app.data.sync.MediaStoreScanner
 import com.iris.app.data.sync.SyncQueueCoordinator
@@ -176,8 +177,20 @@ class IrisRepository(
         syncResult.scanResult
     }
 
+    /**
+     * Probes /healthz and checks that a saved session still belongs to the
+     * installation answering (see [SessionServerCheck]). A session made on
+     * another installation is ended here, for every caller at once.
+     */
     suspend fun checkServerHealth(): Result<com.iris.app.data.model.HealthResponse> = runCatchingCancellable {
-        apiClient.apiService.getHealth()
+        apiClient.apiService.getHealth().also { health ->
+            if (credentialsStore.sessionIdentity.value == null) return@also
+            when (SessionServerCheck.verdict(health, credentialsStore.serverInstanceId())) {
+                SessionServerCheck.Verdict.SAME -> Unit
+                SessionServerCheck.Verdict.RECORD -> health.instanceId?.let(credentialsStore::rememberServerInstance)
+                SessionServerCheck.Verdict.REPLACED -> credentialsStore.signOutBecauseServerReplaced()
+            }
+        }
     }
 
     suspend fun getServerInfo(): Result<ServerInfo> = runCatchingCancellable {
