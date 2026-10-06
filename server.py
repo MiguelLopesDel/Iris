@@ -821,7 +821,10 @@ async def authenticate_library_request(request: Request, call_next):
     # see the new catalog, and eagerly recreating it on the next sync request
     # reloads the search model for every uploaded item.
     backend = None
-    if path != "/api/sync" and not path.startswith("/api/sync/"):
+    # The perf probe (IRIS_PERF_PROBE only) reads no library either: loading
+    # the backend for it rebuilt the whole catalog after every upload and
+    # blocked the event loop, distorting the measurement it serves.
+    if path != "/api/sync" and not path.startswith(("/api/sync/", "/api/_perf/")):
         try:
             backend = request.app.state.backend_registry.get(user.id)
         except KeyError:
