@@ -20,8 +20,12 @@ def move_upload_into_library(
     upload_id: str,
     expected_size: int,
     expected_hash: str,
+    unsynced_directories: set[Path] | None = None,
 ) -> None:
-    """Durably move a reserved original, refusing destinations outside its account library."""
+    """Durably move a reserved original, refusing destinations outside its account library.
+
+    See :func:`durable_move_upload` for ``unsynced_directories``.
+    """
     try:
         destination.resolve().relative_to(media_root.resolve())
     except ValueError as exc:
@@ -34,6 +38,7 @@ def move_upload_into_library(
         upload_id=upload_id,
         expected_size=expected_size,
         expected_hash=expected_hash,
+        unsynced_directories=unsynced_directories,
     )
 
 
@@ -44,15 +49,20 @@ def record_upload_finalized(
     filename: str,
     destination: Path,
     captured_at: str,
+    commit: bool = True,
 ) -> int | None:
-    """Commit the finalizing→pending transition and its change-feed event exactly once."""
+    """Record the finalizing→pending transition and its change-feed event exactly once.
+
+    Commits unless ``commit`` is false, when the caller commits a whole batch.
+    """
     changed = conn.execute(
         "UPDATE sync_uploads SET state = 'pending_processing', updated_at = ? "
         "WHERE id = ? AND state = 'finalizing'",
         (now_iso(), upload_id),
     )
     if changed.rowcount != 1:
-        conn.commit()
+        if commit:
+            conn.commit()
         return None
 
     sequence = append_change(conn, "media", upload_id, "created", 1, {
@@ -62,5 +72,6 @@ def record_upload_finalized(
         "captured_at": captured_at,
         "state": "pending_processing",
     })
-    conn.commit()
+    if commit:
+        conn.commit()
     return sequence

@@ -28,7 +28,7 @@ from PIL import Image
 
 import core.sync_upload_service as service_module
 from core import sync_durability
-from core.sync_processor import process_upload
+from core.sync_processor import process_upload, process_uploads
 from core.sync_recovery import recover_pending_uploads
 from core.sync_upload_service import SyncUploadError, SyncUploadService
 from core.users_db import IrisUser
@@ -47,9 +47,9 @@ class Crash(BaseException):
     """
 
 
-def _photo() -> bytes:
+def _photo(shade: int = 120) -> bytes:
     buffer = io.BytesIO()
-    Image.new("RGB", (32, 24), (40, 120, 200)).save(buffer, format="JPEG")
+    Image.new("RGB", (32, 24), (40, shade, 200)).save(buffer, format="JPEG")
     return buffer.getvalue()
 
 
@@ -114,6 +114,12 @@ class Server:
         self._maybe_crash("after_catalog")
         return result
 
+    def _batch_processor(self, **kwargs):
+        self._maybe_crash("before_catalog")
+        result = process_uploads(**kwargs)
+        self._maybe_crash("after_catalog")
+        return result
+
     def _maybe_crash(self, stage: str) -> None:
         if self.crash_at == stage:
             self.crash_at = None
@@ -144,7 +150,9 @@ class Server:
                 saved.close()
                 live.close()
         service_module._prepared_databases.clear()
-        self.service = SyncUploadService(upload_processor=self._processor)
+        self.service = SyncUploadService(
+            upload_processor=self._processor, batch_processor=self._batch_processor,
+        )
         if self.user.db_path.exists():
             # What the server does when it starts: resume persisted work.
             recover_pending_uploads(
@@ -178,14 +186,19 @@ class Server:
         return self.service.upload_status(self.user, DEVICE, upload_id)
 
     def complete(self, upload_id: str) -> dict:
+        return self.complete_many([upload_id])[0]
+
+    def complete_many(self, upload_ids: list[str]) -> list[dict]:
         return asyncio.run(self.service.complete_upload_batch(
-            self.user, DEVICE, {"uploads": [{"upload_id": upload_id}]},
+            self.user, DEVICE, {"uploads": [{"upload_id": value} for value in upload_ids]},
             sync_ai_processing=False, load_model=False,
             on_finished=lambda: None, log_phase=lambda *a, **k: None,
-        ))["uploads"][0]
+        ))["uploads"]
 
 
-def _sync_like_the_app(server: Server, data: bytes, *, power_loss: bool) -> str:
+def _sync_like_the_app(
+    server: Server, data: bytes, *, power_loss: bool, client_upload_id: str = "client-1",
+) -> str:
     """Retry the protocol until the server confirms the photo; returns the final state."""
     digest = hashlib.sha256(data).hexdigest()
     upload_id: str | None = None
@@ -193,7 +206,7 @@ def _sync_like_the_app(server: Server, data: bytes, *, power_loss: bool) -> str:
         crashed = False
         try:
             if upload_id is None:
-                reserved = server.reserve(digest, len(data))
+                reserved = server.reserve(digest, len(data), client_upload_id)
                 if reserved.get("state") == "duplicate":
                     return "duplicate"
                 upload_id = reserved["upload_id"]
@@ -348,3 +361,45 @@ def test_two_uploads_of_the_same_photo_never_share_one_file(tmp_path: Path, monk
     cataloged = _cataloged(user)
     assert len(cataloged) == 1
     assert cataloged[0].read_bytes() == data
+
+
+@pytest.mark.parametrize("power_loss", [False, True], ids=["process-crash", "power-loss"])
+@pytest.mark.parametrize("stage", ["before_move", "after_move", "before_catalog", "after_catalog"])
+def test_a_batch_interrupted_midway_stores_every_photo_exactly_once(
+    tmp_path: Path, monkeypatch, stage, power_loss,
+):
+    # A batch is claimed together, moved together and recorded together: a
+    # stop between those steps leaves some photos claimed, some moved and some
+    # cataloged at once, and each must still end stored once.
+    user = _user(tmp_path)
+    server = Server(user, monkeypatch)
+    photos = [_photo(shade) for shade in (10, 90, 170)]
+    ids = []
+    for index, data in enumerate(photos):
+        reserved = server.reserve(hashlib.sha256(data).hexdigest(), len(data), f"client-{index}")
+        server.put(reserved["upload_id"], 0, data)
+        ids.append(reserved["upload_id"])
+    server.crash_at = stage
+    try:
+        server.complete_many(ids)
+    except Crash:
+        pass
+    assert server.crash_at is None, f"the batch never reached {stage}"
+    server.restart(power_loss=power_loss)
+
+    for index, data in enumerate(photos):
+        state = _sync_like_the_app(
+            server, data, power_loss=power_loss, client_upload_id=f"client-{index}"
+        )
+        assert state == "ready"
+
+    conn = sqlite3.connect(user.db_path)
+    cataloged = [Path(row[0]) for row in conn.execute("SELECT caminho FROM memes")]
+    states = [row[0] for row in conn.execute("SELECT state FROM sync_uploads")]
+    conn.close()
+    assert sorted(path.read_bytes() for path in cataloged) == sorted(photos)
+    assert "failed" not in states and "failed_processing" not in states
+    stored = sorted(path for path in user.media_root.rglob("*") if path.is_file())
+    assert stored == sorted(cataloged), "no orphan copy may be left in the library"
+    leftovers = [path for path in (user.db_path.parent / "sync_uploads").rglob("*") if path.is_file()]
+    assert leftovers == []
