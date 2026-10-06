@@ -57,6 +57,29 @@ class BackgroundSyncPolicyTest {
     }
 
     @Test
+    fun `skipping media queue does not clear an obsolete retry`() {
+        val queueWasProcessed = BackgroundSyncPolicy.shouldProcessMediaQueue(
+            allowedByConstraints = true,
+            autoBackupEnabled = false,
+            forceScan = false,
+        )
+
+        assertFalse(
+            BackgroundSyncPolicy.shouldClearObsoleteRetry(
+                queueWasProcessed = queueWasProcessed,
+                queueCompleted = true,
+            )
+        )
+    }
+
+    @Test
+    fun `only a processed completed queue clears an obsolete retry`() {
+        assertTrue(BackgroundSyncPolicy.shouldClearObsoleteRetry(queueWasProcessed = true, queueCompleted = true))
+        assertFalse(BackgroundSyncPolicy.shouldClearObsoleteRetry(queueWasProcessed = true, queueCompleted = false))
+        assertFalse(BackgroundSyncPolicy.shouldClearObsoleteRetry(queueWasProcessed = false, queueCompleted = true))
+    }
+
+    @Test
     fun `media constraints pause even manually requested queue work`() {
         assertFalse(
             BackgroundSyncPolicy.shouldProcessMediaQueue(

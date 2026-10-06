@@ -22,4 +22,8 @@ internal object BackgroundSyncPolicy {
         autoBackupEnabled: Boolean,
         forceScan: Boolean,
     ): Boolean = allowedByConstraints && (autoBackupEnabled || forceScan)
+
+    /** A skipped queue is not evidence that queued retries have been completed. */
+    fun shouldClearObsoleteRetry(queueWasProcessed: Boolean, queueCompleted: Boolean): Boolean =
+        queueWasProcessed && queueCompleted
 }

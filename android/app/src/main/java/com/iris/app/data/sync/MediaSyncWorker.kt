@@ -206,7 +206,11 @@ class MediaSyncWorker(
 
             if (queueCompleted) {
                 app.settingsRepository.markCloudSyncSucceeded(accountKey)
-                if (canRunMediaWork) {
+                if (BackgroundSyncPolicy.shouldClearObsoleteRetry(
+                        queueWasProcessed = shouldProcessMediaQueue,
+                        queueCompleted = queueCompleted,
+                    )
+                ) {
                     runCatching { clearObsoleteRetry(applicationContext, completedRunWasPeriodic = isPeriodic) }
                         .onFailure { Log.w(TAG, "Obsolete retry not cleared error=${it.javaClass.simpleName}") }
                 }
