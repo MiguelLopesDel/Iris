@@ -52,6 +52,7 @@ from core import (
     instance_settings,
     library_trash,
     pairing,
+    perf_probe,
     session_cookie,
     space_catalog,
 )
@@ -656,6 +657,10 @@ async def lifespan(app: FastAPI):
     else:
         backend = _backend
         print(f"[iris] Ready — {backend.get_total_records()} records")
+    perf_probe_task = None
+    if perf_probe.enabled():
+        app.state.perf_probe = perf_probe.LoopLagProbe()
+        perf_probe_task = asyncio.create_task(app.state.perf_probe.run())
     if not app.state.multiuser_enabled:
         _resume_unfinished_imports()
     else:
@@ -679,6 +684,12 @@ async def lifespan(app: FastAPI):
         app.state.sync_recovery_stop_event = stop_event
         app.state.sync_recovery_worker = worker
     yield
+    if perf_probe_task is not None:
+        perf_probe_task.cancel()
+        try:
+            await perf_probe_task
+        except asyncio.CancelledError:
+            pass
     if app.state.multiuser_enabled:
         stop_event = getattr(app.state, "sync_recovery_stop_event", None)
         if stop_event is not None:
@@ -910,6 +921,11 @@ app.include_router(pairing_router)
 app.include_router(backup_router)
 app.include_router(records_router)
 app.include_router(setup_router)
+if perf_probe.enabled():
+    @app.get("/api/_perf/probe", include_in_schema=False)
+    async def read_perf_probe(request: Request):
+        """Loop lag since the last read and thread-pool load; performance lab only."""
+        return {**request.app.state.perf_probe.snapshot(), **perf_probe.thread_pool_stats()}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
