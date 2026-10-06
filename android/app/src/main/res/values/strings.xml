@@ -72,7 +72,7 @@
     <string name="queue_state_already_on_server">Já estavam no servidor</string>
     <string name="sync_status_scanning">Analisando fotos do aparelho: %1$d de %2$d</string>
     <string name="sync_status_uploading">Enviando mídias em segundo plano…</string>
-    <string name="sync_status_retry_pending">A última sincronização não terminou. O Iris tenta de novo sozinho em instantes.</string>
+    <string name="sync_status_retry_pending">A última sincronização não terminou. O Iris tenta de novo sozinho, mas pode demorar; toque em Tentar agora para não esperar.</string>
     <string name="sync_status_idle">Pronto para sincronizar</string>
     <string name="sync_action_sync">Sincronizar</string>
     <string name="sync_action_retry_now">Tentar agora</string>
