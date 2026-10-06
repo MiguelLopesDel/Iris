@@ -30,7 +30,7 @@ def main() -> int:
     scenario = scenario_mod.load(args.scenario)
     if args.command == "check":
         print(
-            f"{scenario.name}: {len(scenario.actors)} actor(s), up to {scenario.duration:.0f} s — valid"
+            f"{scenario.name}: {len(scenario.actors)} actor(s), hard cap {scenario.duration:.0f} s — valid"
         )
         return 0
     from scripts.perf_lab.runner import run

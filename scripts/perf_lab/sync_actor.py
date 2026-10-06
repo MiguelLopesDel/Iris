@@ -250,7 +250,10 @@ def summarize(items: list[Item], *, elapsed: float) -> dict[str, Any]:
         for item in items
         if item.finished and item.state in {"ready", "duplicate", "pending_processing"}
     ]
-    failed = [item for item in items if item.state.startswith("error") or item.state == "failed"]
+    failed = [
+        item for item in items
+        if item.state.startswith("error") or item.state in {"failed", "timeout"}
+    ]
 
     def percentiles(values: list[float]) -> dict[str, float]:
         if not values:
@@ -265,6 +268,7 @@ def summarize(items: list[Item], *, elapsed: float) -> dict[str, Any]:
     return {
         "items_done": len(done),
         "items_failed": len(failed),
+        "items_timed_out": sum(1 for item in items if item.state == "timeout"),
         "items_not_started": sum(1 for item in items if not item.started),
         "bytes_done": sum(item.size for item in done),
         "items_per_s": round(len(done) / elapsed, 2) if elapsed else 0.0,

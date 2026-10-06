@@ -176,7 +176,26 @@ async def _run_actors(
                     )
                 )
                 labels.append(number)
-        results = await asyncio.gather(*tasks)
+        timed_out = False
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks), timeout=scenario.duration
+            )
+        except TimeoutError:
+            # The scenario duration is a wall-clock cap for the whole run,
+            # including requests already in flight. Cancel them and account
+            # for every item that had started before the cap was reached.
+            timed_out = True
+            elapsed = time.monotonic() - start
+            for items in items_by_actor:
+                for item in items:
+                    if item.started and not item.finished:
+                        item.finished = elapsed
+                        item.state = "timeout"
+            results = []
+            for actor, items in zip(scenario.actors, items_by_actor, strict=True):
+                share = [items[device :: actor.devices] for device in range(actor.devices)]
+                results.extend(sync_actor.DeviceResult(items=part) for part in share)
         elapsed = time.monotonic() - start
     actors: dict[str, Any] = {}
     for number, actor in enumerate(scenario.actors):
@@ -184,6 +203,7 @@ async def _run_actors(
         items = [item for r in device_results for item in r.items]
         summary = sync_actor.summarize(items, elapsed=elapsed)
         summary["login_errors"] = [r.login_error for r in device_results if r.login_error]
+        summary["timed_out"] = timed_out
         name = f"{number}:{actor.label}"
         actors[name] = {
             "config": {
@@ -246,7 +266,7 @@ def run(scenario: Scenario, root: Path, output: Path) -> dict[str, Any]:
 
         thread = threading.Thread(target=sample_loop, name="perf-lab-sampler", daemon=True)
         thread.start()
-        print(f"[perf-lab] running {scenario.name} (up to {scenario.duration:.0f} s)…", flush=True)
+        print(f"[perf-lab] running {scenario.name} (hard cap {scenario.duration:.0f} s)…", flush=True)
         actors, elapsed = asyncio.run(_run_actors(scenario, base_url, accounts, items_by_actor))
         stop.set()
         thread.join(timeout=5)

@@ -4,7 +4,7 @@ A scenario is a YAML file::
 
     name: sync-small-files
     library_items: 6000          # catalog rows before the run (cost that grows with it)
-    duration: 60s                # upper bound; actors also stop when out of items
+    duration: 60s                # hard wall-clock cap; active requests are cancelled
     actors:
       - kind: syncing
         devices: 1

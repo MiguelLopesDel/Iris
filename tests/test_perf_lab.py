@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -156,6 +157,54 @@ def test_sync_actor_summary_counts_failures_and_omits_unfinished_items():
     assert summary["items_failed"] == 1
     assert summary["items_not_started"] == 1
     assert summary["error_rate"] == 0.5
+
+
+def test_login_failure_misses_zero_error_rate_target():
+    summary = {"error_rate": 0.0, "login_errors": ["authentication failed"]}
+
+    result = report.target_results(summary, {"error_rate": 0.0})
+
+    assert result["error_rate"] == {"goal": 0.0, "actual": 1.0, "met": False}
+
+
+def test_login_success_keeps_per_item_error_rate_for_target():
+    summary = {"error_rate": 0.0, "login_errors": []}
+
+    result = report.target_results(summary, {"error_rate": 0.0})
+
+    assert result["error_rate"] == {"goal": 0.0, "actual": 0.0, "met": True}
+
+
+def test_scenario_duration_cancels_inflight_work_and_counts_it_as_timeout(monkeypatch):
+    from scripts.perf_lab import runner, sync_actor
+
+    case = scenario.parse(
+        {
+            "name": "deadline",
+            "duration": 0.02,
+            "actors": [
+                {"kind": "syncing", "items": 1, "sizes": {"2KB": "100%"}}
+            ],
+        }
+    )
+    item = Item(index=1, size=1024, seed=1)
+
+    async def held_upload(*args, **kwargs):
+        item.started = 0.001
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(sync_actor, "run_device", held_upload)
+    actors, elapsed = asyncio.run(
+        runner._run_actors(case, "http://unused", [{"username": "a", "password": "b"}], [[item]])
+    )
+
+    summary = actors["0:syncing×1"]["summary"]
+    assert elapsed < 0.5
+    assert summary["timed_out"] is True
+    assert summary["items_failed"] == 1
+    assert summary["items_timed_out"] == 1
+    assert summary["items_not_started"] == 0
+    assert item.state == "timeout"
 
 
 def test_percentile_interpolates_between_samples():

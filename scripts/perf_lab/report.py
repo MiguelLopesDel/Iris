@@ -144,11 +144,17 @@ def resource_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def target_results(summary: dict[str, Any], target: dict[str, float]) -> dict[str, dict[str, Any]]:
+    error_rate = summary.get("error_rate")
+    # A device that cannot authenticate cannot process its assigned items.
+    # Keep this visible in the error target even though those items never
+    # reached the per-item request failure accounting in sync_actor.summarize.
+    if summary.get("login_errors"):
+        error_rate = max(error_rate or 0, 1.0)
     actual = {
         "items_per_s": summary.get("items_per_s"),
         "mb_per_s": summary.get("mb_per_s"),
         "total_p95_ms": (summary.get("total") or {}).get("p95_ms"),
-        "error_rate": summary.get("error_rate"),
+        "error_rate": error_rate,
     }
     lower_is_better = {"total_p95_ms", "error_rate"}
     results = {}
@@ -215,8 +221,8 @@ def markdown(report: dict[str, Any]) -> str:
     lines += [
         "## Actors",
         "",
-        "| actor | items/s | MB/s | done | failed | total p50 / p95 / p99 (ms) | reserve p95 | send p95 | complete p95 |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| actor | items/s | MB/s | done | failed | timed out | total p50 / p95 / p99 (ms) | reserve p95 | send p95 | complete p95 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for name, actor in report["actors"].items():
         s = actor["summary"]
@@ -224,7 +230,7 @@ def markdown(report: dict[str, Any]) -> str:
             s.get(k) or {} for k in ("total", "reserve", "send", "complete")
         )
         lines.append(
-            f"| {name} | {s['items_per_s']} | {s['mb_per_s']} | {s['items_done']} | {s['items_failed']} "
+            f"| {name} | {s['items_per_s']} | {s['mb_per_s']} | {s['items_done']} | {s['items_failed']} | {s['items_timed_out']} "
             f"| {total.get('p50_ms', '-')} / {total.get('p95_ms', '-')} / {total.get('p99_ms', '-')} "
             f"| {reserve.get('p95_ms', '-')} | {send.get('p95_ms', '-')} | {complete.get('p95_ms', '-')} |"
         )
