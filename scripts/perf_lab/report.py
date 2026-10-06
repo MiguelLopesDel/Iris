@@ -134,6 +134,9 @@ def resource_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "loop_lag_ms": stats([p["loop_lag_ms_max"] for p in probe]),
         "threads_busy": stats([p["threads_busy"] for p in probe]),
         "threads_waiting": stats([p["threads_waiting"] for p in probe]),
+        # Identity reads kept on the event loop: the tail must stay small.
+        "auth_ms_p99": stats([p["auth_ms_p99"] for p in probe if "auth_ms_p99" in p]),
+        "auth_ms_max": stats([p["auth_ms_max"] for p in probe if "auth_ms_max" in p]),
         "process_rss_mb": stats(
             series(
                 lambda s: (s.get("resource_sample", {}).get("process") or {}).get("rss_bytes", 0)
