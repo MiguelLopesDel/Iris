@@ -155,9 +155,9 @@ class Server:
             )
 
     # The protocol, as the app calls it.
-    def reserve(self, digest: str, size: int) -> dict:
+    def reserve(self, digest: str, size: int, client_upload_id: str = "client-1") -> dict:
         return self.service.reserve_upload_batch(self.user, DEVICE, QUOTA, {"uploads": [{
-            "client_upload_id": "client-1", "filename": "IMG_0001.jpg", "size": size,
+            "client_upload_id": client_upload_id, "filename": "IMG_0001.jpg", "size": size,
             "sha256": digest, "captured_at": "2026-09-09T12:00:00Z",
         }]})["uploads"][0]
 
@@ -293,3 +293,58 @@ def test_a_power_loss_after_another_requests_sync_still_stores_the_photo(tmp_pat
     assert states == ["ready"]
     copies = [path for path in user.media_root.rglob("*") if path.is_file() and path.read_bytes() == data]
     assert copies == [Path(rows[0][0])]
+
+
+def _cataloged(user: IrisUser) -> list[Path]:
+    conn = sqlite3.connect(user.db_path)
+    rows = [Path(row[0]) for row in conn.execute("SELECT caminho FROM memes")]
+    conn.close()
+    return rows
+
+
+def test_recovering_a_lost_upload_never_deletes_another_uploads_original(tmp_path: Path, monkeypatch):
+    # Two uploads of the same photo share the usual library name. When the
+    # second one's temporary file is gone, the copy found there is the first
+    # one's cataloged original, not something to clean up.
+    user = _user(tmp_path)
+    server = Server(user, monkeypatch)
+    data = _photo()
+    digest = hashlib.sha256(data).hexdigest()
+    first = server.reserve(digest, len(data), "client-1")
+    second = server.reserve(digest, len(data), "client-2")
+    server.put(first["upload_id"], 0, data)
+    server.put(second["upload_id"], 0, data)
+    assert server.complete(first["upload_id"])["state"] == "ready"
+    original = _cataloged(user)[0]
+    temporary = Path(sqlite3.connect(user.db_path).execute(
+        "SELECT temp_path FROM sync_uploads WHERE id = ?", (second["upload_id"],)
+    ).fetchone()[0])
+    temporary.unlink()  # the second upload's temporary file is lost
+
+    assert server.complete(second["upload_id"])["state"] == "duplicate"
+    assert _cataloged(user) == [original]
+    assert original.read_bytes() == data
+
+
+def test_two_uploads_of_the_same_photo_never_share_one_file(tmp_path: Path, monkeypatch):
+    # The first upload is stored but not cataloged yet when the second one
+    # completes. Sharing its file would let the later catalog step delete it
+    # as the duplicate's original.
+    user = _user(tmp_path)
+    server = Server(user, monkeypatch)
+    data = _photo()
+    digest = hashlib.sha256(data).hexdigest()
+    first = server.reserve(digest, len(data), "client-1")
+    server.put(first["upload_id"], 0, data)
+    server.crash_at = "before_catalog"
+    with pytest.raises(Crash):
+        server.complete(first["upload_id"])
+
+    second = server.reserve(digest, len(data), "client-2")
+    server.put(second["upload_id"], 0, data)
+    assert server.complete(second["upload_id"])["state"] == "ready"
+    server.restart()  # the first upload is cataloged by recovery
+
+    cataloged = _cataloged(user)
+    assert len(cataloged) == 1
+    assert cataloged[0].read_bytes() == data

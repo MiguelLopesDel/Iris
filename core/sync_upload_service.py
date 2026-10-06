@@ -587,7 +587,11 @@ class SyncUploadService:
                     # "fully received" while the original was already moved into
                     # the library, or already cataloged.
                     for candidate in (primary, alternate):
-                        if await run_in_threadpool(matches_original, candidate, row[1], row[2]):
+                        # Only an unreferenced copy can be this upload's own: two
+                        # uploads of the same photo share the usual name.
+                        if not _referenced_elsewhere(
+                            connection, candidate, upload_id, user.media_root
+                        ) and await run_in_threadpool(matches_original, candidate, row[1], row[2]):
                             recovered = candidate
                             break
                     if recovered is None and connection.execute(
@@ -633,7 +637,9 @@ class SyncUploadService:
                     )
                     connection.commit()
                     temporary.unlink(missing_ok=True)
-                    if recovered is not None:
+                    if recovered is not None and not _referenced_elsewhere(
+                        connection, recovered, upload_id, user.media_root
+                    ):
                         recovered.unlink(missing_ok=True)
                     return {
                         "upload_id": upload_id, "media_id": media_id,
@@ -642,13 +648,17 @@ class SyncUploadService:
                 destination_dir.mkdir(parents=True, exist_ok=True)
                 if recovered is not None:
                     destination = recovered
-                elif primary.exists() and not await run_in_threadpool(
-                    matches_original, primary, row[1], row[2]
+                elif not primary.exists() or (
+                    not _referenced_elsewhere(connection, primary, upload_id, user.media_root)
+                    and await run_in_threadpool(matches_original, primary, row[1], row[2])
                 ):
-                    destination = alternate
-                else:
-                    # Free, or an identical copy left by an interrupted attempt.
+                    # Free, or an identical unreferenced copy left by an
+                    # interrupted attempt. A copy another upload or the catalog
+                    # points to is never shared: finishing this one could
+                    # delete it as a duplicate.
                     destination = primary
+                else:
+                    destination = alternate
                 claim = connection.execute(
                     "UPDATE sync_uploads SET state = 'finalizing', final_path = ?, updated_at = ? "
                     "WHERE id = ? AND state = 'uploading'",
@@ -783,6 +793,29 @@ def _upload_destinations(
     source_token = hashlib.sha256(str(row[8] or "unknown").encode()).hexdigest()[:12]
     directory = user.media_root / "uploads" / device_token / source_token / month
     return directory, directory / f"{row[2][:12]}-{row[0]}", directory / f"{upload_id[:8]}-{row[0]}"
+
+
+def _referenced_elsewhere(
+    connection: sqlite3.Connection, path: Path, upload_id: str, media_root: Path,
+) -> bool:
+    """Whether the catalog or another upload points to ``path``."""
+    names = (str(path), str(path.resolve()))
+    if connection.execute(
+        "SELECT 1 FROM memes WHERE caminho IN (?, ?) LIMIT 1", names
+    ).fetchone():
+        return True
+    try:
+        relative = path.resolve().relative_to(media_root.resolve()).as_posix()
+    except ValueError:
+        relative = None
+    if relative is not None and connection.execute(
+        "SELECT 1 FROM memes WHERE storage_path = ? LIMIT 1", (relative,)
+    ).fetchone():
+        return True
+    return connection.execute(
+        "SELECT 1 FROM sync_uploads WHERE final_path IN (?, ?) AND id != ? LIMIT 1",
+        (*names, upload_id),
+    ).fetchone() is not None
 
 
 def _known_duplicate(
