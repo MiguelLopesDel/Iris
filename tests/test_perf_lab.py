@@ -207,6 +207,47 @@ def test_scenario_duration_cancels_inflight_work_and_counts_it_as_timeout(monkey
     assert item.state == "timeout"
 
 
+def test_scenario_timeout_preserves_login_errors_from_completed_actors(monkeypatch):
+    from scripts.perf_lab import runner, sync_actor
+
+    case = scenario.parse(
+        {
+            "name": "login-and-timeout",
+            "duration": 0.02,
+            "actors": [
+                {"kind": "syncing", "items": 1, "sizes": {"2KB": "100%"}, "target": {"error_rate": 0}},
+                {"kind": "syncing", "items": 1, "sizes": {"2KB": "100%"}, "target": {"error_rate": 0}},
+            ],
+        }
+    )
+    failed_login_item = Item(index=1, size=1024, seed=1)
+    timed_out_item = Item(index=2, size=1024, seed=2)
+
+    async def mixed_results(_client, _base_url, *, device, items, **_kwargs):
+        if device == "perf-0-0":
+            return sync_actor.DeviceResult(items=items, login_error="HTTP 503")
+        items[0].started = 0.001
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(sync_actor, "run_device", mixed_results)
+    actors, _elapsed = asyncio.run(
+        runner._run_actors(
+            case,
+            "http://unused",
+            [{"username": "a", "password": "b"}],
+            [[failed_login_item], [timed_out_item]],
+        )
+    )
+
+    login_summary = actors["0:syncing×1"]["summary"]
+    assert login_summary["login_errors"] == ["HTTP 503"]
+    assert login_summary["error_rate"] == 0
+    assert login_summary["timed_out"] is True
+    assert actors["0:syncing×1"]["targets"]["error_rate"]["met"] is False
+    assert actors["1:syncing×1"]["summary"]["items_timed_out"] == 1
+    assert timed_out_item.state == "timeout"
+
+
 def test_percentile_interpolates_between_samples():
     assert percentile([10, 30], 0.5) == 20
 

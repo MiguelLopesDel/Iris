@@ -157,45 +157,48 @@ async def _run_actors(
     async with httpx.AsyncClient(timeout=600, limits=limits, trust_env=False) as client:
         start = time.monotonic()
         deadline = start + scenario.duration
-        tasks, labels = [], []
+        tasks: list[asyncio.Task[sync_actor.DeviceResult]] = []
+        labels, task_items = [], []
         for number, (actor, items) in enumerate(zip(scenario.actors, items_by_actor, strict=True)):
             share = [items[device :: actor.devices] for device in range(actor.devices)]
             for device in range(actor.devices):
                 account = accounts[device % actor.accounts]
+                device_items = share[device]
                 tasks.append(
-                    sync_actor.run_device(
+                    asyncio.create_task(sync_actor.run_device(
                         client,
                         base_url,
                         username=account["username"],
                         password=account["password"],
                         device=f"perf-{number}-{device}",
-                        items=share[device],
+                        items=device_items,
                         actor=actor,
                         clock_start=start,
                         deadline=deadline,
-                    )
+                    ))
                 )
                 labels.append(number)
-        timed_out = False
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks), timeout=scenario.duration
-            )
-        except TimeoutError:
+                task_items.append(device_items)
+        completed_tasks, pending_tasks = await asyncio.wait(tasks, timeout=scenario.duration)
+        timed_out = bool(pending_tasks)
+        if pending_tasks:
             # The scenario duration is a wall-clock cap for the whole run,
             # including requests already in flight. Cancel them and account
             # for every item that had started before the cap was reached.
             timed_out = True
             elapsed = time.monotonic() - start
+            for task in pending_tasks:
+                task.cancel()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
             for items in items_by_actor:
                 for item in items:
                     if item.started and not item.finished:
                         item.finished = elapsed
                         item.state = "timeout"
-            results = []
-            for actor, items in zip(scenario.actors, items_by_actor, strict=True):
-                share = [items[device :: actor.devices] for device in range(actor.devices)]
-                results.extend(sync_actor.DeviceResult(items=part) for part in share)
+        results = [
+            task.result() if task in completed_tasks else sync_actor.DeviceResult(items=items)
+            for task, items in zip(tasks, task_items, strict=True)
+        ]
         elapsed = time.monotonic() - start
     actors: dict[str, Any] = {}
     for number, actor in enumerate(scenario.actors):
