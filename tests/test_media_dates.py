@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from core.indexer_db import init_db
-from core.media_dates import capture_timestamp
+from core.media_dates import DEVICE_UPLOAD_DATES_REPAIR, capture_timestamp
 
 SEPT_29 = datetime(2026, 9, 29, 22, 7, 22, tzinfo=UTC).timestamp()
 UPLOADED = datetime(2026, 10, 2, 20, 2, 8, tzinfo=UTC)
@@ -25,6 +25,11 @@ def test_absent_or_implausible_capture_times_are_ignored():
     assert capture_timestamp("ontem") is None
     assert capture_timestamp("1970-01-01T00:00:00Z") is None
     assert capture_timestamp("2099-01-01T00:00:00Z", now=UPLOADED.timestamp()) is None
+
+
+def _as_from_before_the_fix(conn):
+    """A database created before the repair existed carries no record of it."""
+    conn.execute("DELETE FROM applied_repairs WHERE name = ?", (DEVICE_UPLOAD_DATES_REPAIR,))
 
 
 def _insert(conn, library_id, name, file_mtime, captured_at):
@@ -51,6 +56,7 @@ def test_opening_a_library_repairs_device_uploads_dated_by_arrival(tmp_path: Pat
     _insert(conn, device, "no-capture-time.jpg", arrival, "")
     # Not from a device: its date came from the file and is left alone.
     _insert(conn, imported, "host-import.jpg", arrival, "2026-09-29T22:07:22Z")
+    _as_from_before_the_fix(conn)
     conn.commit()
     conn.close()
 
@@ -76,6 +82,7 @@ def test_the_gallery_backend_repairs_a_library_before_loading_it(tmp_path: Path)
         "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('device-uploads', '/media', 'x')"
     ).lastrowid
     _insert(conn, device, "dated-by-arrival.jpg", UPLOADED.timestamp(), "2026-09-29T22:07:22Z")
+    _as_from_before_the_fix(conn)
     conn.commit()
     conn.close()
 
@@ -123,6 +130,7 @@ def test_the_repair_reaches_device_uploads_indexed_with_ai(tmp_path: Path):
         "INSERT INTO media_origins (media_id, device_id, source_id, created_at) VALUES (?, 'phone', 'camera', 'x')",
         (host,),
     )
+    _as_from_before_the_fix(conn)
     conn.commit()
     conn.close()
 
@@ -132,3 +140,39 @@ def test_the_repair_reaches_device_uploads_indexed_with_ai(tmp_path: Path):
     dates = dict(sqlite3.connect(db).execute("SELECT arquivo, file_mtime FROM memes").fetchall())
     assert dates["from-phone.jpg"] == SEPT_29
     assert dates["host-import.jpg"] == arrival
+
+
+def test_the_repair_runs_once_per_database_not_on_every_open(tmp_path: Path, monkeypatch):
+    # Every sync request opens the library; the repair scans all of it, so
+    # running it each time made uploads crawl as the library grew.
+    import core.media_dates as media_dates
+
+    calls = []
+    original = media_dates.repair_device_upload_dates
+    monkeypatch.setattr(
+        media_dates, "repair_device_upload_dates", lambda conn: calls.append(1) or original(conn)
+    )
+    db = tmp_path / "iris.db"
+    for _ in range(3):
+        init_db(db).close()
+
+    assert len(calls) == 1
+
+
+def test_a_new_library_needs_no_repair_later(tmp_path: Path):
+    # New uploads are dated when registered, so a library created by this
+    # version is marked repaired from the start and never rescanned.
+    db = tmp_path / "iris.db"
+    conn = init_db(db)
+    device = conn.execute(
+        "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('device-uploads', '/media', 'x')"
+    ).lastrowid
+    arrival = UPLOADED.timestamp() + 1.5
+    _insert(conn, device, "registered-later.jpg", arrival, "2026-09-29T22:07:22Z")
+    conn.commit()
+    conn.close()
+
+    init_db(db).close()
+
+    stored = sqlite3.connect(db).execute("SELECT file_mtime FROM memes").fetchone()[0]
+    assert stored == arrival

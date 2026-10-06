@@ -30,6 +30,31 @@ def capture_timestamp(captured_at: str | None, *, now: float | None = None) -> f
     return stamp if _EARLIEST <= stamp <= limit else None
 
 
+# Records that a library's legacy dates were repaired. New uploads are dated
+# right when they are registered, so the repair is needed once per database;
+# running it on every open made each sync request scan the whole library.
+_APPLIED_TABLE = "applied_repairs"
+DEVICE_UPLOAD_DATES_REPAIR = "device_upload_dates_v1"
+
+
+def repair_device_upload_dates_once(conn: sqlite3.Connection) -> int:
+    """Runs :func:`repair_device_upload_dates` the first time a database is opened."""
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {_APPLIED_TABLE} (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    applied = conn.execute(
+        f"SELECT 1 FROM {_APPLIED_TABLE} WHERE name = ?", (DEVICE_UPLOAD_DATES_REPAIR,)
+    ).fetchone()
+    if applied:
+        return 0
+    changed = repair_device_upload_dates(conn)
+    conn.execute(
+        f"INSERT INTO {_APPLIED_TABLE} (name, applied_at) VALUES (?, ?)",
+        (DEVICE_UPLOAD_DATES_REPAIR, datetime.now(UTC).isoformat()),
+    )
+    return changed
+
+
 def repair_device_upload_dates(conn: sqlite3.Connection) -> int:
     """Gives device uploads dated by their arrival their capture date instead.
 
