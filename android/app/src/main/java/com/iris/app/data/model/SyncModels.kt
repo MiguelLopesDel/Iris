@@ -220,6 +220,8 @@ data class LocalUploadJob(
     val sourceSize: Long? = null,
     /** Whether [sha256] is of the original file (with location) or the redacted one; chunks read the same. */
     val hashedOriginal: Boolean = false,
+    /** Whether ACCESS_MEDIA_LOCATION was granted when [sha256] was computed. */
+    val hashedWithLocation: Boolean = false,
 )
 
 /** Um mês do acervo e onde ele começa na listagem ordenada por data. */
