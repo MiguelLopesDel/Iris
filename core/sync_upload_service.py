@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterable, Callable
@@ -38,6 +39,28 @@ _UPLOAD_DISK_BUFFER_BYTES = 1024 * 1024
 SPEED_TEST_MAX_BYTES = 256 * 1024 * 1024
 _UPLOAD_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
+# Databases whose schema this process already prepared, by file identity.
+# Preparing (init_db plus the sync tables) on every request cost a schema
+# walk and a commit per chunk; it is needed once per database file.
+_prepared_databases: set[tuple[str, int, int]] = set()
+_prepared_lock = threading.Lock()
+
+
+def _database_identity(path: Path) -> tuple[str, int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (str(path), stat.st_dev, stat.st_ino)
+
+
+def _schema_present(connection: sqlite3.Connection) -> bool:
+    # A file recreated at the same path can reuse the inode; a fresh
+    # database has no sync tables, so it is prepared again.
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_uploads'"
+    ).fetchone() is not None
+
 
 class SyncUploadError(Exception):
     """An upload workflow failure safe to map to an HTTP response."""
@@ -67,11 +90,21 @@ class SyncUploadService:
 
     @staticmethod
     def open_connection(user: IrisUser) -> sqlite3.Connection:
+        identity = _database_identity(user.db_path)
+        if identity is not None and identity in _prepared_databases:
+            connection = sqlite3.connect(user.db_path)
+            if _schema_present(connection):
+                return connection
+            connection.close()
         init_db(user.db_path).close()
         connection = sqlite3.connect(user.db_path)
         ensure_tables(connection)
         # ensure_tables may backfill usage counters before a quota transaction.
         connection.commit()
+        identity = _database_identity(user.db_path)
+        if identity is not None:
+            with _prepared_lock:
+                _prepared_databases.add(identity)
         return connection
 
     def reserve_upload(
