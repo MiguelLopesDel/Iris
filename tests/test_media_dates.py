@@ -176,3 +176,20 @@ def test_a_new_library_needs_no_repair_later(tmp_path: Path):
 
     stored = sqlite3.connect(db).execute("SELECT file_mtime FROM memes").fetchone()[0]
     assert stored == arrival
+
+
+def test_two_connections_opening_a_library_at_once(tmp_path: Path):
+    from core.media_dates import repair_device_upload_dates_once
+    from tests.test_sync_db import _OtherConnectionWritesFirst
+
+    db = tmp_path / "iris.db"
+    init_db(db).close()
+    sqlite3.connect(db).execute("DELETE FROM applied_repairs").connection.commit()
+    first = sqlite3.connect(db, isolation_level=None)
+    second = sqlite3.connect(db, isolation_level=None)
+
+    repair_device_upload_dates_once(_OtherConnectionWritesFirst(
+        first, "SELECT 1 FROM applied_repairs", lambda: repair_device_upload_dates_once(second),
+    ))
+
+    assert first.execute("SELECT COUNT(*) FROM applied_repairs").fetchone()[0] == 1

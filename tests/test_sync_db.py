@@ -64,3 +64,31 @@ def test_library_usage_is_summed_once_not_on_every_request() -> None:
 
     assert sum("SUM(" in statement for statement in statements) == 1
     assert used_bytes(conn) == 20
+
+
+class _OtherConnectionWritesFirst:
+    """Lets another connection initialize between this one's check and write."""
+
+    def __init__(self, conn: sqlite3.Connection, check: str, other) -> None:
+        self._conn, self._check, self._other = conn, check, other
+
+    def execute(self, sql: str, *args):
+        cursor = self._conn.execute(sql, *args)
+        if self._check in sql and self._other is not None:
+            other, self._other = self._other, None
+            other()
+        return cursor
+
+
+def test_two_connections_creating_the_usage_counter_at_once(tmp_path) -> None:
+    db = tmp_path / "iris.db"
+    first = sqlite3.connect(db, isolation_level=None)
+    first.execute("CREATE TABLE memes (id INTEGER PRIMARY KEY, file_size INTEGER DEFAULT 0)")
+    first.execute("INSERT INTO memes (id, file_size) VALUES (1, 7)")
+    second = sqlite3.connect(db, isolation_level=None)
+
+    ensure_tables(_OtherConnectionWritesFirst(
+        first, "SELECT 1 FROM library_storage_usage", lambda: ensure_tables(second),
+    ))
+
+    assert used_bytes(first) == 7

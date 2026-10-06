@@ -48,8 +48,10 @@ def repair_device_upload_dates_once(conn: sqlite3.Connection) -> int:
     if applied:
         return 0
     changed = repair_device_upload_dates(conn)
+    # Two connections opening a library at once can both run the repair (it
+    # is idempotent); the record must not fail for the second one.
     conn.execute(
-        f"INSERT INTO {_APPLIED_TABLE} (name, applied_at) VALUES (?, ?)",
+        f"INSERT OR IGNORE INTO {_APPLIED_TABLE} (name, applied_at) VALUES (?, ?)",
         (DEVICE_UPLOAD_DATES_REPAIR, datetime.now(UTC).isoformat()),
     )
     return changed
