@@ -190,3 +190,17 @@ def test_perf_lab_smoke_end_to_end(tmp_path):
     assert result["actors"]["0:syncing×1"]["summary"]["items_done"] == 2
     assert (output / "report.md").is_file()
     assert (output / "report.json").is_file()
+
+
+def test_a_server_held_to_one_core_is_flagged_although_no_host_core_is_full():
+    # Measured on the lab: the server process at ~105% (one core) while the
+    # busiest host core stayed under 60%, because the scheduler moves it around.
+    from scripts.perf_lab.report import RULES
+
+    rule = next(rule for rule in RULES if rule.name == "server_one_core")
+    serial = {"server_cpu": 105.0, "cpu_total": 16.0, "cpu_max_core": 47.0}
+    assert rule.holds(serial)
+    assert not rule.holds({**serial, "cpu_total": 95.0})  # the whole machine is busy instead
+    assert not rule.holds({**serial, "server_cpu": 40.0})
+    one_core = next(rule for rule in RULES if rule.name == "one_core")
+    assert not one_core.holds(serial)  # the host-core rule alone missed it

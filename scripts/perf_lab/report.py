@@ -43,6 +43,9 @@ _RULE_TESTS = {
     "disk": lambda s: _busiest_disk(s).get("util_pct", 0) >= 90,
     "one_core": lambda s: s.get("cpu_max_core", 0) >= 90 and s.get("cpu_total", 0) < 60,
     "cpu": lambda s: s.get("cpu_total", 0) >= 90,
+    # The scheduler spreads one busy process over the cores, so no single
+    # host core looks saturated; the process's own share shows it.
+    "server_one_core": lambda s: 85 <= s.get("server_cpu", 0) <= 130 and s.get("cpu_total", 0) < 60,
     "event_loop": lambda s: (s.get("probe") or {}).get("loop_lag_ms_max", 0) >= 50,
     "thread_pool": lambda s: (s.get("probe") or {}).get("threads_waiting", 0) > 0,
     "io_wait": lambda s: _io_wait_share(s) >= 0.5
@@ -52,6 +55,11 @@ RULES = (
     Rule("disk", "disk ≥ 90% busy"),
     Rule("one_core", "one CPU core ≥ 90% while the total stays < 60% (a serial step)"),
     Rule("cpu", "all CPU ≥ 90%"),
+    Rule(
+        "server_one_core",
+        "the server process uses about one core while the machine has spare CPU "
+        "(a serial step: the Python GIL or one busy thread)",
+    ),
     Rule("event_loop", "server event loop ≥ 50 ms late (possible synchronous-work pressure)"),
     Rule("thread_pool", "requests waiting for a free server thread"),
     Rule("io_wait", "most active server threads waiting on I/O"),
