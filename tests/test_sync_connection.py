@@ -47,3 +47,30 @@ def test_a_database_recreated_at_the_same_path_is_prepared_again(tmp_path: Path,
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_uploads'"
     ).fetchone()
     connection.close()
+
+
+def test_parallel_first_opens_prepare_the_schema_once(tmp_path: Path, monkeypatch):
+    # Requests run in worker threads; two first opens of a new library at once
+    # ran two schema migrations and one failed with "duplicate column name".
+    import threading
+
+    calls = _count_preparations(monkeypatch)
+    user = _user(tmp_path)
+    start = threading.Barrier(8)
+    errors: list[BaseException] = []
+
+    def open_once() -> None:
+        start.wait()
+        try:
+            SyncUploadService.open_connection(user).close()
+        except BaseException as exc:  # pragma: no cover - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=open_once) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(calls) == 1
