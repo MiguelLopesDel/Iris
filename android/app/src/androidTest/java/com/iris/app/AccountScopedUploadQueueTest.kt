@@ -1559,6 +1559,31 @@ class AccountScopedUploadQueueTest {
     }
 
     @Test
+    fun claiming_a_resumable_job_preserves_hash_location_and_upload_progress() = runBlocking {
+        val accountKey = "server|user:88"
+        val jobId = dbHelper.insertOrIgnoreJob(
+            accountKey = accountKey,
+            localUri = "content://media/external/images/media/8800",
+            filename = "location-granted.jpg",
+            byteSize = 90_000L,
+            sha256 = "8".repeat(64),
+            capturedAt = "2026-10-02T00:00:00Z",
+            hashedOriginal = true,
+            hashedWithLocation = true,
+        )
+        dbHelper.updateUploadStarted(accountKey, jobId, "resumable-upload", 32_768L, 32_768)
+
+        val claimed = dbHelper.claimNextPendingJob(accountKey)
+
+        assertNotNull(claimed)
+        assertTrue("The job was already hashed with location access", claimed!!.hashedWithLocation)
+        assertTrue(claimed.hashedOriginal)
+        assertEquals("resumable-upload", claimed.uploadId)
+        assertEquals(32_768L, claimed.nextByteOffset)
+        assertEquals(32_768, claimed.chunkSize)
+    }
+
+    @Test
     fun an_upload_declares_the_real_file_size_when_media_store_trails_it() = runBlocking {
         val (accountKey, sessionIdentity, manager) = signedInManager("stale-size")
         val stamp = System.nanoTime()
