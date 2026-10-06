@@ -1,0 +1,10 @@
+# Tiny end-to-end run for tests and CI.
+name: smoke
+library_items: 10
+duration: 30s
+actors:
+  - kind: syncing
+    devices: 2
+    items: 20
+    sizes: {"20KB-60KB": 100%}
+    concurrency: 4

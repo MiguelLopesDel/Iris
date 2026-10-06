@@ -1,0 +1,13 @@
+# The photo backup's hardest case: many small files (screenshots).
+# MB/s should not depend much on file size; items/s shows the per-file cost.
+name: sync-small-files
+library_items: 6000
+duration: 90s
+actors:
+  - kind: syncing
+    devices: 1
+    items: 2000
+    sizes: {"300KB-800KB": 100%}
+    concurrency: 16
+    completion_lanes: 1
+    target: {items_per_s: 40}
