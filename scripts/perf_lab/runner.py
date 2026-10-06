@@ -86,7 +86,7 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def start_server(root: Path, port: int) -> subprocess.Popen:
+def start_server(root: Path, port: int, variant: str = "") -> subprocess.Popen:
     env = dict(os.environ)
     env.update(
         {
@@ -99,13 +99,16 @@ def start_server(root: Path, port: int) -> subprocess.Popen:
             "IRIS_PERF_PROBE": "1",
         }
     )
+    if variant:
+        # A middleware variant of the app (scripts/perf_lab/variants.py).
+        env["PERF_LAB_VARIANT"] = variant
     with (root / "server.log").open("wb") as log:
         return subprocess.Popen(
             [
                 sys.executable,
                 "-m",
                 "uvicorn",
-                "server:app",
+                "scripts.perf_lab.variants:app" if variant else "server:app",
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -227,7 +230,7 @@ async def _run_actors(
     return actors, elapsed
 
 
-def run(scenario: Scenario, root: Path, output: Path) -> dict[str, Any]:
+def run(scenario: Scenario, root: Path, output: Path, variant: str = "") -> dict[str, Any]:
     from scripts.load_lab import accounts_path
     from scripts.load_lab import prepare as prepare_lab
 
@@ -242,7 +245,7 @@ def run(scenario: Scenario, root: Path, output: Path) -> dict[str, Any]:
     accounts = json.loads(accounts_path(root / "lab").read_text(encoding="utf-8"))
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
-    server = start_server(root, port)
+    server = start_server(root, port, variant)
     samples: list[dict[str, Any]] = []
     stop = threading.Event()
     try:

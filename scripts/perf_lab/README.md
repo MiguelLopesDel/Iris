@@ -84,3 +84,27 @@ This first version does not simulate network shaping and does not yet run mixed
 actors (video playback, gallery scrolling, search or downloads). It also does
 not install a CI performance gate; those are follow-up increments after this
 measurement path is stable and calibrated on SSD and HDD runs.
+
+## Middleware variants
+
+`--variant NAME` runs the same scenario against a modified copy of the app's
+middleware stack, built only inside the disposable lab process
+(`scripts/perf_lab/variants.py`; `server.py` is unchanged). It answers "where
+does the event loop's time go?" before any security code is touched:
+
+- `normal`: the real stack;
+- `no_gzip`: without response compression;
+- `trivial_auth_http` / `trivial_auth_asgi`: authentication replaced by a cheap
+  check (token signature, identity cached in memory), as a `BaseHTTPMiddleware`
+  or as pure ASGI; the difference is the wrapper's own cost;
+- `trivial_auth_and_log_asgi`: request logging as pure ASGI as well;
+- `real_auth_inline` / `real_auth_join_inline`: the real bearer checks run on
+  the event loop, with two reads or with one JOIN on a reused connection. They
+  write the identity read's p50/p95/p99/p99.9/max to `ROOT/auth-stats.json`.
+
+The trivial variants skip checks the real one makes (revocation, versions) and
+must never leave the lab. `run-container.sh` forwards options after the image,
+for example `... IMAGE --variant no_gzip`.
+
+Compare variants by repeating each run, interleaved, on a quiet machine: on a
+busy laptop the same configuration varied by ±40% between runs.
