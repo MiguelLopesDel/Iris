@@ -15,11 +15,16 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
         """CREATE TABLE IF NOT EXISTS library_storage_usage (
         id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL)"""
     )
-    conn.execute(
-        """INSERT OR IGNORE INTO library_storage_usage (id, bytes)
-        SELECT 1, COALESCE(SUM(CASE WHEN file_size > 0 THEN file_size ELSE 0 END), 0)
-        FROM memes"""
-    )
+    # Backfill only when the counter is missing: INSERT OR IGNORE alone still
+    # runs the SELECT, which summed the whole library on every call. The
+    # INSERT is still OR IGNORE: two connections can both find it missing,
+    # and the one that writes second must not fail.
+    if conn.execute("SELECT 1 FROM library_storage_usage WHERE id = 1").fetchone() is None:
+        conn.execute(
+            """INSERT OR IGNORE INTO library_storage_usage (id, bytes)
+            SELECT 1, COALESCE(SUM(CASE WHEN file_size > 0 THEN file_size ELSE 0 END), 0)
+            FROM memes"""
+        )
     conn.execute(
         """CREATE TRIGGER IF NOT EXISTS iris_library_usage_insert
         AFTER INSERT ON memes

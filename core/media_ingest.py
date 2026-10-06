@@ -8,6 +8,7 @@ from pathlib import Path
 
 from core.media_dates import capture_timestamp
 from core.sync_db import now_iso
+from core.sync_durability import connect_deferred
 from core.upload_catalog_writer import UploadCatalogWriter
 
 
@@ -31,7 +32,7 @@ def ingest_upload_without_ai(
     storage_path = file_path.relative_to(media_root).as_posix()
     stat = file_path.stat()
 
-    connection = sqlite3.connect(db_path)
+    connection = connect_deferred(db_path)
     connection.row_factory = sqlite3.Row
     delete_duplicate_original = False
     try:
