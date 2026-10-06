@@ -1559,6 +1559,31 @@ class AccountScopedUploadQueueTest {
     }
 
     @Test
+    fun claiming_a_resumable_job_preserves_hash_location_and_upload_progress() = runBlocking {
+        val accountKey = "server|user:88"
+        val jobId = dbHelper.insertOrIgnoreJob(
+            accountKey = accountKey,
+            localUri = "content://media/external/images/media/8800",
+            filename = "location-granted.jpg",
+            byteSize = 90_000L,
+            sha256 = "8".repeat(64),
+            capturedAt = "2026-10-02T00:00:00Z",
+            hashedOriginal = true,
+            hashedWithLocation = true,
+        )
+        dbHelper.updateUploadStarted(accountKey, jobId, "resumable-upload", 32_768L, 32_768)
+
+        val claimed = dbHelper.claimNextPendingJob(accountKey)
+
+        assertNotNull(claimed)
+        assertTrue("The job was already hashed with location access", claimed!!.hashedWithLocation)
+        assertTrue(claimed.hashedOriginal)
+        assertEquals("resumable-upload", claimed.uploadId)
+        assertEquals(32_768L, claimed.nextByteOffset)
+        assertEquals(32_768, claimed.chunkSize)
+    }
+
+    @Test
     fun an_upload_declares_the_real_file_size_when_media_store_trails_it() = runBlocking {
         val (accountKey, sessionIdentity, manager) = signedInManager("stale-size")
         val stamp = System.nanoTime()
@@ -1606,6 +1631,57 @@ class AccountScopedUploadQueueTest {
             assertNotEquals(originalHash, retried.sha256)
 
             assertTrue(manager.processQueue(accountKey, sessionIdentity))
+            assertEquals("READY", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
+        } finally {
+            app.contentResolver.delete(item.uri, null, null)
+        }
+    }
+
+    @Test
+    fun granting_location_access_after_hashing_hashes_again_before_sending() = runBlocking {
+        // MediaStore returns a photo without its location unless the app holds
+        // ACCESS_MEDIA_LOCATION when it reads, through any URI. A photo hashed
+        // before the permission was granted then reads as other bytes of the
+        // same size, and every photo with a location was refused once.
+        var locationGranted = false
+        val origin = IrisApiClient.getOrigin(server.url("/").toString())
+        app.credentialsStore.saveSession(
+            deviceId = "location-device", accessToken = "location-token",
+            refreshToken = "location-refresh", expiresInSeconds = 3600,
+            username = "location-user", serverOrigin = origin, userId = 43,
+        )
+        val manager = SyncUploadManager(app.contentResolver, dbHelper, canReadOriginals = { locationGranted }) { session ->
+            app.apiClient.apiServiceForSession(session)
+        }
+        val accountKey = app.credentialsStore.accountIdentity.value!!
+        val sessionIdentity = app.credentialsStore.sessionIdentity.value!!
+        val stamp = System.nanoTime()
+        val item = createMediaStoreBenchmarkItem(app.contentResolver, "location-$stamp.jpg", false, 96 * 1024, stamp)
+        try {
+            assertTrue(manager.enqueueMedia(accountKey, item.uri, item.filename, item.sizeBytes, "2026-10-02T00:00:00Z") > 0L)
+            // Granted after the scan: the same URI now returns the unredacted
+            // photo, same size, different bytes.
+            locationGranted = true
+            app.contentResolver.openOutputStream(item.uri, "wt")!!.use { it.write(ByteArray(item.sizeBytes.toInt()) { 9 }) }
+            requests.clear()
+
+            assertTrue(manager.processQueue(accountKey, sessionIdentity))
+
+            val declared = requests.filter { it.path == "/api/sync/uploads/batch" }
+                .flatMap { request ->
+                    val uploads = JSONObject(request.body.clone().readUtf8()).getJSONArray("uploads")
+                    (0 until uploads.length()).map { uploads.getJSONObject(it) }
+                }
+                .single { it.getString("filename") == item.filename }
+            val uploadId = dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.uploadId!!
+            // Every chunk of this upload, in order; the file is sent once, not
+            // refused and sent again.
+            val sent = requests.filter { it.method == "PUT" && it.path!!.contains(uploadId) }
+            val bytes = sent.fold(ByteArray(0)) { all, request -> all + request.body.clone().readByteArray() }
+            assertEquals("The photo is sent once, not refused and sent again", item.sizeBytes, bytes.size.toLong())
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+                .joinToString("") { "%02x".format(it) }
+            assertEquals("The declared hash must describe the bytes sent", declared.getString("sha256"), digest)
             assertEquals("READY", dbHelper.getAllJobs(accountKey).single { it.filename == item.filename }.state.name)
         } finally {
             app.contentResolver.delete(item.uri, null, null)

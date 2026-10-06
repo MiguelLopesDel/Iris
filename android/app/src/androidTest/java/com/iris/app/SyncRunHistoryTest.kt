@@ -65,6 +65,26 @@ class SyncRunHistoryTest {
     }
 
     @Test
+    fun upgrading_from_version_10_requeues_items_refused_for_their_hash() = runBlocking {
+        // Photos hashed before location access was granted were refused once
+        // for a hash mismatch; after the upgrade they are hashed again and sent.
+        val refused = db.insertOrIgnoreJob("account-a", "content://media/1", "a.jpg", 10L, "h1", "2026-01-01T00:00:00Z")
+        db.updateJobState("account-a", refused, UploadJobState.FAILED, "Hash do arquivo não confere")
+        val other = db.insertOrIgnoreJob("account-a", "content://media/2", "b.jpg", 10L, "h2", "2026-01-01T00:00:00Z")
+        db.updateJobState("account-a", other, UploadJobState.FAILED, "O arquivo não existe mais no aparelho")
+        db.writableDatabase.execSQL("ALTER TABLE upload_jobs DROP COLUMN hashed_with_location")
+        db.writableDatabase.version = 10
+        db.close()
+
+        db = UploadDatabaseHelper(context, databaseName)
+        assertEquals(UploadDatabaseHelper.DATABASE_VERSION, db.readableDatabase.version)
+        val jobs = db.getAllJobs("account-a").associateBy { it.filename }
+        assertEquals(UploadJobState.QUEUED, jobs.getValue("a.jpg").state)
+        assertEquals("Only hash refusals are retried", UploadJobState.FAILED, jobs.getValue("b.jpg").state)
+        assertEquals("Rows from before read as hashed without location", false, jobs.getValue("a.jpg").hashedWithLocation)
+    }
+
+    @Test
     fun a_run_is_stored_with_progress_outcome_and_stop_reason() = runBlocking {
         val id = db.insertSyncRun("account-a", 1_000L, SyncRunTrigger.PERIODIC, startedInForeground = false)
         db.updateSyncRunProgress("account-a", id, bytes = 5_000L, items = 2L, uploadMillis = 700L)

@@ -84,6 +84,15 @@ internal class ResumableUploadTransfer(
      * changed size is cheap to see, and the file is hashed again only then.
      */
     private suspend fun withCurrentContent(job: LocalUploadJob): LocalUploadJob {
+        // MediaStore removes a photo's location unless ACCESS_MEDIA_LOCATION is
+        // granted *when the file is read*, through any URI. Granting or
+        // revoking it after hashing changes the bytes the same URI returns, so
+        // the declared hash no longer describes what would be sent: hash again,
+        // dropping a reservation made with the old hash, before sending bytes
+        // the server would refuse.
+        if (job.hashedWithLocation != context.mediaPayloadSource.locationAccessGranted()) {
+            return refreshContent(job)
+        }
         if (!job.uploadId.isNullOrBlank()) return job
         val uri = Uri.parse(job.localUri)
         val size = context.mediaPayloadSource.sizeOf(uri) ?: return job
@@ -93,11 +102,14 @@ internal class ResumableUploadTransfer(
 
     private suspend fun refreshContent(job: LocalUploadJob): LocalUploadJob {
         val content = context.mediaPayloadSource.computeContent(Uri.parse(job.localUri))
-        context.dbHelper.setContent(context.accountKey, job.id, content.sha256, content.size, content.original)
+        context.dbHelper.setContent(
+            context.accountKey, job.id, content.sha256, content.size, content.original, content.withLocation,
+        )
         return job.copy(
             sha256 = content.sha256,
             byteSize = content.size,
             hashedOriginal = content.original,
+            hashedWithLocation = content.withLocation,
             uploadId = null,
             nextByteOffset = 0L,
         )

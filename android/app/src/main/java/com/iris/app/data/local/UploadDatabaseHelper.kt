@@ -149,6 +149,17 @@ class UploadDatabaseHelper(
             // Rows from before this were hashed from the redacted file.
             addColumnIfMissing(db, "upload_jobs", "hashed_original", "INTEGER NOT NULL DEFAULT 0")
         }
+        if (oldVersion < 11) {
+            // Whether location access was granted when the row was hashed. Rows
+            // from before this read as "not granted", so a queued item hashed
+            // before the permission was granted is hashed again before it is
+            // sent. Items refused for a hash mismatch were mostly that case.
+            addColumnIfMissing(db, "upload_jobs", "hashed_with_location", "INTEGER NOT NULL DEFAULT 0")
+            db.execSQL(
+                "UPDATE upload_jobs SET state = 'QUEUED', upload_id = NULL, next_byte_offset = 0, " +
+                    "error_message = NULL WHERE state = 'FAILED' AND error_message LIKE '%Hash do arquivo%'"
+            )
+        }
     }
 
     /** What the queue knows about [localUri] for this account, or null when it is not queued. */
@@ -221,6 +232,7 @@ class UploadDatabaseHelper(
         source: com.iris.app.data.model.UploadSource?,
         verifiedAt: Long,
         hashedOriginal: Boolean = false,
+        hashedWithLocation: Boolean = false,
     ): Boolean = runInWriteTransaction { db ->
         db.execSQL(
             "UPDATE upload_jobs SET previous_sha256 = sha256 " +
@@ -233,6 +245,7 @@ class UploadDatabaseHelper(
                 put("sha256", sha256)
                 put("byte_size", byteSize)
                 put("hashed_original", if (hashedOriginal) 1 else 0)
+                put("hashed_with_location", if (hashedWithLocation) 1 else 0)
                 put("source_size", fingerprint.size)
                 put("source_date_modified", fingerprint.dateModifiedSeconds)
                 put("source_generation", fingerprint.generation)
@@ -283,6 +296,7 @@ class UploadDatabaseHelper(
         sha256: String,
         byteSize: Long,
         hashedOriginal: Boolean,
+        hashedWithLocation: Boolean,
     ) = withContext(Dispatchers.IO) {
         writableDatabase.update(
             "upload_jobs",
@@ -290,6 +304,7 @@ class UploadDatabaseHelper(
                 put("sha256", sha256)
                 put("byte_size", byteSize)
                 put("hashed_original", if (hashedOriginal) 1 else 0)
+                put("hashed_with_location", if (hashedWithLocation) 1 else 0)
                 putNull("upload_id")
                 put("next_byte_offset", 0L)
                 put("verified_at", System.currentTimeMillis())
@@ -377,6 +392,7 @@ class UploadDatabaseHelper(
         verifiedAt: Long? = null,
         sourceSize: Long? = null,
         hashedOriginal: Boolean = false,
+        hashedWithLocation: Boolean = false,
     ): Long = withContext(Dispatchers.IO) {
         require(accountKey.isNotBlank()) { "An account key is required for every upload job" }
         writableDatabase.let { db ->
@@ -397,6 +413,7 @@ class UploadDatabaseHelper(
                 put("source_date_modified", dateModifiedSeconds)
                 put("source_size", sourceSize)
                 put("hashed_original", if (hashedOriginal) 1 else 0)
+                put("hashed_with_location", if (hashedWithLocation) 1 else 0)
                 put("verified_at", verifiedAt)
                 put("state", UploadJobState.QUEUED.name)
                 put("updated_at", System.currentTimeMillis())
@@ -520,9 +537,7 @@ class UploadDatabaseHelper(
         runInWriteTransaction { db ->
             val cursor = db.rawQuery(
                 """
-                SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at,
-                       source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind
-                FROM upload_jobs
+                $JOB_COLUMNS
                 WHERE account_key = ? AND state IN ('QUEUED', 'UPLOADING') AND id > ?
                 ORDER BY id ASC
                 LIMIT 1
@@ -797,6 +812,7 @@ class UploadDatabaseHelper(
             verifiedAt = if (cursor.columnCount > 21 && !cursor.isNull(21)) cursor.getLong(21) else null,
             sourceSize = if (cursor.columnCount > 22 && !cursor.isNull(22)) cursor.getLong(22) else null,
             hashedOriginal = cursor.columnCount > 23 && cursor.getInt(23) != 0,
+            hashedWithLocation = cursor.columnCount > 24 && cursor.getInt(24) != 0,
         )
     }
 
@@ -812,10 +828,10 @@ class UploadDatabaseHelper(
 
     companion object {
         const val DATABASE_NAME = "iris_sync.db"
-        const val DATABASE_VERSION = 10
+        const val DATABASE_VERSION = 11
         const val SYNC_RUN_HISTORY_LIMIT = 50
         private const val JOB_COLUMNS =
-            "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind, source_date_modified, previous_sha256, verified_at, source_size, hashed_original FROM upload_jobs"
+            "SELECT id, local_uri, filename, byte_size, sha256, captured_at, upload_id, next_byte_offset, chunk_size, state, error_message, updated_at, source_id, source_name, source_relative_path, source_volume, source_media_store_id, source_generation, source_media_kind, source_date_modified, previous_sha256, verified_at, source_size, hashed_original, hashed_with_location FROM upload_jobs"
 
         private fun createUploadJobsTable(db: SQLiteDatabase) {
             db.execSQL(
@@ -840,6 +856,7 @@ class UploadDatabaseHelper(
                     verified_at INTEGER,
                     source_size INTEGER,
                     hashed_original INTEGER NOT NULL DEFAULT 0,
+                    hashed_with_location INTEGER NOT NULL DEFAULT 0,
                     upload_id TEXT,
                     next_byte_offset INTEGER NOT NULL DEFAULT 0,
                     chunk_size INTEGER NOT NULL DEFAULT 33554432,

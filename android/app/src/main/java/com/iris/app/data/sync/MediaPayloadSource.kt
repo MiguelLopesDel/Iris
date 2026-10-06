@@ -61,7 +61,13 @@ internal class MediaPayloadSource(
      * or the redacted one. The job records that version and its chunks read
      * the same one.
      */
-    data class Content(val sha256: String, val size: Long, val original: Boolean = false)
+    data class Content(
+        val sha256: String,
+        val size: Long,
+        val original: Boolean = false,
+        /** Whether location access was granted while hashing: it decides the bytes any read returns. */
+        val withLocation: Boolean = false,
+    )
 
     /**
      * Hashes the preferred version of the file and counts its bytes in one
@@ -70,9 +76,13 @@ internal class MediaPayloadSource(
      * trails the real file.
      */
     fun computeContent(uri: Uri): Content {
+        val withLocation = locationAccessGranted()
         val (hashed, original) = originals.openPreferred(uri, ::originalOf) { target -> hashOf(target) }
-        return Content(hashed.first, hashed.second, original)
+        return Content(hashed.first, hashed.second, original, withLocation)
     }
+
+    /** Whether reads return photos with their location now; see [ResumableUploadTransfer]. */
+    fun locationAccessGranted(): Boolean = canReadOriginals()
 
     private fun hashOf(target: Uri): Pair<String, Long> {
         val digest = MessageDigest.getInstance("SHA-256")

@@ -88,6 +88,7 @@ class SyncUploadManager(
             byteSize = content.size,
             sourceSize = size,
             hashedOriginal = content.original,
+            hashedWithLocation = content.withLocation,
             sha256 = content.sha256,
             capturedAt = capturedAtIso,
             source = source
@@ -141,6 +142,7 @@ class SyncUploadManager(
                     byteSize = content.size,
                     sourceSize = fingerprint.size,
                     hashedOriginal = content.original,
+                    hashedWithLocation = content.withLocation,
                     sha256 = content.sha256,
                     capturedAt = capturedAtIso,
                     source = source,
@@ -161,6 +163,7 @@ class SyncUploadManager(
                     dbHelper.replaceWithNewVersion(
                         accountKey, known.jobId, content.sha256, content.size, fingerprint, filename,
                         capturedAtIso, source, now(), hashedOriginal = content.original,
+                        hashedWithLocation = content.withLocation,
                     ) -> ScanOutcome.QUEUED_NEW_VERSION
                     else -> ScanOutcome.DEFERRED
                 }
