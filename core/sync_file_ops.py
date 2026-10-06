@@ -64,6 +64,11 @@ def durable_move_upload(
     fsync_directory(source.parent)
 
 
+def matches_original(path: Path, expected_size: int, expected_hash: str) -> bool:
+    """Whether ``path`` is a file holding exactly the declared original."""
+    return path.is_file() and _matches(path, expected_size, expected_hash)
+
+
 def _verify(path: Path, expected_size: int, expected_hash: str) -> None:
     if not _matches(path, expected_size, expected_hash):
         raise ValueError("uploaded file does not match its declared size/hash")

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.sync_db import append_change, now_iso
+from core.sync_durability import connect_deferred
 from core.upload_catalog_writer import UploadCatalogWriter
 
 _PROCESSING_LOCK_NAME = "library-processing"
@@ -25,7 +26,7 @@ class UploadProcessingStore:
         self._db_path = db_path
 
     def claim(self, upload_id: str, token: str) -> tuple[str | None, int | str]:
-        connection = sqlite3.connect(self._db_path, timeout=30)
+        connection = connect_deferred(self._db_path, timeout=30)
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -97,7 +98,7 @@ class UploadProcessingStore:
         stop_event: threading.Event,
     ) -> None:
         while not stop_event.wait(_PROCESSING_HEARTBEAT_SECONDS):
-            connection = sqlite3.connect(self._db_path, timeout=30)
+            connection = connect_deferred(self._db_path, timeout=30)
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 lease_until = _lease_deadline()
@@ -126,7 +127,7 @@ class UploadProcessingStore:
                 connection.close()
 
     def release(self, upload_id: str, token: str) -> None:
-        connection = sqlite3.connect(self._db_path, timeout=30)
+        connection = connect_deferred(self._db_path, timeout=30)
         try:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
@@ -153,7 +154,7 @@ class UploadProcessingStore:
         attempts: int,
         error_type: str,
     ) -> dict[str, int | str]:
-        connection = sqlite3.connect(self._db_path, timeout=30)
+        connection = connect_deferred(self._db_path, timeout=30)
         try:
             if attempts < _PROCESSING_MAX_ATTEMPTS:
                 delay = _PROCESSING_RETRY_DELAYS_SECONDS[
@@ -192,7 +193,7 @@ class UploadProcessingStore:
 
     def result(self, upload_id: str, state: str) -> dict[str, int | str]:
         result: dict[str, int | str] = {"upload_id": upload_id, "state": state}
-        connection = sqlite3.connect(self._db_path)
+        connection = connect_deferred(self._db_path)
         try:
             catalog = UploadCatalogWriter(connection)
             row = connection.execute(

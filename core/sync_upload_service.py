@@ -19,7 +19,8 @@ from starlette.concurrency import run_in_threadpool
 from core.file_digest import FileDigest
 from core.indexer_db import init_db
 from core.sync_db import append_change, ensure_tables, now_iso, record_origin
-from core.sync_file_ops import fsync_directory
+from core.sync_durability import connect_deferred, make_durable
+from core.sync_file_ops import fsync_directory, matches_original
 from core.sync_processor import process_upload
 from core.sync_upload_metadata import UploadMetadataError, parse_upload_metadata
 from core.upload_finalization import (
@@ -92,12 +93,12 @@ class SyncUploadService:
     def open_connection(user: IrisUser) -> sqlite3.Connection:
         identity = _database_identity(user.db_path)
         if identity is not None and identity in _prepared_databases:
-            connection = sqlite3.connect(user.db_path)
+            connection = connect_deferred(user.db_path)
             if _schema_present(connection):
                 return connection
             connection.close()
         init_db(user.db_path).close()
-        connection = sqlite3.connect(user.db_path)
+        connection = connect_deferred(user.db_path)
         ensure_tables(connection)
         # ensure_tables may backfill usage counters before a quota transaction.
         connection.commit()
@@ -156,6 +157,7 @@ class SyncUploadService:
             if media_id is not None:
                 return _known_duplicate(connection, upload_id, media_id, device_id, metadata.source)
             root.mkdir(mode=0o700, exist_ok=True)
+        make_durable(user.db_path)
         return {"upload_id": upload_id, "offset": 0, "chunk_size": _MAX_CHUNK_BYTES}
 
     def reserve_upload_batch(
@@ -296,6 +298,8 @@ class SyncUploadService:
                 })
             if any("upload_id" in result for result in results):
                 root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # A reservation or known duplicate the device is told about is on disk.
+        make_durable(user.db_path)
         return {"uploads": results}
 
     def upload_status(self, user: IrisUser, device_id: str | None, upload_id: str) -> dict[str, Any]:
@@ -458,6 +462,31 @@ class SyncUploadService:
     ) -> dict[str, Any]:
         if user is None or not device_id:
             raise SyncUploadError(401, "Autenticação necessária")
+        try:
+            return await self._complete_serialized(
+                user,
+                device_id,
+                upload_id,
+                sync_ai_processing=sync_ai_processing,
+                load_model=load_model,
+                on_finished=on_finished,
+                log_phase=log_phase,
+            )
+        finally:
+            # Whatever the device is answered, success or error, is on disk.
+            await run_in_threadpool(make_durable, user.db_path)
+
+    async def _complete_serialized(
+        self,
+        user: IrisUser,
+        device_id: str,
+        upload_id: str,
+        *,
+        sync_ai_processing: bool,
+        load_model: bool,
+        on_finished: Callable[[], None],
+        log_phase: Callable[..., None],
+    ) -> dict[str, Any]:
         async with self._serialize_upload(user.id, device_id, upload_id):
             return await self._complete_once(
                 user,
@@ -495,7 +524,7 @@ class SyncUploadService:
 
         async def finish_one(upload_id: str) -> dict[str, Any]:
             try:
-                return await self.complete_upload(
+                return await self._complete_serialized(
                     user,
                     device_id,
                     upload_id,
@@ -511,7 +540,10 @@ class SyncUploadService:
                     "error_message": exc.detail[:500],
                 }
 
-        return {"uploads": await asyncio.gather(*(finish_one(value) for value in upload_ids))}
+        results = await asyncio.gather(*(finish_one(value) for value in upload_ids))
+        # One disk sync for the whole batch, before the device is told it is stored.
+        await run_in_threadpool(make_durable, user.db_path)
+        return {"uploads": results}
 
     async def _complete_once(
         self,
@@ -548,11 +580,32 @@ class SyncUploadService:
                 "generation": row[13], "media_kind": row[14],
             }
             if row[5] == "uploading":
+                destination_dir, primary, alternate = _upload_destinations(user, device_id, upload_id, row)
+                recovered: Path | None = None
+                if not temporary.is_file():
+                    # After a power loss the database can be behind the files:
+                    # "fully received" while the original was already moved into
+                    # the library, or already cataloged.
+                    for candidate in (primary, alternate):
+                        if await run_in_threadpool(matches_original, candidate, row[1], row[2]):
+                            recovered = candidate
+                            break
+                    if recovered is None and connection.execute(
+                        "SELECT 1 FROM memes WHERE content_hash = ? LIMIT 1", (row[2],)
+                    ).fetchone() is None:
+                        # Nothing to recover: ask for the bytes again rather
+                        # than failing a photo the device still has.
+                        connection.execute(
+                            "UPDATE sync_uploads SET received_size = 0, updated_at = ? WHERE id = ?",
+                            (now_iso(), upload_id),
+                        )
+                        connection.commit()
+                        raise SyncUploadError(409, "Envio incompleto")
                 hash_started = time.perf_counter()
-                actual_hash = (
-                    await run_in_threadpool(FileDigest.sha256, temporary)
-                    if temporary.is_file() else None
-                )
+                if recovered is not None or not temporary.is_file():
+                    actual_hash = row[2]
+                else:
+                    actual_hash = await run_in_threadpool(FileDigest.sha256, temporary)
                 log_phase(
                     "verify_hash", hash_started, bytes=row[1],
                     state="ok" if actual_hash == row[2] else "mismatch",
@@ -580,22 +633,22 @@ class SyncUploadService:
                     )
                     connection.commit()
                     temporary.unlink(missing_ok=True)
+                    if recovered is not None:
+                        recovered.unlink(missing_ok=True)
                     return {
                         "upload_id": upload_id, "media_id": media_id,
                         "state": "duplicate", "cursor": sequence,
                     }
-                month = (
-                    row[7][:7]
-                    if re.fullmatch(r"\d{4}-\d{2}.*", row[7])
-                    else now_iso()[:7]
-                )
-                device_token = hashlib.sha256(device_id.encode()).hexdigest()[:12]
-                source_token = hashlib.sha256(str(source["id"] or "unknown").encode()).hexdigest()[:12]
-                destination_dir = user.media_root / "uploads" / device_token / source_token / month
                 destination_dir.mkdir(parents=True, exist_ok=True)
-                destination = destination_dir / f"{row[2][:12]}-{row[0]}"
-                if destination.exists():
-                    destination = destination_dir / f"{upload_id[:8]}-{row[0]}"
+                if recovered is not None:
+                    destination = recovered
+                elif primary.exists() and not await run_in_threadpool(
+                    matches_original, primary, row[1], row[2]
+                ):
+                    destination = alternate
+                else:
+                    # Free, or an identical copy left by an interrupted attempt.
+                    destination = primary
                 claim = connection.execute(
                     "UPDATE sync_uploads SET state = 'finalizing', final_path = ?, updated_at = ? "
                     "WHERE id = ? AND state = 'uploading'",
@@ -715,6 +768,21 @@ class SyncUploadService:
                 del self._operation_locks[key]
             else:
                 self._operation_locks[key] = (lock, refcount - 1)
+
+
+def _upload_destinations(
+    user: IrisUser, device_id: str, upload_id: str, row: Any,
+) -> tuple[Path, Path, Path]:
+    """Where an upload is stored: its directory, the usual name, the fallback name.
+
+    Both names are derived from the upload alone, so an interrupted attempt's
+    copy can be found again.
+    """
+    month = row[7][:7] if re.fullmatch(r"\d{4}-\d{2}.*", row[7]) else now_iso()[:7]
+    device_token = hashlib.sha256(device_id.encode()).hexdigest()[:12]
+    source_token = hashlib.sha256(str(row[8] or "unknown").encode()).hexdigest()[:12]
+    directory = user.media_root / "uploads" / device_token / source_token / month
+    return directory, directory / f"{row[2][:12]}-{row[0]}", directory / f"{upload_id[:8]}-{row[0]}"
 
 
 def _known_duplicate(
