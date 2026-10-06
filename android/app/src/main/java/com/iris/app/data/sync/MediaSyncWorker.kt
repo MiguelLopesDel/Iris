@@ -206,6 +206,10 @@ class MediaSyncWorker(
 
             if (queueCompleted) {
                 app.settingsRepository.markCloudSyncSucceeded(accountKey)
+                if (canRunMediaWork) {
+                    runCatching { clearObsoleteRetry(applicationContext, completedRunWasPeriodic = isPeriodic) }
+                        .onFailure { Log.w(TAG, "Obsolete retry not cleared error=${it.javaClass.simpleName}") }
+                }
                 outcome = if (canRunMediaWork) SyncRunOutcome.COMPLETED else SyncRunOutcome.SKIPPED
                 return Result.success()
             }
@@ -305,7 +309,9 @@ class MediaSyncWorker(
         private const val RUN_CHECKPOINT_MILLIS = 15_000L
         private const val NOTIFICATION_UPDATE_MILLIS = 2_000L
 
-        fun schedulePeriodic(context: Context) {
+        fun schedulePeriodic(context: Context) = schedulePeriodic(context, ExistingPeriodicWorkPolicy.UPDATE)
+
+        private fun schedulePeriodic(context: Context, policy: ExistingPeriodicWorkPolicy) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
@@ -317,9 +323,25 @@ class MediaSyncWorker(
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 PERIODIC_WORK_TAG,
-                ExistingPeriodicWorkPolicy.UPDATE,
+                policy,
                 request
             )
+        }
+
+        /** See [ObsoleteRetry]: a run that emptied the queue ends the other work's retry. */
+        internal suspend fun clearObsoleteRetry(context: Context, completedRunWasPeriodic: Boolean) {
+            val workManager = WorkManager.getInstance(context)
+            val other = if (completedRunWasPeriodic) ONE_TIME_WORK_TAG else PERIODIC_WORK_TAG
+            val works = workManager.getWorkInfosForUniqueWorkFlow(other).first().map {
+                ObsoleteRetry.Work(it.state == WorkInfo.State.ENQUEUED, it.runAttemptCount)
+            }
+            when (ObsoleteRetry.after(completedRunWasPeriodic, works)) {
+                ObsoleteRetry.Action.NONE -> Unit
+                // Re-enqueued, the periodic work starts over with no attempts and no backoff.
+                ObsoleteRetry.Action.RESET_PERIODIC ->
+                    schedulePeriodic(context, ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE)
+                ObsoleteRetry.Action.CANCEL_ONE_TIME -> workManager.cancelUniqueWork(ONE_TIME_WORK_TAG)
+            }
         }
 
         suspend fun enqueueImmediate(context: Context) {
@@ -384,7 +406,9 @@ class MediaSyncWorker(
                 workManager.getWorkInfosForUniqueWorkFlow(ONE_TIME_WORK_TAG),
                 workManager.getWorkInfosForUniqueWorkFlow(PERIODIC_WORK_TAG),
             ) { oneTime, periodic ->
-                (oneTime + periodic).any { it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0 }
+                ObsoleteRetry.inBackoff(
+                    (oneTime + periodic).map { ObsoleteRetry.Work(it.state == WorkInfo.State.ENQUEUED, it.runAttemptCount) }
+                )
             }
         }
 
