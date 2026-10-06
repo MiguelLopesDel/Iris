@@ -48,3 +48,19 @@ def test_library_usage_counter_tracks_catalog_changes() -> None:
     assert used_bytes(conn) == 15
     conn.execute("DELETE FROM memes WHERE id = 2")
     assert used_bytes(conn) == 7
+
+
+def test_library_usage_is_summed_once_not_on_every_request() -> None:
+    # ensure_tables runs on every sync request; summing the whole library
+    # each time made every request scan it.
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE memes (id INTEGER PRIMARY KEY, file_size INTEGER DEFAULT 0)")
+    conn.executemany("INSERT INTO memes (id, file_size) VALUES (?, ?)", [(1, 12), (2, 8)])
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+
+    for _ in range(3):
+        ensure_tables(conn)
+
+    assert sum("SUM(" in statement for statement in statements) == 1
+    assert used_bytes(conn) == 20
