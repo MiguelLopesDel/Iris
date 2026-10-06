@@ -70,7 +70,12 @@ def _upload_one(client: httpx.Client, base_url: str, headers: dict[str, str], it
     return time.perf_counter() - started
 
 
-def _complete_batch(client: httpx.Client, base_url: str, headers: dict[str, str], batch: list[dict]) -> None:
+# "pending_processing" is a durable acceptance whose catalog registration was
+# taken over by the background processor; the item becomes ready on its own.
+_ACCEPTED_STATES = {"ready", "duplicate", "pending_processing"}
+
+
+def _complete_batch(client: httpx.Client, base_url: str, headers: dict[str, str], batch: list[dict]) -> int:
     response = client.post(
         f"{base_url}/api/sync/uploads/complete-batch",
         headers=headers,
@@ -78,19 +83,22 @@ def _complete_batch(client: httpx.Client, base_url: str, headers: dict[str, str]
     )
     response.raise_for_status()
     results = response.json().get("uploads", [])
-    if len(results) != len(batch) or any(result.get("state") not in {"ready", "duplicate"} for result in results):
-        raise RuntimeError("server did not durably confirm every synthetic upload")
+    unconfirmed = [result for result in results if result.get("state") not in _ACCEPTED_STATES]
+    if len(results) != len(batch) or unconfirmed:
+        detail = {key: result.get(key) for result in unconfirmed[:1] for key in ("state", "error_code", "error_message")}
+        raise RuntimeError(f"server did not durably confirm every synthetic upload: {detail}")
+    return sum(result.get("state") == "pending_processing" for result in results)
 
 
 def _complete_batches(
     client: httpx.Client, base_url: str, headers: dict[str, str], items: list[dict],
     *, lanes: int = 1, batch_size: int = 16,
-) -> None:
+) -> int:
     """Finalize in batches; more than one lane keeps several batches in flight."""
     batches = [items[offset:offset + batch_size] for offset in range(0, len(items), batch_size)]
     with ThreadPoolExecutor(max_workers=lanes) as pool:
-        for future in as_completed([pool.submit(_complete_batch, client, base_url, headers, b) for b in batches]):
-            future.result()
+        futures = [pool.submit(_complete_batch, client, base_url, headers, b) for b in batches]
+        return sum(future.result() for future in as_completed(futures))
 
 
 def run_profile(
@@ -156,7 +164,7 @@ def run_profile(
         transfer_seconds = time.perf_counter() - transfer_started
 
         completion_started = time.perf_counter()
-        _complete_batches(
+        deferred = _complete_batches(
             client, base_url, headers, items, lanes=completion_lanes, batch_size=completion_batch,
         )
         completion_seconds = time.perf_counter() - completion_started
@@ -169,6 +177,7 @@ def run_profile(
             "completion_lanes": completion_lanes,
             "completion_batch": completion_batch,
             "completion_items_per_second": round(file_count / completion_seconds, 2),
+            "deferred_to_processor": deferred,
             "hash_seconds": round(hash_seconds, 4),
             "init_seconds": round(init_seconds, 4),
             "transfer_seconds": round(transfer_seconds, 4),
