@@ -70,23 +70,33 @@ def _upload_one(client: httpx.Client, base_url: str, headers: dict[str, str], it
     return time.perf_counter() - started
 
 
-def _complete_batches(client: httpx.Client, base_url: str, headers: dict[str, str], items: list[dict]) -> None:
-    for offset in range(0, len(items), 16):
-        batch = items[offset:offset + 16]
-        response = client.post(
-            f"{base_url}/api/sync/uploads/complete-batch",
-            headers=headers,
-            json={"uploads": [{"upload_id": item["upload_id"]} for item in batch]},
-        )
-        response.raise_for_status()
-        results = response.json().get("uploads", [])
-        if len(results) != len(batch) or any(result.get("state") not in {"ready", "duplicate"} for result in results):
-            raise RuntimeError("server did not durably confirm every synthetic upload")
+def _complete_batch(client: httpx.Client, base_url: str, headers: dict[str, str], batch: list[dict]) -> None:
+    response = client.post(
+        f"{base_url}/api/sync/uploads/complete-batch",
+        headers=headers,
+        json={"uploads": [{"upload_id": item["upload_id"]} for item in batch]},
+    )
+    response.raise_for_status()
+    results = response.json().get("uploads", [])
+    if len(results) != len(batch) or any(result.get("state") not in {"ready", "duplicate"} for result in results):
+        raise RuntimeError("server did not durably confirm every synthetic upload")
+
+
+def _complete_batches(
+    client: httpx.Client, base_url: str, headers: dict[str, str], items: list[dict],
+    *, lanes: int = 1, batch_size: int = 16,
+) -> None:
+    """Finalize in batches; more than one lane keeps several batches in flight."""
+    batches = [items[offset:offset + batch_size] for offset in range(0, len(items), batch_size)]
+    with ThreadPoolExecutor(max_workers=lanes) as pool:
+        for future in as_completed([pool.submit(_complete_batch, client, base_url, headers, b) for b in batches]):
+            future.result()
 
 
 def run_profile(
     client: httpx.Client, base_url: str, headers: dict[str, str], root: Path,
     *, file_count: int, total_bytes: int, concurrency: int, label: str,
+    completion_lanes: int = 1, completion_batch: int = 16,
 ) -> dict:
     bytes_each = total_bytes // file_count
     if bytes_each < 1024:
@@ -146,7 +156,9 @@ def run_profile(
         transfer_seconds = time.perf_counter() - transfer_started
 
         completion_started = time.perf_counter()
-        _complete_batches(client, base_url, headers, items)
+        _complete_batches(
+            client, base_url, headers, items, lanes=completion_lanes, batch_size=completion_batch,
+        )
         completion_seconds = time.perf_counter() - completion_started
         pipeline_seconds = time.perf_counter() - pipeline_started
         end_to_end_seconds = hash_seconds + init_seconds + pipeline_seconds
@@ -154,6 +166,9 @@ def run_profile(
             "files": file_count,
             "bytes": sum(item["size"] for item in items),
             "concurrency": concurrency,
+            "completion_lanes": completion_lanes,
+            "completion_batch": completion_batch,
+            "completion_items_per_second": round(file_count / completion_seconds, 2),
             "hash_seconds": round(hash_seconds, 4),
             "init_seconds": round(init_seconds, 4),
             "transfer_seconds": round(transfer_seconds, 4),
@@ -173,12 +188,17 @@ def main() -> int:
     parser.add_argument("--total-mib", type=int, default=32)
     parser.add_argument("--files", default="1,8,32")
     parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--completion-lanes", type=int, default=1,
+                        help="complete-batch requests kept in flight at once")
+    parser.add_argument("--completion-batch", type=int, default=16, help="uploads per complete-batch")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if not _is_loopback_url(args.url):
         parser.error("only plain HTTP loopback URLs are allowed; production targets are refused")
     if not 1 <= args.total_mib <= 256 or not 1 <= args.concurrency <= 32:
         parser.error("total-mib must be 1..256 and concurrency must be 1..32")
+    if not 1 <= args.completion_lanes <= 16 or not 1 <= args.completion_batch <= 64:
+        parser.error("completion-lanes must be 1..16 and completion-batch 1..64")
     try:
         root = lab_root(args.root)
     except ValueError as exc:
@@ -210,6 +230,8 @@ def main() -> int:
                 file_count=file_count,
                 total_bytes=args.total_mib * 1024 * 1024,
                 concurrency=args.concurrency,
+                completion_lanes=args.completion_lanes,
+                completion_batch=args.completion_batch,
                 label=f"{run_id}-profile-{index}-{file_count}",
             ))
     result = {"target": "disposable local Iris lab", "ai_requested": False, "profiles": reports}
