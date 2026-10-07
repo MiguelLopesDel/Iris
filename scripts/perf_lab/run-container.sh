@@ -37,12 +37,20 @@ case "$scenario_file" in
     ;;
 esac
 
+# The server's ingest policy can be swept from the host: IRIS_INGEST_* variables
+# set here are passed into the container.
+policy_env=()
+while IFS='=' read -r name _; do
+  [[ "$name" == IRIS_INGEST_* ]] && policy_env+=(--env "$name")
+done < <(env)
+
 exec docker run --rm --network none --read-only \
   --tmpfs /tmp:rw,nosuid,size=512m \
   --user "$(id -u):$(id -g)" \
   --volume "$repo_root:/app:ro" \
   --volume "$workspace:/benchmark:rw" \
   --workdir /app \
+  "${policy_env[@]}" \
   "$image" python3 -m scripts.perf_lab run \
   "$scenario_container_path" \
   --root /benchmark/data --output /benchmark/report "${extra[@]}"

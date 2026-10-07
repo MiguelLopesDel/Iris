@@ -12,6 +12,8 @@ A scenario is a YAML file::
         sizes: {"200KB-1MB": 100%}
         concurrency: 16          # upload workers per device, as the app
         completion_lanes: 1      # complete-batch requests in flight, as the app
+        bundle: 8MB              # optional: send files up to 1MB in bundles of up to 8MB
+        rtt: 30ms                # optional: network round trip added to every request
         target: {items_per_s: 40}
 
 Sizes are a distribution of ranges with weights; each item draws a range,
@@ -104,6 +106,12 @@ class SyncingActor:
     sizes: SizeDistribution
     concurrency: int = 16
     completion_lanes: int = 1
+    # Bytes per bundle request (0: every file in its own PUTs), and the
+    # largest file that travels in one.
+    bundle_bytes: int = 0
+    bundle_item_max: int = 1_000_000
+    # Seconds of network round trip added before every request.
+    rtt: float = 0.0
     accounts: int = 1
     target: dict[str, float] = field(default_factory=dict)
     kind: str = "syncing"
@@ -131,6 +139,24 @@ def _positive_int(raw: dict, key: str, default: int | None = None, *, where: str
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise ScenarioError(f"{where}: {key} must be a positive integer")
     return value
+
+
+def _bundle_bytes(raw: Any, *, where: str) -> int:
+    if raw in (None, 0, False):
+        return 0
+    size = parse_size(raw)
+    if size < 1_000_000 or size > 32 * 1024**2:
+        raise ScenarioError(f"{where}: bundle must be between 1MB and 32MiB")
+    return size
+
+
+def _rtt(raw: Any, *, where: str) -> float:
+    if raw in (None, 0):
+        return 0.0
+    seconds = parse_duration(raw)
+    if not math.isfinite(seconds) or seconds < 0 or seconds > 1:
+        raise ScenarioError(f"{where}: rtt must be between 0 and 1s")
+    return seconds
 
 
 def parse(raw: Any) -> Scenario:
@@ -172,6 +198,8 @@ def parse(raw: Any) -> Scenario:
                 concurrency=_positive_int(item, "concurrency", 16, where=where),
                 completion_lanes=_positive_int(item, "completion_lanes", 1, where=where),
                 accounts=_positive_int(item, "accounts", 1, where=where),
+                bundle_bytes=_bundle_bytes(item.get("bundle"), where=where),
+                rtt=_rtt(item.get("rtt"), where=where),
                 target=parsed_target,
             )
         )

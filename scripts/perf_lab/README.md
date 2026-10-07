@@ -56,6 +56,17 @@ The workspace gets `data/` and `report/`; use a new empty workspace per run.
 - `smoke.yaml`: a tiny end-to-end check suitable for local tests and CI.
 - `sync-small-files.yaml`: a sustained small-file backup run, reporting
   completed items/s as well as bytes/s.
+- `sync-small-files-bundled.yaml`: the same files, with those up to 1MB sent
+  together in `POST /api/sync/ingest` requests (`bundle: 8MB` on the actor),
+  which receive and finish them, instead of one `PUT` each plus completion.
+
+  The server's ingest policy can be swept without code changes through
+  `IRIS_INGEST_<FIELD>` variables (for example
+  `IRIS_INGEST_DURABILITY_WINDOW_S=0.05`), which the lab server inherits.
+
+  The lab runs on the server, where a request's round trip costs nothing. Add
+  `rtt: 30ms` to an actor to make every request first wait as long as a
+  phone's would over Wi-Fi or a VPN; that is where saving requests shows.
 - `sync-mixed-library.yaml`: a weighted size distribution for comparing a
   mixed media workload.
 

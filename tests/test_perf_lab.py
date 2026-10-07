@@ -14,7 +14,8 @@ SCENARIOS = Path(__file__).parents[1] / "scripts" / "perf_lab" / "scenarios"
 
 
 @pytest.mark.parametrize(
-    "filename", ["smoke.yaml", "sync-small-files.yaml", "sync-mixed-library.yaml"]
+    "filename",
+    ["smoke.yaml", "sync-small-files.yaml", "sync-small-files-bundled.yaml", "sync-mixed-library.yaml"],
 )
 def test_checked_in_scenarios_parse(filename):
     loaded = scenario.load(SCENARIOS / filename)
@@ -39,6 +40,10 @@ def test_checked_in_scenarios_parse(filename):
         },
         {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "NaN"}}]},
         {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "1%"}, "target": []}]},
+        {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "bundle": "500KB"}]},
+        {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "bundle": "64MB"}]},
+        {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "rtt": "2s"}]},
+        {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "rtt": "fast"}]},
     ],
 )
 def test_invalid_scenario_values_are_rejected(change):
@@ -282,6 +287,25 @@ def test_perf_lab_smoke_end_to_end(tmp_path):
     assert (output / "report.json").is_file()
 
 
+def test_perf_lab_bundled_upload_end_to_end(tmp_path):
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("PIL")
+    case = scenario.parse({
+        "name": "test-bundled",
+        "duration": "30s",
+        "actors": [{
+            "kind": "syncing", "items": 6, "sizes": {"2KB-1.5MB": "100%"},
+            "concurrency": 6, "bundle": "2MB", "rtt": "20ms",
+        }],
+    })
+
+    result = run(case, tmp_path / "lab", tmp_path / "report")
+
+    summary = result["actors"]["0:syncing×1"]["summary"]
+    assert (summary["items_done"], summary["items_failed"]) == (6, 0), summary
+
+
 def test_a_server_held_to_one_core_is_flagged_although_no_host_core_is_full():
     # Measured on the lab: the server process at ~105% (one core) while the
     # busiest host core stayed under 60%, because the scheduler moves it around.
@@ -294,3 +318,13 @@ def test_a_server_held_to_one_core_is_flagged_although_no_host_core_is_full():
     assert not rule.holds({**serial, "server_cpu": 40.0})
     one_core = next(rule for rule in RULES if rule.name == "one_core")
     assert not one_core.holds(serial)  # the host-core rule alone missed it
+
+
+
+def test_rtt_is_parsed_from_a_duration():
+    case = scenario.parse({
+        "name": "rtt", "duration": 2,
+        "actors": [{"kind": "syncing", "items": 1, "sizes": {"2KB": "100%"}, "rtt": "30ms"}],
+    })
+
+    assert case.actors[0].rtt == pytest.approx(0.03)

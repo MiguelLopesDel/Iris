@@ -5,7 +5,13 @@ its share of the items. Like the app:
 
 - reservations are coalesced into ``POST /api/sync/uploads/batch`` requests of
   up to 16 items (a short window lets concurrent workers join);
-- each item is sent with chunked ``PUT``s of the server's chunk size;
+- each item is sent with chunked ``PUT``s of the server's chunk size, or, with
+  ``bundle`` set, small items travel whole in ``POST /api/sync/ingest``
+  requests of up to that many bytes, which also finish them (no separate
+  completion);
+- with ``rtt`` set, every request first waits that long, as a phone's request
+  would on its way to a server over Wi-Fi or a VPN (the lab runs on the server
+  itself, where a round trip costs nothing);
 - completions are coalesced into ``complete-batch`` requests, with
   ``completion_lanes`` of them in flight (the app keeps one).
 
@@ -31,6 +37,8 @@ from scripts.perf_lab.statistics import percentile
 
 _GEN_BLOCK = 1024 * 1024
 _BATCH = 16
+_BUNDLE_ITEMS = 64
+_BUNDLE_LANES = 4
 _COALESCE_SECONDS = 0.008
 
 
@@ -92,11 +100,20 @@ class DeviceResult:
 class _Coalescer:
     """Gathers concurrent requests into batches, like the app's batchers."""
 
-    def __init__(self, send, lanes: int) -> None:
+    def __init__(self, send, lanes: int, max_items: int = _BATCH, max_bytes: int = 0) -> None:
         self._send = send
         self._queue: asyncio.Queue = asyncio.Queue()
         self._lanes = asyncio.Semaphore(lanes)
+        self._max_items, self._max_bytes = max_items, max_bytes
+        self._carry = None  # an entry that did not fit the previous batch
         self._task = asyncio.create_task(self._run())
+
+    def _fits(self, batch, entry) -> bool:
+        if len(batch) >= self._max_items:
+            return False
+        if not self._max_bytes:
+            return True
+        return sum(item.size for item, _ in batch) + entry[0].size <= self._max_bytes
 
     async def submit(self, item: Item) -> dict:
         future = asyncio.get_running_loop().create_future()
@@ -105,11 +122,15 @@ class _Coalescer:
 
     async def _run(self) -> None:
         while True:
-            first = await self._queue.get()
+            first, self._carry = self._carry or await self._queue.get(), None
             await asyncio.sleep(_COALESCE_SECONDS)
             batch = [first]
-            while len(batch) < _BATCH and not self._queue.empty():
-                batch.append(self._queue.get_nowait())
+            while not self._queue.empty():
+                entry = self._queue.get_nowait()
+                if not self._fits(batch, entry):
+                    self._carry = entry
+                    break
+                batch.append(entry)
             await self._lanes.acquire()
             asyncio.create_task(self._dispatch(batch))
 
@@ -130,6 +151,21 @@ class _Coalescer:
         self._task.cancel()
 
 
+class _DelayedClient:
+    """An HTTP client whose every request costs a network round trip first."""
+
+    def __init__(self, client: httpx.AsyncClient, rtt: float) -> None:
+        self._client, self._rtt = client, rtt
+
+    async def post(self, *args, **kwargs) -> httpx.Response:
+        await asyncio.sleep(self._rtt)
+        return await self._client.post(*args, **kwargs)
+
+    async def put(self, *args, **kwargs) -> httpx.Response:
+        await asyncio.sleep(self._rtt)
+        return await self._client.put(*args, **kwargs)
+
+
 async def run_device(
     client: httpx.AsyncClient,
     base_url: str,
@@ -143,6 +179,7 @@ async def run_device(
     deadline: float,
 ) -> DeviceResult:
     result = DeviceResult(items=items)
+    client = _DelayedClient(client, actor.rtt) if actor.rtt else client
     login = await client.post(
         f"{base_url}/api/auth/devices/login",
         data={
@@ -189,8 +226,25 @@ async def run_device(
         response.raise_for_status()
         return response.json()["uploads"]
 
+    async def bundle(batch: list[Item]) -> list[dict]:
+        # Received and finished in one request: no separate completion.
+        response = await client.post(
+            f"{base_url}/api/sync/ingest",
+            headers={
+                **headers,
+                "X-Iris-Ingest": ",".join(f"{item.upload_id}:{item.size}" for item in batch),
+            },
+            content=b"".join(piece for item in batch for piece in item.blocks()),
+        )
+        response.raise_for_status()
+        return response.json()["uploads"]
+
     reservations = _Coalescer(reserve, lanes=1)  # one in flight, as the app's init batcher
     completions = _Coalescer(complete, lanes=actor.completion_lanes)
+    bundles = (
+        _Coalescer(bundle, lanes=_BUNDLE_LANES, max_items=_BUNDLE_ITEMS, max_bytes=actor.bundle_bytes)
+        if actor.bundle_bytes else None
+    )
     pending = list(items)
     clock = time.monotonic
 
@@ -207,6 +261,13 @@ async def run_device(
                     continue
                 item.upload_id, item.chunk_size = reserved["upload_id"], int(reserved["chunk_size"])
                 offset = int(reserved.get("offset", 0))
+                if bundles is not None and item.size <= actor.bundle_item_max:
+                    finished = await bundles.submit(item)
+                    item.sent = item.finished = clock() - clock_start
+                    item.state = finished.get("state") or f"error {finished.get('error_code')}"
+                    if "error_code" in finished:
+                        item.error = f"{finished['error_code']}: {finished.get('error_message', '')}"[:200]
+                    continue
                 while offset < item.size:
                     end = min(item.size, offset + item.chunk_size)
                     body = b"".join(item.blocks(offset, end))
@@ -231,6 +292,8 @@ async def run_device(
     finally:
         reservations.close()
         completions.close()
+        if bundles is not None:
+            bundles.close()
     return result
 
 
