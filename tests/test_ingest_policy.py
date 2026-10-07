@@ -24,9 +24,9 @@ def test_default_ingest_policy_is_bounded_and_immutable():
     ("field", "value"),
     [
         ("max_items", 0),
-        ("max_items", 65),
+        ("max_items", 1025),
         ("max_bytes", -1),
-        ("max_bytes", (32 << 20) + 1),
+        ("max_bytes", (512 << 20) + 1),
         ("block_bytes", 0),
         ("block_bytes", (1 << 20) + 1),
         ("fsync_concurrency", True),

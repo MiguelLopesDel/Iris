@@ -33,13 +33,15 @@ class IngestPolicy:
 
     def __post_init__(self) -> None:
         bounded_ints = (
-            ("max_items", self.max_items, 64),
-            ("max_bytes", self.max_bytes, 32 << 20),
+            # Bytes stream to disk in blocks, so a batch's size bounds disk
+            # and request time, not memory; the lab sweeps far above defaults.
+            ("max_items", self.max_items, 1024),
+            ("max_bytes", self.max_bytes, 512 << 20),
             ("block_bytes", self.block_bytes, 1 << 20),
             ("fsync_concurrency", self.fsync_concurrency, 128),
             ("db_group_max_items", self.db_group_max_items, 256),
             ("packages_in_flight_per_device", self.packages_in_flight_per_device, 8),
-            ("max_in_flight_bytes", self.max_in_flight_bytes, 256 << 20),
+            ("max_in_flight_bytes", self.max_in_flight_bytes, 2 << 30),
         )
         for name, value, maximum in bounded_ints:
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:

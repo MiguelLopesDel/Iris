@@ -120,13 +120,21 @@ class SyncIngestPipeline:
             max_items=self._policy.max_items, max_bytes=self._policy.max_bytes,
         )
         started = time.perf_counter()
+        count = len(items)
+
+        def phase(name: str, since: float, **fields: Any) -> float:
+            log_phase(name, since, item_count=count, **fields)
+            return time.perf_counter()
+
         async with AsyncExitStack() as locks:
             # One fixed order, so two batches sharing uploads cannot deadlock.
             for item in sorted(items, key=lambda entry: entry.upload_id):
                 await locks.enter_async_context(
                     self._service._serialize_upload(user.id, device_id, item.upload_id)
                 )
+            mark = phase("ingest_locks", started, state="ok")
             await run_in_threadpool(self._admit, user, device_id, items)
+            mark = phase("ingest_admit", mark, state="durable")
             writing = [item for item in items if item.destination is not None]
             try:
                 await run_in_threadpool(_open_targets, writing)
@@ -135,6 +143,9 @@ class SyncIngestPipeline:
             except BaseException:
                 await run_in_threadpool(self._abandon, user, device_id, writing)
                 raise
+            mark = phase(
+                "ingest_receive", mark, bytes=sum(item.size for item in items), state="ok"
+            )
             stored = [item for item in writing if item.stored]
             try:
                 await asyncio.wrap_future(self._durability.flush(
@@ -147,16 +158,19 @@ class SyncIngestPipeline:
             except BaseException:
                 await run_in_threadpool(self._abandon, user, device_id, writing)
                 raise
+            mark = phase("ingest_fsync", mark, state="durable")
             log_phase(
                 "ingest_durable", started, bytes=sum(item.size for item in stored),
                 item_count=len(stored), state="durable",
             )
             await run_in_threadpool(self._commit, user, device_id, writing)
+            mark = phase("ingest_commit", mark, state="durable")
             outcomes = await run_in_threadpool(
                 self._catalog, user, stored,
                 sync_ai_processing, load_model, on_finished, log_phase,
             )
-        log_phase("ingest_batch", started, item_count=len(items), state="ok")
+            phase("ingest_catalog", mark, state="ok")
+        log_phase("ingest_batch", started, item_count=count, state="ok")
         results = []
         for item in items:
             outcome = outcomes.get(item.upload_id, item.error or item.answer)
@@ -167,7 +181,8 @@ class SyncIngestPipeline:
                 })
             else:
                 results.append(outcome)
-        return {"uploads": results}
+        # Clients size their next batch from what the server accepts now.
+        return {"uploads": results, "limits": self._service.ingest_limits()}
 
     def _admit(self, user: IrisUser, device_id: str, items: list[_Item]) -> None:
         """One writer transaction: check each reservation and claim its final path."""

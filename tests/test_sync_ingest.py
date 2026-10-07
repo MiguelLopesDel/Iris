@@ -362,3 +362,23 @@ def test_a_periodic_recovery_pass_leaves_a_batch_in_flight_alone(tmp_path: Path,
 
     assert [entry["state"] for entry in results] == ["ready"] * 3, results
     assert sorted(path.read_bytes() for path in _cataloged(user)) == sorted(photos)
+
+
+def test_the_server_tells_clients_how_large_a_batch_may_be(tmp_path: Path):
+    # Batches are sized by the server's policy, not a fixed protocol number:
+    # a client reserves and sends as many as the server accepts now.
+    user = _user(tmp_path)
+    service = SyncUploadService(ingest_policy=IngestPolicy(
+        max_items=40, max_bytes=40 * 3000, block_bytes=64 * 1024, max_in_flight_bytes=1 << 20,
+        durability_window_s=0,
+    ))
+    limits = service.ingest_limits()
+    assert (limits["max_items"], limits["max_bytes"]) == (40, 120_000)
+
+    photos = [_photo(index) for index in range(limits["suggested_items"])]
+    ids = _reserve(service, user, photos)  # more than the legacy 16 at once
+    results = _ingest(service, user, list(zip(ids, map(len, photos), strict=True)), photos)
+
+    assert [entry["state"] for entry in results] == ["ready"] * 40
+    with pytest.raises(SyncUploadError):
+        _reserve(service, user, [_photo(index) for index in range(41)], "over")

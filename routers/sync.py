@@ -183,6 +183,13 @@ async def upload_chunk(request: Request, upload_id: str, offset: int = Query(...
         _raise_http(exc)
 
 
+@router.get("/ingest/limits")
+async def ingest_limits(request: Request):
+    """How many photos and bytes one batch may carry now."""
+    _user(request)
+    return _upload_service(request).ingest_limits()
+
+
 @router.post("/ingest")
 async def ingest(request: Request):
     """Receive and finish a batch of small reserved uploads in one request.

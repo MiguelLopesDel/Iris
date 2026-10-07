@@ -133,6 +133,18 @@ class SyncUploadService:
     def ingest_policy(self) -> IngestPolicy:
         return self._ingest_policy
 
+    def ingest_limits(self) -> dict[str, int]:
+        """What a batch may hold now, for clients to size their batches.
+
+        ``suggested_items`` is the size the server would like; today it
+        follows the policy, later it can follow load.
+        """
+        return {
+            "max_items": self._ingest_policy.max_items,
+            "max_bytes": self._ingest_policy.max_bytes,
+            "suggested_items": self._ingest_policy.max_items,
+        }
+
     @property
     def ingest_pipeline(self):
         """The batch ingestion path, created on first use."""
@@ -261,8 +273,11 @@ class SyncUploadService:
         if not device_id:
             raise SyncUploadError(403, "Use uma sessão de dispositivo para sincronizar mídia")
         items = payload.get("uploads") if isinstance(payload, dict) else None
-        if not isinstance(items, list) or not items or len(items) > _MAX_UPLOAD_INIT_BATCH:
-            raise SyncUploadError(400, f"O lote deve conter de 1 a {_MAX_UPLOAD_INIT_BATCH} itens")
+        # Batch-ingest clients reserve a whole batch at once; the legacy
+        # 16-item cap stays the floor for older clients.
+        limit = max(_MAX_UPLOAD_INIT_BATCH, self._ingest_policy.max_items)
+        if not isinstance(items, list) or not items or len(items) > limit:
+            raise SyncUploadError(400, f"O lote deve conter de 1 a {limit} itens")
         if any(not isinstance(raw, dict) for raw in items):
             raise SyncUploadError(400, "Todos os itens do lote devem conter metadados")
 
