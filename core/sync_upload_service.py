@@ -530,7 +530,7 @@ class SyncUploadService:
             )
         finally:
             # Whatever the device is answered, success or error, is on disk.
-            await run_in_threadpool(make_durable, user.db_path)
+            await _durability_barrier(user, log_phase, 1)
         if isinstance(outcome, SyncUploadError):
             raise outcome
         return outcome
@@ -559,6 +559,7 @@ class SyncUploadService:
         if len(set(upload_ids)) != len(upload_ids):
             raise SyncUploadError(400, "O lote não pode repetir upload_id")
 
+        batch_started = time.perf_counter()
         outcomes = await self._complete_serialized(
             user,
             device_id,
@@ -568,8 +569,9 @@ class SyncUploadService:
             on_finished=on_finished,
             log_phase=log_phase,
         )
+        log_phase("completion_batch", batch_started, item_count=len(upload_ids), state="ok")
         # One disk sync for the whole batch, before the device is told it is stored.
-        await run_in_threadpool(make_durable, user.db_path)
+        await _durability_barrier(user, log_phase, len(upload_ids))
         return {"uploads": [
             {
                 "upload_id": upload_id,
@@ -1007,6 +1009,15 @@ class SyncUploadService:
                 del self._operation_locks[key]
             else:
                 self._operation_locks[key] = (lock, refcount - 1)
+
+
+async def _durability_barrier(
+    user: IrisUser, log_phase: Callable[..., None], item_count: int,
+) -> None:
+    """Sync the account database to disk, timed: it is the wait every answer ends with."""
+    started = time.perf_counter()
+    await run_in_threadpool(make_durable, user.db_path)
+    log_phase("durability_barrier", started, item_count=item_count, state="durable")
 
 
 def _upload_destinations(
