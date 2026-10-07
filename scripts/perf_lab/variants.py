@@ -17,6 +17,10 @@ with one piece removed or replaced. Select with PERF_LAB_VARIANT and launch
                              with today's two reads, run on the event loop
 - real_auth_join_inline      the same checks with one JOIN on a connection kept
                              open, run on the event loop
+- ingest_files_only          batch ingest admits, writes and syncs the files, then
+                             answers "ready" without its commit or catalog step:
+                             how fast the disk takes the photos alone
+- ingest_no_catalog          batch ingest commits but skips the catalog step
 
 real_auth_* time each identity resolution and, when PERF_LAB_AUTH_STATS names
 a file, write p50/p95/p99/p99.9/max there on exit: work kept on the event loop
@@ -54,6 +58,8 @@ VARIANTS = (
     "trivial_auth_and_log_asgi",
     "real_auth_inline",
     "real_auth_join_inline",
+    "ingest_files_only",
+    "ingest_no_catalog",
 )
 _PUBLIC = {"/healthz", "/api/auth/devices/login", "/api/auth/devices/refresh"}
 _identities: dict[tuple[int, str], object] = {}
@@ -231,6 +237,18 @@ def _dispatch_of(middleware: Middleware):
     return middleware.kwargs.get("dispatch") if middleware.cls is BaseHTTPMiddleware else None
 
 
+def _skip_ingest_steps(*, commit: bool) -> None:
+    """Replace batch ingest's later steps with answers, for disk-only measurements."""
+    from core.sync_ingest import SyncIngestPipeline
+
+    def answer_ready(self, user, stored, *args):
+        return {item.upload_id: {"upload_id": item.upload_id, "state": "ready"} for item in stored}
+
+    SyncIngestPipeline._catalog = answer_ready
+    if not commit:
+        SyncIngestPipeline._commit = lambda self, user, device_id, writing: None
+
+
 def apply(variant: str, app=server.app) -> None:
     if variant not in VARIANTS:
         raise SystemExit(f"PERF_LAB_VARIANT must be one of {VARIANTS}, got {variant!r}")
@@ -257,6 +275,8 @@ def apply(variant: str, app=server.app) -> None:
             else m
             for m in stack
         ]
+    if variant in {"ingest_files_only", "ingest_no_catalog"}:
+        _skip_ingest_steps(commit=variant == "ingest_no_catalog")
     if variant == "trivial_auth_and_log_asgi":
         stack = [Middleware(LogASGI) if _dispatch_of(m) is server.log_request else m for m in stack]
     app.user_middleware = stack
