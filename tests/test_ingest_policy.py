@@ -54,3 +54,19 @@ def test_ingest_policy_rejects_a_block_larger_than_the_package_limit():
 def test_ingest_policy_rejects_an_inflight_budget_smaller_than_one_package():
     with pytest.raises(ValueError, match="max_in_flight_bytes"):
         IngestPolicy(max_in_flight_bytes=16 << 20)
+
+
+def test_environment_overrides_are_validated_like_any_value():
+    from core.ingest_policy import IngestPolicy
+
+    policy = IngestPolicy.from_env({
+        "IRIS_INGEST_DURABILITY_WINDOW_S": "0.01", "IRIS_INGEST_FSYNC_CONCURRENCY": "32",
+    })
+    assert (policy.durability_window_s, policy.fsync_concurrency) == (0.01, 32)
+    assert IngestPolicy.from_env({}) == IngestPolicy()
+    for bad in ({"IRIS_INGEST_FSYNC_CONCURRENCY": "lots"}, {"IRIS_INGEST_FSYNC_CONCURRENCY": "999"}):
+        try:
+            IngestPolicy.from_env(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad} was accepted")

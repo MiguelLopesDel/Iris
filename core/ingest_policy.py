@@ -7,7 +7,9 @@ ordering or acceptance semantics.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,3 +58,21 @@ class IngestPolicy:
             raise ValueError("block_bytes cannot exceed max_bytes")
         if self.max_bytes > self.max_in_flight_bytes:
             raise ValueError("max_bytes cannot exceed max_in_flight_bytes")
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> IngestPolicy:
+        """Defaults overridden by ``IRIS_INGEST_<FIELD>`` variables, validated as usual.
+
+        Lets the performance lab sweep the policy without code changes.
+        """
+        environ = os.environ if environ is None else environ
+        overrides: dict[str, int | float] = {}
+        for item in fields(cls):
+            raw = environ.get(f"IRIS_INGEST_{item.name.upper()}")
+            if raw is None or raw == "":
+                continue
+            try:
+                overrides[item.name] = float(raw) if item.name.endswith("_s") else int(raw)
+            except ValueError as exc:
+                raise ValueError(f"IRIS_INGEST_{item.name.upper()} is not a number") from exc
+        return cls(**overrides)
