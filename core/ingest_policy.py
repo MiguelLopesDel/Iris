@@ -1,0 +1,58 @@
+"""Validated resource limits for the media-ingestion pipeline.
+
+The policy contains tuning values only. Ingestion stages remain responsible
+for enforcing the limits they use; the policy does not define durability
+ordering or acceptance semantics.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class IngestPolicy:
+    """Bounded batch and I/O settings shared by ingestion stages."""
+
+    # These limits describe the new data-plane pipeline. The legacy
+    # reservation API keeps its independent 16-item protocol cap.
+    max_items: int = 64
+    max_bytes: int = 32 << 20
+    block_bytes: int = 1 << 20
+    fsync_concurrency: int = 64
+    durability_window_s: float = 0.25
+    db_group_max_items: int = 256
+    db_window_s: float = 0.01
+    packages_in_flight_per_device: int = 4
+    max_in_flight_bytes: int = 128 << 20
+
+    def __post_init__(self) -> None:
+        bounded_ints = (
+            ("max_items", self.max_items, 64),
+            ("max_bytes", self.max_bytes, 32 << 20),
+            ("block_bytes", self.block_bytes, 1 << 20),
+            ("fsync_concurrency", self.fsync_concurrency, 128),
+            ("db_group_max_items", self.db_group_max_items, 512),
+            ("packages_in_flight_per_device", self.packages_in_flight_per_device, 8),
+            ("max_in_flight_bytes", self.max_in_flight_bytes, 256 << 20),
+        )
+        for name, value, maximum in bounded_ints:
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+            if value > maximum:
+                raise ValueError(f"{name} cannot exceed {maximum}")
+
+        for name in ("durability_window_s", "db_window_s"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{name} must be a finite non-negative number")
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be a finite non-negative number")
+
+        if self.durability_window_s > 5 or self.db_window_s > 1:
+            raise ValueError("batch windows exceed their safe maximum")
+
+        if self.block_bytes > self.max_bytes:
+            raise ValueError("block_bytes cannot exceed max_bytes")
+        if self.max_bytes > self.max_in_flight_bytes:
+            raise ValueError("max_bytes cannot exceed max_in_flight_bytes")

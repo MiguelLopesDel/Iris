@@ -120,8 +120,11 @@ def process_uploads(
                     media_root=media_root,
                     processing_lease_token=token,
                     uploads=claimed,
-                    on_finished=lambda upload_id: _notify_finished(on_finished, upload_id),
                 ))
+                # ``ingest_uploads_without_ai`` commits the complete catalog
+                # batch before returning. Invalidate the account backend once
+                # at that boundary, not once for every row in the transaction.
+                _notify_finished(on_finished, claimed_ids[0])
                 claimed = []
             except Exception as exc:
                 _logger.warning(

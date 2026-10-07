@@ -17,11 +17,11 @@ from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
-from core.file_digest import FileDigest
 from core.indexer_db import init_db
+from core.ingest_policy import IngestPolicy
 from core.sync_db import append_change, ensure_tables, now_iso, record_origin
 from core.sync_durability import connect_deferred, make_durable
-from core.sync_file_ops import fsync_directory, matches_original
+from core.sync_file_ops import VerifiedUploadSource, fsync_directory, matches_original
 from core.sync_processor import process_upload, process_uploads
 from core.sync_upload_metadata import UploadMetadataError, parse_upload_metadata
 from core.upload_finalization import (
@@ -33,9 +33,7 @@ from core.upload_processing_workers import UploadProcessingWorkers
 from core.upload_reservations import UploadReservationStore
 from core.users_db import IrisUser
 
-_MAX_CHUNK_BYTES = 32 * 1024 * 1024
 _MAX_UPLOAD_INIT_BATCH = 16
-_UPLOAD_DISK_BUFFER_BYTES = 1024 * 1024
 # A speed test measures a path, not a library: large enough for a stable rate
 # over a home connection, small enough that it cannot fill a disk.
 SPEED_TEST_MAX_BYTES = 256 * 1024 * 1024
@@ -84,6 +82,7 @@ class _Finalization:
     expected_hash: str
     captured_at: str
     temporary: Path
+    verified_source: VerifiedUploadSource | None = None
     destination: Path | None = None
     sequence: int | None = None
     # Settled without a move (a duplicate): the answer, and files to delete
@@ -105,7 +104,9 @@ class SyncUploadService:
         upload_processor: Callable[..., Any] = process_upload,
         processing_workers: UploadProcessingWorkers | None = None,
         batch_processor: Callable[..., Any] | None = None,
+        ingest_policy: IngestPolicy | None = None,
     ) -> None:
+        self._ingest_policy = ingest_policy or IngestPolicy()
         self._upload_processor = upload_processor
         # Catalogs a completion batch at once; a custom single-upload
         # processor without a batch counterpart is called once per upload.
@@ -191,10 +192,13 @@ class SyncUploadService:
                 updated_at=now_iso(),
             )
             if media_id is not None:
-                return _known_duplicate(connection, upload_id, media_id, device_id, metadata.source)
+                return _known_duplicate(
+                    connection, upload_id, media_id, device_id, metadata.source,
+                    chunk_size=self._ingest_policy.max_bytes,
+                )
             root.mkdir(mode=0o700, exist_ok=True)
         make_durable(user.db_path)
-        return {"upload_id": upload_id, "offset": 0, "chunk_size": _MAX_CHUNK_BYTES}
+        return {"upload_id": upload_id, "offset": 0, "chunk_size": self._ingest_policy.max_bytes}
 
     def reserve_upload_batch(
         self,
@@ -280,7 +284,7 @@ class SyncUploadService:
                             "client_upload_id": client_upload_id,
                             "upload_id": existing[0],
                             "offset": existing[4],
-                            "chunk_size": _MAX_CHUNK_BYTES,
+                            "chunk_size": self._ingest_policy.max_bytes,
                             "state": state,
                         })
                     continue
@@ -321,7 +325,10 @@ class SyncUploadService:
                 if media_id is not None:
                     results.append({
                         "client_upload_id": client_upload_id,
-                        **_known_duplicate(connection, upload_id, media_id, device_id, source),
+                        **_known_duplicate(
+                            connection, upload_id, media_id, device_id, source,
+                            chunk_size=self._ingest_policy.max_bytes,
+                        ),
                     })
                     continue
                 remaining -= item["size"]
@@ -329,7 +336,7 @@ class SyncUploadService:
                     "client_upload_id": client_upload_id,
                     "upload_id": upload_id,
                     "offset": 0,
-                    "chunk_size": _MAX_CHUNK_BYTES,
+                    "chunk_size": self._ingest_policy.max_bytes,
                     "state": "uploading",
                 })
             if any("upload_id" in result for result in results):
@@ -359,7 +366,7 @@ class SyncUploadService:
         stream: AsyncIterable[bytes],
         log_phase: Callable[..., None],
     ) -> dict[str, Any]:
-        if content_length > _MAX_CHUNK_BYTES:
+        if content_length > self._ingest_policy.max_bytes:
             raise SyncUploadError(413, "Chunk excede o limite")
         phase_started = time.perf_counter()
         async with self._serialize_upload(user.id, device_id or "", upload_id):
@@ -374,16 +381,16 @@ class SyncUploadService:
                     pending = bytearray()
                     async for chunk in stream:
                         received += len(chunk)
-                        if received > _MAX_CHUNK_BYTES or offset + received > expected_size:
+                        if received > self._ingest_policy.max_bytes or offset + received > expected_size:
                             raise SyncUploadError(413, "Chunk excede o limite")
                         view = memoryview(chunk)
                         cursor = 0
                         while cursor < len(view):
-                            available = _UPLOAD_DISK_BUFFER_BYTES - len(pending)
+                            available = self._ingest_policy.block_bytes - len(pending)
                             end = min(cursor + available, len(view))
                             pending.extend(view[cursor:end])
                             cursor = end
-                            if len(pending) == _UPLOAD_DISK_BUFFER_BYTES:
+                            if len(pending) == self._ingest_policy.block_bytes:
                                 await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
                                 pending.clear()
                     if pending:
@@ -485,7 +492,7 @@ class SyncUploadService:
                 if output is None:
                     continue
                 pending.extend(chunk)
-                if len(pending) >= _UPLOAD_DISK_BUFFER_BYTES:
+                if len(pending) >= self._ingest_policy.block_bytes:
                     await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
                     pending.clear()
             if output is not None:
@@ -735,9 +742,9 @@ class SyncUploadService:
         device_id: str,
         upload_ids: list[str],
         log_phase: Callable[..., None],
-    ) -> dict[str, str]:
-        """The hash of each of the device's fully received uploads."""
-        digests: dict[str, str] = {}
+    ) -> dict[str, VerifiedUploadSource]:
+        """Stable digest snapshots for the device's fully received uploads."""
+        digests: dict[str, VerifiedUploadSource] = {}
         for upload_id in upload_ids:
             row = connection.execute(
                 "SELECT expected_size, expected_hash, received_size, temp_path, state "
@@ -750,10 +757,10 @@ class SyncUploadService:
             if not temporary.is_file():
                 continue
             hash_started = time.perf_counter()
-            digests[upload_id] = FileDigest.sha256(temporary)
+            digests[upload_id] = VerifiedUploadSource.calculate(temporary)
             log_phase(
                 "verify_hash", hash_started, bytes=row[0],
-                state="ok" if digests[upload_id] == row[1] else "mismatch",
+                state="ok" if digests[upload_id].sha256 == row[1] else "mismatch",
             )
         return digests
 
@@ -763,7 +770,7 @@ class SyncUploadService:
         user: IrisUser,
         device_id: str,
         upload_id: str,
-        digest: str | None,
+        verified_source: VerifiedUploadSource | None,
     ) -> dict[str, Any] | _Finalization:
         """Settle one upload in the batch's transaction, or claim it for its move.
 
@@ -789,7 +796,7 @@ class SyncUploadService:
             raise SyncUploadError(409, "Envio incompleto")
         finalization = _Finalization(
             upload_id=upload_id, filename=row[0], size=row[1], expected_hash=row[2],
-            captured_at=row[7], temporary=Path(row[4]),
+            captured_at=row[7], temporary=Path(row[4]), verified_source=verified_source,
         )
         if row[5] == "finalizing":
             if not row[15]:
@@ -804,6 +811,7 @@ class SyncUploadService:
         }
         destination_dir, primary, alternate = _upload_destinations(user, device_id, upload_id, row)
         recovered: Path | None = None
+        digest = verified_source.sha256 if verified_source is not None else None
         if digest is None:
             # After a power loss the database can be behind the files:
             # "fully received" while the original was already moved into
@@ -901,6 +909,7 @@ class SyncUploadService:
                     upload_id=finalization.upload_id,
                     expected_size=finalization.size,
                     expected_hash=finalization.expected_hash,
+                    verified_source=finalization.verified_source,
                     unsynced_directories=unsynced,
                 )
             except UnsafeUploadDestinationError:
@@ -1069,6 +1078,8 @@ def _known_duplicate(
     media_id: int,
     device_id: str,
     source: dict[str, str | int],
+    *,
+    chunk_size: int,
 ) -> dict[str, Any]:
     """Settle a reservation whose content the library already has, before any byte is sent.
 
@@ -1083,7 +1094,7 @@ def _known_duplicate(
     )
     return {
         "upload_id": upload_id, "media_id": media_id, "offset": 0,
-        "chunk_size": _MAX_CHUNK_BYTES, "state": "duplicate", "cursor": sequence,
+        "chunk_size": chunk_size, "state": "duplicate", "cursor": sequence,
     }
 
 

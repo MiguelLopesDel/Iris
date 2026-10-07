@@ -50,10 +50,10 @@ def _upload(service, user, photos: list[bytes], prefix: str = "item") -> list[st
     return ids
 
 
-def _complete(service, user, upload_ids: list[str]) -> list[dict]:
+def _complete(service, user, upload_ids: list[str], *, on_finished=lambda: None) -> list[dict]:
     return asyncio.run(service.complete_upload_batch(
         user, DEVICE, {"uploads": [{"upload_id": value} for value in upload_ids]},
-        sync_ai_processing=False, load_model=False, on_finished=lambda: None,
+        sync_ai_processing=False, load_model=False, on_finished=on_finished,
         log_phase=lambda *a, **k: None,
     ))["uploads"]
 
@@ -85,11 +85,52 @@ def test_a_batch_syncs_each_directory_once_after_moving_and_before_recording(
     monkeypatch.setattr(service_module, "record_upload_finalized", record)
     events.clear()
 
-    assert [entry["state"] for entry in _complete(service, user, ids)] == ["ready"] * 6
+    invalidations: list[tuple[str, ...]] = []
+
+    def invalidate_after_commit():
+        with sqlite3.connect(user.db_path) as connection:
+            states = tuple(row[0] for row in connection.execute(
+                "SELECT state FROM sync_uploads WHERE id IN ({}) ORDER BY id".format(
+                    ",".join("?" for _ in ids)
+                ), ids,
+            ))
+        invalidations.append(states)
+
+    assert [entry["state"] for entry in _complete(
+        service, user, ids, on_finished=invalidate_after_commit,
+    )] == ["ready"] * 6
 
     # Six moves, then the library folder and the upload area synced once
     # each (not twice per photo), and only then the moves recorded.
     assert events == ["move"] * 6 + ["sync"] * 2 + ["record"] * 6
+    assert invalidations == [("ready",) * 6]
+
+
+def test_a_single_successful_item_still_invalidates_once(tmp_path: Path):
+    user, service = _user(tmp_path), SyncUploadService()
+    ids = _upload(service, user, [_photo(20)])
+    invalidations: list[str] = []
+
+    results = _complete(service, user, ids, on_finished=lambda: invalidations.append("done"))
+
+    assert results[0]["state"] == "ready"
+    assert invalidations == ["done"]
+
+
+def test_a_single_failed_item_does_not_invalidate(tmp_path: Path):
+    user, service = _user(tmp_path), SyncUploadService()
+    ids = _upload(service, user, [_photo(21)])
+    with sqlite3.connect(user.db_path) as connection:
+        temporary = Path(connection.execute(
+            "SELECT temp_path FROM sync_uploads WHERE id = ?", (ids[0],)
+        ).fetchone()[0])
+    temporary.write_bytes(b"corrupt")
+    invalidations: list[str] = []
+
+    results = _complete(service, user, ids, on_finished=lambda: invalidations.append("done"))
+
+    assert results[0]["error_code"] == 422
+    assert invalidations == []
 
 
 def test_each_upload_of_a_batch_keeps_its_own_outcome(tmp_path: Path):
@@ -106,13 +147,18 @@ def test_each_upload_of_a_batch_keeps_its_own_outcome(tmp_path: Path):
         "sha256": hashlib.sha256(short).hexdigest(), "captured_at": "2026-09-09T12:00:00Z",
     }]})["uploads"]
 
-    results = _complete(service, user, [ids[0], ids[1], incomplete["upload_id"], "unknown"])
+    invalidations: list[str] = []
+    results = _complete(
+        service, user, [ids[0], ids[1], incomplete["upload_id"], "unknown"],
+        on_finished=lambda: invalidations.append("done"),
+    )
 
     assert results[0]["state"] == "ready"
     assert results[1]["error_code"] == 422
     assert results[2]["error_code"] == 409
     assert results[3]["error_code"] == 404
     assert [path.read_bytes() for path in _cataloged(user)] == [good]
+    assert invalidations == ["done"]
     states = dict(sqlite3.connect(user.db_path).execute("SELECT id, state FROM sync_uploads"))
     assert states[ids[1]] == "failed"
     assert states[incomplete["upload_id"]] == "uploading"

@@ -2,11 +2,44 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
-import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.file_digest import FileDigest
+
+
+@dataclass(frozen=True)
+class VerifiedUploadSource:
+    """Digest and file identity observed together for an upload source."""
+
+    sha256: str
+    size: int
+    device: int
+    inode: int
+    mtime_ns: int
+    ctime_ns: int
+
+    @classmethod
+    def calculate(cls, path: Path) -> VerifiedUploadSource:
+        before = path.stat()
+        digest, size = FileDigest.sha256_with_size(path)
+        after = path.stat()
+        if _file_identity(before) != _file_identity(after) or size != after.st_size:
+            raise ValueError("upload source changed while its hash was calculated")
+        return cls(digest, size, after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns)
+
+    def still_matches(self, path: Path) -> bool:
+        try:
+            current = path.stat()
+        except FileNotFoundError:
+            return False
+        return (
+            current.st_size == self.size
+            and _file_identity(current)
+            == (self.device, self.inode, self.mtime_ns, self.ctime_ns)
+        )
 
 
 def durable_move_upload(
@@ -16,6 +49,7 @@ def durable_move_upload(
     upload_id: str,
     expected_size: int,
     expected_hash: str,
+    verified_source: VerifiedUploadSource | None = None,
     unsynced_directories: set[Path] | None = None,
 ) -> None:
     """Place an upload at its persisted destination and verify crash-safely.
@@ -49,7 +83,14 @@ def durable_move_upload(
     staging.unlink(missing_ok=True)
     if not source.is_file():
         raise FileNotFoundError("upload source and finalized destination are both absent")
-    _verify(source, expected_size, expected_hash)
+    source_was_verified = (
+        verified_source is not None
+        and verified_source.sha256 == expected_hash
+        and verified_source.size == expected_size
+        and verified_source.still_matches(source)
+    )
+    if not source_was_verified:
+        _verify(source, expected_size, expected_hash)
 
     try:
         source.replace(destination)
@@ -63,11 +104,18 @@ def durable_move_upload(
         if exc.errno != errno.EXDEV:
             raise
 
+    copied_digest = hashlib.sha256()
+    copied_size = 0
     with source.open("rb") as input_file, staging.open("wb") as output_file:
-        shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
+        for chunk in iter(lambda: input_file.read(FileDigest.DEFAULT_CHUNK_SIZE), b""):
+            output_file.write(chunk)
+            copied_digest.update(chunk)
+            copied_size += len(chunk)
         output_file.flush()
         os.fsync(output_file.fileno())
-    _verify(staging, expected_size, expected_hash)
+    if copied_size != expected_size or copied_digest.hexdigest() != expected_hash:
+        staging.unlink(missing_ok=True)
+        raise ValueError("uploaded file does not match its declared size/hash")
     os.replace(staging, destination)
     fsync_directory(destination.parent)
     source.unlink(missing_ok=True)
@@ -86,6 +134,10 @@ def _verify(path: Path, expected_size: int, expected_hash: str) -> None:
 
 def _matches(path: Path, expected_size: int, expected_hash: str) -> bool:
     return path.stat().st_size == expected_size and FileDigest.sha256(path) == expected_hash
+
+
+def _file_identity(stat_result: os.stat_result) -> tuple[int, int, int, int]:
+    return (stat_result.st_dev, stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_ctime_ns)
 
 
 def fsync_directory(path: Path) -> None:
