@@ -64,6 +64,7 @@ class _Item:
     descriptor: int | None = None
     digest: Any = None
     received: int = 0
+    written: int = 0
     stored: bool = False
     sequence: int | None = None
     # Set when the batch's commit also cataloged the upload.
@@ -551,14 +552,14 @@ class SyncIngestPipeline:
 
 
 def _open_targets(items: list[_Item]) -> None:
+    # Directories now; each file is opened by its first bytes and closed by
+    # its last, so a batch keeps one or two files open, not all of them (with
+    # several large batches in flight, all of them ran out of descriptors).
     for item in items:
         directory = item.destination.parent
         if not directory.is_dir():
             directory.mkdir(parents=True, exist_ok=True)
             item.new_directory = True
-        item.descriptor = os.open(
-            item.destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
-        )
         item.digest = hashlib.sha256()
 
 
@@ -566,20 +567,29 @@ def _write_segments(segments: list[tuple[_Item, bytes]]) -> None:
     # os.write and sha256.update release the GIL for large buffers, so pieces
     # from concurrent requests are written and hashed on several cores.
     for item, data in segments:
+        if item.descriptor is None:
+            item.descriptor = os.open(
+                item.destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+            )
         view = memoryview(data)
         while view:
             written = os.write(item.descriptor, view)
             view = view[written:]
         item.digest.update(data)
+        item.written += len(data)
+        if item.written == item.size:
+            os.close(item.descriptor)
+            item.descriptor = None
 
 
 def _close_and_verify(items: list[_Item]) -> None:
     from core.sync_upload_service import SyncUploadError
 
     for item in items:
-        os.close(item.descriptor)
-        item.descriptor = None
-        if item.received == item.size and item.digest.hexdigest() == item.expected_hash:
+        if item.descriptor is not None:
+            os.close(item.descriptor)
+            item.descriptor = None
+        if item.written == item.size and item.digest.hexdigest() == item.expected_hash:
             item.stored = True
         else:
             item.error = SyncUploadError(422, "Hash do arquivo não confere")

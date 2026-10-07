@@ -509,3 +509,35 @@ def test_a_reservation_for_ingest_admits_so_the_batch_writes_no_admission(tmp_pa
     assert [entry["state"] for entry in results] == ["ready"] * 3
     # Only the final commit, and it does not wait for the disk.
     assert writes == [("commit", False)]
+
+
+def test_a_batch_keeps_only_the_files_it_is_writing_open(tmp_path: Path, monkeypatch):
+    # Every file of a batch stayed open until the batch was received; several
+    # large batches in flight ran the server out of file descriptors.
+    open_counts = []
+    real = ingest_module._write_segments
+
+    def counting(segments, *args):
+        real(segments, *args)
+        open_counts.append(sum(1 for item in tracked if item.descriptor is not None))
+
+    tracked = []
+    real_open_targets = ingest_module._open_targets
+
+    def remember(items):
+        tracked.extend(items)
+        real_open_targets(items)
+
+    monkeypatch.setattr(ingest_module, "_open_targets", remember)
+    monkeypatch.setattr(ingest_module, "_write_segments", counting)
+    user = _user(tmp_path)
+    service = SyncUploadService(ingest_policy=IngestPolicy(
+        block_bytes=4096, max_bytes=1 << 20, max_in_flight_bytes=1 << 21, durability_window_s=0,
+    ))
+    photos = [_photo(index, 3000) for index in range(30)]
+    ids = _reserve(service, user, photos)
+
+    results = _ingest(service, user, list(zip(ids, map(len, photos), strict=True)), photos)
+
+    assert [entry["state"] for entry in results] == ["ready"] * 30
+    assert open_counts and max(open_counts) <= 1
