@@ -65,6 +65,49 @@ def _schema_present(connection: sqlite3.Connection) -> bool:
     ).fetchone() is not None
 
 
+_thread_connections = threading.local()
+
+
+class _ConnectionSlot:
+    """One thread's kept connection to one database file."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self.connection = connection
+        self.in_use = False
+
+
+class _LentConnection:
+    """A kept connection lent out for one use; ending the use gives it back."""
+
+    def __init__(self, slot: _ConnectionSlot) -> None:
+        self._slot = slot
+        self._connection = slot.connection
+        self._lent = True
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def __enter__(self) -> _LentConnection:
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *exc_info: Any) -> bool:
+        try:
+            return bool(self._connection.__exit__(*exc_info))
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        if not self._lent:
+            return
+        self._lent = False
+        try:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+        finally:
+            self._slot.in_use = False
+
+
 class SyncUploadError(Exception):
     """An upload workflow failure safe to map to an HTTP response."""
 
@@ -117,6 +160,39 @@ class SyncUploadService:
 
     @staticmethod
     def open_connection(user: IrisUser) -> sqlite3.Connection:
+        """This thread's connection to the account database, for one use.
+
+        Opening a SQLite connection is not cheap: its first statement reads
+        and parses the whole schema. Every chunk request opened two, which
+        took about a fifth of the server's CPU during a backup. Each thread
+        now keeps one connection per database file and lends it out; leaving
+        the ``with`` block (or closing it) gives it back, with any transaction
+        left open rolled back. A nested use on the same thread gets a separate
+        connection, as before.
+        """
+        identity = _database_identity(user.db_path)
+        slots: dict = getattr(_thread_connections, "slots", None) or {}
+        _thread_connections.slots = slots
+        slot = slots.get(identity) if identity is not None else None
+        if slot is not None and not slot.in_use:
+            slot.in_use = True
+            return _LentConnection(slot)
+        connection = SyncUploadService._new_connection(user)
+        if slot is not None:
+            return connection  # nested use: a connection of its own
+        identity = _database_identity(user.db_path)
+        if identity is None:
+            return connection
+        # A file replaced at the same path gets a new connection.
+        for key in [key for key in slots if key[0] == identity[0]]:
+            slots.pop(key).connection.close()
+        slot = _ConnectionSlot(connection)
+        slot.in_use = True
+        slots[identity] = slot
+        return _LentConnection(slot)
+
+    @staticmethod
+    def _new_connection(user: IrisUser) -> sqlite3.Connection:
         identity = _database_identity(user.db_path)
         if identity is not None and identity in _prepared_databases:
             connection = connect_deferred(user.db_path)
