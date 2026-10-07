@@ -215,7 +215,7 @@ def _left_receiving(tmp_path: Path, *, complete: bool) -> tuple[IrisUser, str, P
     return user, upload_id, destination, photo
 
 
-def _recover(user: IrisUser) -> None:
+def _recover(user: IrisUser, **options) -> None:
     class Inline:
         def submit(self, user, upload_id, file_path, *, use_ai, on_finished):
             from core.sync_processor import process_upload
@@ -230,7 +230,7 @@ def _recover(user: IrisUser) -> None:
     recover_pending_uploads(
         users_db_path=user.db_path.parent / "users.db", sync_ai_processing=False,
         load_model=False, on_finished=lambda *_: None, stop_event=threading.Event(),
-        processing_workers=Inline(), users=[user],
+        processing_workers=Inline(), users=[user], **options,
     )
 
 
@@ -337,3 +337,28 @@ def test_pieces_of_several_photos_share_a_thread_hop(tmp_path: Path, monkeypatch
     _ingest(service, user, [(upload_id, len(data)) for upload_id, data in zip(ids, photos, strict=True)], photos)
 
     assert hops == [8]  # 8 small photos, well under one block: one hand-over
+
+
+def test_a_periodic_recovery_pass_leaves_a_batch_in_flight_alone(tmp_path: Path, monkeypatch):
+    # Recovery runs periodically. A pass that ran while a batch was between
+    # writing its files and recording them finished those uploads itself,
+    # and the batch then answered 409 for photos it had stored; with a file
+    # still arriving, it would have removed it mid-write.
+    from core.sync_db import now_iso
+
+    user, service = _user(tmp_path), _service()
+    photos = [_photo(index) for index in range(3)]
+    ids = _reserve(service, user, photos)
+    process_started = now_iso()
+    real_verify = ingest_module._close_and_verify
+
+    def verify_then_recover(items):
+        real_verify(items)  # files complete on disk, state still "receiving"
+        _recover(user, interrupted_before=process_started)
+
+    monkeypatch.setattr(ingest_module, "_close_and_verify", verify_then_recover)
+
+    results = _ingest(service, user, [(upload_id, len(data)) for upload_id, data in zip(ids, photos, strict=True)], photos)
+
+    assert [entry["state"] for entry in results] == ["ready"] * 3, results
+    assert sorted(path.read_bytes() for path in _cataloged(user)) == sorted(photos)

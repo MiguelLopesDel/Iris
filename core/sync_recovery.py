@@ -28,8 +28,14 @@ def recover_pending_uploads(
     processing_workers: UploadProcessingWorkers,
     write_registry: SQLiteWriteCoordinatorRegistry | None = None,
     users=None,
+    interrupted_before: str | None = None,
 ) -> None:
     """Resume persisted finalization and catalog work for each account.
+
+    ``interrupted_before`` is when this process started: only a batch upload
+    left ``receiving`` before then can have been interrupted. One received
+    since may still be in flight in this process. Defaults to now, for a
+    single pass at startup.
 
     ``sync_uploads`` is the source of truth. File finalization is idempotent,
     and catalog work is claimed through the same durable lease as live uploads.
@@ -45,7 +51,7 @@ def recover_pending_uploads(
             return
         try:
             # First, so a batch upload found complete joins the work below.
-            _settle_interrupted_batches(user, write_registry)
+            _settle_interrupted_batches(user, write_registry, interrupted_before or now_iso())
         except Exception as exc:
             _logger.warning(
                 "sync_recovery_batches_failed user_id=%s error_type=%s",
@@ -122,7 +128,7 @@ def recover_pending_uploads(
                 )
 
 
-def _settle_interrupted_batches(user, write_registry=None) -> None:
+def _settle_interrupted_batches(user, write_registry=None, before: str = "") -> None:
     """Resolve uploads a batch request left in ``receiving`` when the server stopped.
 
     The batch wrote straight to the final path, so a complete file is checked
@@ -135,7 +141,8 @@ def _settle_interrupted_batches(user, write_registry=None) -> None:
     try:
         rows = conn.execute(
             "SELECT id, expected_size, expected_hash, final_path FROM sync_uploads "
-            "WHERE state = 'receiving'"
+            "WHERE state = 'receiving' AND updated_at < ?",
+            (before,),
         ).fetchall()
     except sqlite3.Error:
         rows = []
@@ -156,13 +163,13 @@ def _settle_interrupted_batches(user, write_registry=None) -> None:
     def settle(connection: sqlite3.Connection) -> None:
         connection.executemany(
             "UPDATE sync_uploads SET state = 'finalizing', received_size = expected_size, "
-            "updated_at = ? WHERE id = ? AND state = 'receiving'",
-            [(now_iso(), upload_id) for upload_id in complete],
+            "updated_at = ? WHERE id = ? AND state = 'receiving' AND updated_at < ?",
+            [(now_iso(), upload_id, before) for upload_id in complete],
         )
         connection.executemany(
             "UPDATE sync_uploads SET state = 'uploading', final_path = '', received_size = 0, "
-            "updated_at = ? WHERE id = ? AND state = 'receiving'",
-            [(now_iso(), upload_id) for upload_id in partial],
+            "updated_at = ? WHERE id = ? AND state = 'receiving' AND updated_at < ?",
+            [(now_iso(), upload_id, before) for upload_id in partial],
         )
 
     if write_registry is not None:
@@ -344,8 +351,12 @@ def _run_pending_upload_recovery(
     except Exception as exc:
         _logger.error("sync_recovery_users_failed error_type=%s", type(exc).__name__)
         users = None
+    # Batch uploads still in flight are newer than this; only older ones can
+    # have been interrupted by a stop.
+    started = now_iso()
     while not stop_event.is_set():
         recover_pending_uploads(
+            interrupted_before=started,
             users_db_path=users_db_path,
             sync_ai_processing=sync_ai_processing,
             load_model=load_model,
