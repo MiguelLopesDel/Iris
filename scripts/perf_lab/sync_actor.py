@@ -51,6 +51,8 @@ def _jpeg_header() -> bytes:
 
 
 _HEADER = _jpeg_header()
+# Random bytes generated once; each item reads its own slice of them.
+_POOL = memoryview(random.Random(20261007).randbytes(64 * 1024 * 1024))
 
 
 @dataclass
@@ -70,18 +72,26 @@ class Item:
     error: str = ""
 
     def blocks(self, start: int = 0, end: int | None = None):
-        """The item's bytes in [start, end), generated deterministically."""
+        """The item's bytes in [start, end), deterministic and unique per item.
+
+        A JPEG header, then 8 bytes of the item's seed (so no two items share
+        a hash), then a slice of one random pool chosen by the seed. Slicing
+        a pool built once keeps the client cheap: generating fresh random
+        bytes for every file took over a quarter of each batch's time, and
+        the lab runs the client on the server's machine.
+        """
         end = self.size if end is None else end
+        prefix = _HEADER + self.seed.to_bytes(8, "big")
         position = start
         while position < end:
-            if position < len(_HEADER):
-                piece = _HEADER[position : min(end, len(_HEADER))]
+            if position < len(prefix):
+                piece = prefix[position : min(end, len(prefix))]
             else:
-                block = (position - len(_HEADER)) // _GEN_BLOCK
-                offset = (position - len(_HEADER)) % _GEN_BLOCK
-                data = random.Random(self.seed * 1_000_003 + block).randbytes(_GEN_BLOCK)
-                piece = data[offset : offset + (end - position)]
-            yield piece
+                # Wraps around the pool, so items of any size are covered.
+                body_start = (self.seed + position - len(prefix)) % len(_POOL)
+                length = min(end - position, _GEN_BLOCK, len(_POOL) - body_start)
+                piece = _POOL[body_start : body_start + length]
+            yield bytes(piece)
             position += len(piece)
 
     def compute_hash(self) -> None:
