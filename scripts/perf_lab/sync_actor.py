@@ -213,6 +213,8 @@ async def run_device(
             f"{base_url}/api/sync/uploads/batch",
             headers=headers,
             json={
+                # Full batches go through ingest: the reservation also admits them.
+                "ingest": bool(actor.batch_items),
                 "uploads": [
                     {
                         "client_upload_id": f"{device}-{item.index}",
