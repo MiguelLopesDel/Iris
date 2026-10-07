@@ -24,6 +24,12 @@ def main() -> int:
     run_parser.add_argument(
         "--output", type=Path, help="where to write the report (default: ROOT/report)"
     )
+    run_parser.add_argument(
+        "--variant",
+        default="",
+        help="run a middleware variant of the app instead of the real stack "
+        "(see scripts/perf_lab/variants.py): no_gzip, trivial_auth_http, trivial_auth_asgi, ...",
+    )
     check_parser = commands.add_parser("check", help="validate a scenario file")
     check_parser.add_argument("scenario", type=Path)
     args = parser.parse_args()
@@ -35,7 +41,9 @@ def main() -> int:
         return 0
     from scripts.perf_lab.runner import run
 
-    result = run(scenario, args.root.resolve(), (args.output or args.root / "report").resolve())
+    result = run(
+        scenario, args.root.resolve(), (args.output or args.root / "report").resolve(), args.variant
+    )
     for name, actor in result["actors"].items():
         s = actor["summary"]
         print(
