@@ -500,13 +500,13 @@ def _ingest_like_the_app(server: Server, photos: list[bytes], *, power_loss: boo
     raise AssertionError("the batch was never confirmed")
 
 
+# Without AI the batch's commit also catalogs it: "ingest_committed" is after
+# the catalog, and there is no separate catalog step to stop at.
 INGEST_STAGES = [
     "ingest_admitted",
     "ingest_mid_write",
     "ingest_durable",
     "ingest_committed",
-    "before_catalog",
-    "after_catalog",
 ]
 
 

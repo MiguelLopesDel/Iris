@@ -382,3 +382,91 @@ def test_the_server_tells_clients_how_large_a_batch_may_be(tmp_path: Path):
     assert [entry["state"] for entry in results] == ["ready"] * 40
     with pytest.raises(SyncUploadError):
         _reserve(service, user, [_photo(index) for index in range(41)], "over")
+
+
+def test_the_batch_ownership_check_agrees_with_the_single_one(tmp_path: Path):
+    import core.sync_upload_service as service_module
+    from core.sync_ingest import _paths_in_use
+
+    user, service = _user(tmp_path), _service()
+    library = user.media_root / "uploads" / "x"
+    library.mkdir(parents=True)
+    by_catalog, by_relative, by_other, by_self, free = (
+        library / name for name in ("a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg")
+    )
+    with service.open_connection(user) as connection:
+        connection.execute("INSERT INTO memes (arquivo, caminho, content_hash) VALUES ('a', ?, 'h1')", (str(by_catalog),))
+        connection.execute(
+            "INSERT INTO memes (arquivo, caminho, storage_path, content_hash) VALUES ('b', '/elsewhere/b.jpg', ?, 'h2')",
+            (by_relative.relative_to(user.media_root).as_posix(),),
+        )
+    ids = _reserve(service, user, [_photo(1), _photo(2)])
+    with service.open_connection(user) as connection:
+        connection.execute("UPDATE sync_uploads SET final_path = ? WHERE id = ?", (str(by_other), ids[0]))
+        connection.execute("UPDATE sync_uploads SET final_path = ? WHERE id = ?", (str(by_self), ids[1]))
+    claims = [(ids[1], path) for path in (by_catalog, by_relative, by_other, by_self, free)]
+
+    with service.open_connection(user) as connection:
+        batch = _paths_in_use(connection, claims, user.media_root)
+        single = {
+            str(path) for upload_id, path in claims
+            if service_module._referenced_elsewhere(connection, path, upload_id, user.media_root)
+        }
+
+    assert batch == single == {str(by_catalog), str(by_relative), str(by_other)}
+
+
+def test_the_batch_commit_also_catalogs_it(tmp_path: Path, monkeypatch):
+    # The batch owns its uploads: no separate claim, catalog and release
+    # transactions, three FULL commits fewer per batch.
+    from core.upload_processing_store import UploadProcessingStore
+
+    claims = []
+    monkeypatch.setattr(
+        UploadProcessingStore, "claim_many", lambda *a, **k: claims.append(1) or {}
+    )
+    user, service = _user(tmp_path), _service()
+    photos = [_photo(index) for index in range(4)]
+    ids = _reserve(service, user, photos)
+    phases = []
+
+    manifest = ",".join(f"{upload_id}:{len(data)}" for upload_id, data in zip(ids, photos, strict=True))
+    results = asyncio.run(service.ingest_pipeline.ingest(
+        user, DEVICE, manifest, sum(map(len, photos)), _body(photos, 1000),
+        sync_ai_processing=False, load_model=False, on_finished=lambda: None,
+        log_phase=lambda name, *a, **k: phases.append(name),
+    ))["uploads"]
+
+    assert [entry["state"] for entry in results] == ["ready"] * 4
+    assert claims == []
+    assert set(_states(user).values()) == {"ready"}
+    with sqlite3.connect(user.db_path) as conn:
+        leases = conn.execute(
+            "SELECT COUNT(*) FROM sync_uploads WHERE processing_lease_token IS NOT NULL"
+        ).fetchone()[0]
+    assert leases == 0
+    assert {"ingest_receive_wait", "ingest_receive_write"} <= set(phases)
+
+
+def test_a_photo_whose_catalog_fails_does_not_hold_back_the_batch(tmp_path: Path, monkeypatch):
+    import core.media_ingest as media_ingest
+
+    user, service = _user(tmp_path), _service()
+    photos = [_photo(index) for index in range(3)]
+    ids = _reserve(service, user, photos)
+    real = media_ingest._ingest_one
+
+    def failing_for_one(connection, catalog, media_root, token, prepared):
+        if prepared.upload_id == ids[1]:
+            raise OSError("unreadable")
+        return real(connection, catalog, media_root, token, prepared)
+
+    monkeypatch.setattr(media_ingest, "_ingest_one", failing_for_one)
+
+    results = _ingest(service, user, [(upload_id, len(data)) for upload_id, data in zip(ids, photos, strict=True)], photos)
+
+    assert results[0]["state"] == "ready" and results[2]["state"] == "ready"
+    # Left to the usual processing path, which records the failure and retries.
+    assert results[1]["state"] == "pending_processing", results[1]
+    assert _states(user)[ids[1]] == "pending_processing"
+    assert len(_cataloged(user)) == 2
