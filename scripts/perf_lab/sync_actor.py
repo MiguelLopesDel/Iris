@@ -320,13 +320,15 @@ async def run_device(
 async def _run_full_batches(client, base_url, headers, items, actor, reserve, clock_start, deadline):
     """Reserve and ingest whole batches, sized as the server suggests or as set.
 
-    Each batch is one reservation and one ingest request for all its photos;
-    ``batches_in_flight`` of them run at once. With ``batch: auto`` the size
-    follows the limits the server returns with every ingest answer.
+    Each batch is one reservation and one ingest request for all its photos.
+    One task reserves the next batches while ``batches_in_flight`` lanes send
+    the reserved ones, so a lane never waits for a reservation: the queue
+    between them holds at most one reserved batch per lane.
     """
     clock = time.monotonic
     limits = (await client.get(f"{base_url}/api/sync/ingest/limits", headers=headers)).json()
     pending = list(items)
+    ready: asyncio.Queue = asyncio.Queue(maxsize=actor.batches_in_flight)
 
     def next_batch() -> list[Item]:
         wanted = limits["suggested_items"] if actor.batch_items < 0 else actor.batch_items
@@ -339,8 +341,14 @@ async def _run_full_batches(client, base_url, headers, items, actor, reserve, cl
             batch.append(pending.pop(0))  # larger than a batch: refused on its own
         return batch
 
-    async def lane() -> None:
-        nonlocal limits
+    def fail(batch: list[Item], exc: BaseException) -> None:
+        now = clock() - clock_start
+        for item in batch:
+            if not item.finished:
+                item.finished = now
+                item.state, item.error = "error", f"{type(exc).__name__}: {exc}"[:200]
+
+    async def reserver() -> None:
         while pending and clock() < deadline:
             batch = next_batch()
             started = clock() - clock_start
@@ -348,18 +356,30 @@ async def _run_full_batches(client, base_url, headers, items, actor, reserve, cl
                 item.started = started
             try:
                 reserved = await reserve(batch)
-                now = clock() - clock_start
-                sending = []
-                for item, answer in zip(batch, reserved, strict=True):
-                    item.reserved = now
-                    if answer.get("state") != "uploading":
-                        item.state = answer.get("state") or f"error {answer.get('error_code')}"
-                        item.sent = item.finished = now
-                        continue
-                    item.upload_id = answer["upload_id"]
-                    sending.append(item)
-                if not sending:
+            except Exception as exc:
+                fail(batch, exc)
+                continue
+            now = clock() - clock_start
+            sending = []
+            for item, answer in zip(batch, reserved, strict=True):
+                item.reserved = now
+                if answer.get("state") != "uploading":
+                    item.state = answer.get("state") or f"error {answer.get('error_code')}"
+                    item.sent = item.finished = now
                     continue
+                item.upload_id = answer["upload_id"]
+                sending.append(item)
+            if sending:
+                await ready.put(sending)
+        for _ in range(actor.batches_in_flight):
+            await ready.put(None)
+
+    async def lane() -> None:
+        nonlocal limits
+        while (sending := await ready.get()) is not None:
+            if clock() >= deadline:
+                continue  # drain without sending; the run is over
+            try:
                 response = await client.post(
                     f"{base_url}/api/sync/ingest",
                     headers={
@@ -378,13 +398,9 @@ async def _run_full_batches(client, base_url, headers, items, actor, reserve, cl
                     if "error_code" in outcome:
                         item.error = f"{outcome['error_code']}: {outcome.get('error_message', '')}"[:200]
             except Exception as exc:
-                now = clock() - clock_start
-                for item in batch:
-                    if not item.finished:
-                        item.finished = now
-                        item.state, item.error = "error", f"{type(exc).__name__}: {exc}"[:200]
+                fail(sending, exc)
 
-    await asyncio.gather(*(lane() for _ in range(actor.batches_in_flight)))
+    await asyncio.gather(reserver(), *(lane() for _ in range(actor.batches_in_flight)))
 
 
 def make_items(actor: SyncingActor, rng: random.Random, start_index: int) -> list[Item]:
