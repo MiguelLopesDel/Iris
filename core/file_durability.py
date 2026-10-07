@@ -118,25 +118,34 @@ class FileDurabilityService:
                 return
 
     def _sync_group(self, group: list[_Request]) -> None:
-        try:
-            futures = [
-                self._pool.submit(_fsync_file, path)
-                for request in group
-                for path in request.files
-            ]
-            wait(futures)
-            for future in futures:
-                future.result()
-            for directory in sorted({d for request in group for d in request.directories}):
+        # Files of several requests share a group; each request fails only on
+        # its own files and directories (another request's file may already
+        # be gone, removed with its abandoned batch).
+        failures: dict[Path, BaseException] = {}
+        futures = {
+            path: self._pool.submit(_fsync_file, path)
+            for path in {path for request in group for path in request.files}
+        }
+        wait(futures.values())
+        for path, future in futures.items():
+            if future.exception() is not None:
+                failures[path] = future.exception()
+        for directory in sorted({d for request in group for d in request.directories}):
+            try:
                 fsync_directory(directory)
-        except BaseException as exc:
-            for request in group:
-                if not request.future.done():
-                    request.future.set_exception(exc)
-            return
+            except BaseException as exc:
+                failures[directory] = exc
         for request in group:
-            if not request.future.done():
+            if request.future.done():
+                continue
+            error = next(
+                (failures[path] for path in (*request.files, *request.directories) if path in failures),
+                None,
+            )
+            if error is None:
                 request.future.set_result(None)
+            else:
+                request.future.set_exception(error)
 
 
 def _fsync_file(path: Path) -> None:

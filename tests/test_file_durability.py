@@ -96,3 +96,40 @@ def test_nothing_to_sync_completes_at_once():
         assert service.flush([], []).result(timeout=1) is None
     finally:
         service.stop()
+
+
+def test_a_missing_file_fails_only_the_request_that_owns_it(tmp_path: Path, monkeypatch):
+    # Files of several requests share a group; one request's file can be gone
+    # (its batch was abandoned) without failing the others.
+    hold, syncing = threading.Event(), threading.Event()
+    grouped: list[list[str]] = []
+    real_fsync_file, real_sync_group = durability_module._fsync_file, FileDurabilityService._sync_group
+
+    def gate_waits(path):
+        if path.name == "gate0.bin":
+            syncing.set()
+            hold.wait(timeout=5)
+        real_fsync_file(path)
+
+    def record_group(self, group):
+        grouped.append(sorted(p.name for request in group for p in request.files))
+        real_sync_group(self, group)
+
+    monkeypatch.setattr(durability_module, "_fsync_file", gate_waits)
+    monkeypatch.setattr(FileDurabilityService, "_sync_group", record_group)
+    service = FileDurabilityService(IngestPolicy(durability_window_s=0))
+    try:
+        gate = service.flush(_files(tmp_path, 1, "gate"))
+        assert syncing.wait(timeout=5)
+        # Both queued while the first group syncs: they form the next group.
+        good = service.flush(_files(tmp_path, 2, "good"))
+        gone = service.flush([tmp_path / "removed.bin"])
+        hold.set()
+        gate.result(timeout=5)
+        good.result(timeout=5)
+        with pytest.raises(FileNotFoundError):
+            gone.result(timeout=5)
+    finally:
+        hold.set()
+        service.stop()
+    assert grouped[1] == ["good0.bin", "good1.bin", "removed.bin"]

@@ -92,7 +92,7 @@ def test_a_batch_is_stored_and_cataloged_in_one_request(tmp_path: Path):
     assert not staging.exists() or not any(staging.iterdir())
 
 
-def test_one_file_barrier_and_one_admission_per_batch(tmp_path: Path, monkeypatch):
+def test_each_file_is_synced_as_it_arrives_and_one_admission_per_batch(tmp_path: Path, monkeypatch):
     flushes, writes = [], []
     real_flush = FileDurabilityService.flush
 
@@ -112,7 +112,8 @@ def test_one_file_barrier_and_one_admission_per_batch(tmp_path: Path, monkeypatc
 
     _ingest(service, user, [(upload_id, len(data)) for upload_id, data in zip(ids, photos, strict=True)], photos)
 
-    assert flushes == [6]
+    # Each file as soon as it is written, then the directories once.
+    assert flushes == [1] * 6 + [0]
     # Admission and commit; cataloging adds its own few batch writes.
     names = [getattr(callback, "__name__", "") for callback in writes]
     assert names[:2] == ["admit", "commit"]
@@ -329,7 +330,7 @@ print("ok")
 def test_pieces_of_several_photos_share_a_thread_hop(tmp_path: Path, monkeypatch):
     hops = []
     real = ingest_module._write_segments
-    monkeypatch.setattr(ingest_module, "_write_segments", lambda segments: hops.append(len(segments)) or real(segments))
+    monkeypatch.setattr(ingest_module, "_write_segments", lambda segments, *args: hops.append(len(segments)) or real(segments, *args))
     user, service = _user(tmp_path), _service()
     photos = [_photo(index) for index in range(8)]
     ids = _reserve(service, user, photos)
