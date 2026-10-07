@@ -63,10 +63,6 @@ class _Item:
     descriptor: int | None = None
     digest: Any = None
     received: int = 0
-    written: int = 0
-    # The file's own fsync, started as soon as its last byte is written, so
-    # the disk stores one photo while the next is still arriving.
-    synced: Any = None
     stored: bool = False
     sequence: int | None = None
 
@@ -142,7 +138,7 @@ class SyncIngestPipeline:
             writing = [item for item in items if item.destination is not None]
             try:
                 await run_in_threadpool(_open_targets, writing)
-                await self._receive(items, stream, self._durability)
+                await self._receive(items, stream)
                 await run_in_threadpool(_close_and_verify, writing)
             except BaseException:
                 await run_in_threadpool(self._abandon, user, device_id, writing)
@@ -152,13 +148,10 @@ class SyncIngestPipeline:
             )
             stored = [item for item in writing if item.stored]
             try:
-                # Most files are already on disk by now; wait for the rest,
-                # then the directories that name them.
-                for item in stored:
-                    await asyncio.wrap_future(item.synced)
-                await asyncio.wrap_future(
-                    self._durability.flush([], _directories_to_sync(stored))
-                )
+                await asyncio.wrap_future(self._durability.flush(
+                    [item.destination for item in stored],
+                    _directories_to_sync(stored),
+                ))
             except FileDurabilityBusy as exc:
                 await run_in_threadpool(self._abandon, user, device_id, writing)
                 raise SyncUploadError(503, "Servidor ocupado; tente novamente em instantes") from exc
@@ -267,9 +260,7 @@ class SyncIngestPipeline:
 
         self._service._submit_write(user, admit)
 
-    async def _receive(
-        self, items: list[_Item], stream: AsyncIterable[bytes], durability: FileDurabilityService,
-    ) -> None:
+    async def _receive(self, items: list[_Item], stream: AsyncIterable[bytes]) -> None:
         """Split the body across the items, writing and hashing in large pieces.
 
         Pieces of several small items are handed to the thread pool together,
@@ -287,7 +278,7 @@ class SyncIngestPipeline:
             if pending:
                 segments = [(item, bytes(data)) for item, data in pending]
                 pending, pending_bytes = [], 0
-                await run_in_threadpool(_write_segments, segments, durability)
+                await run_in_threadpool(_write_segments, segments)
 
         async for chunk in stream:
             view = memoryview(chunk)
@@ -407,9 +398,7 @@ def _open_targets(items: list[_Item]) -> None:
         item.digest = hashlib.sha256()
 
 
-def _write_segments(
-    segments: list[tuple[_Item, bytes]], durability: FileDurabilityService,
-) -> None:
+def _write_segments(segments: list[tuple[_Item, bytes]]) -> None:
     # os.write and sha256.update release the GIL for large buffers, so pieces
     # from concurrent requests are written and hashed on several cores.
     for item, data in segments:
@@ -418,9 +407,6 @@ def _write_segments(
             written = os.write(item.descriptor, view)
             view = view[written:]
         item.digest.update(data)
-        item.written += len(data)
-        if item.written == item.size:
-            item.synced = durability.flush([item.destination])
 
 
 def _close_and_verify(items: list[_Item]) -> None:

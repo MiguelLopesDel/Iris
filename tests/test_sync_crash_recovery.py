@@ -142,8 +142,8 @@ class Server:
             self._maybe_crash("ingest_admitted")  # paths claimed, nothing written
             real_open(items)
 
-        def write_segments(segments, *args):
-            real_write(segments, *args)
+        def write_segments(segments):
+            real_write(segments)
             self._maybe_crash("ingest_mid_write")  # some bytes on disk, unsynced
 
         def commit(pipeline, *args, **kwargs):
