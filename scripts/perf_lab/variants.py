@@ -246,7 +246,7 @@ def _skip_ingest_steps(*, commit: bool) -> None:
 
     SyncIngestPipeline._catalog = answer_ready
     if not commit:
-        SyncIngestPipeline._commit = lambda self, user, device_id, writing: None
+        SyncIngestPipeline._commit = lambda self, *args, **kwargs: None
 
 
 def apply(variant: str, app=server.app) -> None:
