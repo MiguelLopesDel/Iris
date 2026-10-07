@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import core.sync_file_ops as file_ops
@@ -131,6 +133,65 @@ def test_two_uploads_of_one_photo_in_a_batch_never_share_a_file(tmp_path: Path):
     assert stored.read_bytes() == photo
     copies = [path for path in user.media_root.rglob("*") if path.is_file()]
     assert copies == [stored], "the duplicate's copy is removed, the original kept"
+
+
+def test_concurrent_completions_of_separate_requests_never_share_a_file(
+    tmp_path: Path, monkeypatch,
+):
+    user = _user(tmp_path)
+    first_service, second_service = SyncUploadService(), SyncUploadService()
+    photo = _photo(12)
+    first = _upload(first_service, user, [photo], "first-request")
+    second = _upload(second_service, user, [photo], "second-request")
+
+    # Make both requests finish hashing before either enters destination
+    # selection. Their primary destination is identical; BEGIN IMMEDIATE
+    # must serialize the check-and-claim section across independent services.
+    hashes_ready = threading.Barrier(2)
+    real_received_digests = SyncUploadService._received_digests
+
+    def synchronize_after_hash(connection, device_id, upload_ids, log_phase):
+        digests = real_received_digests(connection, device_id, upload_ids, log_phase)
+        hashes_ready.wait(timeout=5)
+        return digests
+
+    monkeypatch.setattr(
+        SyncUploadService, "_received_digests", staticmethod(synchronize_after_hash)
+    )
+    same_destination_checked = threading.Barrier(2)
+    real_referenced_elsewhere = service_module._referenced_elsewhere
+    digest_prefix = hashlib.sha256(photo).hexdigest()[:12]
+
+    def synchronize_destination_check(connection, path, upload_id, media_root):
+        result = real_referenced_elsewhere(connection, path, upload_id, media_root)
+        if path.name.startswith(digest_prefix):
+            # On the fixed implementation the second request is blocked at
+            # BEGIN IMMEDIATE, so this wait times out for the first request.
+            # Without that lock both requests arrive here with the same
+            # unclaimed destination and race to reserve it.
+            try:
+                same_destination_checked.wait(timeout=0.25)
+            except threading.BrokenBarrierError:
+                pass
+        return result
+
+    monkeypatch.setattr(
+        service_module, "_referenced_elsewhere", synchronize_destination_check
+    )
+
+    def complete(service, upload_ids):
+        return _complete(service, user, upload_ids)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(complete, first_service, first)
+        second_future = executor.submit(complete, second_service, second)
+        results = first_future.result() + second_future.result()
+
+    assert sorted(entry["state"] for entry in results) == ["duplicate", "ready"]
+    [stored] = _cataloged(user)
+    assert stored.read_bytes() == photo
+    copies = [path for path in user.media_root.rglob("*") if path.is_file()]
+    assert copies == [stored], "duplicate cleanup must not remove the ready upload"
 
 
 def test_a_photo_the_library_already_has_is_settled_in_the_batch(tmp_path: Path):

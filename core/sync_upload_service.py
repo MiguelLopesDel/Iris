@@ -631,6 +631,11 @@ class SyncUploadService:
             # while files are read.
             digests = self._received_digests(connection, device_id, upload_ids, log_phase)
             try:
+                # Destination selection reads both the catalog and other
+                # uploads' final_path claims. Take SQLite's writer lock first
+                # so concurrent completion requests cannot make that decision
+                # from the same stale snapshot.
+                connection.execute("BEGIN IMMEDIATE")
                 for upload_id in upload_ids:
                     try:
                         claim = self._claim_finalization(
