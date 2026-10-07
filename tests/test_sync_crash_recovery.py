@@ -26,7 +26,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import core.sync_ingest as ingest_module
 import core.sync_upload_service as service_module
+from core.ingest_policy import IngestPolicy
 from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_processor import process_upload, process_uploads
 from core.sync_recovery import recover_pending_uploads
@@ -133,6 +135,25 @@ class Server:
             self._maybe_crash("after_chunk_written")
 
         monkeypatch.setattr(service_module, "_flush_upload_buffer", flush)
+        real_open, real_write = ingest_module._open_targets, ingest_module._write_segments
+        real_commit = ingest_module.SyncIngestPipeline._commit
+
+        def open_targets(items):
+            self._maybe_crash("ingest_admitted")  # paths claimed, nothing written
+            real_open(items)
+
+        def write_segments(segments):
+            real_write(segments)
+            self._maybe_crash("ingest_mid_write")  # some bytes on disk, unsynced
+
+        def commit(pipeline, *args, **kwargs):
+            self._maybe_crash("ingest_durable")  # files synced, state not recorded
+            real_commit(pipeline, *args, **kwargs)
+            self._maybe_crash("ingest_committed")  # recorded, catalog not written
+
+        monkeypatch.setattr(ingest_module, "_open_targets", open_targets)
+        monkeypatch.setattr(ingest_module, "_write_segments", write_segments)
+        monkeypatch.setattr(ingest_module.SyncIngestPipeline, "_commit", commit)
         self.restart()
 
     def _processor(self, **kwargs):
@@ -183,6 +204,7 @@ class Server:
         self.service = SyncUploadService(
             upload_processor=self._processor, batch_processor=self._batch_processor,
             write_registry=self.write_registry,
+            ingest_policy=IngestPolicy(durability_window_s=0),
         )
         if self.user.db_path.exists():
             # What the server does when it starts: resume persisted work.
@@ -216,6 +238,18 @@ class Server:
 
     def status(self, upload_id: str) -> dict:
         return self.service.upload_status(self.user, DEVICE, upload_id)
+
+    def ingest(self, entries: list[tuple[str, bytes]]) -> list[dict]:
+        async def body():
+            for _, data in entries:
+                yield data
+
+        manifest = ",".join(f"{upload_id}:{len(data)}" for upload_id, data in entries)
+        return asyncio.run(self.service.ingest_pipeline.ingest(
+            self.user, DEVICE, manifest, sum(len(data) for _, data in entries), body(),
+            sync_ai_processing=False, load_model=False,
+            on_finished=lambda: None, log_phase=lambda *a, **k: None,
+        ))["uploads"]
 
     def complete(self, upload_id: str) -> dict:
         return self.complete_many([upload_id])[0]
@@ -435,3 +469,66 @@ def test_a_batch_interrupted_midway_stores_every_photo_exactly_once(
     assert stored == sorted(cataloged), "no orphan copy may be left in the library"
     leftovers = [path for path in (user.db_path.parent / "sync_uploads").rglob("*") if path.is_file()]
     assert leftovers == []
+
+
+def _ingest_like_the_app(server: Server, photos: list[bytes], *, power_loss: bool) -> list[str]:
+    """Reserve, then send whatever is not confirmed in one batch, until all are."""
+    clients = [f"client-{index}" for index in range(len(photos))]
+    ids: dict[str, str] = {}
+    for _ in range(8):
+        crashed = False
+        try:
+            for client, data in zip(clients, photos, strict=True):
+                if client not in ids:
+                    reserved = server.reserve(hashlib.sha256(data).hexdigest(), len(data), client)
+                    ids[client] = reserved["upload_id"]
+            states = {client: server.status(ids[client]) for client in clients}
+            pending = [
+                (ids[client], data) for client, data in zip(clients, photos, strict=True)
+                if states[client]["state"] not in {"ready", "duplicate"}
+            ]
+            if not pending:
+                return [states[client]["state"] for client in clients]
+            server.ingest(pending)
+        except Crash:
+            crashed = True
+        except SyncUploadError as exc:
+            if exc.status_code == 404:
+                ids.clear()  # the server lost the reservations; reserve again
+        if crashed:
+            server.restart(power_loss=power_loss)
+    raise AssertionError("the batch was never confirmed")
+
+
+INGEST_STAGES = [
+    "ingest_admitted",
+    "ingest_mid_write",
+    "ingest_durable",
+    "ingest_committed",
+    "before_catalog",
+    "after_catalog",
+]
+
+
+@pytest.mark.parametrize("power_loss", [False, True], ids=["process-crash", "power-loss"])
+@pytest.mark.parametrize("stage", INGEST_STAGES)
+def test_a_batch_ingest_interrupted_anywhere_stores_every_photo_once(
+    tmp_path: Path, monkeypatch, stage, power_loss,
+):
+    user = _user(tmp_path)
+    server = Server(user, monkeypatch)
+    photos = [_photo(shade) for shade in (15, 95, 175)]
+    server.crash_at = stage
+
+    states = _ingest_like_the_app(server, photos, power_loss=power_loss)
+
+    assert states == ["ready"] * 3, states
+    assert server.crash_at is None, f"the batch never reached {stage}"
+    conn = sqlite3.connect(user.db_path)
+    cataloged = [Path(row[0]) for row in conn.execute("SELECT caminho FROM memes")]
+    upload_states = [row[0] for row in conn.execute("SELECT state FROM sync_uploads")]
+    conn.close()
+    assert sorted(path.read_bytes() for path in cataloged) == sorted(photos)
+    assert set(upload_states) == {"ready"}, upload_states
+    stored = sorted(path for path in user.media_root.rglob("*") if path.is_file())
+    assert stored == sorted(cataloged), "no partial or orphan copy may be left in the library"

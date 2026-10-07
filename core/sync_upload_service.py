@@ -112,6 +112,7 @@ class SyncUploadService:
         batch_processor: Callable[..., Any] | None = None,
         ingest_policy: IngestPolicy | None = None,
         write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+        durability: Any = None,
     ) -> None:
         self._ingest_policy = ingest_policy or IngestPolicy()
         self._upload_processor = upload_processor
@@ -125,6 +126,24 @@ class SyncUploadService:
         # Standalone service instances (tests/tools) own an isolated registry.
         self._write_registry = write_registry or SQLiteWriteCoordinatorRegistry()
         self._operation_locks: dict[tuple[int, str, str], tuple[asyncio.Lock, int]] = {}
+        self._durability = durability
+        self._ingest_pipeline = None
+
+    @property
+    def ingest_policy(self) -> IngestPolicy:
+        return self._ingest_policy
+
+    @property
+    def ingest_pipeline(self):
+        """The batch ingestion path, created on first use."""
+        if self._ingest_pipeline is None:
+            from core.file_durability import FileDurabilityService
+            from core.sync_ingest import SyncIngestPipeline
+
+            if self._durability is None:
+                self._durability = FileDurabilityService(self._ingest_policy)
+            self._ingest_pipeline = SyncIngestPipeline(self, self._durability)
+        return self._ingest_pipeline
 
     def _submit_write[T](
         self,
@@ -324,7 +343,10 @@ class SyncUploadService:
                             }
                         )
                     else:
-                        state = "uploading" if existing[5] == "finalizing" else existing[5]
+                        # A batch interrupted mid-transfer is sent again whole.
+                        state = (
+                            "uploading" if existing[5] in {"finalizing", "receiving"} else existing[5]
+                        )
                         results.append(
                             {
                                 "client_upload_id": client_upload_id,
@@ -413,6 +435,9 @@ class SyncUploadService:
             ).fetchone()
         if row is None:
             raise SyncUploadError(404, "Envio não encontrado")
+        if row[2] == "receiving":
+            # Bytes of an unfinished batch are not acknowledged: send it again.
+            return {"upload_id": upload_id, "offset": 0, "size": row[1], "state": "uploading"}
         return {"upload_id": upload_id, "offset": row[0], "size": row[1], "state": row[2]}
 
     async def receive_chunk(
@@ -778,15 +803,34 @@ class SyncUploadService:
             # their contents and directory entries have been synced.
             self._submit_write(user, record_moved)
 
+        outcomes.update(self.register_finalized(
+            user, moved,
+            sync_ai_processing=sync_ai_processing, load_model=load_model,
+            on_finished=on_finished, log_phase=log_phase,
+        ))
+        return [outcomes[upload_id] for upload_id in upload_ids]
+
+    def register_finalized(
+        self,
+        user: IrisUser,
+        finalized: list[_Finalization],
+        *,
+        sync_ai_processing: bool,
+        load_model: bool,
+        on_finished: Callable[[], None],
+        log_phase: Callable[..., None],
+    ) -> dict[str, dict[str, Any] | SyncUploadError]:
+        """Hand stored, recorded uploads to the catalog; the outcome of each."""
+        outcomes: dict[str, dict[str, Any] | SyncUploadError] = {}
         inline = not (sync_ai_processing and load_model)
         batched = [
             finalization
-            for finalization in moved
+            for finalization in finalized
             if inline and finalization.sequence is not None and self._batch_processor is not None
         ]
         if len(batched) > 1:
             outcomes.update(self._register_batch(user, batched, on_finished, log_phase))
-        for finalization in moved:
+        for finalization in finalized:
             if finalization.upload_id not in outcomes:
                 outcomes[finalization.upload_id] = self._register(
                     user,
@@ -796,7 +840,7 @@ class SyncUploadService:
                     on_finished=on_finished,
                     log_phase=log_phase,
                 )
-        return [outcomes[upload_id] for upload_id in upload_ids]
+        return outcomes
 
     def _register_batch(
         self,

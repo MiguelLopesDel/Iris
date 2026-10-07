@@ -94,6 +94,7 @@ from core.backend_registry import BackendRegistry
 from core.backup_scheduler import BackupService
 from core.device_tokens import read_access_token
 from core.embedding_models import resolve_embedding_model
+from core.file_durability import FileDurabilityService
 from core.file_ops import move_to_trash
 from core.index_rebuild import rebuild_indexes_in_background
 from core.indexer_db import init_db
@@ -687,7 +688,7 @@ async def lifespan(app: FastAPI):
     if not app.state.multiuser_enabled:
         _resume_unfinished_imports()
     else:
-        ingest_policy = IngestPolicy()
+        ingest_policy = IngestPolicy.from_env()
         write_registry = SQLiteWriteCoordinatorRegistry(
             coordinator_options={
                 "max_batch_items": ingest_policy.db_group_max_items,
@@ -697,10 +698,13 @@ async def lifespan(app: FastAPI):
         app.state.sqlite_write_registry = write_registry
         processing_workers = UploadProcessingWorkers(write_registry=write_registry)
         app.state.upload_processing_workers = processing_workers
+        file_durability = FileDurabilityService(ingest_policy)
+        app.state.file_durability = file_durability
         app.state.sync_upload_service = SyncUploadService(
             processing_workers=processing_workers,
             ingest_policy=ingest_policy,
             write_registry=write_registry,
+            durability=file_durability,
         )
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
@@ -737,6 +741,9 @@ async def lifespan(app: FastAPI):
         if processing_workers is not None and not processing_workers.stop(timeout=10):
             logger.warning("upload_processing_shutdown_timeout")
         app.state.backup_service.stop()
+        file_durability = getattr(app.state, "file_durability", None)
+        if file_durability is not None and not file_durability.stop(timeout=10):
+            logger.warning("file_durability_shutdown_timeout")
         write_registry = getattr(app.state, "sqlite_write_registry", None)
         if write_registry is not None and not write_registry.shutdown(timeout=10):
             logger.warning("sqlite_write_coordinator_shutdown_timeout")

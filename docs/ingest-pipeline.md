@@ -53,6 +53,48 @@ in the optional indexer behind this writer, or measuring and replacing those
 writes, is still an explicit follow-up; this phase does not claim that all
 application SQLite writes have been centralized.
 
+### File durability service
+
+`FileDurabilityService` groups the file and directory fsyncs of concurrent
+requests. One coordinator thread starts a group with the first waiting
+request, adds requests arriving within `durability_window_s` until the group
+holds `fsync_concurrency` files, then fsyncs those files in parallel and each
+distinct directory once. Requests arriving meanwhile form the next group. The
+queue is bounded; a full queue is reported as retryable backpressure. It
+orders file data only: the account writer's FULL commit, issued after the
+barrier, makes the matching database state durable.
+
+### Batch ingest endpoint
+
+`POST /api/sync/ingest` receives a bounded batch of reserved uploads whole,
+back to back; `X-Iris-Ingest` lists them as `upload_id:size` in body order
+(limits from `IngestPolicy`: `max_items`, `max_bytes`). `SyncIngestPipeline`
+runs each stage once per batch:
+
+1. **Admission** (one writer transaction): checks each reservation, settles
+   content the library already has as `duplicate`, and records the final
+   library path with state `receiving` before any byte is written.
+2. **Write and hash**: bytes go straight to those paths, hashed as they
+   arrive. Pieces of several small files share one thread-pool hand-over;
+   `os.write` and SHA-256 release the GIL on large buffers.
+3. **Durability**: one `FileDurabilityService` barrier for the batch's files
+   and directories.
+4. **Commit** (one writer transaction, FULL): stored files move to
+   `pending_processing` through the existing finalization record; files whose
+   hash does not match are removed and their uploads marked `failed`.
+5. **Catalog**: the existing batch catalog path (`register_finalized`).
+
+Each upload gets its own result, shaped like `complete-batch`. A batch cut
+short acknowledges nothing: its files are removed and its uploads return to
+`uploading`. Devices see `receiving` as `uploading` at offset 0, so they send
+the file again. At startup, recovery checks every upload left `receiving`:
+a complete file with the declared hash continues as `finalizing`; anything
+else is removed and reset. The resumable `PUT` path is unchanged, for large
+files and older clients.
+
+`IngestPolicy.from_env()` reads `IRIS_INGEST_<FIELD>` overrides, so the
+performance lab can sweep the policy without code changes.
+
 ## Planned phases
 
 The order below is a roadmap, not a statement that these features already
@@ -62,13 +104,9 @@ exist.
    processing state, recovery, and catalog writes through the bounded writer;
    verify account isolation, overload behavior, commit ordering, and crash
    recovery.
-2. **Durability service:** generalize upload-file durability into a shared
-   service with bounded concurrent fsyncs and a policy supplied by the
-   performance lab. Keep the existing durability behavior until measurements
-   justify a change.
-3. **Batch ingest endpoint:** accept a bounded manifest and streamed payloads,
-   admit each item transactionally, hash while writing, and return a result per
-   item. Preserve the resumable endpoint for older clients and large files.
+2. **Durability service (done):** used by the batch endpoint. The resumable
+   `PUT` keeps its own per-chunk fsync until measurements justify a change.
+3. **Batch ingest endpoint (done):** see above.
 4. **Performance lab:** exercise the new endpoint and sweep item count, bytes,
    in-flight packets, fsync concurrency, and durability/database windows on
    representative disks and networks.

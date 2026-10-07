@@ -10,6 +10,7 @@ from pathlib import Path
 from core.library_operation_lock import serialize_library_operations
 from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_db import append_change, now_iso
+from core.sync_file_ops import matches_original
 from core.upload_finalization import move_upload_into_library, record_upload_finalized
 from core.upload_processing_workers import UploadProcessingWorkers
 
@@ -42,6 +43,15 @@ def recover_pending_uploads(
     for user in users:
         if stop_event.is_set():
             return
+        try:
+            # First, so a batch upload found complete joins the work below.
+            _settle_interrupted_batches(user, write_registry)
+        except Exception as exc:
+            _logger.warning(
+                "sync_recovery_batches_failed user_id=%s error_type=%s",
+                user.id,
+                type(exc).__name__,
+            )
         try:
             conn = sqlite3.connect(user.db_path, timeout=30)
             has_uploads = conn.execute(
@@ -110,6 +120,64 @@ def recover_pending_uploads(
                     upload_id,
                     type(exc).__name__,
                 )
+
+
+def _settle_interrupted_batches(user, write_registry=None) -> None:
+    """Resolve uploads a batch request left in ``receiving`` when the server stopped.
+
+    The batch wrote straight to the final path, so a complete file is checked
+    against its declared size and hash: when it matches, the upload becomes
+    ``finalizing`` and continues like any interrupted completion. Otherwise
+    the partial file is removed and the upload returns to ``uploading``, so
+    the device sends it again; its bytes were never acknowledged.
+    """
+    conn = sqlite3.connect(user.db_path, timeout=30)
+    try:
+        rows = conn.execute(
+            "SELECT id, expected_size, expected_hash, final_path FROM sync_uploads "
+            "WHERE state = 'receiving'"
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+    if not rows:
+        return
+    complete, partial = [], []
+    for upload_id, size, digest, final_path in rows:
+        path = Path(final_path) if final_path else None
+        if path is not None and path.is_file() and matches_original(path, int(size), str(digest)):
+            complete.append(str(upload_id))
+        else:
+            if path is not None:
+                path.unlink(missing_ok=True)
+            partial.append(str(upload_id))
+
+    def settle(connection: sqlite3.Connection) -> None:
+        connection.executemany(
+            "UPDATE sync_uploads SET state = 'finalizing', received_size = expected_size, "
+            "updated_at = ? WHERE id = ? AND state = 'receiving'",
+            [(now_iso(), upload_id) for upload_id in complete],
+        )
+        connection.executemany(
+            "UPDATE sync_uploads SET state = 'uploading', final_path = '', received_size = 0, "
+            "updated_at = ? WHERE id = ? AND state = 'receiving'",
+            [(now_iso(), upload_id) for upload_id in partial],
+        )
+
+    if write_registry is not None:
+        write_registry.submit(user.db_path, settle).result()
+        return
+    conn = sqlite3.connect(user.db_path, timeout=30)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        settle(conn)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _mark_recovery_failure(

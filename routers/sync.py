@@ -183,6 +183,31 @@ async def upload_chunk(request: Request, upload_id: str, offset: int = Query(...
         _raise_http(exc)
 
 
+@router.post("/ingest")
+async def ingest(request: Request):
+    """Receive and finish a batch of small reserved uploads in one request.
+
+    The body is the files back to back; ``X-Iris-Ingest`` lists them in order
+    as ``upload_id:size`` pairs separated by commas. Each upload gets its own
+    result, as from ``complete-batch``.
+    """
+    user = _user(request)
+    try:
+        return await _upload_service(request).ingest_pipeline.ingest(
+            user,
+            getattr(request.state, "iris_device_id", None),
+            request.headers.get("x-iris-ingest", ""),
+            int(request.headers.get("content-length", "0") or 0),
+            request.stream(),
+            sync_ai_processing=request.app.state.sync_ai_processing,
+            load_model=request.app.state.load_model,
+            on_finished=_finished_callback(request, user.id),
+            log_phase=lambda phase, started, **fields: _log_sync_phase(request, phase, started, **fields),
+        )
+    except SyncUploadError as exc:
+        _raise_http(exc)
+
+
 def _finished_callback(request: Request, user_id: int):
     return lambda: request.app.state.backend_registry.invalidate(user_id)
 
