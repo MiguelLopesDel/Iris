@@ -30,6 +30,7 @@ def test_default_ingest_policy_is_bounded_and_immutable():
         ("block_bytes", 0),
         ("block_bytes", (1 << 20) + 1),
         ("fsync_concurrency", True),
+        ("db_group_max_items", 257),
         ("db_group_max_items", 1.5),
         ("packages_in_flight_per_device", 0),
         ("max_in_flight_bytes", 0),

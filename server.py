@@ -96,11 +96,14 @@ from core.device_tokens import read_access_token
 from core.embedding_models import resolve_embedding_model
 from core.file_ops import move_to_trash
 from core.index_rebuild import rebuild_indexes_in_background
+from core.indexer_db import init_db
+from core.ingest_policy import IngestPolicy
 from core.observability import configure_logging, request_path
 from core.perf import dump, trace
 from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_upload_service import SyncUploadService
 from core.upload_processing_workers import UploadProcessingWorkers
 from core.users_db import (
@@ -166,7 +169,10 @@ _DEFAULT_DB = _default_db_path()
 _MEDIA_ROOT = os.environ.get("IRIS_MEDIA_ROOT", "media")
 _LOAD_MODEL = os.environ.get("IRIS_LOAD_MODEL", "1").lower() not in {"0", "false", "no"}
 _SYNC_AI_PROCESSING = os.environ.get("IRIS_SYNC_AI_PROCESSING", "0").lower() not in {
-    "0", "false", "no", "off",
+    "0",
+    "false",
+    "no",
+    "off",
 }
 _USERS_DB = _DATA_DIR / "users.db"
 
@@ -292,10 +298,18 @@ def _invalidate_view_caches_for(db_path: Path | str) -> None:
     """
     prefix = f"{db_path}#"
     for cache in (
-        _sorted_records_cache, _missing_count_cache, _record_positions_by_db_id_cache,
-        _allowed_media_paths_cache, _extension_counts_cache, _fingerprint_coverage_cache,
+        _sorted_records_cache,
+        _missing_count_cache,
+        _record_positions_by_db_id_cache,
+        _allowed_media_paths_cache,
+        _extension_counts_cache,
+        _fingerprint_coverage_cache,
     ):
-        for key in [key for key in cache if str(key[0] if isinstance(key, tuple) else key).startswith(prefix)]:
+        for key in [
+            key
+            for key in cache
+            if str(key[0] if isinstance(key, tuple) else key).startswith(prefix)
+        ]:
             cache.pop(key, None)
 
 
@@ -345,13 +359,17 @@ def _fingerprint_coverage(backend: SearchBackend) -> dict[str, Any]:
     if engine is None:
         return {}
     try:
-        row = engine.db.get_connection().execute(
-            "SELECT COUNT(*),"
-            " SUM(CASE WHEN perceptual_hash IS NOT NULL AND perceptual_hash != '' THEN 1 ELSE 0 END),"
-            " SUM(CASE WHEN perceptual_hash = '' THEN 1 ELSE 0 END),"
-            " SUM(CASE WHEN perceptual_hash IS NULL THEN 1 ELSE 0 END)"
-            " FROM memes"
-        ).fetchone()
+        row = (
+            engine.db.get_connection()
+            .execute(
+                "SELECT COUNT(*),"
+                " SUM(CASE WHEN perceptual_hash IS NOT NULL AND perceptual_hash != '' THEN 1 ELSE 0 END),"
+                " SUM(CASE WHEN perceptual_hash = '' THEN 1 ELSE 0 END),"
+                " SUM(CASE WHEN perceptual_hash IS NULL THEN 1 ELSE 0 END)"
+                " FROM memes"
+            )
+            .fetchone()
+        )
         # Unpacked inside the guard on purpose: a backend that answers something
         # unexpected must degrade to "no coverage reported", never take down the
         # endpoint that the sidebar polls.
@@ -555,7 +573,6 @@ def _reload_backend(config: dict[str, Any] | None = None) -> SearchBackend:
             # before opening the backend. Without this, launching the server on a
             # fresh DB (before any indexing) leaves it without a `memes` table,
             # which crashes the engine on the next start. init_db is idempotent.
-            from core.indexer_db import init_db
             init_db(Path(_active_config["db_path"])).close()
             backend = create_backend(
                 db_path=str(_active_config["db_path"]),
@@ -670,10 +687,20 @@ async def lifespan(app: FastAPI):
     if not app.state.multiuser_enabled:
         _resume_unfinished_imports()
     else:
-        processing_workers = UploadProcessingWorkers()
+        ingest_policy = IngestPolicy()
+        write_registry = SQLiteWriteCoordinatorRegistry(
+            coordinator_options={
+                "max_batch_items": ingest_policy.db_group_max_items,
+                "batch_window_s": ingest_policy.db_window_s,
+            }
+        )
+        app.state.sqlite_write_registry = write_registry
+        processing_workers = UploadProcessingWorkers(write_registry=write_registry)
         app.state.upload_processing_workers = processing_workers
         app.state.sync_upload_service = SyncUploadService(
-            processing_workers=processing_workers
+            processing_workers=processing_workers,
+            ingest_policy=ingest_policy,
+            write_registry=write_registry,
         )
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
@@ -686,6 +713,7 @@ async def lifespan(app: FastAPI):
             load_model=app.state.load_model,
             on_finished=app.state.backend_registry.invalidate,
             processing_workers=processing_workers,
+            write_registry=write_registry,
         )
         app.state.sync_recovery_stop_event = stop_event
         app.state.sync_recovery_worker = worker
@@ -709,6 +737,9 @@ async def lifespan(app: FastAPI):
         if processing_workers is not None and not processing_workers.stop(timeout=10):
             logger.warning("upload_processing_shutdown_timeout")
         app.state.backup_service.stop()
+        write_registry = getattr(app.state, "sqlite_write_registry", None)
+        if write_registry is not None and not write_registry.shutdown(timeout=10):
+            logger.warning("sqlite_write_coordinator_shutdown_timeout")
     dump()
     try:
         from core.browser_session import close_browser_session
@@ -735,8 +766,7 @@ _server_mode = os.environ.get("IRIS_SERVER_MODE", "legacy").lower()
 _private_server_requested = _server_mode in {"private", "multiuser"}
 _has_users = has_users(_USERS_DB)
 app.state.multiuser_enabled = _private_server_requested or (
-    os.environ.get("IRIS_MULTIUSER", "auto").lower() not in {"0", "false", "no"}
-    and _has_users
+    os.environ.get("IRIS_MULTIUSER", "auto").lower() not in {"0", "false", "no"} and _has_users
 )
 app.state.setup_required = app.state.multiuser_enabled and not _has_users
 # A legacy single library found here is migrated into the first account.
@@ -747,16 +777,16 @@ if app.state.multiuser_enabled:
     except ValueError:
         engine_cache_size = 1
     app.state.backend_registry = BackendRegistry(
-        _USERS_DB, cache_size=engine_cache_size, load_model=_LOAD_MODEL,
+        _USERS_DB,
+        cache_size=engine_cache_size,
+        load_model=_LOAD_MODEL,
         on_new_backend=_invalidate_view_caches_for,
     )
     # Shared-space storage policy: the administrator's choice in the interface,
     # else the installer's .env, else the defaults. An impossible .env choice
     # (reflink on ext4, say) stops the server here rather than failing on the
     # first shared photo.
-    app.state.space_policy = instance_settings.space_storage_policy(
-        _USERS_DB, _DATA_DIR / "spaces"
-    )
+    app.state.space_policy = instance_settings.space_storage_policy(_USERS_DB, _DATA_DIR / "spaces")
     app.state.space_storage = app.state.space_policy.storage
     compute_device.set_gpu_allowed(instance_settings.gpu_allowed(_USERS_DB))
     # Whole-instance backups: scheduled by this process, configured in the
@@ -777,17 +807,32 @@ async def authenticate_library_request(request: Request, call_next):
         return await call_next(request)
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > _MAX_REQUEST_BYTES:
-        return Response(status_code=413, content='{"detail":"Requisição excede o limite configurado"}', media_type="application/json")
+        return Response(
+            status_code=413,
+            content='{"detail":"Requisição excede o limite configurado"}',
+            media_type="application/json",
+        )
     path = request.url.path
-    public = (
-        path in {"/login", "/setup", "/api/setup", "/healthz", "/favicon.ico", "/api/auth/login", "/api/auth/devices/login", "/api/auth/devices/refresh", "/api/pairing/ca.pem"}
-        or path.startswith("/static/")
-    )
+    public = path in {
+        "/login",
+        "/setup",
+        "/api/setup",
+        "/healthz",
+        "/favicon.ico",
+        "/api/auth/login",
+        "/api/auth/devices/login",
+        "/api/auth/devices/refresh",
+        "/api/pairing/ca.pem",
+    } or path.startswith("/static/")
     if public:
         return await call_next(request)
     if _setup_required():
         if path.startswith("/api/"):
-            return Response(status_code=503, content='{"detail":"Configuração inicial necessária"}', media_type="application/json")
+            return Response(
+                status_code=503,
+                content='{"detail":"Configuração inicial necessária"}',
+                media_type="application/json",
+            )
         return RedirectResponse("/setup", status_code=303)
     session = request.session
     user_id = session.get("user_id")
@@ -807,18 +852,31 @@ async def authenticate_library_request(request: Request, call_next):
             # The database is read every time, so a revoked device or an ended
             # session is refused on its next request.
             auth_started = time.perf_counter()
-            found = resolve_device_session(request.app.state.users_db_path, str(device_id)) if device_id else None
+            found = (
+                resolve_device_session(request.app.state.users_db_path, str(device_id))
+                if device_id
+                else None
+            )
             probe = getattr(request.app.state, "perf_probe", None)
             if probe is not None:
                 probe.record_auth(time.perf_counter() - auth_started)
             device, bearer_user = found if found else (None, None)
-            if device is None or device.revoked_at or device.user_id != user_id or device.token_version != payload.get("token_version"):
+            if (
+                device is None
+                or device.revoked_at
+                or device.user_id != user_id
+                or device.token_version != payload.get("token_version")
+            ):
                 user_id = None
                 bearer_user = None
     if bearer_user is not None:
         user = bearer_user
     else:
-        user = read_user(request.app.state.users_db_path, int(user_id)) if isinstance(user_id, int) else None
+        user = (
+            read_user(request.app.state.users_db_path, int(user_id))
+            if isinstance(user_id, int)
+            else None
+        )
     if user is not None and device_id is None and user.session_version == session_version:
         # A browser: its session is a device of its own, revocable like a phone.
         device_id = web_session_device(
@@ -829,13 +887,25 @@ async def authenticate_library_request(request: Request, call_next):
     if user is None or user.session_version != session_version:
         session.clear()
         if path.startswith("/api/"):
-            return Response(status_code=401, content='{"detail":"Autenticação necessária"}', media_type="application/json")
+            return Response(
+                status_code=401,
+                content='{"detail":"Autenticação necessária"}',
+                media_type="application/json",
+            )
         return RedirectResponse("/login", status_code=303)
     # These legacy endpoints operate on host-global paths/configuration. They
     # must not be reachable from a private-library deployment until they are
     # redesigned around an account-owned destination.
-    if path.startswith("/api/backup/") or path in {"/api/settings", "/api/filesystem", "/api/open-folder"}:
-        return Response(status_code=404, content='{"detail":"Indisponível em bibliotecas privadas"}', media_type="application/json")
+    if path.startswith("/api/backup/") or path in {
+        "/api/settings",
+        "/api/filesystem",
+        "/api/open-folder",
+    }:
+        return Response(
+            status_code=404,
+            content='{"detail":"Indisponível em bibliotecas privadas"}',
+            media_type="application/json",
+        )
     # Device sync routes are backed directly by the account database and do
     # not use SearchBackend. Avoid creating it as an authentication side
     # effect: upload completion invalidates the cached backend so gallery reads
@@ -850,7 +920,11 @@ async def authenticate_library_request(request: Request, call_next):
             backend = request.app.state.backend_registry.get(user.id)
         except KeyError:
             session.clear()
-            return Response(status_code=401, content='{"detail":"Sessão inválida"}', media_type="application/json")
+            return Response(
+                status_code=401,
+                content='{"detail":"Sessão inválida"}',
+                media_type="application/json",
+            )
     request.state.iris_user = user
     request.state.iris_device_id = device_id
     backend_token = None
@@ -914,6 +988,7 @@ async def log_request(request: Request, call_next):
         )
     return response
 
+
 # Compress JSON/HTML responses (records pages can be sizeable). Skips small bodies
 # and is a no-op for already-compressed media/thumbnails (own content types).
 app.add_middleware(GZipMiddleware, minimum_size=1024)
@@ -946,6 +1021,7 @@ app.include_router(backup_router)
 app.include_router(records_router)
 app.include_router(setup_router)
 if perf_probe.enabled():
+
     @app.get("/api/_perf/probe", include_in_schema=False)
     async def read_perf_probe(request: Request):
         """Loop lag since the last read and thread-pool load; performance lab only."""
@@ -1039,16 +1115,18 @@ def _attach_persons(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 async def _results_to_json(results: list[SearchResult]) -> list[dict[str, Any]]:
     # Same reasoning as get_records: _result_to_json can decode/resize a source
     # file on a thumbnail-cache miss, which must not run on the event loop.
-    return await run_in_threadpool(
-        lambda: _attach_persons([_result_to_json(r) for r in results])
-    )
+    return await run_in_threadpool(lambda: _attach_persons([_result_to_json(r) for r in results]))
 
 
 def _empty_record(r: SearchResult) -> IndexRecord:
     return IndexRecord(
-        index=r.index, arquivo=r.arquivo, caminho=r.caminho,
-        resolved_path=r.resolved_path, texto_extraido=r.texto_extraido,
-        descricao_ia=r.descricao_ia, tags=r.tags,
+        index=r.index,
+        arquivo=r.arquivo,
+        caminho=r.caminho,
+        resolved_path=r.resolved_path,
+        texto_extraido=r.texto_extraido,
+        descricao_ia=r.descricao_ia,
+        tags=r.tags,
         embedding=np.zeros(1, dtype=np.float32),
         desc_embedding=None,
     )
@@ -1132,9 +1210,7 @@ def _compute_thumbnail_url(fp: str) -> str:
         return ""
     try:
         stat = os.stat(fp)
-        key = hashlib.md5(
-            f"{fp}:{stat.st_mtime}:{stat.st_size}".encode()
-        ).hexdigest()
+        key = hashlib.md5(f"{fp}:{stat.st_mtime}:{stat.st_size}".encode()).hexdigest()
         thumb_dir = _thumbnail_dir()
         thumb = thumb_dir / f"{key}.jpg"
 
@@ -1181,6 +1257,7 @@ def _generate_video_thumbnail(video_path: str, thumb_path: Path) -> None:
             return
 
         from PIL import Image
+
         img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         img.thumbnail(_THUMB_SIZE, Image.LANCZOS)
         img.save(str(thumb_path), format="JPEG", quality=_THUMB_QUALITY, optimize=True)
@@ -1213,6 +1290,7 @@ def _generate_thumbnail(source_path: str, thumb_path: Path) -> None:
 def _generate_image_thumbnail(image_path: str, thumb_path: Path) -> None:
     """Resize an image file and save as JPEG thumbnail."""
     from PIL import Image
+
     img = Image.open(image_path).convert("RGB")
     img.thumbnail(_THUMB_SIZE, Image.LANCZOS)
     img.save(str(thumb_path), format="JPEG", quality=_THUMB_QUALITY, optimize=True)
@@ -1221,6 +1299,7 @@ def _generate_image_thumbnail(image_path: str, thumb_path: Path) -> None:
 def _is_blank_frame(frame) -> bool:
     """Return True if frame is all-black, all-white, or a uniform solid color."""
     import cv2
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     mean = float(gray.mean())
     std = float(gray.std())
@@ -1394,8 +1473,7 @@ def _run_import_job(
         else:
             _reload_backend({"model_name": str(settings["model_name"])})
         done_msg = (
-            f"Importação concluída: {total_imported} nova(s), "
-            f"{total_quarantined} em revisão."
+            f"Importação concluída: {total_imported} nova(s), {total_quarantined} em revisão."
         )
         finished = datetime.now(dt.UTC).isoformat()
         _import_job.update(
@@ -1407,8 +1485,13 @@ def _run_import_job(
         )
         with _import_db() as conn:
             import_review.update_job(
-                conn, job_id, status="completed", imported=total_imported,
-                quarantined=total_quarantined, message=done_msg, finished_at=finished,
+                conn,
+                job_id,
+                status="completed",
+                imported=total_imported,
+                quarantined=total_quarantined,
+                message=done_msg,
+                finished_at=finished,
             )
     except BaseException as exc:
         finished = datetime.now(dt.UTC).isoformat()
@@ -1422,7 +1505,10 @@ def _run_import_job(
             try:
                 with _import_db() as conn:
                     import_review.update_job(
-                        conn, job_id, status="interrupted", error_message=msg,
+                        conn,
+                        job_id,
+                        status="interrupted",
+                        error_message=msg,
                     )
             except Exception:
                 pass
@@ -1431,7 +1517,11 @@ def _run_import_job(
             try:
                 with _import_db() as conn:
                     import_review.update_job(
-                        conn, job_id, status="failed", error_message=str(exc), finished_at=finished,
+                        conn,
+                        job_id,
+                        status="failed",
+                        error_message=str(exc),
+                        finished_at=finished,
                     )
             except Exception:
                 pass
@@ -1463,7 +1553,9 @@ def _resume_unfinished_imports() -> None:
             # No source/settings recorded → genuinely unrecoverable.
             with _import_db() as conn:
                 import_review.update_job(
-                    conn, job["id"], status="failed",
+                    conn,
+                    job["id"],
+                    status="failed",
                     error_message="Sem origem/configuração para retomar.",
                     finished_at=datetime.now(dt.UTC).isoformat(),
                 )
@@ -1473,11 +1565,14 @@ def _resume_unfinished_imports() -> None:
             # 'interrupted' so a later restart (or re-import of the folder) resumes it.
             with _import_db() as conn:
                 import_review.update_job(
-                    conn, job["id"], status="interrupted",
+                    conn,
+                    job["id"],
+                    status="interrupted",
                     error_message="Aguardando a pasta de origem ficar acessível para retomar.",
                 )
             _import_job.update(
-                id=job["id"], status="interrupted",
+                id=job["id"],
+                status="interrupted",
                 imported=int(job.get("imported", 0)),
                 quarantined=int(job.get("quarantined", 0)),
                 message="Importação pausada: aguardando a pasta de origem ficar acessível.",
@@ -1485,8 +1580,11 @@ def _resume_unfinished_imports() -> None:
             print(f"[iris] Importação {job['id'][:8]} aguardando pasta acessível")
             continue
         _import_job.update(
-            id=job["id"], status="queued", done=int(job.get("done", 0)),
-            total=int(job.get("total", 0)), imported=int(job.get("imported", 0)),
+            id=job["id"],
+            status="queued",
+            done=int(job.get("done", 0)),
+            total=int(job.get("total", 0)),
+            imported=int(job.get("imported", 0)),
             quarantined=int(job.get("quarantined", 0)),
             message="Retomando importação interrompida.",
         )
@@ -1555,7 +1653,8 @@ def _missing_count(backend: SearchBackend, total: int) -> int:
     if cached is not None:
         return cached
     count = sum(
-        1 for r in backend.get_all_records()
+        1
+        for r in backend.get_all_records()
         if not r.resolved_path or not os.path.exists(r.resolved_path)
     )
     _missing_count_cache[key] = count
@@ -1575,8 +1674,8 @@ async def get_info(check_missing: int = Query(0)):
         total = backend.get_total_records()
         missing_count = None
         if check_missing:
-            missing_count = 0 if not records else await run_in_threadpool(
-                _missing_count, backend, total
+            missing_count = (
+                0 if not records else await run_in_threadpool(_missing_count, backend, total)
             )
         user = _current_user()
         private_library = _multiuser_enabled()
@@ -1592,8 +1691,13 @@ async def get_info(check_missing: int = Query(0)):
             "load_model": bool(_active_config["load_model"]),
             "multiuser": _multiuser_enabled(),
             "current_user": (
-                {"username": user.username, "display_name": user.display_name, "is_admin": user.is_admin}
-                if user else None
+                {
+                    "username": user.username,
+                    "display_name": user.display_name,
+                    "is_admin": user.is_admin,
+                }
+                if user
+                else None
             ),
             "has_concepts": backend.has_concept_tables(),
             "has_faces": backend.has_face_tables(),
@@ -1622,7 +1726,9 @@ async def update_settings(
 ):
     _require_admin()
     if _multiuser_enabled():
-        raise HTTPException(409, "As bibliotecas privadas não podem trocar de caminho pela interface")
+        raise HTTPException(
+            409, "As bibliotecas privadas não podem trocar de caminho pela interface"
+        )
     candidate_db = Path(db_path)
     if not candidate_db.is_absolute() and candidate_db.parts[:1] != (_DATA_DIR.name,):
         candidate_db = _DATA_DIR / candidate_db
@@ -1707,13 +1813,27 @@ async def import_status():
                 job = import_review.latest_job(conn)
             if job:
                 return {
-                    "id": job["id"], "status": job["status"], "done": job["done"],
-                    "total": job["total"], "imported": job["imported"],
-                    "quarantined": job["quarantined"], "current": "", "message": job["message"],
+                    "id": job["id"],
+                    "status": job["status"],
+                    "done": job["done"],
+                    "total": job["total"],
+                    "imported": job["imported"],
+                    "quarantined": job["quarantined"],
+                    "current": "",
+                    "message": job["message"],
                 }
         except Exception:
             pass
-        return {"id": None, "status": "idle", "done": 0, "total": 0, "imported": 0, "quarantined": 0, "current": "", "message": ""}
+        return {
+            "id": None,
+            "status": "idle",
+            "done": 0,
+            "total": 0,
+            "imported": 0,
+            "quarantined": 0,
+            "current": "",
+            "message": "",
+        }
     if _import_job.get("id"):
         return dict(_import_job)
     # No in-memory job (e.g. fresh process): hydrate from the persisted job row.
@@ -1722,9 +1842,13 @@ async def import_status():
             job = import_review.latest_job(conn)
         if job:
             return {
-                "id": job["id"], "status": job["status"], "done": job["done"],
-                "total": job["total"], "imported": job["imported"],
-                "quarantined": job["quarantined"], "current": "",
+                "id": job["id"],
+                "status": job["status"],
+                "done": job["done"],
+                "total": job["total"],
+                "imported": job["imported"],
+                "quarantined": job["quarantined"],
+                "current": "",
                 "message": job["message"],
             }
     except Exception:
@@ -1755,7 +1879,10 @@ async def start_import(
         raise HTTPException(409, "Indexing is disabled because IRIS_LOAD_MODEL=0")
     if _multiuser_enabled():
         with _import_db() as conn:
-            if any(job["status"] in {"queued", "running"} for job in import_review.unfinished_jobs(conn)):
+            if any(
+                job["status"] in {"queued", "running"}
+                for job in import_review.unfinished_jobs(conn)
+            ):
                 raise HTTPException(409, "Já existe uma importação em andamento nesta biblioteca")
     elif _import_job["status"] in {"queued", "running"}:
         raise HTTPException(409, "Já existe uma importação em andamento")
@@ -1778,7 +1905,9 @@ async def start_import(
         if len(files) > _MAX_UPLOAD_FILES:
             raise HTTPException(413, "Quantidade de arquivos excede o limite configurado")
         user = _current_user()
-        upload_root = (user.db_path.parent / "import_uploads") if user else (_DATA_DIR / "import_uploads")
+        upload_root = (
+            (user.db_path.parent / "import_uploads") if user else (_DATA_DIR / "import_uploads")
+        )
         upload_root.mkdir(parents=True, exist_ok=True)
         cleanup = Path(tempfile.mkdtemp(prefix="iris-", dir=upload_root))
         used_bytes = _library_usage_bytes(user.media_root) if user else 0
@@ -1806,15 +1935,15 @@ async def start_import(
         LOW_RESOURCE_MODEL
         if low_resource
         else (
-            resolve_embedding_model(user.model_name)
-            if user
-            else str(_active_config["model_name"])
+            resolve_embedding_model(user.model_name) if user else str(_active_config["model_name"])
         )
     )
     settings = {
         "recursive": recursive,
         "library_name": "media" if user else (library_name.strip() or "default"),
-        "library_root": str(user.media_root.parent) if user else (library_root.strip() or "data/library"),
+        "library_root": str(user.media_root.parent)
+        if user
+        else (library_root.strip() or "data/library"),
         "copy_to_library": True if user else copy_to_library,
         "batch_size": 1 if low_resource else batch_size,
         "device": "cpu" if low_resource else device,
@@ -1824,7 +1953,12 @@ async def start_import(
         "low_resource": low_resource,
     }
     _import_job.update(
-        id=job_id, status="queued", done=0, total=0, imported=0, quarantined=0,
+        id=job_id,
+        status="queued",
+        done=0,
+        total=0,
+        imported=0,
+        quarantined=0,
         message="Importação na fila.",
     )
     with _import_db() as conn:
@@ -1873,7 +2007,9 @@ async def import_review_list(
                 "match_filename": os.path.basename(match.arquivo) if match else "",
                 "match_thumb_url": _thumbnail_url(match) if match else "",
                 "match_full_url": (
-                    "/media/" + match.resolved_path.lstrip("/") if match and match.resolved_path else ""
+                    "/media/" + match.resolved_path.lstrip("/")
+                    if match and match.resolved_path
+                    else ""
                 ),
                 "score": round(float(item["score"]), 4),
             }
@@ -1963,7 +2099,9 @@ async def import_review_resolve(
     if _multiuser_enabled() and action == "import":
         # The legacy coalesced queue is process-global. Do not let it cross a
         # library boundary; a per-library queue will replace it in a follow-up.
-        raise HTTPException(409, "Importar itens em revisão ainda não está disponível em bibliotecas privadas")
+        raise HTTPException(
+            409, "Importar itens em revisão ainda não está disponível em bibliotecas privadas"
+        )
     with _import_db() as conn:
         id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
         if detection and not id_list:
@@ -2051,7 +2189,9 @@ def _forced_import_worker() -> None:
                     _forced_worker_running = False
                     return
             # Defer to a normal (non-forced) import if one is in flight.
-            while _import_job.get("status") in {"queued", "running"} and not _import_job.get("forced"):
+            while _import_job.get("status") in {"queued", "running"} and not _import_job.get(
+                "forced"
+            ):
                 time.sleep(0.5)
             paths = [Path(p) for p in batch if Path(p).exists()]
             if paths:
@@ -2081,15 +2221,25 @@ def _run_forced_import_batch(paths: list[Path]) -> None:
         "model_name": str(_active_config["model_name"]),
     }
     _import_job.update(
-        id=job_id, status="queued", done=0, total=0, imported=0, quarantined=0,
-        forced=True, message="Importando itens marcados como “importar mesmo assim”.",
+        id=job_id,
+        status="queued",
+        done=0,
+        total=0,
+        imported=0,
+        quarantined=0,
+        forced=True,
+        message="Importando itens marcados como “importar mesmo assim”.",
     )
     with _import_db() as conn:
         import_review.create_job(conn, job_id, json.dumps([str(media_dir)]), json.dumps(settings))
     try:
         _run_import_job(
-            job_id, [media_dir], settings, None,
-            explicit_files=paths, dedup_enabled=False,
+            job_id,
+            [media_dir],
+            settings,
+            None,
+            explicit_files=paths,
+            dedup_enabled=False,
         )
     finally:
         _import_job["forced"] = False
@@ -2132,8 +2282,10 @@ def _rebuild_faiss(db_path: Path, model_name: str) -> None:
 
 def _do_snapshot(reason: str, cfg: dict) -> dict:
     info = backup_mod.catalog_snapshot(
-        _active_db_path(), cfg["backup_dir"],
-        weights_path=_weights_path(), model_name=str(_active_config["model_name"]),
+        _active_db_path(),
+        cfg["backup_dir"],
+        weights_path=_weights_path(),
+        model_name=str(_active_config["model_name"]),
         reason=reason,
     )
     backup_mod.apply_retention(cfg["backup_dir"], int(cfg.get("backup_keep_last") or 0))
@@ -2156,8 +2308,12 @@ def maybe_auto_snapshot(reason: str) -> dict | None:
 
 def _do_restore(snap: Path, mode: str) -> dict:
     return backup_mod.restore_snapshot(
-        snap, db_path=_active_db_path(), weights_path=_weights_path(),
-        mode=mode, rebuild_faiss=_rebuild_faiss, model_name=str(_active_config["model_name"]),
+        snap,
+        db_path=_active_db_path(),
+        weights_path=_weights_path(),
+        mode=mode,
+        rebuild_faiss=_rebuild_faiss,
+        model_name=str(_active_config["model_name"]),
     )
 
 
@@ -2187,6 +2343,7 @@ def _sort_key_for(sort_by: str):
         if sort_by == "tipo":
             return os.path.splitext(r.arquivo)[1].lower()
         return r.db_id or r.index  # importacao
+
     return _key
 
 
@@ -2240,11 +2397,7 @@ def _filter_records(
     # The normal gallery has no filter. Its sorted positions are already the
     # answer, so walking the entire catalogue would merely materialise and
     # discard every record before returning one page.
-    if (
-        options.media_type == "all"
-        and not options.collection_ids
-        and not options.concept_ids
-    ):
+    if options.media_type == "all" and not options.collection_ids and not options.concept_ids:
         return record_indices
 
     allowed_collections = (
@@ -2265,7 +2418,10 @@ def _filter_records(
         record = backend.get_record(index)
         if record is None:
             continue
-        if allowed_extensions and os.path.splitext(record.arquivo)[1].lower() not in allowed_extensions:
+        if (
+            allowed_extensions
+            and os.path.splitext(record.arquivo)[1].lower() not in allowed_extensions
+        ):
             continue
         if allowed_collections is not None and record.db_id not in allowed_collections:
             continue
@@ -2340,10 +2496,15 @@ async def search_text(
     backend = _get_backend()
     with trace("api.search.text"):
         options = _options_from_params(
-            top_k=top_k, threshold=threshold, balance=balance,
-            text_bonus=text_bonus, lexical_weight=lexical_weight,
-            translate=translate, media_type=media_type,
-            collection_ids=collection_ids, concept_ids=concept_ids,
+            top_k=top_k,
+            threshold=threshold,
+            balance=balance,
+            text_bonus=text_bonus,
+            lexical_weight=lexical_weight,
+            translate=translate,
+            media_type=media_type,
+            collection_ids=collection_ids,
+            concept_ids=concept_ids,
         )
         results = await _run_search(backend.search_text, q.strip(), options)
         return {
@@ -2400,7 +2561,7 @@ async def search_filename(
         scored.sort(key=lambda item: (-item[0], item[1].arquivo.lower(), item[1].db_id))
         results = [
             _record_to_search_result(record, score, "filename")
-            for score, record in scored[:options.top_k]
+            for score, record in scored[: options.top_k]
         ]
         return {
             "query": q,
@@ -2429,9 +2590,13 @@ async def search_image(
     with trace("api.search.image"):
         img = await run_in_threadpool(_open_uploaded_image, file)
         options = _options_from_params(
-            top_k=top_k, threshold=threshold, balance=balance,
-            text_bonus=text_bonus, lexical_weight=lexical_weight,
-            media_type=media_type, collection_ids=collection_ids,
+            top_k=top_k,
+            threshold=threshold,
+            balance=balance,
+            text_bonus=text_bonus,
+            lexical_weight=lexical_weight,
+            media_type=media_type,
+            collection_ids=collection_ids,
             concept_ids=concept_ids,
         )
         results = await _run_search(backend.search_image, img, options)
@@ -2444,10 +2609,7 @@ async def search_image(
             groups = _group_search_results(results, max(-1.0, min(group_threshold, 1.0)))
             if not show_singletons:
                 groups = [group for group in groups if len(group) > 1]
-            response["groups"] = [
-                await _results_to_json(group)
-                for group in groups
-            ]
+            response["groups"] = [await _results_to_json(group) for group in groups]
         return response
 
 
@@ -2519,8 +2681,11 @@ async def search_similar(
     backend = _get_backend()
     with trace("api.search.similar"):
         options = _options_from_params(
-            top_k=top_k, threshold=threshold, balance=balance,
-            text_bonus=text_bonus, lexical_weight=lexical_weight,
+            top_k=top_k,
+            threshold=threshold,
+            balance=balance,
+            text_bonus=text_bonus,
+            lexical_weight=lexical_weight,
             media_type=media_type,
         )
         results = await _run_search(backend.search_similar, idx, options)
@@ -2591,9 +2756,7 @@ async def get_collection_members(col_id: int):
                 if record.db_id is not None
             }
             return [
-                _record_to_json(records_by_id[db_id])
-                for db_id in db_ids
-                if db_id in records_by_id
+                _record_to_json(records_by_id[db_id]) for db_id in db_ids if db_id in records_by_id
             ]
 
         records = await run_in_threadpool(_build)
@@ -2721,8 +2884,11 @@ async def create_concept(
     backend = _get_backend()
     with trace("api.concepts.create"):
         cid = backend.create_concept(
-            name=name, category=category, description=description,
-            search_terms=search_terms, auto_threshold=auto_threshold,
+            name=name,
+            category=category,
+            description=description,
+            search_terms=search_terms,
+            auto_threshold=auto_threshold,
         )
         return {"id": cid}
 
@@ -3317,7 +3483,9 @@ async def trashed_thumbnail(item_id: int):
         await run_in_threadpool(_generate_thumbnail, str(held), thumb)
     if not thumb.exists():
         raise HTTPException(404, "Sem miniatura")
-    return FileResponse(thumb, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    return FileResponse(
+        thumb, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"}
+    )
 
 
 class RestoreTrashIn(BaseModel):
@@ -3469,9 +3637,7 @@ def _mark_removed_in_graph(content_hashes: list[str]) -> None:
         return
     try:
         conn = _backend_connection()
-        equivalence_graph.mark_removed(
-            conn, content_hashes, dt.datetime.now(dt.UTC).isoformat()
-        )
+        equivalence_graph.mark_removed(conn, content_hashes, dt.datetime.now(dt.UTC).isoformat())
         conn.commit()
     except Exception as exc:
         logger.warning("equivalence graph: falha ao marcar remoção: %s", exc)
@@ -3554,8 +3720,14 @@ def _private_original_for(db_id: int) -> PrivateOriginal | None:
     resolved = Path(record.resolved_path).resolve()
     if str(resolved) not in _allowed_media_paths() or not resolved.is_file():
         return None
-    words = (record.descricao_ia, record.tags, record.objects, record.texto_extraido,
-             record.source_work, record.context)
+    words = (
+        record.descricao_ia,
+        record.tags,
+        record.objects,
+        record.texto_extraido,
+        record.source_work,
+        record.context,
+    )
     embedding = getattr(record, "embedding", None)
     user = _current_user()
     return PrivateOriginal(

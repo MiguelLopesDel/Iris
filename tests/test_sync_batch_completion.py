@@ -294,10 +294,10 @@ def test_when_the_batch_catalog_fails_each_upload_is_tried_on_its_own(tmp_path: 
     ids = _upload(service, user, [_photo(index) for index in range(3)])
     real_ingest_one = ingest_module._ingest_one
 
-    def failing_for_one(connection, catalog, media_root, upload_id, *args):
-        if upload_id == ids[1]:
+    def failing_for_one(connection, catalog, media_root, lease_token, prepared):
+        if prepared.upload_id == ids[1]:
             raise OSError("unreadable file")
-        return real_ingest_one(connection, catalog, media_root, upload_id, *args)
+        return real_ingest_one(connection, catalog, media_root, lease_token, prepared)
 
     monkeypatch.setattr(ingest_module, "_ingest_one", failing_for_one)
 

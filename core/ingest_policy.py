@@ -32,7 +32,7 @@ class IngestPolicy:
             ("max_bytes", self.max_bytes, 32 << 20),
             ("block_bytes", self.block_bytes, 1 << 20),
             ("fsync_concurrency", self.fsync_concurrency, 128),
-            ("db_group_max_items", self.db_group_max_items, 512),
+            ("db_group_max_items", self.db_group_max_items, 256),
             ("packages_in_flight_per_device", self.packages_in_flight_per_device, 8),
             ("max_in_flight_bytes", self.max_in_flight_bytes, 256 << 20),
         )

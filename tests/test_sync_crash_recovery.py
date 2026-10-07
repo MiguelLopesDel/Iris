@@ -27,7 +27,7 @@ import pytest
 from PIL import Image
 
 import core.sync_upload_service as service_module
-from core import sync_durability
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_processor import process_upload, process_uploads
 from core.sync_recovery import recover_pending_uploads
 from core.sync_upload_service import SyncUploadError, SyncUploadService
@@ -68,7 +68,42 @@ class InlineWorkers:
         process_upload(
             db_path=user.db_path, media_root=user.media_root, model_name=user.model_name,
             upload_id=upload_id, file_path=file_path, on_finished=on_finished, use_ai=use_ai,
+            write_registry=self.write_registry,
         )
+
+    def __init__(self, write_registry) -> None:
+        self.write_registry = write_registry
+
+
+class _CommittedFuture:
+    def __init__(self, future, after_commit) -> None:
+        self._future = future
+        self._after_commit = after_commit
+
+    def result(self, *args, **kwargs):
+        value = self._future.result(*args, **kwargs)
+        self._after_commit()
+        return value
+
+
+class _CrashAwareRegistry:
+    def __init__(self, server) -> None:
+        self._server = server
+        self._inner = SQLiteWriteCoordinatorRegistry(
+            coordinator_options={"batch_window_s": 0},
+        )
+
+    def submit(self, db_path, callback):
+        self._server._maybe_crash("before_full_commit")
+        future = self._inner.submit(db_path, callback)
+        return _CommittedFuture(future, self._after_commit)
+
+    def _after_commit(self) -> None:
+        self._server._take_snapshot()
+        self._server._maybe_crash("after_full_commit")
+
+    def shutdown(self, *, timeout=10.0):
+        return self._inner.shutdown(timeout=timeout)
 
 
 class Server:
@@ -80,17 +115,9 @@ class Server:
         self.crash_at: str | None = None
         # Another photo's request syncing the disk right after this chunk.
         self.other_request_syncs_after_chunk = False
-        self._real_make_durable = sync_durability.make_durable
+        self.write_registry = _CrashAwareRegistry(self)
         self._processor_hook = None
-        real_make_durable = sync_durability.make_durable
-
-        def make_durable(db_path):
-            self._maybe_crash("before_barrier")
-            real_make_durable(db_path)
-            self._take_snapshot()
-            self._maybe_crash("after_barrier")
-
-        monkeypatch.setattr(service_module, "make_durable", make_durable)
+        self.service = None
         real_move = service_module.move_upload_into_library
 
         def move(*args, **kwargs):
@@ -138,6 +165,9 @@ class Server:
 
     def restart(self, *, power_loss: bool = False) -> None:
         gc.collect()  # release connections the crashed request left open
+        if self.service is not None:
+            assert self.write_registry.shutdown(timeout=2)
+            self.write_registry = _CrashAwareRegistry(self)
         if power_loss and self.snapshot is not None:
             # The database returns to its last disk sync. Restored through
             # SQLite as well: a real power loss leaves no connection open, but
@@ -152,13 +182,15 @@ class Server:
         service_module._prepared_databases.clear()
         self.service = SyncUploadService(
             upload_processor=self._processor, batch_processor=self._batch_processor,
+            write_registry=self.write_registry,
         )
         if self.user.db_path.exists():
             # What the server does when it starts: resume persisted work.
             recover_pending_uploads(
                 users_db_path=self.user.db_path.parent / "users.db",
                 sync_ai_processing=False, load_model=False, on_finished=lambda *_: None,
-                stop_event=threading.Event(), processing_workers=InlineWorkers(),
+                stop_event=threading.Event(), processing_workers=InlineWorkers(self.write_registry),
+                write_registry=self.write_registry,
                 users=[self.user],
             )
 
@@ -175,7 +207,7 @@ class Server:
 
         def log_phase(phase, *args, **kwargs):
             if phase == "chunk_durable" and self.other_request_syncs_after_chunk:
-                self._real_make_durable(self.user.db_path)
+                # Chunk progress already crossed the writer's FULL commit.
                 self._take_snapshot()
 
         return asyncio.run(self.service.receive_chunk(
@@ -231,13 +263,13 @@ def _sync_like_the_app(
 
 
 STAGES = [
-    "before_barrier",        # reserve committed, never confirmed to the device
-    "after_barrier",         # reserve confirmed on disk, answer lost
+    "before_full_commit",    # no transaction changes have reached durable storage
+    "after_full_commit",     # reservation durable, response lost
     "after_chunk_written",   # chunk synced to its file, database not updated
     "before_move",           # finalizing claimed, file still in the upload area
     "after_move",            # file moved into the library, catalog not written
     "before_catalog",        # finalization recorded, catalog not written
-    "after_catalog",         # cataloged, completion not yet synced to disk
+    "after_catalog",         # cataloged, completion response not yet returned
 ]
 
 
@@ -248,7 +280,7 @@ def test_an_interrupted_sync_stores_the_photo_exactly_once(tmp_path: Path, monke
     server = Server(user, monkeypatch)
     data = _photo()
     server.crash_at = stage
-    # Barrier stages fire at the reserve; completion stages fire later in the flow.
+    # The first full-commit stages fire during reservation; later hooks target completion.
     state = _sync_like_the_app(server, data, power_loss=power_loss)
 
     assert state == "ready"

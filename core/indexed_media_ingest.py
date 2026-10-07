@@ -4,9 +4,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.media_dates import capture_timestamp
 from core.upload_catalog_writer import UploadCatalogWriter
+
+if TYPE_CHECKING:
+    from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 
 
 def ingest_upload_with_ai(
@@ -18,6 +22,7 @@ def ingest_upload_with_ai(
     processing_lease_token: str,
     file_path: Path,
     on_finished: Callable[[], None] | None = None,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
 ) -> dict[str, int | str]:
     """Run the existing indexer pipeline, then atomically record upload readiness.
 
@@ -52,10 +57,10 @@ def ingest_upload_with_ai(
     process_images(config, explicit_files=[file_path], dedup_enabled=False)
     create_faiss_indices(db_path, model_name)
 
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    try:
-        with connection:
+    def catalog_upload(connection: sqlite3.Connection) -> None:
+        previous_row_factory = connection.row_factory
+        connection.row_factory = sqlite3.Row
+        try:
             catalog = UploadCatalogWriter(connection)
             upload = connection.execute(
                 """SELECT device_id, expected_hash, captured_at, source_id, source_name,
@@ -82,8 +87,20 @@ def ingest_upload_with_ai(
                 lease_token=processing_lease_token,
                 media_id=media_id,
             )
-    finally:
-        connection.close()
+        finally:
+            # The coordinator connection is shared by callbacks for this DB.
+            connection.row_factory = previous_row_factory
+
+    if write_registry is not None:
+        # Successful futures resolve only after the writer's FULL commit.
+        write_registry.submit(db_path, catalog_upload).result()
+    else:
+        connection = sqlite3.connect(db_path)
+        try:
+            with connection:
+                catalog_upload(connection)
+        finally:
+            connection.close()
 
     if on_finished is not None:
         on_finished()

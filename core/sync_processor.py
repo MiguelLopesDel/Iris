@@ -1,4 +1,5 @@
 """Coordinate durable upload processing without coupling routes to server state."""
+
 from __future__ import annotations
 
 import logging
@@ -7,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from core.library_operation_lock import serialize_library_operations
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.upload_processing_store import UploadProcessingStore
 
 _logger = logging.getLogger("iris.sync")
@@ -21,10 +23,11 @@ def process_upload(
     file_path: Path,
     on_finished,
     use_ai: bool = True,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
 ) -> dict[str, int | str] | None:
     """Claim and catalog one upload under a database-backed per-library lease."""
     with serialize_library_operations(db_path):
-        store = UploadProcessingStore(db_path)
+        store = UploadProcessingStore(db_path, write_registry)
         token = uuid.uuid4().hex
         claimed = store.claim(upload_id, token)
         if claimed[0] is None:
@@ -49,6 +52,7 @@ def process_upload(
                     processing_lease_token=token,
                     file_path=file_path,
                     on_finished=lambda: _notify_finished(on_finished, upload_id),
+                    write_registry=write_registry,
                 )
             from core.indexed_media_ingest import ingest_upload_with_ai
 
@@ -60,6 +64,7 @@ def process_upload(
                 processing_lease_token=token,
                 file_path=file_path,
                 on_finished=lambda: _notify_finished(on_finished, upload_id),
+                write_registry=write_registry,
             )
         except Exception as exc:
             _logger.error(
@@ -82,6 +87,7 @@ def process_uploads(
     model_name: str,
     uploads: list[tuple[str, Path]],
     on_finished,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
 ) -> dict[str, dict[str, int | str] | None]:
     """Catalog several uploads without AI under one lease and one transaction.
 
@@ -93,7 +99,7 @@ def process_uploads(
     results: dict[str, dict[str, int | str] | None] = {}
     claimed: list[tuple[str, Path]] = []
     with serialize_library_operations(db_path):
-        store = UploadProcessingStore(db_path)
+        store = UploadProcessingStore(db_path, write_registry)
         token = uuid.uuid4().hex
         claims = store.claim_many([upload_id for upload_id, _ in uploads], token)
         for upload_id, file_path in uploads:
@@ -115,12 +121,15 @@ def process_uploads(
             try:
                 from core.media_ingest import ingest_uploads_without_ai
 
-                results.update(ingest_uploads_without_ai(
-                    db_path=db_path,
-                    media_root=media_root,
-                    processing_lease_token=token,
-                    uploads=claimed,
-                ))
+                results.update(
+                    ingest_uploads_without_ai(
+                        db_path=db_path,
+                        media_root=media_root,
+                        processing_lease_token=token,
+                        uploads=claimed,
+                        write_registry=write_registry,
+                    )
+                )
                 # ``ingest_uploads_without_ai`` commits the complete catalog
                 # batch before returning. Invalidate the account backend once
                 # at that boundary, not once for every row in the transaction.
@@ -141,8 +150,14 @@ def process_uploads(
     # Outside the library lock, which each single attempt takes itself.
     for upload_id, file_path in claimed:
         results[upload_id] = process_upload(
-            db_path=db_path, media_root=media_root, model_name=model_name,
-            upload_id=upload_id, file_path=file_path, on_finished=on_finished, use_ai=False,
+            db_path=db_path,
+            media_root=media_root,
+            model_name=model_name,
+            upload_id=upload_id,
+            file_path=file_path,
+            on_finished=on_finished,
+            use_ai=False,
+            write_registry=write_registry,
         )
     return results
 

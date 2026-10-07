@@ -8,6 +8,7 @@ import time
 from types import ModuleType, SimpleNamespace
 
 from core import upload_processing_store as processing_store_module
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_db import ensure_tables
 from core.sync_processor import process_upload
 from core.sync_recovery import _recover_finalizing_upload, recover_pending_uploads
@@ -201,16 +202,38 @@ def test_process_upload_with_ai_holds_lease_and_records_catalog_origin(
     )
     monkeypatch.setitem(sys.modules, "core.indexer", fake_indexer)
     callbacks: list[str] = []
+    registry = SQLiteWriteCoordinatorRegistry()
+    submitted_callbacks = []
+    real_submit = registry.submit
 
-    result = process_upload(
-        db_path=database,
-        media_root=media_root,
-        model_name="test-model",
-        upload_id="upload-ai",
-        file_path=file_path,
-        on_finished=lambda: callbacks.append("finished"),
-        use_ai=True,
-    )
+    def record_submit(db_path, callback):
+        submitted_callbacks.append(callback.__name__)
+        return real_submit(db_path, callback)
+
+    monkeypatch.setattr(registry, "submit", record_submit)
+
+    def finished_after_commit() -> None:
+        conn = sqlite3.connect(database)
+        state = conn.execute(
+            "SELECT state FROM sync_uploads WHERE id = 'upload-ai'"
+        ).fetchone()[0]
+        conn.close()
+        assert state == "ready"
+        callbacks.append("finished")
+
+    try:
+        result = process_upload(
+            db_path=database,
+            media_root=media_root,
+            model_name="test-model",
+            upload_id="upload-ai",
+            file_path=file_path,
+            on_finished=finished_after_commit,
+            use_ai=True,
+            write_registry=registry,
+        )
+    finally:
+        assert registry.shutdown(timeout=5)
 
     assert result == {"upload_id": "upload-ai", "state": "ready", "cursor": 2}
     assert calls == [
@@ -218,6 +241,7 @@ def test_process_upload_with_ai_holds_lease_and_records_catalog_origin(
         ("create_faiss_indices", (database, "test-model")),
     ]
     assert callbacks == ["finished"]
+    assert "catalog_upload" in submitted_callbacks
     conn = sqlite3.connect(database)
     upload = conn.execute(
         "SELECT state, processing_attempts, processing_lease_token "
@@ -270,10 +294,14 @@ def test_startup_recovery_uses_shared_idempotent_upload_finalization(tmp_path) -
     conn.close()
     user = SimpleNamespace(id=1, db_path=database, media_root=media_root)
 
-    assert _recover_finalizing_upload(user, "upload-one") == destination
+    from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
+
+    write_registry = SQLiteWriteCoordinatorRegistry()
+    assert _recover_finalizing_upload(user, "upload-one", write_registry) == destination
     assert destination.read_bytes() == payload
     assert not source.exists()
-    assert _recover_finalizing_upload(user, "upload-one") is None
+    assert _recover_finalizing_upload(user, "upload-one", write_registry) is None
+    assert write_registry.shutdown(timeout=5)
 
     conn = sqlite3.connect(database)
     state = conn.execute(
