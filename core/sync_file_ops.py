@@ -16,6 +16,7 @@ def durable_move_upload(
     upload_id: str,
     expected_size: int,
     expected_hash: str,
+    unsynced_directories: set[Path] | None = None,
 ) -> None:
     """Place an upload at its persisted destination and verify crash-safely.
 
@@ -23,6 +24,12 @@ def durable_move_upload(
     a deterministic staging file beside the destination, fsync and validate it,
     then atomically rename that staged copy into place. The source remains until
     the destination is verified, so a restart can safely repeat either path.
+
+    With ``unsynced_directories``, a plain rename does not sync its two
+    directories: it adds them to the set, and the caller syncs each once for
+    a whole batch before recording any of its moves. The copy paths still sync
+    the destination before removing the source, as the two may sit on
+    different filesystems.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = destination.with_name(f".{destination.name}.{upload_id}.staging")
@@ -46,6 +53,9 @@ def durable_move_upload(
 
     try:
         source.replace(destination)
+        if unsynced_directories is not None:
+            unsynced_directories.update((destination.parent, source.parent))
+            return
         fsync_directory(destination.parent)
         fsync_directory(source.parent)
         return
