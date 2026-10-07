@@ -12,7 +12,7 @@ def test_default_ingest_policy_is_bounded_and_immutable():
     assert policy.max_bytes == 32 * 1024 * 1024
     assert policy.block_bytes == 1024 * 1024
     assert policy.fsync_concurrency == 64
-    assert policy.durability_window_s == 0.25
+    assert policy.durability_window_s == 0.01
     assert policy.db_group_max_items == 256
     assert policy.packages_in_flight_per_device == 4
 

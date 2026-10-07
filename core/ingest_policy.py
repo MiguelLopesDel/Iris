@@ -22,7 +22,10 @@ class IngestPolicy:
     max_bytes: int = 32 << 20
     block_bytes: int = 1 << 20
     fsync_concurrency: int = 64
-    durability_window_s: float = 0.25
+    # Each batch request already brings its own files; waiting long for other
+    # requests only delays it. Measured on the reference HDD with 64 uploads in
+    # flight: 0.01 s took 69 photos/s, 0.05 s 67, 0 63 and 0.25 s 53.
+    durability_window_s: float = 0.01
     db_group_max_items: int = 256
     db_window_s: float = 0.01
     packages_in_flight_per_device: int = 4
