@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,7 @@ _UPLOAD_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 # walk and a commit per chunk; it is needed once per database file.
 _prepared_databases: set[tuple[str, int, int]] = set()
 _prepared_lock = threading.Lock()
+_prepare_lock = threading.Lock()
 
 
 def _database_identity(path: Path) -> tuple[str, int, int] | None:
@@ -97,16 +98,26 @@ class SyncUploadService:
             if _schema_present(connection):
                 return connection
             connection.close()
-        init_db(user.db_path).close()
-        connection = connect_deferred(user.db_path)
-        ensure_tables(connection)
-        # ensure_tables may backfill usage counters before a quota transaction.
-        connection.commit()
-        identity = _database_identity(user.db_path)
-        if identity is not None:
-            with _prepared_lock:
-                _prepared_databases.add(identity)
-        return connection
+        # One thread prepares a database at a time: requests now run in
+        # parallel worker threads, and two schema migrations at once collide
+        # (ALTER TABLE ... "duplicate column name").
+        with _prepare_lock:
+            identity = _database_identity(user.db_path)
+            if identity is not None and identity in _prepared_databases:
+                connection = connect_deferred(user.db_path)
+                if _schema_present(connection):
+                    return connection
+                connection.close()
+            init_db(user.db_path).close()
+            connection = connect_deferred(user.db_path)
+            ensure_tables(connection)
+            # ensure_tables may backfill usage counters before a quota transaction.
+            connection.commit()
+            identity = _database_identity(user.db_path)
+            if identity is not None:
+                with _prepared_lock:
+                    _prepared_databases.add(identity)
+            return connection
 
     def reserve_upload(
         self,
@@ -327,70 +338,90 @@ class SyncUploadService:
             raise SyncUploadError(413, "Chunk excede o limite")
         phase_started = time.perf_counter()
         async with self._serialize_upload(user.id, device_id or "", upload_id):
-            with self.open_connection(user) as connection:
-                row = connection.execute(
-                    "SELECT expected_size, received_size, temp_path, state, device_id "
-                    "FROM sync_uploads WHERE id = ?",
-                    (upload_id,),
-                ).fetchone()
-                if row is None or row[4] != device_id:
-                    raise SyncUploadError(404, "Envio não encontrado")
-                if row[3] != "uploading" or offset != row[1]:
-                    raise SyncUploadError(409, "Offset de envio incompatível")
-                if offset + content_length > row[0]:
-                    raise SyncUploadError(413, "Chunk ultrapassa o tamanho declarado")
-                destination = Path(row[2])
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                file_existed = destination.exists()
-                destination.touch(mode=0o600, exist_ok=True)
-                if not file_existed:
-                    fsync_directory(destination.parent)
-                received = 0
-                output = destination.open("r+b")
+            # Database and directory syncs block; they run in the thread pool
+            # so the event loop keeps serving other requests meanwhile.
+            expected_size, output = await run_in_threadpool(
+                self._open_chunk_target, user, device_id, upload_id, offset, content_length
+            )
+            received = 0
+            try:
                 try:
-                    output.seek(0, 2)
-                    file_size = output.tell()
-                    if file_size < offset:
-                        connection.execute(
-                            "UPDATE sync_uploads SET received_size = ?, updated_at = ? "
-                            "WHERE id = ? AND device_id = ? AND received_size = ?",
-                            (file_size, now_iso(), upload_id, device_id, offset),
-                        )
-                        connection.commit()
-                        raise SyncUploadError(409, "Offset reconciliado; consulte o estado do envio")
-                    if file_size > offset:
-                        output.truncate(offset)
-                    output.seek(offset)
-                    try:
-                        pending = bytearray()
-                        async for chunk in stream:
-                            received += len(chunk)
-                            if received > _MAX_CHUNK_BYTES or offset + received > row[0]:
-                                raise SyncUploadError(413, "Chunk excede o limite")
-                            view = memoryview(chunk)
-                            cursor = 0
-                            while cursor < len(view):
-                                available = _UPLOAD_DISK_BUFFER_BYTES - len(pending)
-                                end = min(cursor + available, len(view))
-                                pending.extend(view[cursor:end])
-                                cursor = end
-                                if len(pending) == _UPLOAD_DISK_BUFFER_BYTES:
-                                    await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
-                                    pending.clear()
-                        if pending:
-                            await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
-                        await run_in_threadpool(_flush_upload_buffer, output)
-                    except BaseException:
-                        await run_in_threadpool(_rollback_upload_buffer, output, offset)
-                        raise
-                finally:
-                    await run_in_threadpool(output.close)
-                connection.execute(
-                    "UPDATE sync_uploads SET received_size = ?, updated_at = ? WHERE id = ?",
-                    (offset + received, now_iso(), upload_id),
-                )
+                    pending = bytearray()
+                    async for chunk in stream:
+                        received += len(chunk)
+                        if received > _MAX_CHUNK_BYTES or offset + received > expected_size:
+                            raise SyncUploadError(413, "Chunk excede o limite")
+                        view = memoryview(chunk)
+                        cursor = 0
+                        while cursor < len(view):
+                            available = _UPLOAD_DISK_BUFFER_BYTES - len(pending)
+                            end = min(cursor + available, len(view))
+                            pending.extend(view[cursor:end])
+                            cursor = end
+                            if len(pending) == _UPLOAD_DISK_BUFFER_BYTES:
+                                await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
+                                pending.clear()
+                    if pending:
+                        await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
+                    await run_in_threadpool(_flush_upload_buffer, output)
+                except BaseException:
+                    await run_in_threadpool(_rollback_upload_buffer, output, offset)
+                    raise
+            finally:
+                await run_in_threadpool(output.close)
+            await run_in_threadpool(self._record_chunk, user, upload_id, offset + received)
         log_phase("chunk_durable", phase_started, bytes=received, state="durable")
         return {"upload_id": upload_id, "offset": offset + received}
+
+    def _open_chunk_target(
+        self, user: IrisUser, device_id: str | None, upload_id: str, offset: int, content_length: int,
+    ) -> tuple[int, Any]:
+        """Check the upload and open its file at ``offset``; runs in a worker thread."""
+        with closing(self.open_connection(user)) as connection:
+            row = connection.execute(
+                "SELECT expected_size, received_size, temp_path, state, device_id "
+                "FROM sync_uploads WHERE id = ?",
+                (upload_id,),
+            ).fetchone()
+            if row is None or row[4] != device_id:
+                raise SyncUploadError(404, "Envio não encontrado")
+            if row[3] != "uploading" or offset != row[1]:
+                raise SyncUploadError(409, "Offset de envio incompatível")
+            if offset + content_length > row[0]:
+                raise SyncUploadError(413, "Chunk ultrapassa o tamanho declarado")
+            destination = Path(row[2])
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            file_existed = destination.exists()
+            destination.touch(mode=0o600, exist_ok=True)
+            if not file_existed:
+                fsync_directory(destination.parent)
+            output = destination.open("r+b")
+            try:
+                output.seek(0, 2)
+                file_size = output.tell()
+                if file_size < offset:
+                    connection.execute(
+                        "UPDATE sync_uploads SET received_size = ?, updated_at = ? "
+                        "WHERE id = ? AND device_id = ? AND received_size = ?",
+                        (file_size, now_iso(), upload_id, device_id, offset),
+                    )
+                    connection.commit()
+                    raise SyncUploadError(409, "Offset reconciliado; consulte o estado do envio")
+                if file_size > offset:
+                    output.truncate(offset)
+                output.seek(offset)
+            except BaseException:
+                output.close()
+                raise
+            return int(row[0]), output
+
+    def _record_chunk(self, user: IrisUser, upload_id: str, received_size: int) -> None:
+        with closing(self.open_connection(user)) as connection:
+            connection.execute(
+                "UPDATE sync_uploads SET received_size = ?, updated_at = ? WHERE id = ?",
+                (received_size, now_iso(), upload_id),
+            )
+            connection.commit()
 
     async def receive_speed_test(
         self,
@@ -556,6 +587,31 @@ class SyncUploadService:
         on_finished: Callable[[], None],
         log_phase: Callable[..., None],
     ) -> dict[str, Any]:
+        # Completion is database, hashing and filesystem work end to end. In a
+        # worker thread it no longer blocks the event loop, and the items of a
+        # batch really run side by side (SQLite and I/O release the GIL).
+        return await run_in_threadpool(
+            self._complete_once_sync,
+            user,
+            device_id,
+            upload_id,
+            sync_ai_processing=sync_ai_processing,
+            load_model=load_model,
+            on_finished=on_finished,
+            log_phase=log_phase,
+        )
+
+    def _complete_once_sync(
+        self,
+        user: IrisUser,
+        device_id: str,
+        upload_id: str,
+        *,
+        sync_ai_processing: bool,
+        load_model: bool,
+        on_finished: Callable[[], None],
+        log_phase: Callable[..., None],
+    ) -> dict[str, Any]:
         with self.open_connection(user) as connection:
             row = connection.execute(
                 """SELECT filename, expected_size, expected_hash, received_size, temp_path,
@@ -591,7 +647,7 @@ class SyncUploadService:
                         # uploads of the same photo share the usual name.
                         if not _referenced_elsewhere(
                             connection, candidate, upload_id, user.media_root
-                        ) and await run_in_threadpool(matches_original, candidate, row[1], row[2]):
+                        ) and matches_original(candidate, row[1], row[2]):
                             recovered = candidate
                             break
                     if recovered is None and connection.execute(
@@ -609,7 +665,7 @@ class SyncUploadService:
                 if recovered is not None or not temporary.is_file():
                     actual_hash = row[2]
                 else:
-                    actual_hash = await run_in_threadpool(FileDigest.sha256, temporary)
+                    actual_hash = FileDigest.sha256(temporary)
                 log_phase(
                     "verify_hash", hash_started, bytes=row[1],
                     state="ok" if actual_hash == row[2] else "mismatch",
@@ -650,7 +706,7 @@ class SyncUploadService:
                     destination = recovered
                 elif not primary.exists() or (
                     not _referenced_elsewhere(connection, primary, upload_id, user.media_root)
-                    and await run_in_threadpool(matches_original, primary, row[1], row[2])
+                    and matches_original(primary, row[1], row[2])
                 ):
                     # Free, or an identical unreferenced copy left by an
                     # interrupted attempt. A copy another upload or the catalog
@@ -674,8 +730,7 @@ class SyncUploadService:
 
             storage_started = time.perf_counter()
             try:
-                await run_in_threadpool(
-                    move_upload_into_library,
+                move_upload_into_library(
                     temporary,
                     destination,
                     media_root=user.media_root,
@@ -721,8 +776,7 @@ class SyncUploadService:
 
         catalog_started = time.perf_counter()
         try:
-            result = await run_in_threadpool(
-                self._upload_processor,
+            result = self._upload_processor(
                 db_path=user.db_path,
                 media_root=user.media_root,
                 model_name=user.model_name,

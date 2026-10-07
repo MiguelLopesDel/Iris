@@ -103,7 +103,13 @@ from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MOD
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
 from core.sync_upload_service import SyncUploadService
 from core.upload_processing_workers import UploadProcessingWorkers
-from core.users_db import IrisUser, get_device, get_user_by_id, has_users, list_users
+from core.users_db import (
+    IrisUser,
+    has_users,
+    list_users,
+    read_user,
+    resolve_device_session,
+)
 from core.web_enrichment import (
     EnrichmentSuggestion,
     WebEnrichmentService,
@@ -787,6 +793,7 @@ async def authenticate_library_request(request: Request, call_next):
     user_id = session.get("user_id")
     session_version = session.get("session_version")
     device_id = None
+    bearer_user = None
     authorization = request.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
         payload = read_access_token(request.app.state.auth_secret, authorization[7:].strip())
@@ -794,10 +801,24 @@ async def authenticate_library_request(request: Request, call_next):
             user_id = payload.get("user_id")
             session_version = payload.get("session_version")
             device_id = payload.get("device_id")
-            device = get_device(request.app.state.users_db_path, str(device_id)) if device_id else None
+            # One indexed read on a reused connection, kept on the event loop:
+            # sending it to the thread pool (two hops per request) cost far
+            # more than the read and left the loop ~250 ms behind under load.
+            # The database is read every time, so a revoked device or an ended
+            # session is refused on its next request.
+            auth_started = time.perf_counter()
+            found = resolve_device_session(request.app.state.users_db_path, str(device_id)) if device_id else None
+            probe = getattr(request.app.state, "perf_probe", None)
+            if probe is not None:
+                probe.record_auth(time.perf_counter() - auth_started)
+            device, bearer_user = found if found else (None, None)
             if device is None or device.revoked_at or device.user_id != user_id or device.token_version != payload.get("token_version"):
                 user_id = None
-    user = get_user_by_id(request.app.state.users_db_path, int(user_id)) if isinstance(user_id, int) else None
+                bearer_user = None
+    if bearer_user is not None:
+        user = bearer_user
+    else:
+        user = read_user(request.app.state.users_db_path, int(user_id)) if isinstance(user_id, int) else None
     if user is not None and device_id is None and user.session_version == session_version:
         # A browser: its session is a device of its own, revocable like a phone.
         device_id = web_session_device(

@@ -5,6 +5,7 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 
 from core.sync_db import changes_after
 from core.sync_upload_service import SyncUploadError, SyncUploadService
@@ -90,23 +91,30 @@ async def revoke(request: Request, device_id: str):
 
 @router.get("/changes")
 async def changes(request: Request, cursor: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=1000)):
-    with _connection(request) as conn:
-        rows = changes_after(conn, cursor, limit)
+    def read() -> list:
+        with _connection(request) as conn:
+            return changes_after(conn, cursor, limit)
+
+    # SQLite blocks; off the event loop, so other requests keep moving.
+    rows = await run_in_threadpool(read)
     return {"changes": rows, "next_cursor": rows[-1]["cursor"] if rows else cursor, "has_more": len(rows) == limit}
 
 
 @router.get("/sources")
 async def sources(request: Request):
-    with _connection(request) as conn:
-        rows = conn.execute(
-            """SELECT s.device_id, s.source_id, s.name, s.relative_path, s.volume,
-                      s.media_kind, COUNT(DISTINCT o.media_id)
-               FROM device_sources s
-               LEFT JOIN media_origins o
-                 ON o.device_id = s.device_id AND o.source_id = s.source_id
-               GROUP BY s.device_id, s.source_id
-               ORDER BY lower(s.name), s.media_kind"""
-        ).fetchall()
+    def read() -> list:
+        with _connection(request) as conn:
+            return conn.execute(
+                """SELECT s.device_id, s.source_id, s.name, s.relative_path, s.volume,
+                          s.media_kind, COUNT(DISTINCT o.media_id)
+                   FROM device_sources s
+                   LEFT JOIN media_origins o
+                     ON o.device_id = s.device_id AND o.source_id = s.source_id
+                   GROUP BY s.device_id, s.source_id
+                   ORDER BY lower(s.name), s.media_kind"""
+            ).fetchall()
+
+    rows = await run_in_threadpool(read)
     return {"sources": [
         {"device_id": row[0], "source_id": row[1], "name": row[2],
          "relative_path": row[3], "volume": row[4], "media_kind": row[5],
@@ -122,8 +130,9 @@ async def start_upload(request: Request):
         raise HTTPException(403, "Use uma sessão de dispositivo para sincronizar mídia")
     payload = await request.json()
     try:
-        return _upload_service(request).reserve_upload(
-            _user(request), device_id, request.app.state.account_quota_bytes, payload
+        return await run_in_threadpool(
+            _upload_service(request).reserve_upload,
+            _user(request), device_id, request.app.state.account_quota_bytes, payload,
         )
     except SyncUploadError as exc:
         _raise_http(exc)
@@ -137,8 +146,10 @@ async def start_upload_batch(request: Request):
     if not device_id:
         raise HTTPException(403, "Use uma sessão de dispositivo para sincronizar mídia")
     try:
-        return _upload_service(request).reserve_upload_batch(
-            user, device_id, request.app.state.account_quota_bytes, await request.json()
+        payload = await request.json()
+        return await run_in_threadpool(
+            _upload_service(request).reserve_upload_batch,
+            user, device_id, request.app.state.account_quota_bytes, payload,
         )
     except SyncUploadError as exc:
         _raise_http(exc)
@@ -147,8 +158,9 @@ async def start_upload_batch(request: Request):
 @router.get("/uploads/{upload_id}")
 async def upload_status(request: Request, upload_id: str):
     try:
-        return _upload_service(request).upload_status(
-            _user(request), getattr(request.state, "iris_device_id", None), upload_id
+        return await run_in_threadpool(
+            _upload_service(request).upload_status,
+            _user(request), getattr(request.state, "iris_device_id", None), upload_id,
         )
     except SyncUploadError as exc:
         _raise_http(exc)

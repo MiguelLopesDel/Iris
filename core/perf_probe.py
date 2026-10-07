@@ -27,6 +27,11 @@ class LoopLagProbe:
         self._max = 0.0
         self._total = 0.0
         self._count = 0
+        self._auth: list[float] = []
+
+    def record_auth(self, seconds: float) -> None:
+        """Time one request's identity read, kept on the event loop on purpose."""
+        self._auth.append(seconds)
 
     def record(self, lag: float) -> None:
         lag = max(0.0, lag)
@@ -48,8 +53,16 @@ class LoopLagProbe:
             "loop_lag_ms_mean": round(self._total / self._count * 1000, 2) if self._count else 0.0,
             "loop_lag_samples": self._count,
         }
+        if self._auth:
+            # Work kept on the loop must stay small in its worst case: watch
+            # the tail, not only the average.
+            ordered = sorted(self._auth)
+            result["auth_ms_p99"] = round(ordered[int(0.99 * (len(ordered) - 1))] * 1000, 3)
+            result["auth_ms_max"] = round(ordered[-1] * 1000, 3)
+            result["auth_samples"] = len(ordered)
         self._max = self._total = 0.0
         self._count = 0
+        self._auth = []
         return result
 
 
