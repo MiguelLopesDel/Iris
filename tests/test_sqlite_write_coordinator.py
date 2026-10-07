@@ -207,3 +207,48 @@ def test_shutdown_timeout_must_be_nonnegative(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="timeout"):
         coordinator.shutdown(timeout=-1)
     assert coordinator.shutdown(timeout=2)
+
+
+def _synchronous(connection: sqlite3.Connection) -> int:
+    return connection.execute("PRAGMA synchronous").fetchone()[0]
+
+
+def _synced_at(path: Path) -> str | None:
+    with sqlite3.connect(path) as conn:
+        try:
+            row = conn.execute("SELECT synced_at FROM durability_marks WHERE id = 1").fetchone()
+        except sqlite3.OperationalError:
+            return None
+    return row[0] if row else None
+
+
+def test_relaxed_writes_skip_the_disk_wait_and_durable_ones_keep_it(tmp_path: Path):
+    path = tmp_path / "relaxed.db"
+    _create_table(path)
+    with SQLiteWriteCoordinator(path, batch_window_s=0, relaxed_barrier_s=60) as coordinator:
+        relaxed = coordinator.submit(_synchronous, durable=False).result(timeout=5)
+        durable = coordinator.submit(_synchronous).result(timeout=5)
+    assert (relaxed, durable) == (1, 2)  # NORMAL, then FULL
+
+
+def test_relaxed_writes_reach_the_disk_within_the_barrier_interval(tmp_path: Path):
+    import time
+
+    path = tmp_path / "barrier.db"
+    _create_table(path)
+    with SQLiteWriteCoordinator(path, batch_window_s=0, relaxed_barrier_s=0.2) as coordinator:
+        coordinator.submit(_insert(1), durable=False).result(timeout=5)
+        assert _synced_at(path) is None  # not synced yet
+        deadline = time.monotonic() + 5
+        while _synced_at(path) is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+    assert _synced_at(path) is not None
+
+
+def test_relaxed_writes_are_synced_before_the_writer_stops(tmp_path: Path):
+    path = tmp_path / "stop.db"
+    _create_table(path)
+    coordinator = SQLiteWriteCoordinator(path, batch_window_s=0, relaxed_barrier_s=60)
+    coordinator.submit(_insert(1), durable=False).result(timeout=5)
+    assert coordinator.shutdown(timeout=5)
+    assert _synced_at(path) is not None

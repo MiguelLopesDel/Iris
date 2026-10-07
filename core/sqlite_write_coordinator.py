@@ -35,6 +35,9 @@ class CoordinatorQueueFull(SQLiteWriteQueueFull):
 class _Operation[T]:
     callback: Callable[[sqlite3.Connection], T]
     future: Future[T]
+    # False: the caller does not need this write on disk when its Future
+    # resolves (it can rebuild it after a power loss); see relaxed_barrier_s.
+    durable: bool = True
 
 
 class SQLiteWriteCoordinator:
@@ -63,6 +66,7 @@ class SQLiteWriteCoordinator:
         max_batch_items: int = 256,
         batch_window_s: float = 0.01,
         sqlite_timeout_s: float = 30.0,
+        relaxed_barrier_s: float = 1.0,
     ) -> None:
         if (
             isinstance(max_pending, bool)
@@ -85,6 +89,17 @@ class SQLiteWriteCoordinator:
         if not 0 < sqlite_timeout_s <= 300 or not float(sqlite_timeout_s) < float("inf"):
             raise ValueError("sqlite_timeout_s must be finite and between 0 and 300")
 
+        if (
+            isinstance(relaxed_barrier_s, bool)
+            or not isinstance(relaxed_barrier_s, (int, float))
+            or not 0 < relaxed_barrier_s <= 60
+        ):
+            raise ValueError("relaxed_barrier_s must be between 0 and 60")
+        self._relaxed_barrier_s = float(relaxed_barrier_s)
+        # When the oldest commit not yet synced to disk was made, if any.
+        self._relaxed_since: float | None = None
+        self._synchronous = "FULL"
+
         self.db_path = Path(db_path)
         self._max_batch_items = max_batch_items
         self._batch_window_s = batch_window_s
@@ -105,14 +120,23 @@ class SQLiteWriteCoordinator:
         """Whether the worker can still accept and execute its database queue."""
         return self._thread.is_alive()
 
-    def submit[T](self, callback: Callable[[sqlite3.Connection], T]) -> Future[T]:
+    def submit[T](
+        self, callback: Callable[[sqlite3.Connection], T], *, durable: bool = True,
+    ) -> Future[T]:
         """Queue one operation and return its result Future.
+
+        With ``durable`` (the default) the Future resolves after a FULL commit.
+        Without it, after a commit that may not be on disk yet: a batch with
+        only such operations commits with ``synchronous=NORMAL``, and a FULL
+        barrier follows within ``relaxed_barrier_s`` (or with the next durable
+        batch). Use it only for writes the caller can rebuild after a power
+        loss.
 
         Raises RuntimeError after shutdown begins, or CoordinatorQueueFull
         immediately if the pending queue has reached its configured bound.
         """
         future: Future[T] = Future()
-        operation: _Operation[T] = _Operation(callback=callback, future=future)
+        operation: _Operation[T] = _Operation(callback=callback, future=future, durable=durable)
         with self._state_lock:
             if self._stopping:
                 raise RuntimeError("SQLite write coordinator is shutting down")
@@ -174,8 +198,9 @@ class SQLiteWriteCoordinator:
             )
             connection.execute("PRAGMA synchronous=FULL")
             while True:
-                first = self._next_operation()
+                first = self._next_operation(connection)
                 if first is None:
+                    self._barrier_if_relaxed(connection)
                     return
                 batch = self._collect_batch(first)
                 active_batch = [
@@ -189,6 +214,8 @@ class SQLiteWriteCoordinator:
                         self._accepted_operations -= cancelled_count
                 if not active_batch:
                     continue
+                durable = any(operation.durable for operation in active_batch)
+                self._set_synchronous(connection, "FULL" if durable else "NORMAL")
                 try:
                     outcomes = self._execute_batch(connection, active_batch)
                 except BaseException as exc:
@@ -198,6 +225,11 @@ class SQLiteWriteCoordinator:
                     raise
                 with self._state_lock:
                     self._accepted_operations -= len(active_batch)
+                if any(error is None for _, _, error in outcomes):
+                    if durable:
+                        self._relaxed_since = None  # a FULL commit syncs earlier ones too
+                    elif self._relaxed_since is None:
+                        self._relaxed_since = time.monotonic()
                 self._resolve(outcomes)
         except BaseException:
             _logger.exception("sqlite_write_worker_failed database_name=%s", self.db_path.name)
@@ -208,14 +240,49 @@ class SQLiteWriteCoordinator:
             if connection is not None:
                 connection.close()
 
-    def _next_operation(self) -> _Operation[object] | None:
+    def _next_operation(self, connection: sqlite3.Connection) -> _Operation[object] | None:
         while True:
             try:
                 return self._queue.get(timeout=0.05)
             except queue.Empty:
+                if (
+                    self._relaxed_since is not None
+                    and time.monotonic() - self._relaxed_since >= self._relaxed_barrier_s
+                ):
+                    self._barrier_if_relaxed(connection)
                 with self._state_lock:
                     if self._stopping and self._queue.empty():
                         return None
+
+    def _set_synchronous(self, connection: sqlite3.Connection, mode: str) -> None:
+        if self._synchronous != mode:
+            connection.execute(f"PRAGMA synchronous={mode}")
+            self._synchronous = mode
+
+    def _barrier_if_relaxed(self, connection: sqlite3.Connection) -> None:
+        """Sync every relaxed commit so far with one FULL commit that writes.
+
+        A FULL commit syncs the WAL up to its own frame, which includes the
+        earlier NORMAL commits; it must write something to sync at all.
+        """
+        if self._relaxed_since is None:
+            return
+        self._set_synchronous(connection, "FULL")
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS durability_marks ("
+                "id INTEGER PRIMARY KEY CHECK (id = 1), synced_at TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO durability_marks (id, synced_at) VALUES (1, datetime('now')) "
+                "ON CONFLICT(id) DO UPDATE SET synced_at = excluded.synced_at"
+            )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        self._relaxed_since = None
 
     def _collect_batch(self, first: _Operation[object]) -> list[_Operation[object]]:
         batch = [first]

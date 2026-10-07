@@ -59,6 +59,8 @@ class SQLiteWriteCoordinatorRegistry:
         self,
         db_path: Path,
         callback: Callable[[sqlite3.Connection], T],
+        *,
+        durable: bool = True,
     ) -> Future[T]:
         """Submit work to the coordinator owned by ``db_path``.
 
@@ -92,7 +94,7 @@ class SQLiteWriteCoordinatorRegistry:
                 self._coordinators[normalized_path] = coordinator
             else:
                 self._coordinators.move_to_end(normalized_path)
-            return cast(Future[T], coordinator.submit(callback))
+            return cast(Future[T], coordinator.submit(callback, durable=durable))
 
     def shutdown(self, *, timeout: float | None = 10.0) -> bool:
         """Stop admission and drain every worker within one shared deadline.
