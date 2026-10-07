@@ -95,7 +95,11 @@ class _CrashAwareRegistry:
             coordinator_options={"batch_window_s": 0},
         )
 
-    def submit(self, db_path, callback):
+    def submit(self, db_path, callback, *, durable=True):
+        if not durable:
+            # A relaxed commit is not on disk yet: a power loss before the next
+            # FULL commit loses it, so it takes no snapshot.
+            return self._inner.submit(db_path, callback, durable=False)
         self._server._maybe_crash("before_full_commit")
         future = self._inner.submit(db_path, callback)
         return _CommittedFuture(future, self._after_commit)
@@ -217,8 +221,10 @@ class Server:
             )
 
     # The protocol, as the app calls it.
-    def reserve(self, digest: str, size: int, client_upload_id: str = "client-1") -> dict:
-        return self.service.reserve_upload_batch(self.user, DEVICE, QUOTA, {"uploads": [{
+    def reserve(
+        self, digest: str, size: int, client_upload_id: str = "client-1", *, ingest: bool = False,
+    ) -> dict:
+        return self.service.reserve_upload_batch(self.user, DEVICE, QUOTA, {"ingest": ingest, "uploads": [{
             "client_upload_id": client_upload_id, "filename": "IMG_0001.jpg", "size": size,
             "sha256": digest, "captured_at": "2026-09-09T12:00:00Z",
         }]})["uploads"][0]
@@ -480,7 +486,9 @@ def _ingest_like_the_app(server: Server, photos: list[bytes], *, power_loss: boo
         try:
             for client, data in zip(clients, photos, strict=True):
                 if client not in ids:
-                    reserved = server.reserve(hashlib.sha256(data).hexdigest(), len(data), client)
+                    reserved = server.reserve(
+                        hashlib.sha256(data).hexdigest(), len(data), client, ingest=True,
+                    )
                     ids[client] = reserved["upload_id"]
             states = {client: server.status(ids[client]) for client in clients}
             pending = [
@@ -532,3 +540,31 @@ def test_a_batch_ingest_interrupted_anywhere_stores_every_photo_once(
     assert set(upload_states) == {"ready"}, upload_states
     stored = sorted(path for path in user.media_root.rglob("*") if path.is_file())
     assert stored == sorted(cataloged), "no partial or orphan copy may be left in the library"
+
+
+def test_a_power_loss_after_the_relaxed_commit_is_rebuilt_from_the_files(tmp_path: Path, monkeypatch):
+    # The batch's final commit does not wait for the disk: its uploads'
+    # "receiving" rows (from the reservation's FULL commit) and their synced
+    # files are enough. After a power loss that lost the commit, recovery alone,
+    # without the device sending again, catalogs every photo from its file.
+    user = _user(tmp_path)
+    server = Server(user, monkeypatch)
+    photos = [_photo(shade) for shade in (25, 105, 185)]
+    entries = []
+    for index, data in enumerate(photos):
+        reserved = server.reserve(
+            hashlib.sha256(data).hexdigest(), len(data), f"client-{index}", ingest=True,
+        )
+        entries.append((reserved["upload_id"], data))
+    server.crash_at = "ingest_committed"
+    with pytest.raises(Crash):
+        server.ingest(entries)
+
+    server.restart(power_loss=True)
+
+    conn = sqlite3.connect(user.db_path)
+    states = [row[0] for row in conn.execute("SELECT state FROM sync_uploads")]
+    cataloged = [Path(row[0]) for row in conn.execute("SELECT caminho FROM memes")]
+    conn.close()
+    assert states == ["ready"] * 3, states
+    assert sorted(path.read_bytes() for path in cataloged) == sorted(photos)

@@ -107,7 +107,8 @@ def test_one_file_barrier_and_one_admission_per_batch(tmp_path: Path, monkeypatc
     ids = _reserve(service, user, photos)
     real_submit = service._submit_write
     monkeypatch.setattr(
-        service, "_submit_write", lambda u, callback: writes.append(callback) or real_submit(u, callback)
+        service, "_submit_write",
+        lambda u, callback, **kw: writes.append(callback) or real_submit(u, callback, **kw),
     )
 
     _ingest(service, user, [(upload_id, len(data)) for upload_id, data in zip(ids, photos, strict=True)], photos)
@@ -304,6 +305,14 @@ with TestClient(server.app) as phone:
     assert sent.status_code == 200, sent.text
     assert [entry["state"] for entry in sent.json()["uploads"]] == ["ready"] * 3, sent.text
 
+    feed = phone.get("/api/sync/changes?limit=1000").json()
+    last = feed["next_cursor"]
+    assert last > 0 and "reset" not in feed
+    # A device ahead of the feed (a power loss undid its last changes) is
+    # sent back to the feed's end, which devices store as their cursor.
+    ahead = phone.get(f"/api/sync/changes?cursor={last + 10}").json()
+    assert ahead == {"changes": [], "next_cursor": last, "has_more": False, "reset": True}, ahead
+
     bad = phone.post("/api/sync/ingest", content=b"x", headers={"X-Iris-Ingest": "abc:2"})
     assert bad.status_code == 400, bad.text
     phone.headers.pop("Authorization")
@@ -470,3 +479,33 @@ def test_a_photo_whose_catalog_fails_does_not_hold_back_the_batch(tmp_path: Path
     assert results[1]["state"] == "pending_processing", results[1]
     assert _states(user)[ids[1]] == "pending_processing"
     assert len(_cataloged(user)) == 2
+
+
+def test_a_reservation_for_ingest_admits_so_the_batch_writes_no_admission(tmp_path: Path, monkeypatch):
+    user, service = _user(tmp_path), _service()
+    photos = [_photo(index) for index in range(3)]
+    result = service.reserve_upload_batch(user, DEVICE, 1 << 40, {"ingest": True, "uploads": [{
+        "client_upload_id": f"r-{index}", "filename": f"IMG_{index:04d}.jpg", "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(), "captured_at": "2026-09-09T12:00:00Z",
+    } for index, data in enumerate(photos)]})["uploads"]
+    ids = [entry["upload_id"] for entry in result]
+    # Devices still see an upload waiting for its bytes.
+    assert {entry["state"] for entry in result} == {"uploading"}
+    with sqlite3.connect(user.db_path) as conn:
+        planned = conn.execute(
+            "SELECT state, final_path FROM sync_uploads WHERE id IN (?, ?, ?)", ids
+        ).fetchall()
+    assert all(state == "receiving" and path for state, path in planned)
+
+    writes = []
+    real_submit = service._submit_write
+    monkeypatch.setattr(
+        service, "_submit_write",
+        lambda u, callback, **kw: writes.append((callback.__name__, kw.get("durable", True)))
+        or real_submit(u, callback, **kw),
+    )
+    results = _ingest(service, user, [(upload_id, len(data)) for upload_id, data in zip(ids, photos, strict=True)], photos)
+
+    assert [entry["state"] for entry in results] == ["ready"] * 3
+    # Only the final commit, and it does not wait for the disk.
+    assert writes == [("commit", False)]

@@ -92,6 +92,28 @@ a complete file with the declared hash continues as `finalizing`; anything
 else is removed and reset. The resumable `PUT` path is unchanged, for large
 files and older clients.
 
+#### Fewer disk barriers per batch
+
+On a spinning disk each FULL commit costs a trip to the database's WAL and a
+cache flush, whatever its size. A batch now pays about one:
+
+- **Admission at reservation.** A batch-ingest client sends `"ingest": true`
+  with its reservation. The reservation's own transaction (one FULL commit,
+  needed anyway) also records each new upload's final path and state
+  `receiving`. The ingest request then only reads to confirm that and writes
+  no admission. Anything else (a reset upload, content found since, an older
+  client) still takes the admission transaction.
+- **A relaxed final commit.** The batch's final commit (stored and cataloged)
+  does not wait for the disk: the `receiving` rows (final path, size, hash)
+  and the synced files already let recovery rebuild it after a power loss.
+  The account writer commits operations submitted with `durable=False` with
+  `synchronous=NORMAL`, and a FULL barrier follows within
+  `relaxed_barrier_s` (1 s), with the next durable batch, or when it stops.
+- **Feed rewind.** A power loss can undo the feed's last changes, which
+  recovery records again. `GET /api/sync/changes` with a cursor past the
+  feed's end answers `next_cursor` = the end and `reset: true`; devices store
+  `next_cursor` as is, so they rewind without an app change.
+
 `IngestPolicy.from_env()` reads `IRIS_INGEST_<FIELD>` overrides, so the
 performance lab can sweep the policy without code changes.
 

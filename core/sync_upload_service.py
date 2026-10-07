@@ -161,12 +161,16 @@ class SyncUploadService:
         self,
         user: IrisUser,
         callback: Callable[[sqlite3.Connection], T],
+        *,
+        durable: bool = True,
     ) -> T:
         """Prepare account schema, then run one DB-only callback on its writer."""
         with closing(self.open_connection(user)):
             pass
         try:
-            return self._write_registry.submit(user.db_path, callback).result()
+            if durable:
+                return self._write_registry.submit(user.db_path, callback).result()
+            return self._write_registry.submit(user.db_path, callback, durable=False).result()
         except SQLiteWriteQueueFull as exc:
             raise SyncUploadError(503, "Servidor ocupado; tente novamente em instantes") from exc
 
@@ -273,6 +277,9 @@ class SyncUploadService:
         if not device_id:
             raise SyncUploadError(403, "Use uma sessão de dispositivo para sincronizar mídia")
         items = payload.get("uploads") if isinstance(payload, dict) else None
+        # A batch-ingest client says so: its reservations are also admitted,
+        # each with its final path, so its ingest request writes no admission.
+        for_ingest = isinstance(payload, dict) and payload.get("ingest") is True
         # Batch-ingest clients reserve a whole batch at once; the legacy
         # 16-item cap stays the floor for older clients.
         limit = max(_MAX_UPLOAD_INIT_BATCH, self._ingest_policy.max_items)
@@ -321,6 +328,7 @@ class SyncUploadService:
 
         def reserve_batch(connection: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
             results: list[dict[str, Any]] = []
+            planned: list[tuple[str, dict[str, Any]]] = []
             remaining = UploadReservationStore.remaining_bytes(connection, quota_bytes)
             for item in prepared:
                 if "error_code" in item:
@@ -424,6 +432,7 @@ class SyncUploadService:
                     )
                     continue
                 remaining -= item["size"]
+                planned.append((upload_id, item))
                 results.append(
                     {
                         "client_upload_id": client_upload_id,
@@ -433,6 +442,10 @@ class SyncUploadService:
                         "state": "uploading",
                     }
                 )
+            if for_ingest and planned:
+                from core.sync_ingest import plan_destinations
+
+                plan_destinations(connection, user, device_id, planned)
             return {"uploads": results}
 
         # The coordinator's FULL commit is the durability barrier for every

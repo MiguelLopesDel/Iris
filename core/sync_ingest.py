@@ -27,7 +27,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import AsyncIterable, Callable
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -195,6 +195,47 @@ class SyncIngestPipeline:
         return {"uploads": results, "limits": self._service.ingest_limits()}
 
     def _admit(self, user: IrisUser, device_id: str, items: list[_Item]) -> None:
+        """Check each reservation and claim its final path, writing only if needed.
+
+        Uploads reserved for batch ingest were admitted by their reservation's
+        own FULL commit: a read confirms it and nothing is written. Anything
+        else (a reset, a duplicate found since, an older client) takes the
+        admission transaction below.
+        """
+        if self._already_admitted(user, device_id, items):
+            return
+        self._admit_in_writer(user, device_id, items)
+
+    def _already_admitted(self, user: IrisUser, device_id: str, items: list[_Item]) -> bool:
+        ids = [item.upload_id for item in items]
+        with closing(self._service.open_connection(user)) as connection:
+            rows = {
+                row[0]: row[1:]
+                for row in _select_in(
+                    connection,
+                    "SELECT id, device_id, state, expected_size, final_path, filename, "
+                    "expected_hash, captured_at FROM sync_uploads WHERE id IN ({marks})",
+                    ids,
+                )
+            }
+            hashes = sorted({row[5] for row in rows.values()})
+            known = {row[0] for row in _select_in(
+                connection, "SELECT content_hash FROM memes WHERE content_hash IN ({marks})", hashes,
+            )}
+        for item in items:
+            row = rows.get(item.upload_id)
+            if (
+                row is None or row[0] != device_id or row[1] != "receiving" or not row[3]
+                or int(row[2]) != item.size or row[5] in known
+            ):
+                return False
+        for item in items:
+            row = rows[item.upload_id]
+            item.destination = Path(row[3])
+            item.filename, item.expected_hash, item.captured_at = row[4], row[5], row[6]
+        return True
+
+    def _admit_in_writer(self, user: IrisUser, device_id: str, items: list[_Item]) -> None:
         """One writer transaction: check each reservation and claim its final path.
 
         Lookups run once for the whole batch (reservations, known content,
@@ -471,8 +512,12 @@ class SyncIngestPipeline:
                 if result["state"] == "duplicate":
                     duplicates.append(item.destination)
 
-        self._service._submit_write(user, commit)
-        # After the FULL commit: the catalog points to the kept copy only.
+        # Not a FULL commit: the uploads' "receiving" rows (final path, size,
+        # hash) and their files are already on disk, so after a power loss
+        # recovery rebuilds this commit from them. The writer syncs relaxed
+        # commits within a second, or with the next durable one.
+        self._service._submit_write(user, commit, durable=False)
+        # After the commit: the catalog points to the kept copy only.
         for path in duplicates:
             path.unlink(missing_ok=True)
         if on_finished is not None and any(item.outcome for item in writing):
@@ -597,3 +642,47 @@ def _paths_in_use(
         if upload_id != owner[forms[path]]:
             taken.add(forms[path])
     return taken
+
+
+def plan_destinations(
+    connection: sqlite3.Connection,
+    user: IrisUser,
+    device_id: str,
+    planned: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Admit new reservations for batch ingest, inside the reservation's transaction.
+
+    Each gets its final library path and state ``receiving``, made durable by
+    the reservation's own FULL commit, so the ingest request writes nothing
+    before its bytes. One that cannot get a path stays ``uploading`` and is
+    admitted by the ingest request instead.
+    """
+    from core.sync_upload_service import _referenced_elsewhere, _upload_destinations
+
+    choices = []
+    for upload_id, item in planned:
+        row = (
+            item["filename"], item["size"], item["sha256"], 0, "", "uploading", device_id,
+            item["captured_at"], item["source"]["id"],
+        )
+        _directory, primary, alternate = _upload_destinations(user, device_id, upload_id, row)
+        choices.append((upload_id, primary, alternate))
+    taken = _paths_in_use(
+        connection, [(upload_id, primary) for upload_id, primary, _ in choices], user.media_root,
+    )
+    updates = []
+    timestamp = now_iso()
+    for upload_id, primary, alternate in choices:
+        if str(primary) not in taken and not primary.exists():
+            destination = primary
+        elif not _referenced_elsewhere(connection, alternate, upload_id, user.media_root):
+            destination = alternate
+        else:
+            continue
+        taken.add(str(destination))
+        updates.append((str(destination), timestamp, upload_id))
+    connection.executemany(
+        "UPDATE sync_uploads SET state = 'receiving', final_path = ?, updated_at = ? "
+        "WHERE id = ? AND state = 'uploading'",
+        updates,
+    )
