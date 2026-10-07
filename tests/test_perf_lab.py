@@ -15,7 +15,10 @@ SCENARIOS = Path(__file__).parents[1] / "scripts" / "perf_lab" / "scenarios"
 
 @pytest.mark.parametrize(
     "filename",
-    ["smoke.yaml", "sync-small-files.yaml", "sync-small-files-bundled.yaml", "sync-mixed-library.yaml"],
+    [
+        "smoke.yaml", "sync-small-files.yaml", "sync-small-files-bundled.yaml",
+        "sync-small-files-full-batches.yaml", "sync-mixed-library.yaml",
+    ],
 )
 def test_checked_in_scenarios_parse(filename):
     loaded = scenario.load(SCENARIOS / filename)
@@ -43,6 +46,8 @@ def test_checked_in_scenarios_parse(filename):
         {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "bundle": "500KB"}]},
         {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "bundle": "64MB"}]},
         {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "rtt": "2s"}]},
+        {"actors": [{"kind": "syncing", "items": 1, "sizes": {"2KB": "100%"}, "batch": 0}]},
+        {"actors": [{"kind": "syncing", "items": 1, "sizes": {"2KB": "100%"}, "batch": "big"}]},
         {"actors": [{"kind": "syncing", "items": 1, "sizes": {"1KB": "100%"}, "rtt": "fast"}]},
     ],
 )
@@ -328,3 +333,23 @@ def test_rtt_is_parsed_from_a_duration():
     })
 
     assert case.actors[0].rtt == pytest.approx(0.03)
+
+
+@pytest.mark.parametrize("batch", ["auto", 3])
+def test_perf_lab_full_batches_end_to_end(tmp_path, batch):
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("PIL")
+    case = scenario.parse({
+        "name": "test-full-batches",
+        "duration": "30s",
+        "actors": [{
+            "kind": "syncing", "items": 7, "sizes": {"2KB-20KB": "100%"},
+            "batch": batch, "batches_in_flight": 2,
+        }],
+    })
+
+    result = run(case, tmp_path / "lab", tmp_path / "report")
+
+    summary = result["actors"]["0:syncing×1"]["summary"]
+    assert (summary["items_done"], summary["items_failed"]) == (7, 0), summary

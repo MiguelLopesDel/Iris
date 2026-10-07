@@ -219,6 +219,8 @@ async def _run_actors(
                 "completion_lanes": actor.completion_lanes,
                 "bundle_bytes": actor.bundle_bytes,
                 "rtt_ms": round(actor.rtt * 1000, 1),
+                "batch_items": actor.batch_items,
+                "batches_in_flight": actor.batches_in_flight,
                 "accounts": actor.accounts,
             },
             "summary": summary,

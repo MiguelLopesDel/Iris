@@ -165,6 +165,10 @@ class _DelayedClient:
         await asyncio.sleep(self._rtt)
         return await self._client.put(*args, **kwargs)
 
+    async def get(self, *args, **kwargs) -> httpx.Response:
+        await asyncio.sleep(self._rtt)
+        return await self._client.get(*args, **kwargs)
+
 
 async def run_device(
     client: httpx.AsyncClient,
@@ -239,6 +243,12 @@ async def run_device(
         response.raise_for_status()
         return response.json()["uploads"]
 
+    if actor.batch_items:
+        await _run_full_batches(
+            client, base_url, headers, items, actor, reserve, clock_start, deadline
+        )
+        return result
+
     reservations = _Coalescer(reserve, lanes=1)  # one in flight, as the app's init batcher
     completions = _Coalescer(complete, lanes=actor.completion_lanes)
     bundles = (
@@ -295,6 +305,76 @@ async def run_device(
         if bundles is not None:
             bundles.close()
     return result
+
+
+async def _run_full_batches(client, base_url, headers, items, actor, reserve, clock_start, deadline):
+    """Reserve and ingest whole batches, sized as the server suggests or as set.
+
+    Each batch is one reservation and one ingest request for all its photos;
+    ``batches_in_flight`` of them run at once. With ``batch: auto`` the size
+    follows the limits the server returns with every ingest answer.
+    """
+    clock = time.monotonic
+    limits = (await client.get(f"{base_url}/api/sync/ingest/limits", headers=headers)).json()
+    pending = list(items)
+
+    def next_batch() -> list[Item]:
+        wanted = limits["suggested_items"] if actor.batch_items < 0 else actor.batch_items
+        wanted = min(wanted, limits["max_items"])
+        batch, size = [], 0
+        while pending and len(batch) < wanted and size + pending[0].size <= limits["max_bytes"]:
+            size += pending[0].size
+            batch.append(pending.pop(0))
+        if not batch and pending:
+            batch.append(pending.pop(0))  # larger than a batch: refused on its own
+        return batch
+
+    async def lane() -> None:
+        nonlocal limits
+        while pending and clock() < deadline:
+            batch = next_batch()
+            started = clock() - clock_start
+            for item in batch:
+                item.started = started
+            try:
+                reserved = await reserve(batch)
+                now = clock() - clock_start
+                sending = []
+                for item, answer in zip(batch, reserved, strict=True):
+                    item.reserved = now
+                    if answer.get("state") != "uploading":
+                        item.state = answer.get("state") or f"error {answer.get('error_code')}"
+                        item.sent = item.finished = now
+                        continue
+                    item.upload_id = answer["upload_id"]
+                    sending.append(item)
+                if not sending:
+                    continue
+                response = await client.post(
+                    f"{base_url}/api/sync/ingest",
+                    headers={
+                        **headers,
+                        "X-Iris-Ingest": ",".join(f"{item.upload_id}:{item.size}" for item in sending),
+                    },
+                    content=b"".join(piece for item in sending for piece in item.blocks()),
+                )
+                response.raise_for_status()
+                answer = response.json()
+                limits = answer.get("limits", limits)
+                now = clock() - clock_start
+                for item, outcome in zip(sending, answer["uploads"], strict=True):
+                    item.sent = item.finished = now
+                    item.state = outcome.get("state") or f"error {outcome.get('error_code')}"
+                    if "error_code" in outcome:
+                        item.error = f"{outcome['error_code']}: {outcome.get('error_message', '')}"[:200]
+            except Exception as exc:
+                now = clock() - clock_start
+                for item in batch:
+                    if not item.finished:
+                        item.finished = now
+                        item.state, item.error = "error", f"{type(exc).__name__}: {exc}"[:200]
+
+    await asyncio.gather(*(lane() for _ in range(actor.batches_in_flight)))
 
 
 def make_items(actor: SyncingActor, rng: random.Random, start_index: int) -> list[Item]:
