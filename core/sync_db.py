@@ -67,6 +67,8 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_changes_sequence ON sync_changes(sequence)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_media_origins_source ON media_origins(device_id, source_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_uploads_state ON sync_uploads(state)")
+    # The same check covers uploads moved into the library but not cataloged yet.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_uploads_final_path ON sync_uploads(final_path)")
     conn.execute(
         """CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_uploads_client_id
         ON sync_uploads(device_id, client_upload_id)
