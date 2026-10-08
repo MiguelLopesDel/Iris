@@ -1,6 +1,5 @@
 package com.iris.app.ui.screens.detail
 
-import android.content.Intent
 import android.graphics.Color as AndroidColor
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -78,6 +77,7 @@ import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.rememberMediaDownload
+import com.iris.app.ui.components.rememberMediaShare
 import com.iris.app.ui.screens.spaces.SpacePickerDialog
 import kotlinx.coroutines.launch
 import com.iris.app.ui.components.decodeThumbHash
@@ -105,6 +105,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val application = context.applicationContext as IrisApplication
     val apiClient = application.apiClient
     val download = rememberMediaDownload { viewModel.showNotice(it) }
+    val share = rememberMediaShare { viewModel.showNotice(it) }
     val scope = rememberCoroutineScope()
     var pickingSpace by remember { mutableStateOf(false) }
 
@@ -169,7 +170,12 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             )
                         },
                         onDetails = { showDetails = true },
-                        onShare = { shareRecord(context, record, apiClient) },
+                        onShare = {
+                            share(
+                                apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho),
+                                record.cleanFilename
+                            )
+                        },
                         onSpace = { pickingSpace = true },
                         onRename = { renaming = true }
                     )
@@ -495,24 +501,4 @@ private fun RenameDialog(
             TextButton(onClick = onDismiss) { Text("Cancelar", color = Color.White) }
         }
     )
-}
-
-private fun shareRecord(
-    context: android.content.Context,
-    record: MediaRecord,
-    apiClient: com.iris.app.data.remote.IrisApiClient,
-) {
-    val mediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(
-            Intent.EXTRA_TEXT,
-            buildString {
-                appendLine(record.cleanFilename)
-                if (!record.descricaoIa.isNullOrBlank()) appendLine("\n${record.descricaoIa}")
-                appendLine("\n$mediaUrl")
-            }
-        )
-    }
-    context.startActivity(Intent.createChooser(intent, "Compartilhar"))
 }
