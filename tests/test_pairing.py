@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from core import pairing
+from tests.test_server_identity import verify_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -119,6 +120,8 @@ out["code"] = ana.get("/api/pairing", params={"current": "http://192.168.1.20:85
 out["public_ca"] = anonymous.get("/api/pairing/ca.pem").text
 out["removed"] = root.delete("/api/admin/pairing/ca").json()
 out["ca_after"] = anonymous.get("/api/pairing/ca.pem").status_code
+out["identity"] = anonymous.get("/api/identity", params={"nonce": "n" * 32, "address": "http://192.168.1.20:8501"}).json()
+out["identity_bad_nonce"] = anonymous.get("/api/identity", params={"nonce": "short", "address": "http://192.168.1.20:8501"}).status_code
 print(json.dumps(out))
 '''
 
@@ -149,3 +152,11 @@ def test_signed_in_people_get_a_code_and_only_administrators_set_its_ca(tmp_path
     assert code["qr_svg"].startswith("<svg")
     assert "BEGIN CERTIFICATE" in out["public_ca"]
     assert out["removed"] == {"ca_sha256": None} and out["ca_after"] == 404
+
+    # The code carries the key a device pins; anyone may ask the server to prove it holds it.
+    assert len(code["key_sha256"]) == 64
+    assert parse_qs(urlsplit(code["uri"]).query)["k"] == [code["key_sha256"]]
+    identity = out["identity"]
+    assert identity["key_sha256"] == code["key_sha256"] and identity["instance_id"] == out["health_id"]
+    assert verify_identity(identity, "n" * 32, "http://192.168.1.20:8501")
+    assert out["identity_bad_nonce"] == 422

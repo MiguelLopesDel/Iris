@@ -2,6 +2,7 @@
 # edit; the pinned requirements*.txt locks are generated from it by
 # scripts/lock_deps.sh. Lower bounds are the versions last tested together.
 cairosvg>=2.9.1
+cryptography>=50.0.2
 deep-translator>=1.11.4
 easyocr>=1.7.2
 einops>=0.8.2

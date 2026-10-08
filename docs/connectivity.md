@@ -181,6 +181,30 @@ O código não é segredo e não dá acesso a nada: endereços, identificador e
 certificado de autoridade são públicos por natureza. Depois do pareamento, entrar
 na conta continua exigindo usuário e senha.
 
+## Identidade do servidor
+
+O endereço não prova quem está atendendo: outro computador pode assumir o mesmo IP, e
+o `instance_id` do `/healthz` é público, então qualquer um pode repeti-lo. Por isso
+cada instalação tem uma **chave de identidade** (ECDSA P-256), criada na primeira
+subida em `<dados>/identity_key.pem`, legível só pelo usuário do servidor.
+
+- O código de pareamento leva a impressão digital da chave pública (`k=`, SHA-256 da
+  chave em hexadecimal). Ela vem da tela de uma sessão já autenticada, então a
+  confiança não depende da primeira conexão.
+- Antes de enviar token ou senha, o app pede ao servidor que assine um desafio novo:
+  `GET /api/identity?nonce=<aleatório>&address=<esquema://host:porta usado>`. A
+  resposta traz a chave pública e a assinatura de
+  `iris-identity-v1 \n instance_id \n nonce \n address`. O app confere que a chave é a
+  do pareamento e que a assinatura vale. Quem não tem a chave privada não consegue
+  responder.
+- A rota é pública: o app pergunta antes de entrar, e nada nela é segredo.
+- Por HTTP sem criptografia, a assinatura barra uma máquina que tomou o endereço, mas
+  não um intermediário ativo que repasse o desafio ao servidor verdadeiro. Contra
+  esse caso, só HTTPS.
+- A chave fica junto do `instance_id` e do `secret_key` no diretório de dados e não
+  entra nos backups do catálogo. Perder o diretório de dados faz desta instalação um
+  servidor novo para todos os aparelhos, que precisam parear de novo.
+
 ## Próximas etapas
 
 - **Troca automática de endereço:** hoje o pareamento escolhe um endereço. Com
