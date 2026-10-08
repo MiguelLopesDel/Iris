@@ -234,6 +234,11 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
 def ensure_memes_indexes(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memes_content_hash ON memes(content_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memes_library_id ON memes(library_id)")
+    # Before an upload claims a library file name, sync checks that no catalog
+    # row points to it, by absolute or relative path. The usual answer is "none",
+    # which without these indexes meant reading the whole table for every photo.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memes_caminho ON memes(caminho)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memes_storage_path ON memes(storage_path)")
     # Collections: filter-by-collection queries need collection_id as leading column
     conn.execute("CREATE INDEX IF NOT EXISTS idx_media_collections_collection_id ON media_collections(collection_id)")
     # Concepts: get_references(concept_id) needs concept_id indexed
