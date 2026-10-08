@@ -38,7 +38,7 @@ internal class BatchIngestTransfer(
     /** Per-job results, and the limits the server reported for the next batch. */
     data class Outcome(val results: Map<Long, ItemResult>, val limits: IngestLimits?)
 
-    suspend fun send(queued: List<LocalUploadJob>): Outcome = withContext(Dispatchers.IO) {
+    suspend fun send(queued: List<LocalUploadJob>, limits: IngestBatchSize): Outcome = withContext(Dispatchers.IO) {
         val results = linkedMapOf<Long, ItemResult>()
         val current = mutableListOf<LocalUploadJob>()
         for (job in queued) {
@@ -50,11 +50,39 @@ internal class BatchIngestTransfer(
         }
         if (current.isEmpty()) return@withContext Outcome(results, null)
 
+        var reportedLimits: IngestLimits? = null
+        try {
+            val ingestable = current.filter { limits.takes(it.byteSize) }
+            val resumable = current.filterNot { limits.takes(it.byteSize) }
+            for (job in resumable) results[job.id] = single.execute(job)
+
+            // Content may have grown after the manager selected this batch.
+            // Repartition the refreshed jobs before reserving or sending bytes.
+            for (group in limits.partition(ingestable) { it.byteSize }) {
+                val outcome = sendBatch(group)
+                results.putAll(outcome.results)
+                outcome.limits?.let { reportedLimits = it }
+            }
+            Outcome(results, reportedLimits)
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                for (job in current) {
+                    if (job.id !in results) {
+                        context.dbHelper.updateJobState(context.accountKey, job.id, UploadJobState.QUEUED)
+                    }
+                }
+            }
+            throw cancelled
+        }
+    }
+
+    private suspend fun sendBatch(current: List<LocalUploadJob>): Outcome {
+        val results = linkedMapOf<Long, ItemResult>()
         val db = context.dbHelper
         val accountKey = context.accountKey
         val api = context.apiServiceProvider(context.sessionIdentity)
         var sending: List<Pair<LocalUploadJob, String>> = emptyList()
-        try {
+        return try {
             context.ensureSession()
             val reserved = api.initUploadBatch(
                 UploadInitBatchRequest(uploads = current.map(::reservation), ingest = true)
@@ -74,7 +102,7 @@ internal class BatchIngestTransfer(
                 }
             }
             sending = toSend
-            if (sending.isEmpty()) return@withContext Outcome(results, null)
+            if (sending.isEmpty()) return Outcome(results, null)
 
             val manifest = sending.joinToString(",") { (job, uploadId) -> "$uploadId:${job.byteSize}" }
             val finishRequest = observer.beginPayloadRequest()
@@ -88,7 +116,7 @@ internal class BatchIngestTransfer(
                 val code = response.code()
                 val message = response.errorBody()?.string()
                 for ((job, _) in sending) results[job.id] = settleError(job, code, message)
-                return@withContext Outcome(results, null)
+                return Outcome(results, null)
             }
             val answer = response.body()
             val byUploadId = answer?.uploads.orEmpty().associateBy { it.uploadId }

@@ -13,7 +13,26 @@ internal data class IngestBatchSize(val maxItems: Int, val maxBytes: Long, val m
 
     /** Whether a photo of [nextSize] still fits a batch holding [count] photos and [bytes]. */
     fun fits(count: Int, bytes: Long, nextSize: Long): Boolean =
-        count < maxItems && bytes + nextSize <= maxBytes
+        count < maxItems && nextSize >= 0L && bytes <= maxBytes && nextSize <= maxBytes - bytes
+
+    /** Partitions in input order with a single O(n) pass and no group exceeding server limits. */
+    fun <T> partition(items: List<T>, sizeOf: (T) -> Long): List<List<T>> {
+        val groups = mutableListOf<MutableList<T>>()
+        var group = mutableListOf<T>()
+        var bytes = 0L
+        for (item in items) {
+            val size = sizeOf(item)
+            if (group.isNotEmpty() && !fits(group.size, bytes, size)) {
+                groups += group
+                group = mutableListOf()
+                bytes = 0L
+            }
+            group += item
+            bytes += size
+        }
+        if (group.isNotEmpty()) groups += group
+        return groups
+    }
 
     companion object {
         const val MAX_FILE_BYTES = 8L * 1024 * 1024

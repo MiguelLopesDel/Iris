@@ -343,7 +343,17 @@ class SyncUploadManager(
                     single = transfer,
                     observer = transfer.observer,
                 )
-                var batchSize = if (batchIngest) ingestBatchSize(sessionIdentity) else null
+                val ingestAvailability = if (batchIngest) ingestBatchAvailability(sessionIdentity)
+                    else IngestBatchAvailability.Unsupported
+                var batchSize = (ingestAvailability as? IngestBatchAvailability.Supported)?.size
+                val deferForIngestProbe = ingestAvailability == IngestBatchAvailability.Retry
+                if (deferForIngestProbe) {
+                    // Existing reservations may be in the server's `receiving`
+                    // state and can only be resumed through the ingest endpoint.
+                    // Do not switch protocols because a limits probe failed.
+                    anyDeferred.set(true)
+                    retryRequested.set(true)
+                }
                 val lanes = AdaptiveLanes()
                 try {
                     val workers = if (batchSize != null) List(AdaptiveLanes.MAX) { lane ->
@@ -395,7 +405,7 @@ class SyncUploadManager(
                                         if (batch.isNotEmpty()) {
                                             val lanesAtStart = lanes.lanes
                                             val startedAtNanos = System.nanoTime()
-                                            val outcome = ingest.send(batch)
+                                            val outcome = ingest.send(batch, size)
                                             lanes.recordBatch(
                                                 lanesAtStart,
                                                 bytes = batch.filter {
@@ -462,6 +472,8 @@ class SyncUploadManager(
                                 anyDeferred.set(true)
                             }
                         }
+                    } else if (deferForIngestProbe) {
+                        emptyList()
                     } else List(maxConcurrentUploads) {
                         launch(Dispatchers.IO) {
                             while (!retryRequested.get()) {
@@ -587,14 +599,14 @@ class SyncUploadManager(
         }
     }
 
-    /** The server's batch limits, or null to keep the resumable path (an older server, or no answer). */
-    private suspend fun ingestBatchSize(sessionIdentity: String): IngestBatchSize? = try {
+    /** Only a missing endpoint selects the legacy protocol; transient failures defer uploads. */
+    private suspend fun ingestBatchAvailability(sessionIdentity: String): IngestBatchAvailability = try {
         val response = apiServiceProvider(sessionIdentity).getIngestLimits()
-        if (response.isSuccessful) IngestBatchSize.from(response.body()) else null
+        IngestBatchAvailability.fromHttp(response.code(), response.body())
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Exception) {
-        null
+        IngestBatchAvailability.Retry
     }
 
     internal companion object {

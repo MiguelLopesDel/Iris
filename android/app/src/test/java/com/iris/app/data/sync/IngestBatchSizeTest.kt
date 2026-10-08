@@ -40,4 +40,22 @@ class IngestBatchSizeTest {
         assertTrue(size.takes(2L shl 20))
         assertFalse(size.takes(IngestBatchSize.MAX_FILE_BYTES + 1))
     }
+
+    @Test
+    fun refreshedSizesArePartitionedWithoutExceedingThePacketByteLimit() {
+        val size = IngestBatchSize(maxItems = 64, maxBytes = 32L shl 20, maxFileBytes = 32L shl 20)
+        val refreshed = listOf(9L, 8L, 8L, 8L).map { it shl 20 }
+
+        val batches = size.partition(refreshed) { it }
+
+        assertEquals(listOf(25L shl 20, 8L shl 20), batches.map { it.sum() })
+        assertEquals(refreshed, batches.flatten())
+    }
+
+    @Test
+    fun partitionHonorsItemLimitAsWellAsByteLimit() {
+        val size = IngestBatchSize(maxItems = 2, maxBytes = 100, maxFileBytes = 100)
+
+        assertEquals(listOf(listOf(10L, 20L), listOf(30L)), size.partition(listOf(10L, 20L, 30L)) { it })
+    }
 }
