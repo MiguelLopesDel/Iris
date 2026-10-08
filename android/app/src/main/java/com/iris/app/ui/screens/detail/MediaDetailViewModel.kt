@@ -3,8 +3,7 @@ package com.iris.app.ui.screens.detail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.iris.app.data.model.MediaOrigin
-import com.iris.app.data.model.MediaOriginIndex
+import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.RecordMetadataResponse
 import com.iris.app.data.repository.IrisRepository
@@ -12,7 +11,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class MediaDetailUiState(
     val recordIndex: Int,
@@ -24,15 +25,19 @@ data class MediaDetailUiState(
     val isLoadingSimilars: Boolean = false,
     val error: String? = null,
     val isRenaming: Boolean = false,
-    /** Whether this device uploaded the item, so it should still hold it; null until checked. */
-    val onDevice: Boolean? = null,
+    /** Whether the device copy was looked for (when the panel first opened). */
+    val deviceChecked: Boolean = false,
+    /** The copy on this device, when this device sent the item and still holds it. */
+    val deviceCopy: DeviceMediaDetails? = null,
     /** Mensagem curta para a tela mostrar e descartar (rename, download). */
     val notice: String? = null
 )
 
 class MediaDetailViewModel(
     private val recordIndex: Int,
-    private val repository: IrisRepository
+    private val repository: IrisRepository,
+    /** Reads a device item from the media store; the default finds none (tests, no device). */
+    private val readDeviceMedia: (String) -> DeviceMediaDetails? = { null },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(MediaDetailUiState(recordIndex = recordIndex))
@@ -107,25 +112,28 @@ class MediaDetailViewModel(
     }
 
     /**
-     * Checks once, when the information panel opens, whether this device sent
-     * the item (by content hash, as the gallery's badges do): reading the
-     * whole upload history for every photo swiped past would be wasted work.
+     * Looks once, when the information panel opens, for this item's copy on
+     * the device: the upload this device made of it (by content hash, as the
+     * gallery's badges do), and that file in the media store if it is still
+     * there. Reading the whole upload history for every photo swiped past
+     * would be wasted work.
      */
     fun loadBackupState() {
         val record = _uiState.value.record ?: return
-        if (_uiState.value.onDevice != null) return
+        if (_uiState.value.deviceChecked) return
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
         viewModelScope.launch {
-            val jobs = try {
-                repository.getUploadQueue()
+            val copy = try {
+                val hash = record.contentHash?.lowercase()
+                val job = hash?.let { h -> repository.getUploadQueue().lastOrNull { it.sha256.lowercase() == h } }
+                job?.let { withContext(Dispatchers.IO) { readDeviceMedia(it.localUri) } }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                return@launch
+                null
             }
-            val origin = MediaOriginIndex.from(jobs).originOf(record.contentHash)
             if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@launch
-            _uiState.update { it.copy(onDevice = origin == MediaOrigin.ON_DEVICE) }
+            _uiState.update { it.copy(deviceChecked = true, deviceCopy = copy) }
         }
     }
 
@@ -178,11 +186,12 @@ class MediaDetailViewModel(
 
     class Factory(
         private val recordIndex: Int,
-        private val repository: IrisRepository
+        private val repository: IrisRepository,
+        private val readDeviceMedia: (String) -> DeviceMediaDetails? = { null },
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return MediaDetailViewModel(recordIndex, repository) as T
+            return MediaDetailViewModel(recordIndex, repository, readDeviceMedia) as T
         }
     }
 }
