@@ -17,6 +17,14 @@ class SyncActivityTest {
     }
 
     @Test
+    fun `a scan while photos are already being sent says both`() {
+        val state = SyncUiState(scanProgress = MediaStoreScanner.ScanProgress(120, 6900), isSyncing = true)
+
+        assertEquals(SyncActivity.SCANNING_AND_UPLOADING, SyncActivity.of(state))
+        assertTrue(SyncActivity.of(state).isRunning)
+    }
+
+    @Test
     fun `a pending retry leaves the button available`() {
         val state = SyncUiState(retryPending = true)
 

@@ -198,6 +198,12 @@ data class UploadQueueSummary(
 ) {
     /** Items the server holds, sent now or before. */
     val finished: Int get() = uploaded + alreadyOnServer
+
+    /** Safe on the server: stored, already there, or stored and being cataloged. */
+    val saved: Int get() = finished + processing
+
+    /** Still to send from this device. */
+    val remaining: Int get() = queued + uploading
     val total: Int get() = queued + uploading + processing + finished + failed
 
     companion object {

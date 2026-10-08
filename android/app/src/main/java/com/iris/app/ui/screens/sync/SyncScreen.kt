@@ -489,6 +489,11 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                             scan?.examined ?: 0,
                                             scan?.total ?: 0,
                                         )
+                                        SyncActivity.SCANNING_AND_UPLOADING -> stringResource(
+                                            R.string.sync_status_scanning_and_uploading,
+                                            scan?.examined ?: 0,
+                                            scan?.total ?: 0,
+                                        )
                                         SyncActivity.UPLOADING -> stringResource(R.string.sync_status_uploading)
                                         SyncActivity.RETRY_PENDING -> stringResource(R.string.sync_status_retry_pending)
                                         SyncActivity.IDLE -> stringResource(R.string.sync_status_idle)
@@ -522,6 +527,11 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     fontSize = 13.sp
                                 )
                             }
+                        }
+
+                        if (uiState.queueTotal > 0) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            BackupCounters(uiState.queueCounts)
                         }
 
                         val scanProgress = uiState.scanProgress
@@ -831,6 +841,36 @@ private fun SectionToggle(
                 if (expanded) R.string.section_collapse else R.string.section_expand
             ),
             tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * Total, saved and remaining, as the first thing under the status: what a
+ * backup screen is asked ("is it done, how much is left"), apart from what
+ * the device is doing right now.
+ */
+@Composable
+private fun BackupCounters(counts: Map<UploadJobState, Int>) {
+    val summary = remember(counts) { UploadQueueSummary.from(counts) }
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        listOf(
+            stringResource(R.string.backup_counter_total) to summary.total,
+            stringResource(R.string.backup_counter_saved) to summary.saved,
+            stringResource(R.string.backup_counter_remaining) to summary.remaining,
+        ).forEach { (label, value) ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                Text("$value", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(label, fontSize = 12.sp, color = IrisTextSoft)
+            }
+        }
+    }
+    if (summary.failed > 0) {
+        Text(
+            stringResource(R.string.backup_counter_failed, summary.failed),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(top = 4.dp),
         )
     }
 }

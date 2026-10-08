@@ -72,6 +72,11 @@
     <string name="queue_state_already_on_server">Já estavam no servidor</string>
     <string name="sync_status_scanning">Analisando fotos do aparelho: %1$d de %2$d</string>
     <string name="sync_status_uploading">Enviando mídias em segundo plano…</string>
+    <string name="sync_status_scanning_and_uploading">Analisando %1$d de %2$d · enviando</string>
+    <string name="backup_counter_total">Total</string>
+    <string name="backup_counter_saved">Salvas</string>
+    <string name="backup_counter_remaining">Restantes</string>
+    <string name="backup_counter_failed">%1$d com falha</string>
     <string name="sync_status_retry_pending">A última sincronização não terminou. O Iris tenta de novo sozinho, mas pode demorar; toque em Tentar agora para não esperar.</string>
     <string name="sync_status_idle">Pronto para sincronizar</string>
     <string name="sync_action_sync">Sincronizar</string>
