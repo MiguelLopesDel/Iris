@@ -11,7 +11,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.espresso.Espresso.onView
-import androidx.test.espresso.action.ViewActions.click as espressoClick
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withId
@@ -274,7 +273,7 @@ class InterfaceSmokeTest {
         waitForText("Viagem de Teste")
 
         // Shared space list, shared album/content, and member sheet.
-        compose.onNodeWithText("Espaços").performClick()
+        compose.onNodeWithText("Grupos").performClick()
         waitForText("Família de Teste")
         compose.onNodeWithText("Família de Teste").performClick()
         waitForText("Praia de Teste · 1")
@@ -298,18 +297,14 @@ class InterfaceSmokeTest {
         waitForText("Servidor Iris Conectado")
         compose.onNodeWithContentDescription("Voltar").performClick()
 
-        // Open a media record and reveal the viewer actions.
+        // Open a media record: the viewer opens with its actions showing.
         waitForDescription("foto-teste.jpg")
         compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
         waitForRequestPath("/api/records/0")
-        // The viewer starts immersive with chrome hidden; its first tap belongs
-        // to the gallery card, so tap the full-bleed media once more.
-        compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
-        waitForText("Renomear")
-        // The Details action is present, but a touch in this custom pointer
-        // action did not open the sheet during emulator exploration. Keep the
-        // route smoke green and report that interaction separately.
-        waitForText("Detalhes")
+        waitForText("Salvar no celular")
+        compose.onNodeWithText("Informações").performClick()
+        waitForText("Quando e onde")
+        scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
 
         assertTrue("No unexpected API paths: ${unhandledPaths.joinToString()}", unhandledPaths.isEmpty())
     }
@@ -353,8 +348,8 @@ class InterfaceSmokeTest {
         scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         waitForText("Nenhum álbum")
 
-        compose.onNodeWithText("Espaços").performClick()
-        waitForText("Nenhum espaço ainda")
+        compose.onNodeWithText("Grupos").performClick()
+        waitForText("Nenhum grupo ainda")
 
         assertTrue("No unexpected API paths: ${unhandledPaths.joinToString()}", unhandledPaths.isEmpty())
     }
@@ -416,20 +411,19 @@ class InterfaceSmokeTest {
     fun logout_while_media_viewer_is_open_returns_to_login_gate() {
         compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
         waitForRequestPath("/api/records/0")
-        compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
-        waitForText("Renomear")
+        waitForText("Salvar no celular")
 
         app.credentialsStore.clearCredentials()
 
         waitForText("Login Necessário")
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("Renomear").fetchSemanticsNodes().isEmpty() &&
+            compose.onAllNodesWithText("Salvar no celular").fetchSemanticsNodes().isEmpty() &&
                 compose.onAllNodesWithContentDescription("foto-teste.jpg").fetchSemanticsNodes().isEmpty() &&
                 runBlocking { app.mediaCatalog.cachedCount() == 0 }
         }
         assertTrue(
             "The authenticated media viewer remained visible after logout",
-            compose.onAllNodesWithText("Renomear").fetchSemanticsNodes().isEmpty()
+            compose.onAllNodesWithText("Salvar no celular").fetchSemanticsNodes().isEmpty()
         )
     }
 
@@ -455,9 +449,11 @@ class InterfaceSmokeTest {
     fun rename_photo_and_open_authenticated_video_player() {
         compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
         waitForRequestPath("/api/records/0")
-        compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
+        // Renaming is rare, so it sits in the ⋮ menu.
+        waitForDescription("Mais opções")
+        compose.onNodeWithContentDescription("Mais opções").performClick()
         waitForText("Renomear")
-        compose.onNodeWithText("Renomear").performTouchInput { click() }
+        compose.onNodeWithText("Renomear").performClick()
         waitForText("A extensão é mantida pelo servidor.")
         compose.onNodeWithText("Nome").performTextClearance()
         compose.onNodeWithText("Nome").performTextInput("foto-renomeada")
@@ -470,16 +466,19 @@ class InterfaceSmokeTest {
             "Rename used the wrong filename: ${fixture.renameRequestBodies.last()}",
             fixture.renameRequestBodies.last().contains("name=foto-renomeada")
         )
+        // This fixture has no capture date, so the viewer's title is its file name.
         waitForText("foto-renomeada.jpg")
 
         compose.onNodeWithContentDescription("Voltar").performClick()
         waitForDescription("video-teste.mp4")
         compose.onNodeWithContentDescription("video-teste.mp4").performTouchInput { click() }
         waitForRequestPath("/api/records/1")
+        // A video shows its still and a play button; the player starts when pressed.
+        waitForDescription("Reproduzir vídeo")
+        compose.onNodeWithContentDescription("Reproduzir vídeo").performClick()
         waitForRequestPath("/media/library/video-teste.mp4")
-        onView(withId(androidx.media3.ui.R.id.exo_play_pause))
+        onView(withId(androidx.media3.ui.R.id.exo_content_frame))
             .check(matches(isDisplayed()))
-            .perform(espressoClick())
         assertTrue(
             "Video request did not carry the authenticated session: ${mediaAuthorizationHeaders.joinToString()}",
             mediaAuthorizationHeaders.any { it == "Bearer ui-fixture-token" }
