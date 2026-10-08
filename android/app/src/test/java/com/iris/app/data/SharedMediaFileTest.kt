@@ -1,9 +1,39 @@
 package com.iris.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 
 class SharedMediaFileTest {
+
+    @Test
+    fun `each share gets a unique directory and old entries are pruned`() {
+        val root = Files.createTempDirectory("iris-shared-media-test").toFile()
+        try {
+            val oldFile = root.resolve("old.jpg").apply {
+                writeText("old")
+                setLastModified(1_000L)
+            }
+            val recentFile = root.resolve("recent.jpg").apply {
+                writeText("recent")
+                setLastModified(150_000_000L)
+            }
+
+            val first = SharedMediaFile.createShareDirectory(root, nowMillis = 200_000_000L)
+            val second = SharedMediaFile.createShareDirectory(root, nowMillis = 200_000_000L)
+
+            assertNotEquals(first, second)
+            assertTrue(first.isDirectory)
+            assertTrue(second.isDirectory)
+            assertFalse(oldFile.exists())
+            assertTrue(recentFile.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
     @Test
     fun `a plain name is kept`() {

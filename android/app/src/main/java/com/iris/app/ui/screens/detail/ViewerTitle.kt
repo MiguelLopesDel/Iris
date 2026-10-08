@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -20,8 +21,9 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
         private val timeFormat = DateTimeFormatter.ofPattern("HH:mm", locale)
 
         /**
-         * [capturedAt] is the server's capture time (ISO, the camera's local
-         * time); [fileMtime] in epoch seconds stands in when there is none.
+         * [capturedAt] is an ISO capture time. Explicit offsets are converted
+         * to the device's zone; values without an offset remain local times.
+         * [fileMtime] in epoch seconds stands in when there is none.
          * With neither, the file name is all there is.
          */
         fun of(
@@ -32,7 +34,7 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
             today: LocalDate = LocalDate.now(),
             zone: ZoneId = ZoneId.systemDefault(),
         ): ViewerTitle {
-            val taken = parse(capturedAt)
+            val taken = parse(capturedAt, zone)
                 ?: fileMtime?.takeIf { it > 0.0 }?.let {
                     LocalDateTime.ofInstant(Instant.ofEpochMilli((it * 1000).toLong()), zone)
                 }
@@ -50,7 +52,7 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
 
         /** The capture time in full, for the information panel; null when unknown. */
         fun fullDate(capturedAt: String?, fileMtime: Double?, zone: ZoneId = ZoneId.systemDefault()): String? {
-            val taken = parse(capturedAt)
+            val taken = parse(capturedAt, zone)
                 ?: fileMtime?.takeIf { it > 0.0 }?.let {
                     LocalDateTime.ofInstant(Instant.ofEpochMilli((it * 1000).toLong()), zone)
                 }
@@ -58,9 +60,11 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
             return taken.format(fullFormat).replaceFirstChar { it.uppercase(locale) }
         }
 
-        private fun parse(value: String?): LocalDateTime? {
+        private fun parse(value: String?, zone: ZoneId): LocalDateTime? {
             if (value.isNullOrBlank()) return null
-            return runCatching { LocalDateTime.parse(value.take(19)) }.getOrNull()
+            return runCatching { OffsetDateTime.parse(value).atZoneSameInstant(zone).toLocalDateTime() }
+                .getOrNull()
+                ?: runCatching { LocalDateTime.parse(value) }.getOrNull()
         }
     }
 }

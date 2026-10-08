@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneOffset
+import java.time.ZoneId
 
 class ViewerTitleTest {
     private val today = LocalDate.of(2026, 10, 8)
@@ -20,6 +21,29 @@ class ViewerTitleTest {
     fun `recent photos say today and yesterday`() {
         assertEquals("Hoje", ViewerTitle.of("2026-10-08T09:00:00", null, null, "a.jpg", today).headline)
         assertEquals("Ontem", ViewerTitle.of("2026-10-07T23:59:00", null, null, "a.jpg", today).headline)
+    }
+
+    @Test
+    fun `an offset capture date is converted to the device zone across midnight`() {
+        val saoPaulo = ZoneId.of("America/Sao_Paulo")
+        val title = ViewerTitle.of(
+            "2026-10-08T02:00:00Z", null, null, "a.jpg", today,
+            zone = saoPaulo,
+        )
+
+        assertEquals("Ontem", title.headline)
+        assertEquals("23:00", title.subline)
+    }
+
+    @Test
+    fun `a capture date without offset remains local time`() {
+        val title = ViewerTitle.of(
+            "2026-10-08T09:00:00", null, null, "a.jpg", today,
+            zone = ZoneId.of("America/Sao_Paulo"),
+        )
+
+        assertEquals("Hoje", title.headline)
+        assertEquals("09:00", title.subline)
     }
 
     @Test

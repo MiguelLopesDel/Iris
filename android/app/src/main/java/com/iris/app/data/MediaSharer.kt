@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
+import java.util.UUID
 
 /**
  * Shares a library item itself, the way a gallery does: the receiving app
@@ -38,9 +39,10 @@ class MediaSharer(
                 }
                 val body = response.body ?: return@withContext Result.Failed("Resposta vazia")
                 val mimeType = SharedMediaFile.mimeType(response.header("Content-Type"), fileName)
-                val folder = File(context.cacheDir, SHARE_DIR).apply { mkdirs() }
-                // One shared item at a time: the previous one has been handed over already.
-                folder.listFiles()?.forEach { it.delete() }
+                val folder = SharedMediaFile.createShareDirectory(
+                    File(context.cacheDir, SHARE_DIR),
+                    System.currentTimeMillis(),
+                )
                 val file = File(folder, SharedMediaFile.safeName(fileName))
                 file.outputStream().use { output -> body.byteStream().copyTo(output) }
                 Result.Ready(intentFor(contentUriOf(file), mimeType))
@@ -74,6 +76,24 @@ class MediaSharer(
 /** Naming and typing of a shared file, apart from Android so it can be tested. */
 internal object SharedMediaFile {
     private val unsafe = Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]")
+    private val shareDirectoryName = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+    private const val SHARE_RETENTION_MS = 24L * 60 * 60 * 1000
+
+    /** Creates an isolated path per share and prunes only expired entries from this cache folder. */
+    fun createShareDirectory(root: File, nowMillis: Long = System.currentTimeMillis()): File {
+        root.mkdirs()
+        val cutoff = nowMillis - SHARE_RETENTION_MS
+        root.listFiles()?.forEach { entry ->
+            if (entry.lastModified() < cutoff &&
+                (!entry.isDirectory || shareDirectoryName.matches(entry.name))
+            ) {
+                if (entry.isDirectory) entry.deleteRecursively() else entry.delete()
+            }
+        }
+        return File(root, UUID.randomUUID().toString()).apply {
+            check(mkdirs()) { "Could not create isolated share directory" }
+        }
+    }
 
     /** The file name the receiving app shows; never a path. */
     fun safeName(fileName: String): String {
