@@ -62,7 +62,6 @@ class MediaDetailViewModel(
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update { it.copy(record = rec, isLoading = false, error = null) }
                 loadMetadata(requestedSession)
-                loadSimilars(requestedSession)
             }.onFailure { ex ->
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 val rawMessage = ex.localizedMessage.orEmpty()
@@ -123,7 +122,14 @@ class MediaDetailViewModel(
         }
     }
 
-    private fun loadSimilars(requestedSession: String) {
+    /**
+     * Loads the similar items once, when the information panel first opens:
+     * a similarity search per photo swiped past would be wasted work.
+     */
+    fun loadSimilars() {
+        val state = _uiState.value
+        if (state.record == null || state.isLoadingSimilars || state.similarRecords.isNotEmpty()) return
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingSimilars = true) }
             repository.searchSimilar(recordIndex, topK = 15).onSuccess { resp ->

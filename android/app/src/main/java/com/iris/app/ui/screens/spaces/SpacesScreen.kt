@@ -112,7 +112,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Column {
-                        Text("Espaços", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("Grupos", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text("Galerias compartilhadas com outras contas", fontSize = 12.sp, color = IrisTextSoft)
                     }
                 },
@@ -129,7 +129,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 onClick = { creating = true },
                 containerColor = IrisAccentLime,
                 contentColor = IrisAccentInk,
-            ) { Icon(Icons.Default.Add, contentDescription = "Novo espaço") }
+            ) { Icon(Icons.Default.Add, contentDescription = "Novo grupo") }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = IrisDarkBg,
@@ -140,7 +140,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             ) { CircularProgressIndicator(color = IrisAccentLime) }
 
             uiState.error != null && uiState.spaces.isEmpty() -> EmptyState(
-                title = "Não foi possível carregar os espaços",
+                title = "Não foi possível carregar os grupos",
                 message = uiState.error ?: "",
                 actionLabel = "Tentar novamente",
                 onAction = { viewModel.load() },
@@ -148,10 +148,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             )
 
             uiState.spaces.isEmpty() -> EmptyState(
-                title = "Nenhum espaço ainda",
-                message = "Crie um espaço e convide outras contas deste servidor pela web. " +
+                title = "Nenhum grupo ainda",
+                message = "Crie um grupo e convide outras contas deste servidor pela web. " +
                     "Só entra nele o que alguém enviar: sua biblioteca continua privada.",
-                actionLabel = "Criar espaço",
+                actionLabel = "Criar grupo",
                 onAction = { creating = true },
                 modifier = Modifier.padding(padding),
             )
@@ -184,7 +184,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
         var name by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { creating = false },
-            title = { Text("Novo espaço") },
+            title = { Text("Novo grupo") },
             text = {
                 OutlinedTextField(
                     value = name,
@@ -275,7 +275,7 @@ fun SpaceScreen(
                     ) { CircularProgressIndicator(color = IrisAccentLime) }
 
                     uiState.error != null && uiState.items.isEmpty() -> EmptyState(
-                        title = "Não foi possível abrir o espaço",
+                        title = "Não foi possível abrir o grupo",
                         message = uiState.error ?: "",
                         actionLabel = "Tentar novamente",
                         onAction = { viewModel.refresh() },
@@ -285,13 +285,13 @@ fun SpaceScreen(
                         title = when {
                             uiState.query.isNotEmpty() -> "Nada encontrado para “${uiState.query}”"
                             uiState.albumId != null -> "Álbum vazio"
-                            else -> "Este espaço ainda não tem fotos"
+                            else -> "Este grupo ainda não tem fotos"
                         },
                         message = when {
                             uiState.query.isNotEmpty() -> "A busca olha o nome e a descrição de cada foto."
-                            uiState.albumId != null -> "Os álbuns do espaço são montados pela web."
+                            uiState.albumId != null -> "Os álbuns do grupo são montados pela web."
                             uiState.space?.canAdd == true ->
-                                "Abra uma foto da sua galeria e toque em Espaço para enviá-la."
+                                "Abra uma foto da sua galeria, toque em ⋮ e depois em Enviar para um grupo."
                             else -> "Quando alguém enviar fotos, elas aparecem aqui."
                         },
                     )
@@ -352,7 +352,7 @@ fun SpaceScreen(
                 }
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = { confirmLeave = true }) {
-                    Text("Sair do espaço", color = Color(0xFFFF8A9A))
+                    Text("Sair do grupo", color = Color(0xFFFF8A9A))
                 }
             }
         }
@@ -363,7 +363,7 @@ fun SpaceScreen(
             onDismissRequest = { confirmLeave = false },
             title = { Text("Sair de ${uiState.name}?") },
             text = {
-                Text("Você perde o acesso a este espaço. As fotos que enviou continuam nele e as cópias na sua biblioteca não mudam.")
+                Text("Você perde o acesso a este grupo. As fotos que enviou continuam nele e as cópias na sua biblioteca não mudam.")
             },
             confirmButton = {
                 TextButton(onClick = { confirmLeave = false; showMembers = false; viewModel.leave() }) {
@@ -451,8 +451,8 @@ private fun SpaceItemViewer(
     if (confirmRemove) {
         AlertDialog(
             onDismissRequest = { confirmRemove = false },
-            title = { Text("Remover do espaço?") },
-            text = { Text("A foto sai do espaço para todos. As cópias nas bibliotecas pessoais não são afetadas.") },
+            title = { Text("Remover do grupo?") },
+            text = { Text("A foto sai do grupo para todos. As cópias nas bibliotecas pessoais não são afetadas.") },
             confirmButton = { TextButton(onClick = { confirmRemove = false; onRemove() }) { Text("Remover") } },
             dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancelar") } },
         )
@@ -487,23 +487,23 @@ fun SpacePickerDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Enviar para um espaço") },
+        title = { Text("Enviar para um grupo") },
         text = {
             val result = loaded
             when {
                 result == null -> CircularProgressIndicator(color = IrisAccentLime)
-                result.isFailure -> Text(result.exceptionOrNull()?.localizedMessage ?: "Erro ao carregar espaços")
+                result.isFailure -> Text(result.exceptionOrNull()?.localizedMessage ?: "Erro ao carregar grupos")
                 else -> {
                     val spaces = result.getOrDefault(emptyList()).filter { it.canAdd }
                     if (spaces.isEmpty()) {
                         Text(
-                            "Você só pode enviar fotos a espaços em que é colaborador ou gestor. " +
-                                "Crie um na aba Espaços."
+                            "Você só pode enviar fotos a grupos em que é colaborador ou gestor. " +
+                                "Crie um na aba Grupos."
                         )
                     } else {
                         Column {
                             Text(
-                                "O espaço ganha uma cópia: apagar a sua não apaga a de lá.",
+                                "O grupo ganha uma cópia: apagar a sua não apaga a de lá.",
                                 fontSize = 12.sp, color = IrisTextMuted,
                             )
                             Spacer(Modifier.height(8.dp))
@@ -547,7 +547,7 @@ private fun SpaceFilters(
         OutlinedTextField(
             value = text,
             onValueChange = { text = it.take(300) },
-            placeholder = { Text("Buscar neste espaço") },
+            placeholder = { Text("Buscar neste grupo") },
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             trailingIcon = {

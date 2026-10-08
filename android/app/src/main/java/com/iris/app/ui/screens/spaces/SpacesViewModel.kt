@@ -57,7 +57,7 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                     _uiState.update {
-                        it.copy(isLoading = false, error = e.localizedMessage ?: "Erro ao carregar espaços")
+                        it.copy(isLoading = false, error = e.localizedMessage ?: "Erro ao carregar grupos")
                     }
                 }
         }
@@ -75,7 +75,7 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
                 }
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value == requestedSession) {
-                        showNotice(e.localizedMessage ?: "Não foi possível criar o espaço")
+                        showNotice(e.localizedMessage ?: "Não foi possível criar o grupo")
                     }
                 }
         }
@@ -192,7 +192,7 @@ class SpaceViewModel(
         }.onFailure { e ->
             if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
             _uiState.update {
-                it.copy(isLoading = false, error = e.localizedMessage ?: "Erro ao carregar o espaço")
+                it.copy(isLoading = false, error = e.localizedMessage ?: "Erro ao carregar o grupo")
             }
         }
     }
@@ -245,7 +245,7 @@ class SpaceViewModel(
                 .onSuccess {
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                     _uiState.update { state -> state.copy(items = state.items.filterNot { it.id == item.id }) }
-                    showNotice("Removida do espaço; pode ser restaurada pela lixeira do espaço na web")
+                    showNotice("Removida do grupo; pode ser restaurada pela lixeira do grupo na web")
                     onRemoved()
                 }
                 .onFailure { e ->
@@ -278,7 +278,7 @@ class SpaceViewModel(
                 }
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value == requestedSession) {
-                        showNotice(e.localizedMessage ?: "Não foi possível sair do espaço")
+                        showNotice(e.localizedMessage ?: "Não foi possível sair do grupo")
                     }
                 }
         }
