@@ -1,5 +1,6 @@
 package com.iris.app.ui.navigation
 
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Face
@@ -45,6 +46,7 @@ import com.iris.app.ui.screens.collections.CollectionsScreen
 import com.iris.app.ui.screens.collections.CollectionsViewModel
 import com.iris.app.ui.screens.detail.MediaDetailScreen
 import com.iris.app.ui.screens.detail.MediaDetailViewModel
+import com.iris.app.ui.screens.detail.ViewerSequence
 import com.iris.app.ui.screens.gallery.GalleryScreen
 import com.iris.app.ui.screens.gallery.GalleryViewModel
 import com.iris.app.ui.screens.gallery.LocalMediaViewerScreen
@@ -218,7 +220,11 @@ fun IrisNavGraph(
         NavHost(
             navController = navController,
             startDestination = NavRoute.Gallery.route,
-            modifier = Modifier.padding(paddingValues)
+            // Consumed, so a screen asking for status or navigation bar padding
+            // (the viewers' bars) does not add it a second time.
+            modifier = Modifier
+                .padding(paddingValues)
+                .consumeWindowInsets(paddingValues)
         ) {
             composable(NavRoute.Gallery.route) {
                 val viewModel: GalleryViewModel = viewModel(
@@ -233,6 +239,10 @@ fun IrisNavGraph(
                 GalleryScreen(
                     viewModel = viewModel,
                     onMediaClick = { index ->
+                        // Items only on the device open in their own viewer; the pager skips them.
+                        ViewerSequence.set(
+                            viewModel.uiState.value.records.filter { it.deviceUri == null }.map { it.index }
+                        )
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     },
                     onDeviceMediaClick = { uri ->
@@ -266,6 +276,7 @@ fun IrisNavGraph(
                 SearchScreen(
                     viewModel = viewModel,
                     onMediaClick = { index ->
+                        ViewerSequence.set(viewModel.uiState.value.results.map { it.index })
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     }
                 )
@@ -303,6 +314,7 @@ fun IrisNavGraph(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() },
                     onMediaClick = { index ->
+                        ViewerSequence.set(viewModel.uiState.value.media.map { it.index })
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     }
                 )
@@ -346,6 +358,7 @@ fun IrisNavGraph(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() },
                     onMediaClick = { index ->
+                        ViewerSequence.set(viewModel.uiState.value.members.map { it.index })
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     }
                 )
@@ -356,12 +369,14 @@ fun IrisNavGraph(
                 arguments = listOf(navArgument("recordIndex") { type = NavType.IntType })
             ) { backStackEntry ->
                 val recordIndex = backStackEntry.arguments?.getInt("recordIndex") ?: 0
-                val viewModel: MediaDetailViewModel = viewModel(
-                    key = "detail_$recordIndex",
-                    factory = MediaDetailViewModel.Factory(recordIndex, application.irisRepository)
-                )
                 MediaDetailScreen(
-                    viewModel = viewModel,
+                    startIndex = recordIndex,
+                    viewModelFor = { index ->
+                        viewModel(
+                            key = "detail_$index",
+                            factory = MediaDetailViewModel.Factory(index, application.irisRepository)
+                        )
+                    },
                     onBack = { navController.popBackStack() },
                     onMediaClick = { index ->
                         navController.navigate(NavRoute.Detail.createRoute(index))
