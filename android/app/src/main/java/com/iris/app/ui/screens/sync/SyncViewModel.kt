@@ -54,7 +54,6 @@ data class SyncUiState(
     val scanProgress: MediaStoreScanner.ScanProgress? = null,
     /** A sync that did not finish is waiting to be retried automatically. */
     val retryPending: Boolean = false,
-    val currentProgress: Float = 0f,
     val syncWifiOnly: Boolean = false,
     val syncChargingOnly: Boolean = false,
     val autoBackupEnabled: Boolean = false,
@@ -138,7 +137,6 @@ class SyncViewModel(
                             queueRefreshFailed = false,
                             cloudSyncStatus = CloudSyncStatus(),
                             isSyncing = false,
-                            currentProgress = 0f,
                             uploadSpeed = UploadSpeedSnapshot(),
                             remainingUploadBytes = 0L,
                             syncRuns = emptyList(),
@@ -232,11 +230,6 @@ class SyncViewModel(
         viewModelScope.launch {
             syncRetryPending.collect { pending ->
                 _uiState.update { it.copy(retryPending = pending) }
-            }
-        }
-        viewModelScope.launch {
-            repository.uploadManager.currentProgress.collect { progress ->
-                _uiState.update { it.copy(currentProgress = progress) }
             }
         }
     }

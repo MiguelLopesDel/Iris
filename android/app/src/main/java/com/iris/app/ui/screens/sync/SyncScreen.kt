@@ -534,21 +534,15 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             BackupCounters(uiState.queueCounts)
                         }
 
-                        val scanProgress = uiState.scanProgress
-                        if (scanProgress != null && scanProgress.total > 0) {
+                        val backupProgress = BackupProgress.of(
+                            UploadQueueSummary.from(uiState.queueCounts),
+                            uiState.scanProgress,
+                            SyncActivity.of(uiState).isRunning,
+                        )
+                        if (backupProgress != null) {
                             Spacer(modifier = Modifier.height(12.dp))
                             LinearProgressIndicator(
-                                progress = { scanProgress.examined.toFloat() / scanProgress.total },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp),
-                                color = IrisAccentLime,
-                                trackColor = IrisDarkSurfaceBright
-                            )
-                        } else if (uiState.isSyncing && uiState.currentProgress > 0f) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            LinearProgressIndicator(
-                                progress = { uiState.currentProgress },
+                                progress = { backupProgress },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(6.dp),
