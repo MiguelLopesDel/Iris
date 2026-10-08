@@ -252,3 +252,36 @@ def test_relaxed_writes_are_synced_before_the_writer_stops(tmp_path: Path):
     coordinator.submit(_insert(1), durable=False).result(timeout=5)
     assert coordinator.shutdown(timeout=5)
     assert _synced_at(path) is not None
+
+
+def test_the_barrier_comes_on_time_under_nonstop_relaxed_work(tmp_path: Path, monkeypatch):
+    # The deadline was only checked when the queue ran empty: relaxed writes
+    # arriving nonstop kept commits unsynced well past the promised interval.
+    import time
+
+    path = tmp_path / "busy.db"
+    _create_table(path)
+    barriers: list[float] = []
+    real = SQLiteWriteCoordinator._barrier_if_relaxed
+
+    def recording(self, connection):
+        if self._relaxed_since is not None:
+            barriers.append(time.monotonic() - self._relaxed_since)
+        real(self, connection)
+
+    monkeypatch.setattr(SQLiteWriteCoordinator, "_barrier_if_relaxed", recording)
+
+    def slow_insert(connection):
+        time.sleep(0.01)
+        connection.execute("INSERT INTO values_written(value) VALUES (1)")
+
+    with SQLiteWriteCoordinator(
+        path, batch_window_s=0, max_batch_items=1, relaxed_barrier_s=0.1, max_pending=4096,
+    ) as coordinator:
+        futures = [coordinator.submit(slow_insert, durable=False) for _ in range(60)]
+        for future in futures:
+            future.result(timeout=10)
+
+    # About 0.6 s of nonstop relaxed work: barriers on time, not one at the end.
+    assert len(barriers) >= 4, barriers
+    assert max(barriers) < 0.1 + 0.05, barriers

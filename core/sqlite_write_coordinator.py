@@ -231,6 +231,9 @@ class SQLiteWriteCoordinator:
                     elif self._relaxed_since is None:
                         self._relaxed_since = time.monotonic()
                 self._resolve(outcomes)
+                # Also between batches: with relaxed work arriving nonstop the
+                # queue is never empty, and the barrier must still come on time.
+                self._barrier_if_due(connection)
         except BaseException:
             _logger.exception("sqlite_write_worker_failed database_name=%s", self.db_path.name)
             with self._state_lock:
@@ -245,14 +248,17 @@ class SQLiteWriteCoordinator:
             try:
                 return self._queue.get(timeout=0.05)
             except queue.Empty:
-                if (
-                    self._relaxed_since is not None
-                    and time.monotonic() - self._relaxed_since >= self._relaxed_barrier_s
-                ):
-                    self._barrier_if_relaxed(connection)
+                self._barrier_if_due(connection)
                 with self._state_lock:
                     if self._stopping and self._queue.empty():
                         return None
+
+    def _barrier_if_due(self, connection: sqlite3.Connection) -> None:
+        if (
+            self._relaxed_since is not None
+            and time.monotonic() - self._relaxed_since >= self._relaxed_barrier_s
+        ):
+            self._barrier_if_relaxed(connection)
 
     def _set_synchronous(self, connection: sqlite3.Connection, mode: str) -> None:
         if self._synchronous != mode:
