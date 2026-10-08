@@ -1,6 +1,17 @@
 package com.iris.app.ui.screens.detail
 
 import android.graphics.Color as AndroidColor
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.fadeIn
@@ -46,20 +57,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.DriveFileRenameOutline
-import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -118,15 +121,18 @@ import kotlinx.coroutines.launch
  * it was opened from ([ViewerSequence]); a double tap zooms; dragging down
  * closes and dragging up opens the information panel. Every gesture also has
  * a visible button, for whoever does not know it.
+ *
+ * The information panel rises from the bottom and pushes the photo up rather
+ * than covering it, so the photo it describes stays in view.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaDetailScreen(
     startIndex: Int,
     viewModelFor: @Composable (Int) -> MediaDetailViewModel,
     onBack: () -> Unit,
     onMediaClick: (Int) -> Unit,
-    onPersonClick: (Int, String) -> Unit
+    onPersonClick: (Int, String) -> Unit,
+    onSearchText: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as IrisApplication
@@ -139,10 +145,11 @@ fun MediaDetailScreen(
     var showDetails by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var pickingSpace by remember { mutableStateOf(false) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
+    val panelProgress by animateFloatAsState(if (showDetails) 1f else 0f, label = "info panel")
 
     LaunchedEffect(pagerState.currentPage) { zoomed = false }
+    BackHandler(enabled = showDetails) { showDetails = false }
 
     Box(
         modifier = Modifier
@@ -154,7 +161,11 @@ fun MediaDetailScreen(
             userScrollEnabled = !zoomed,
             key = { sequence[it] },
             beyondViewportPageCount = 1,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxWidth()
+                // The panel takes the bottom of the screen; the photo keeps the rest.
+                .fillMaxHeight(1f - PANEL_HEIGHT_FRACTION * panelProgress)
+                .align(Alignment.TopCenter)
         ) { page ->
             val pageViewModel = viewModelFor(sequence[page])
             val pageState by pageViewModel.uiState.collectAsStateWithLifecycle()
@@ -163,11 +174,12 @@ fun MediaDetailScreen(
                 state = pageState,
                 apiClient = apiClient,
                 isCurrent = isCurrent,
-                onToggleChrome = { chromeVisible = !chromeVisible },
+                onToggleChrome = { if (showDetails) showDetails = false else chromeVisible = !chromeVisible },
                 onZoomChanged = { if (isCurrent) zoomed = it },
                 onSwipe = { swipe ->
                     when (swipe) {
-                        ViewerGestures.Swipe.CLOSE -> onBack()
+                        // With the panel up, dragging the photo down lowers the panel first.
+                        ViewerGestures.Swipe.CLOSE -> if (showDetails) showDetails = false else onBack()
                         ViewerGestures.Swipe.SHOW_INFO -> showDetails = true
                         ViewerGestures.Swipe.NONE -> Unit
                     }
@@ -190,7 +202,7 @@ fun MediaDetailScreen(
 
         val record = uiState.record
         AnimatedVisibility(
-            visible = chromeVisible,
+            visible = chromeVisible && !showDetails,
             enter = fadeIn() + slideInVertically { -it },
             exit = fadeOut() + slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter)
@@ -206,14 +218,14 @@ fun MediaDetailScreen(
             ViewerTopBar(
                 title = title,
                 onBack = onBack,
+                onInfo = record?.let { { showDetails = true } },
                 onRename = record?.let { { renaming = true } },
-                onSendToGroup = record?.let { { pickingSpace = true } },
             )
         }
 
         if (record != null) {
             AnimatedVisibility(
-                visible = chromeVisible,
+                visible = chromeVisible && !showDetails,
                 enter = fadeIn() + slideInVertically { it },
                 exit = fadeOut() + slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -221,9 +233,48 @@ fun MediaDetailScreen(
                 val mediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
                 ViewerActionBar(
                     onShare = { share(mediaUrl, record.cleanFilename) },
+                    onAddTo = { pickingSpace = true },
                     onSave = { download(mediaUrl, record.cleanFilename) },
                     onInfo = { showDetails = true },
                 )
+            }
+        }
+
+        if (panelProgress > 0f && record != null) {
+            LaunchedEffect(record.index) {
+                viewModel.loadSimilars()
+                viewModel.loadBackupState()
+            }
+            // The photo stays on black; the panel follows the system's light or dark setting.
+            IrisTheme(darkTheme = isSystemInDarkTheme()) {
+                InfoPanel(
+                    progress = panelProgress,
+                    onClose = { showDetails = false },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                ) {
+                    MediaDetailsSheet(
+                        state = uiState,
+                        onPersonClick = onPersonClick,
+                        onMediaClick = { index ->
+                            showDetails = false
+                            ViewerSequence.set(uiState.similarRecords.map { it.index })
+                            onMediaClick(index)
+                        },
+                        onSearchText = onSearchText,
+                    )
+                }
+            }
+            // The way back stays in reach above the panel.
+            IconButton(
+                onClick = { showDetails = false },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(8.dp)
+                    .size(48.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Fechar informações", tint = Color.White)
             }
         }
 
@@ -254,28 +305,6 @@ fun MediaDetailScreen(
             )
         }
 
-        if (showDetails && record != null) {
-            LaunchedEffect(record.index) { viewModel.loadSimilars() }
-            // The photo stays on black; the panel follows the system's light or dark setting.
-            IrisTheme(darkTheme = isSystemInDarkTheme()) {
-                ModalBottomSheet(
-                    onDismissRequest = { showDetails = false },
-                    sheetState = sheetState,
-                    containerColor = MaterialTheme.colorScheme.surface
-                ) {
-                    MediaDetailsSheet(
-                        state = uiState,
-                        onPersonClick = onPersonClick,
-                        onMediaClick = { index ->
-                            showDetails = false
-                            ViewerSequence.set(uiState.similarRecords.map { it.index })
-                            onMediaClick(index)
-                        }
-                    )
-                }
-            }
-        }
-
         if (renaming && record != null) {
             RenameDialog(
                 currentName = record.cleanFilename,
@@ -287,6 +316,53 @@ fun MediaDetailScreen(
                 }
             )
         }
+    }
+}
+
+/** Share of the screen height the information panel takes; the photo keeps the rest. */
+private const val PANEL_HEIGHT_FRACTION = 0.68f
+
+/**
+ * The information panel's frame: rounded top, a handle that can be dragged
+ * down to close it, and the panel's own colours. It slides up with [progress].
+ */
+@Composable
+private fun InfoPanel(
+    progress: Float,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val closeDistance = with(LocalDensity.current) { 64.dp.toPx() }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .fillMaxHeight(PANEL_HEIGHT_FRACTION)
+            .graphicsLayer { translationY = size.height * (1f - progress) }
+            .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
+        var dragged by remember { mutableFloatStateOf(0f) }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { dragged = 0f },
+                        onDragEnd = { if (dragged > closeDistance) onClose() },
+                        onVerticalDrag = { _, amount -> dragged += amount },
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                Modifier
+                    .size(width = 36.dp, height = 4.dp)
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
+            )
+        }
+        content()
     }
 }
 
@@ -556,13 +632,16 @@ private fun VideoStage(
     )
 }
 
-/** Back, when and where the photo was taken, and the rarer actions behind ⋮. */
+/**
+ * Back, the date centred as a gallery shows it (a tap, or the ›, opens the
+ * information panel), and the rarer actions behind ⋮.
+ */
 @Composable
 private fun ViewerTopBar(
     title: ViewerTitle,
     onBack: () -> Unit,
+    onInfo: (() -> Unit)?,
     onRename: (() -> Unit)?,
-    onSendToGroup: (() -> Unit)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -577,15 +656,33 @@ private fun ViewerTopBar(
         IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
         }
-        Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
-            Text(
-                text = title.headline,
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .then(if (onInfo != null) Modifier.clickable(onClick = onInfo, role = Role.Button) else Modifier)
+                .padding(vertical = 2.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title.headline,
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (onInfo != null) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
             title.subline?.let {
                 Text(
                     text = it,
@@ -596,23 +693,25 @@ private fun ViewerTopBar(
                 )
             }
         }
-        if (onRename != null || onSendToGroup != null) {
-            Box {
-                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(52.dp)) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Mais opções", tint = Color.White)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    onSendToGroup?.let { action ->
-                        MenuItem(Icons.Default.Group, "Enviar para um grupo") {
-                            menuOpen = false
-                            action()
-                        }
+        Box {
+            IconButton(
+                onClick = { menuOpen = true },
+                enabled = onInfo != null || onRename != null,
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(Icons.Default.MoreVert, contentDescription = "Mais opções", tint = Color.White)
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                onInfo?.let { action ->
+                    MenuItem(Icons.Outlined.Info, "Informações") {
+                        menuOpen = false
+                        action()
                     }
-                    onRename?.let { action ->
-                        MenuItem(Icons.Default.DriveFileRenameOutline, "Renomear") {
-                            menuOpen = false
-                            action()
-                        }
+                }
+                onRename?.let { action ->
+                    MenuItem(Icons.Outlined.DriveFileRenameOutline, "Renomear") {
+                        menuOpen = false
+                        action()
                     }
                 }
             }
@@ -627,20 +726,21 @@ private fun MenuItem(
     onClick: () -> Unit,
 ) {
     DropdownMenuItem(
-        text = { Text(label, fontSize = 16.sp) },
+        text = { Text(label, fontSize = 17.sp) },
         leadingIcon = { Icon(icon, contentDescription = null) },
         onClick = onClick,
-        modifier = Modifier.height(52.dp)
+        modifier = Modifier.height(56.dp)
     )
 }
 
 /**
- * The three things people do with a photo, where a gallery app has them:
- * large, each with its name under the icon. The rest is behind ⋮ above.
+ * The everyday actions, where a gallery app has them: each a large icon with
+ * its name under it. "Adicionar a" sends the photo to a group.
  */
 @Composable
 private fun ViewerActionBar(
     onShare: () -> Unit,
+    onAddTo: () -> Unit,
     onSave: () -> Unit,
     onInfo: () -> Unit,
 ) {
@@ -653,11 +753,12 @@ private fun ViewerActionBar(
             .pointerInput(Unit) { detectTapGestures { } }
             .navigationBarsPadding()
             .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
-        ActionItem(Icons.Default.Share, "Compartilhar", onShare)
-        ActionItem(Icons.Default.Download, "Salvar no celular", onSave)
-        ActionItem(Icons.Default.Info, "Informações", onInfo)
+        ActionItem(Icons.Outlined.Share, "Compartilhar", onShare)
+        ActionItem(Icons.Default.Add, "Adicionar a", onAddTo)
+        ActionItem(Icons.Outlined.FileDownload, "Salvar no celular", onSave)
+        ActionItem(Icons.Outlined.Info, "Informações", onInfo)
     }
 }
 
@@ -669,17 +770,24 @@ private fun RowScope.ActionItem(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Top,
         modifier = Modifier
             .weight(1f)
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick, role = Role.Button)
-            .padding(vertical = 6.dp)
+            .padding(vertical = 6.dp, horizontal = 2.dp)
     ) {
         Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
         Spacer(Modifier.height(4.dp))
-        Text(label, color = Color.White, fontSize = 13.sp, maxLines = 1)
+        Text(
+            label,
+            color = Color.White,
+            fontSize = 13.sp,
+            maxLines = 2,
+            textAlign = TextAlign.Center,
+            lineHeight = 15.sp
+        )
     }
 }
 

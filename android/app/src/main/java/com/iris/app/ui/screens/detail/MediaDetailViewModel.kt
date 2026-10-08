@@ -3,6 +3,8 @@ package com.iris.app.ui.screens.detail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.data.model.MediaOrigin
+import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.RecordMetadataResponse
 import com.iris.app.data.repository.IrisRepository
@@ -22,6 +24,8 @@ data class MediaDetailUiState(
     val isLoadingSimilars: Boolean = false,
     val error: String? = null,
     val isRenaming: Boolean = false,
+    /** Whether this device uploaded the item, so it should still hold it; null until checked. */
+    val onDevice: Boolean? = null,
     /** Mensagem curta para a tela mostrar e descartar (rename, download). */
     val notice: String? = null
 )
@@ -99,6 +103,29 @@ class MediaDetailViewModel(
                     }
                     _uiState.update { it.copy(isRenaming = false, notice = motivo) }
                 }
+        }
+    }
+
+    /**
+     * Checks once, when the information panel opens, whether this device sent
+     * the item (by content hash, as the gallery's badges do): reading the
+     * whole upload history for every photo swiped past would be wasted work.
+     */
+    fun loadBackupState() {
+        val record = _uiState.value.record ?: return
+        if (_uiState.value.onDevice != null) return
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
+        viewModelScope.launch {
+            val jobs = try {
+                repository.getUploadQueue()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                return@launch
+            }
+            val origin = MediaOriginIndex.from(jobs).originOf(record.contentHash)
+            if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@launch
+            _uiState.update { it.copy(onDevice = origin == MediaOrigin.ON_DEVICE) }
         }
     }
 

@@ -47,6 +47,7 @@ import com.iris.app.ui.screens.collections.CollectionsViewModel
 import com.iris.app.ui.screens.detail.MediaDetailScreen
 import com.iris.app.ui.screens.detail.MediaDetailViewModel
 import com.iris.app.ui.screens.detail.ViewerSequence
+import com.iris.app.ui.screens.search.PendingSearch
 import com.iris.app.ui.screens.gallery.GalleryScreen
 import com.iris.app.ui.screens.gallery.GalleryViewModel
 import com.iris.app.ui.screens.gallery.LocalMediaViewerScreen
@@ -273,6 +274,8 @@ fun IrisNavGraph(
                 val viewModel: SearchViewModel = viewModel(
                     factory = SearchViewModel.Factory(application.irisRepository)
                 )
+                // Text handed over from a photo ("Buscar no Iris") runs as the query.
+                LaunchedEffect(Unit) { PendingSearch.take()?.let(viewModel::onQueryChange) }
                 SearchScreen(
                     viewModel = viewModel,
                     onMediaClick = { index ->
@@ -383,6 +386,10 @@ fun IrisNavGraph(
                     },
                     onPersonClick = { personId, personName ->
                         navController.navigate(NavRoute.PersonMedia.createRoute(personId, personName))
+                    },
+                    onSearchText = { text ->
+                        PendingSearch.set(text)
+                        navController.navigate(NavRoute.Search.route) { launchSingleTop = true }
                     }
                 )
             }
