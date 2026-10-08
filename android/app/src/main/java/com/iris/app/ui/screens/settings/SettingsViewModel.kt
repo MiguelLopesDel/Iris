@@ -51,6 +51,8 @@ data class SecuritySummary(
     val trustMode: TrustMode,
     val pinnedFingerprints: List<String>,
     val cleartextAllowed: Boolean,
+    /** The identity key pinned at pairing, if this server was paired by code. */
+    val identityKeySha256: String? = null,
 ) {
     val isDefault: Boolean get() = trustMode == TrustMode.SYSTEM && !cleartextAllowed
 }
@@ -191,6 +193,7 @@ class SettingsViewModel(
                         ConnectionSecurity.parseCertificates(der).firstOrNull()?.let(ConnectionSecurity::sha256)
                     },
                     cleartextAllowed = current.cleartextAllowed,
+                    identityKeySha256 = current.identityKeySha256,
                 )
             )
         }
@@ -234,7 +237,9 @@ class SettingsViewModel(
     }
 
     /** Back to the strictest policy: public authorities only, no HTTP. */
-    fun resetSecurity() = changeSecurity { ServerSecurity() }
+    // Certificate trust and HTTP go back to the default; the paired identity stays,
+    // since only a new pairing code can say which key the server holds.
+    fun resetSecurity() = changeSecurity { ServerSecurity(identityKeySha256 = it.identityKeySha256) }
 
     fun dismissSecurityMessage() = _uiState.update { it.copy(securityMessage = null) }
 

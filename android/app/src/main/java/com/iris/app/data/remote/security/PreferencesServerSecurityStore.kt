@@ -50,6 +50,7 @@ class PreferencesServerSecurityStore(context: Context) : ServerSecurityStore {
         val trustMode: String,
         val pinned: List<String> = emptyList(),
         val cleartextAllowed: Boolean = false,
+        val identityKeySha256: String? = null,
     )
 
     private fun encode(security: ServerSecurity): String = Json.encodeToString(
@@ -58,6 +59,7 @@ class PreferencesServerSecurityStore(context: Context) : ServerSecurityStore {
             trustMode = security.trustMode.name,
             pinned = security.pinnedCertificates.map { Base64.encodeToString(it, Base64.NO_WRAP) },
             cleartextAllowed = security.cleartextAllowed,
+            identityKeySha256 = security.identityKeySha256,
         ),
     )
 
@@ -67,6 +69,7 @@ class PreferencesServerSecurityStore(context: Context) : ServerSecurityStore {
             trustMode = TrustMode.valueOf(stored.trustMode),
             pinnedCertificates = stored.pinned.map { Base64.decode(it, Base64.NO_WRAP) },
             cleartextAllowed = stored.cleartextAllowed,
+            identityKeySha256 = stored.identityKeySha256,
         )
     }.getOrNull()
 

@@ -216,6 +216,16 @@ fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
                 fontSize = 13.sp,
                 color = if (summary.cleartextAllowed && !summary.usesHttps) IrisDanger else IrisTextSoft,
             )
+            val identity = summary.identityKeySha256
+            Text(
+                if (identity != null) {
+                    "Identidade do servidor: fixada pelo código de pareamento (${identity.take(16).chunked(4).joinToString(" ")}…)"
+                } else {
+                    "Identidade do servidor: não fixada. Pareie pelo código para que o app só fale com este servidor."
+                },
+                fontSize = 13.sp,
+                color = if (identity == null && !summary.usesHttps) IrisDanger else IrisTextSoft,
+            )
             if (!summary.isDefault) {
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) {

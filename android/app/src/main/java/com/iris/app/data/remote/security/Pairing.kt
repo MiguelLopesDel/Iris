@@ -14,14 +14,17 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
 /**
- * What a pairing code says: which server (by its instance identifier), at which
+ * What a pairing code says: which server (by its instance identifier and, from
+ * servers that have one, the fingerprint of its identity key), at which
  * addresses, and optionally which certificate authority it uses. Produced by the
- * server's "Conectar um celular" screen as `iris://pair?v=1&id=...&u=...&ca=...`.
+ * server's "Conectar um celular" screen as `iris://pair?v=1&id=...&u=...&ca=...&k=...`.
  */
 data class PairingCode(
     val instanceId: String,
     val addresses: List<String>,
     val caSha256: String?,
+    /** SHA-256 of the server's identity key (`k`); absent in codes from older servers. */
+    val keySha256: String? = null,
 ) {
     val usesCleartext: Boolean get() = addresses.any { it.startsWith("http://") }
 
@@ -61,7 +64,11 @@ data class PairingCode(
             if (ca != null && !Regex("[0-9a-f]{64}").matches(ca)) {
                 throw PairingCodeException("Impressão digital inválida no código.")
             }
-            return PairingCode(id, addresses, ca)
+            val key = all("k").singleOrNull()
+            if (key != null && !Regex("[0-9a-f]{64}").matches(key)) {
+                throw PairingCodeException("Identidade do servidor inválida no código.")
+            }
+            return PairingCode(id, addresses, ca, key)
         }
     }
 }
@@ -86,7 +93,8 @@ class PairingAuthorityException(message: String) : IOException(message)
 /**
  * Applies a [PairingCode]: trusts the code's certificate authority for its HTTPS
  * addresses, allows HTTP for its HTTP addresses when the user accepted that, and
- * picks the first address that answers as the same server.
+ * picks the first address that answers as the same server: the same instance id
+ * and, when the code names one, a signature made with the code's identity key.
  *
  * The authority is downloaded without verifying the connection -- it is only a
  * public certificate, no credential is sent, and it is accepted only if its
@@ -131,7 +139,7 @@ class PairingConnector(
                 outcomes += AddressOutcome.Skipped(address, "HTTP sem criptografia não foi permitido")
                 continue
             }
-            val current = security.securityFor(origin)
+            val current = security.securityFor(origin).copy(identityKeySha256 = code.keySha256)
             val candidate = when {
                 https && authority != null ->
                     current.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(authority))
@@ -142,8 +150,12 @@ class PairingConnector(
             // before that policy is saved: nothing is stored for any other address.
             val trial = security.trying(origin, candidate)
             val outcome = try {
-                if (instanceAt(address, trial) == code.instanceId) AddressOutcome.Connected(address)
-                else AddressOutcome.OtherServer(address)
+                when {
+                    instanceAt(address, trial) != code.instanceId -> AddressOutcome.OtherServer(address)
+                    // The instance id is public: only the key proves this is the server on the code.
+                    code.keySha256 != null && !provesIdentity(address, trial, code) -> AddressOutcome.OtherServer(address)
+                    else -> AddressOutcome.Connected(address)
+                }
             } catch (error: IOException) {
                 AddressOutcome.Failed(address, ConnectionProblem.from(error, origin, trial), error.message.orEmpty())
             }
@@ -154,6 +166,17 @@ class PairingConnector(
             }
         }
         return PairingResult(null, outcomes)
+    }
+
+    private fun provesIdentity(address: String, trial: ConnectionSecurity, code: PairingCode): Boolean {
+        val url = address.toHttpUrlOrNull() ?: return false
+        val verifier = ServerIdentityVerifier(client = { trial.apply(baseBuilder()).build() })
+        return try {
+            verifier.requireIdentity(url, code.keySha256 ?: return true, code.instanceId)
+            true
+        } catch (_: ServerIdentityMismatchException) {
+            false
+        }
     }
 
     private fun instanceAt(address: String, trial: ConnectionSecurity): String? {

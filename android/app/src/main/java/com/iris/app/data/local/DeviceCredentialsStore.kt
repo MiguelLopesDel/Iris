@@ -42,7 +42,7 @@ class DeviceCredentialsStore(context: Context) : DeviceAuthStore {
     val serverReplaced: StateFlow<Boolean> = _serverReplaced.asStateFlow()
 
     /** The server installation this session was made on, once known. */
-    fun serverInstanceId(): String? = synchronized(lock) {
+    override fun serverInstanceId(): String? = synchronized(lock) {
         sharedPreferences.getString(KEY_SERVER_INSTANCE, null)
     }
 
