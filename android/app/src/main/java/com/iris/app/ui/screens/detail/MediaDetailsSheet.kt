@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -96,18 +97,6 @@ fun MediaDetailsSheet(
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
         )
-        curated?.textOf("location_label")?.let { place ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                Icon(
-                    Icons.Outlined.Place,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(place, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
-            }
-        }
 
         if (record.persons.isNotEmpty()) {
             Section("Quem aparece") {
@@ -176,6 +165,14 @@ fun MediaDetailsSheet(
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(bottom = 10.dp)
         )
+
+        // Where it was taken: the place, its coordinates, and the way to Google Maps.
+        val place = curated?.textOf("location_label")
+        val point = GeoPoint.from(curated)
+        if (place != null || point != null) {
+            LocationCard(place, point)
+            Spacer(Modifier.height(4.dp))
+        }
 
         // Where the item is kept.
         DetailCard(icon = Icons.Outlined.CloudDone) {
@@ -453,3 +450,27 @@ internal fun formatBytes(bytes: Long): String = when {
     bytes >= 1024 -> String.format(Locale("pt", "BR"), "%.0f kB", bytes / 1024.0)
     else -> "$bytes B"
 }
+
+/**
+ * Where the photo or video was taken. With GPS in the file, the card shows
+ * the coordinates and opens the spot in Google Maps; with only a place name
+ * (no coordinates), it just names it.
+ */
+@Composable
+private fun LocationCard(place: String?, point: GeoPoint?) {
+    val context = LocalContext.current
+    val open = point?.let { { GeoPoint.openInGoogleMaps(context, it, place) } }
+    DetailCard(icon = Icons.Outlined.Place, onClick = open) {
+        Text(
+            place ?: "Local da foto",
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (point != null) {
+            Text(point.label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            ActionChip(Icons.Outlined.Map, "Abrir no Google Maps") { open?.invoke() }
+        }
+    }
+}
+
