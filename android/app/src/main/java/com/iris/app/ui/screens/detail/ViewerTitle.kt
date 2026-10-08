@@ -46,6 +46,18 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
             return ViewerTitle(day, sub)
         }
 
+        private val fullFormat = DateTimeFormatter.ofPattern("EEEE, d 'de' MMMM 'de' yyyy 'às' HH:mm", locale)
+
+        /** The capture time in full, for the information panel; null when unknown. */
+        fun fullDate(capturedAt: String?, fileMtime: Double?, zone: ZoneId = ZoneId.systemDefault()): String? {
+            val taken = parse(capturedAt)
+                ?: fileMtime?.takeIf { it > 0.0 }?.let {
+                    LocalDateTime.ofInstant(Instant.ofEpochMilli((it * 1000).toLong()), zone)
+                }
+                ?: return null
+            return taken.format(fullFormat).replaceFirstChar { it.uppercase(locale) }
+        }
+
         private fun parse(value: String?): LocalDateTime? {
             if (value.isNullOrBlank()) return null
             return runCatching { LocalDateTime.parse(value.take(19)) }.getOrNull()

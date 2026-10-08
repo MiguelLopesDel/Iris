@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
@@ -105,6 +107,7 @@ import com.iris.app.ui.components.rememberMediaShare
 import com.iris.app.ui.screens.spaces.SpacePickerDialog
 import com.iris.app.ui.theme.IrisAccentLime
 import com.iris.app.ui.theme.IrisDarkBg
+import com.iris.app.ui.theme.IrisTheme
 import kotlinx.coroutines.launch
 
 /**
@@ -253,20 +256,23 @@ fun MediaDetailScreen(
 
         if (showDetails && record != null) {
             LaunchedEffect(record.index) { viewModel.loadSimilars() }
-            ModalBottomSheet(
-                onDismissRequest = { showDetails = false },
-                sheetState = sheetState,
-                containerColor = IrisDarkBg
-            ) {
-                MediaDetailsSheet(
-                    state = uiState,
-                    onPersonClick = onPersonClick,
-                    onMediaClick = { index ->
-                        showDetails = false
-                        ViewerSequence.set(uiState.similarRecords.map { it.index })
-                        onMediaClick(index)
-                    }
-                )
+            // The photo stays on black; the panel follows the system's light or dark setting.
+            IrisTheme(darkTheme = isSystemInDarkTheme()) {
+                ModalBottomSheet(
+                    onDismissRequest = { showDetails = false },
+                    sheetState = sheetState,
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) {
+                    MediaDetailsSheet(
+                        state = uiState,
+                        onPersonClick = onPersonClick,
+                        onMediaClick = { index ->
+                            showDetails = false
+                            ViewerSequence.set(uiState.similarRecords.map { it.index })
+                            onMediaClick(index)
+                        }
+                    )
+                }
             }
         }
 

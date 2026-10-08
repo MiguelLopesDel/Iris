@@ -38,4 +38,13 @@ class ViewerTitleTest {
         assertEquals("IMG_0001.jpg", title.headline)
         assertEquals(null, title.subline)
     }
+
+    @Test
+    fun `the panel gives the date in full`() {
+        assertEquals(
+            "Quarta-feira, 12 de março de 2025 às 14:32",
+            ViewerTitle.fullDate("2025-03-12T14:32:05", null),
+        )
+        assertEquals(null, ViewerTitle.fullDate(null, null))
+    }
 }
