@@ -187,9 +187,7 @@ local_url() {
     local host
     host="$(configured_bind)"
     [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
-    local scheme=http
-    case "$(env_value IRIS_TLS)" in self|custom) scheme=https ;; esac
-    printf '%s://%s:%s' "$scheme" "$host" "$(configured_port)"
+    printf 'http://%s:%s' "$host" "$(configured_port)"
 }
 
 host_has_address() {
@@ -343,7 +341,7 @@ wait_for_health() {
     local attempt
     for attempt in $(seq 1 30); do
         # Connection errors are expected while the server starts; only the outcome matters.
-        if curl --fail --silent --insecure "$(local_url)/healthz" >/dev/null 2>&1; then
+        if curl --fail --silent "$(local_url)/healthz" >/dev/null 2>&1; then
             return 0
         fi
         sleep 2
@@ -399,7 +397,7 @@ case "${1:-}" in
     status)
         require_compose
         docker compose ps
-        curl --fail --silent --insecure "$(local_url)/healthz"; echo
+        curl --fail --silent "$(local_url)/healthz"; echo
         ;;
     logs)
         require_compose

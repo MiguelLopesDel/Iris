@@ -151,13 +151,10 @@ restore_checkout() {
 wait_for_health() {
     local bind port url
     bind="$(env_value IRIS_BIND)"; port="$(env_value IRIS_PORT)"
-    local scheme=http
-    case "$(env_value IRIS_TLS)" in self|custom) scheme=https ;; esac
-    url="$scheme://${bind:-127.0.0.1}:${port:-8501}/healthz"
-    # -k: this only asks whether the process answers, not who it is.
+    url="http://${bind:-127.0.0.1}:${port:-8501}/healthz"
     for _ in $(seq 1 60); do
-        if curl -fsSk -m 3 "$url" >/dev/null 2>&1; then
-            say "healthy: $(curl -fsSk -m 3 "$url")"
+        if curl -fsS -m 3 "$url" >/dev/null 2>&1; then
+            say "healthy: $(curl -fsS -m 3 "$url")"
             return 0
         fi
         sleep 2

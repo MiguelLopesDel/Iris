@@ -1,15 +1,19 @@
 """HTTPS served by Iris itself, in the mode the administrator chooses (``IRIS_TLS``).
 
-* ``off`` (the default): plain HTTP. TLS, if any, is done in front of Iris by
+The web interface always stays on plain HTTP (port 8501), so setting up and
+using Iris in a browser never shows a certificate warning. The modes add an
+HTTPS listener (port 8443) for devices:
+
+* ``off`` (the default): no HTTPS. TLS, if any, is done in front of Iris by
   a proxy or a mesh (``tailscale serve``, Caddy, nginx), and the pairing code
   offers that service's ``https://`` address.
 * ``self``: a self-signed certificate made from this installation's identity
   key (:mod:`core.server_identity`). A paired app pins that key, so the
-  certificate can be reissued (new addresses) without pairing again. Browsers
-  warn about it: nothing public vouches for it.
+  certificate can be reissued (new addresses) without pairing again. The
+  pairing code turns the ``http://`` addresses into this ``https://`` one.
 * ``custom``: the administrator's own certificate and key, for example from a
-  public or company CA, so browsers accept it. Paired devices still check the
-  identity key through ``/api/identity``.
+  public or company CA. Paired devices still check the identity key through
+  ``/api/identity``.
 
 The certificate lives under ``<data>/tls``; a custom one is read from
 ``IRIS_TLS_CERT`` / ``IRIS_TLS_KEY`` (by default ``<data>/tls/cert.pem`` and
@@ -56,6 +60,17 @@ def mode_from_env(environ: dict[str, str] | None = None) -> str:
     if value not in MODES:
         raise TlsConfigError(f"IRIS_TLS={value!r}: use one of {', '.join(MODES)}")
     return value
+
+
+def device_https_port(environ: dict[str, str] | None = None) -> int | None:
+    """The host port devices reach HTTPS at, or None when Iris serves no HTTPS."""
+    env = environ if environ is not None else os.environ
+    try:
+        if mode_from_env(env) == "off":
+            return None
+    except TlsConfigError:
+        return None
+    return int(env.get("IRIS_TLS_PUBLIC_PORT") or env.get("IRIS_HTTPS_PORT") or 8443)
 
 
 def certificate_names(addresses: list[str], extra: str = "") -> list[str]:

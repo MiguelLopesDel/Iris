@@ -117,13 +117,89 @@ def test_a_custom_certificate_defaults_to_the_data_tls_folder(tmp_path: Path) ->
     assert files == tls.TlsFiles(tmp_path / "tls" / "cert.pem", tmp_path / "tls" / "key.pem")
 
 
-def test_the_launcher_adds_tls_only_when_asked(tmp_path: Path) -> None:
-    plain = serve.uvicorn_args({"IRIS_DATA_DIR": str(tmp_path)})
-    assert not any(arg.startswith("--ssl") for arg in plain)
+def test_the_launcher_prepares_a_certificate_only_when_asked(tmp_path: Path) -> None:
+    assert serve.tls_files({"IRIS_DATA_DIR": str(tmp_path)}) is None
 
-    selfsigned = serve.uvicorn_args({"IRIS_DATA_DIR": str(tmp_path), "IRIS_TLS": "self", "IRIS_TLS_NAMES": "home.lan"})
-    assert f"--ssl-keyfile={tmp_path / server_identity.KEY_FILE}" in selfsigned
-    assert f"--ssl-certfile={tmp_path / 'tls' / tls.SELF_CERT_FILE}" in selfsigned
+    files = serve.tls_files({"IRIS_DATA_DIR": str(tmp_path), "IRIS_TLS": "self", "IRIS_TLS_NAMES": "home.lan"})
+    assert files == tls.TlsFiles(tmp_path / "tls" / tls.SELF_CERT_FILE, tmp_path / server_identity.KEY_FILE)
 
     with pytest.raises(tls.TlsConfigError):
-        serve.uvicorn_args({"IRIS_DATA_DIR": str(tmp_path), "IRIS_TLS": "custom"})
+        serve.tls_files({"IRIS_DATA_DIR": str(tmp_path), "IRIS_TLS": "custom"})
+
+
+def test_devices_get_the_https_port_only_when_iris_serves_https() -> None:
+    assert tls.device_https_port({}) is None
+    assert tls.device_https_port({"IRIS_TLS": "self"}) == 8443
+    assert tls.device_https_port({"IRIS_TLS": "custom", "IRIS_TLS_PUBLIC_PORT": "8503"}) == 8503
+
+
+def test_the_pairing_code_sends_devices_to_https_while_the_page_stays_on_http() -> None:
+    from core.pairing import device_addresses
+
+    page = ["http://192.168.1.20:8501", "https://iris.example", "http://[fd00::1]:8501", "http://192.168.1.20:8501"]
+
+    assert device_addresses(page, None) == page
+    assert device_addresses(page, 8443) == ["https://192.168.1.20:8443", "https://iris.example", "https://[fd00::1]:8443"]
+    assert device_addresses(["http://iris.lan:8501"], 443) == ["https://iris.lan"]
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def test_the_server_answers_browsers_over_http_and_devices_over_https(tmp_path: Path) -> None:
+    import os
+    import signal
+    import subprocess
+    import time
+    import urllib.request
+
+    root = Path(__file__).resolve().parents[1]
+    http_port, https_port = _free_port(), _free_port()
+    env = dict(
+        os.environ, PYTHONPATH=str(root), IRIS_DATA_DIR=str(tmp_path / "data"), IRIS_TLS="self",
+        IRIS_HTTP_PORT=str(http_port), IRIS_HTTPS_PORT=str(https_port), IRIS_LOAD_MODEL="0",
+        IRIS_SERVER_MODE="private", IRIS_SESSION_HTTPS_ONLY="false",
+    )
+    process = subprocess.Popen(
+        [sys.executable, str(root / "scripts" / "serve.py")], cwd=tmp_path, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    insecure = ssl.create_default_context()
+    insecure.check_hostname = False
+    insecure.verify_mode = ssl.CERT_NONE
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                plain = urllib.request.urlopen(f"http://127.0.0.1:{http_port}/healthz", timeout=2).status
+                secure = urllib.request.urlopen(f"https://127.0.0.1:{https_port}/healthz", timeout=2, context=insecure).status
+                break
+            except OSError:
+                assert process.poll() is None, process.stdout.read() if process.stdout else ""
+                assert time.monotonic() < deadline, "server did not come up"
+                time.sleep(0.3)
+        assert (plain, secure) == (200, 200)
+
+        import socket as socket_module
+
+        with socket_module.create_connection(("127.0.0.1", https_port)) as raw:
+            with insecure.wrap_socket(raw, server_hostname="127.0.0.1") as wrapped:
+                presented = x509.load_der_x509_certificate(wrapped.getpeercert(binary_form=True))
+        # Devices meet the identity key they pinned.
+        assert _spki(presented) == server_identity.read_identity(tmp_path / "data").public_key_der
+    finally:
+        process.send_signal(signal.SIGTERM)
+        try:
+            # One signal stops both listeners after the app's shutdown ran; uvicorn
+            # then re-raises the signal it caught, as it does on its own.
+            assert process.wait(timeout=20) in (0, -signal.SIGTERM)
+            output = process.stdout.read() if process.stdout else ""
+            assert "Application shutdown complete." in output
+        finally:
+            if process.poll() is None:
+                process.kill()
