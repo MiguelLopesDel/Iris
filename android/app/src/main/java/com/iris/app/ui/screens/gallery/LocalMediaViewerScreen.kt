@@ -114,7 +114,9 @@ fun LocalMediaViewerScreen(
     var chromeVisible by remember { mutableStateOf(true) }
     var panelOpen by remember { mutableStateOf(false) }
     val backup by produceState<DeviceBackupState?>(initialValue = null, mediaUri, panelOpen) {
-        if (panelOpen && value == null) {
+        // The producer's State survives key changes. Refresh on every opening
+        // instead of treating the first lookup as a live view of the queue.
+        if (panelOpen) {
             value = runCatching { DeviceBackupState.of(mediaUri, application.irisRepository.getUploadQueue()) }
                 .getOrDefault(DeviceBackupState.NOT_QUEUED)
         }
@@ -286,7 +288,9 @@ private fun BackupCard(backup: DeviceBackupState?, notInBackup: NotInBackupNotic
         backup == DeviceBackupState.SENDING -> Triple(Icons.Outlined.CloudUpload, "Enviando para o Iris", null)
         backup == DeviceBackupState.SAVED -> Triple(Icons.Outlined.CloudDone, "Salva no Iris", "Qualidade original")
         backup == DeviceBackupState.FAILED ->
-            Triple(Icons.Outlined.ErrorOutline, "O envio falhou", "Está só neste aparelho; o Iris tenta de novo no próximo backup")
+            Triple(Icons.Outlined.ErrorOutline, "O envio falhou", "Não será reenviada automaticamente")
+        backup == DeviceBackupState.FAILED_PROCESSING ->
+            Triple(Icons.Outlined.ErrorOutline, "Original salvo no Iris", "O processamento no servidor falhou; o arquivo continua disponível")
         else -> Triple(Icons.Outlined.CloudOff, "Ainda não está no Iris", "Entra no próximo backup")
     }
     DetailCard(icon = icon) {

@@ -25,6 +25,10 @@ class DeviceMediaDetailsTest {
         assertEquals(DeviceBackupState.SENDING, DeviceBackupState.of(uri, listOf(job(uri, UploadJobState.UPLOADING))))
         assertEquals(DeviceBackupState.SAVED, DeviceBackupState.of(uri, listOf(job(uri, UploadJobState.PROCESSING))))
         assertEquals(DeviceBackupState.FAILED, DeviceBackupState.of(uri, listOf(job(uri, UploadJobState.FAILED))))
+        assertEquals(
+            DeviceBackupState.FAILED_PROCESSING,
+            DeviceBackupState.of(uri, listOf(job(uri, UploadJobState.FAILED_PROCESSING)))
+        )
     }
 
     @Test

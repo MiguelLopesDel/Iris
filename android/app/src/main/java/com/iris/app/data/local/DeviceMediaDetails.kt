@@ -100,6 +100,9 @@ enum class DeviceBackupState {
     /** The last attempt failed; it stays only on the phone. */
     FAILED,
 
+    /** The original is on the server, but its optional processing failed. */
+    FAILED_PROCESSING,
+
     /** Not queued yet: the next scan picks it up, or its folder is left out of the backup. */
     NOT_QUEUED;
 
@@ -113,7 +116,8 @@ enum class DeviceBackupState {
                 UploadJobState.UPLOADING -> SENDING
                 UploadJobState.PENDING_PROCESSING, UploadJobState.PROCESSING,
                 UploadJobState.READY, UploadJobState.DUPLICATE -> SAVED
-                UploadJobState.FAILED, UploadJobState.FAILED_PROCESSING -> FAILED
+                UploadJobState.FAILED -> FAILED
+                UploadJobState.FAILED_PROCESSING -> FAILED_PROCESSING
             }
         }
     }
