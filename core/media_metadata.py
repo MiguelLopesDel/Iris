@@ -72,6 +72,35 @@ def extract_metadata(path: str | Path) -> dict:
     return meta
 
 
+# Fields extract_metadata reads from the file itself.
+FILE_METADATA_FIELDS = ("captured_at", "source_app", "device", "gps", "location_label")
+
+
+def needs_file_metadata(stored: dict) -> bool:
+    """Whether stored metadata never went through ``extract_metadata``.
+
+    The extractor always writes a ``gps`` key (``None`` when the file has no
+    position), so its absence marks a row cataloged without reading the file,
+    as device sync does to keep ingest fast.
+    """
+    return "gps" not in stored
+
+
+def merge_file_metadata(stored: dict, extracted: dict) -> dict:
+    """``stored`` completed with what the file says, keeping every stored value.
+
+    What the device reported at upload (its capture time, the source folder)
+    wins over the file's own tags; the file fills only what is missing. The
+    result always has ``gps``, so it is not extracted again.
+    """
+    merged = dict(stored)
+    for field in FILE_METADATA_FIELDS:
+        if not merged.get(field) and extracted.get(field):
+            merged[field] = extracted[field]
+    merged.setdefault("gps", extracted.get("gps"))
+    return merged
+
+
 def extract_full_metadata(path: str | Path) -> dict:
     """Return the complete raw metadata of a file for on-demand display.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,10 +15,16 @@ from fastapi import APIRouter, Form, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from core.api_models import OkOut, RecordDetailOut, RecordMetadataOut, RecordsPageOut, TimelineOut
-from core.media_metadata import extract_full_metadata, extract_metadata
+from core.media_metadata import (
+    extract_full_metadata,
+    extract_metadata,
+    merge_file_metadata,
+    needs_file_metadata,
+)
 from core.perf import trace
 
 router = APIRouter(tags=["records"])
+logger = logging.getLogger("iris")
 
 
 @dataclass(frozen=True)
@@ -177,15 +184,28 @@ async def get_record_metadata(request: Request, idx: int):
         path_exists = bool(path) and os.path.exists(path)
 
         curated: dict[str, Any] = {}
+        raw = ""
         try:
             raw = backend.get_record_metadata_json(record.db_id) if record.db_id else ""
             if raw:
                 curated = json.loads(raw)
         except Exception:
             curated = {}
-        if not curated and path_exists:
-            # Legacy rows may predate stored metadata extraction.
-            curated = await run_in_threadpool(extract_metadata, path)
+        if path_exists and (not curated or needs_file_metadata(curated)):
+            # Legacy rows predate stored extraction, and device sync catalogs without
+            # reading the file: read GPS, place and device now, once, and keep them.
+            extracted = await run_in_threadpool(extract_metadata, path)
+            curated = merge_file_metadata(curated, extracted) if curated else extracted
+            if record.db_id:
+                try:
+                    await run_in_threadpool(
+                        backend.replace_record_metadata_json,
+                        record.db_id,
+                        raw,
+                        json.dumps(curated, ensure_ascii=False),
+                    )
+                except Exception:
+                    logger.warning("record_metadata_store_failed db_id=%s", record.db_id, exc_info=True)
 
         full = await run_in_threadpool(extract_full_metadata, path) if path_exists else {}
         return {"curated": curated, "full": full, "path_exists": path_exists}

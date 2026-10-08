@@ -50,6 +50,9 @@ class SearchBackend(ABC):
     @abstractmethod
     def get_record_metadata_json(self, db_id: int) -> str: pass
 
+    @abstractmethod
+    def replace_record_metadata_json(self, db_id: int, expected: str, metadata_json: str) -> bool: pass
+
     # --- Search ---
     @abstractmethod
     def search_text(self, query: str, options: SearchOptions) -> list[SearchResult]: pass
@@ -222,6 +225,20 @@ class LocalBackend(SearchBackend):
         except Exception:
             return ""  # pre-migration DBs may lack the column
         return (row[0] or "") if row else ""
+
+    def replace_record_metadata_json(self, db_id: int, expected: str, metadata_json: str) -> bool:
+        """Store ``metadata_json`` only if the row still holds ``expected``.
+
+        A concurrent change (an import, another reader completing the same
+        row) wins; the caller keeps its value for this response only.
+        """
+        conn = self.engine.db.get_connection()
+        cursor = conn.execute(
+            "UPDATE memes SET metadata_json = ? WHERE id = ? AND COALESCE(metadata_json, '') = ?",
+            (metadata_json, db_id, expected),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
 
     def search_text(self, query: str, options: SearchOptions) -> list[SearchResult]:
         return self.engine.search_text(query, options)

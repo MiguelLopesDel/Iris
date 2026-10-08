@@ -14,6 +14,8 @@ from core.media_metadata import (
     _parse_iso6709,
     extract_full_metadata,
     extract_metadata,
+    merge_file_metadata,
+    needs_file_metadata,
 )
 
 
@@ -121,6 +123,39 @@ class GpsAndHelperTests(unittest.TestCase):
         self.assertAlmostEqual(gps["lon"], -9.1376, places=4)
         self.assertIsNone(_parse_iso6709(""))
         self.assertIsNone(_parse_iso6709("garbage"))
+
+
+class FileMetadataMergeTests(unittest.TestCase):
+    def test_a_synced_row_was_never_read_from_the_file(self) -> None:
+        synced = {"kind": "image", "captured_at": "2026-10-08T07:23:00", "source_name": "Camera"}
+        self.assertTrue(needs_file_metadata(synced))
+        self.assertFalse(needs_file_metadata({**synced, "gps": None}))
+
+    def test_the_file_fills_only_what_is_missing(self) -> None:
+        synced = {"kind": "image", "captured_at": "2026-10-08T07:23:00", "source_name": "Camera"}
+        extracted = {
+            "captured_at": "2026-10-08T07:22:59",
+            "source_app": "",
+            "device": "Phone X",
+            "gps": {"lat": 41.1579, "lon": -8.6291},
+            "location_label": "Porto, PT",
+        }
+
+        merged = merge_file_metadata(synced, extracted)
+
+        # What the device reported at upload wins over the file's own tags.
+        self.assertEqual(merged["captured_at"], "2026-10-08T07:23:00")
+        self.assertEqual(merged["source_name"], "Camera")
+        self.assertEqual(merged["device"], "Phone X")
+        self.assertEqual(merged["gps"], {"lat": 41.1579, "lon": -8.6291})
+        self.assertEqual(merged["location_label"], "Porto, PT")
+
+    def test_a_file_without_position_is_not_read_again(self) -> None:
+        merged = merge_file_metadata({"kind": "image"}, {"gps": None, "device": ""})
+
+        self.assertIn("gps", merged)
+        self.assertIsNone(merged["gps"])
+        self.assertFalse(needs_file_metadata(merged))
 
 
 if __name__ == "__main__":

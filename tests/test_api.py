@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -584,6 +585,40 @@ class TestRecordMetadata:
         assert data["curated"]["captured_at"] == "2026-01-01T00:00:00"
         assert data["full"]["kind"] == "image"
         assert data["full"]["exif"]["Make"] == "Apple"
+
+    def test_metadata_of_a_synced_photo_reads_gps_from_the_file_and_keeps_it(self, client, tmp_path):
+        import server
+
+        media_path = tmp_path / "IMG_0001.jpg"
+        exif = Image.Exif()
+        exif[271] = "Camera Maker"
+        gps = exif.get_ifd(0x8825)
+        gps.update({1: "N", 2: (41.0, 9.0, 28.44), 3: "W", 4: (8.0, 37.0, 44.76)})
+        Image.new("RGB", (16, 16), (9, 9, 9)).save(media_path, exif=exif)
+
+        # Device sync stores only what the phone reported, never reading the file.
+        stored = '{"kind": "image", "captured_at": "2026-10-08T07:23:00", "source_name": "Camera"}'
+        record = SimpleNamespace(index=3, db_id=44, resolved_path=str(media_path))
+        original = server._backend.get_record.return_value
+        server._backend.get_record.return_value = record
+        server._backend.get_record_metadata_json.return_value = stored
+        server._backend.replace_record_metadata_json.reset_mock()
+        try:
+            r = client.get("/api/records/3/metadata")
+        finally:
+            server._backend.get_record.return_value = original
+
+        assert r.status_code == 200
+        curated = r.json()["curated"]
+        assert curated["gps"]["lat"] == pytest.approx(41.1579, abs=1e-3)
+        assert curated["gps"]["lon"] == pytest.approx(-8.6291, abs=1e-3)
+        assert curated["location_label"]
+        assert curated["captured_at"] == "2026-10-08T07:23:00"
+        assert curated["source_name"] == "Camera"
+        # Stored once, guarded by the value it replaces, so the next read is free.
+        db_id, expected, written = server._backend.replace_record_metadata_json.call_args.args
+        assert (db_id, expected) == (44, stored)
+        assert json.loads(written)["gps"] == curated["gps"]
 
     def test_metadata_missing_file_keeps_curated_only(self, client):
         import server
