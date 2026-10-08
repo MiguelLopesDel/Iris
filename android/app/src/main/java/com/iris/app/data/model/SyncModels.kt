@@ -52,7 +52,25 @@ data class UploadInitBatchItemRequest(
 
 @Serializable
 data class UploadInitBatchRequest(
-    @SerialName("uploads") val uploads: List<UploadInitBatchItemRequest>
+    @SerialName("uploads") val uploads: List<UploadInitBatchItemRequest>,
+    // Reserved for batch ingest: the server also admits them (their final
+    // path), so the ingest request writes nothing before the bytes. Omitted
+    // when false, so older servers see the same request as before.
+    @SerialName("ingest") val ingest: Boolean = false
+)
+
+/** How many photos and bytes one batch-ingest request may carry now. */
+@Serializable
+data class IngestLimits(
+    @SerialName("max_items") val maxItems: Int = 0,
+    @SerialName("max_bytes") val maxBytes: Long = 0L,
+    @SerialName("suggested_items") val suggestedItems: Int = 0
+)
+
+@Serializable
+data class IngestResponse(
+    @SerialName("uploads") val uploads: List<UploadCompleteBatchItemResponse> = emptyList(),
+    @SerialName("limits") val limits: IngestLimits? = null
 )
 
 @Serializable

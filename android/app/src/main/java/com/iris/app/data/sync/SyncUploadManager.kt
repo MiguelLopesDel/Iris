@@ -38,6 +38,8 @@ class SyncUploadManager(
     val speedMeter: UploadSpeedMeter = UploadSpeedMeter(),
     /** Whether photos may be read with their location metadata; see [MediaLocationAccess]. */
     canReadOriginals: () -> Boolean = { false },
+    /** Send small photos in batches when the server supports it; see [BatchIngestTransfer]. */
+    private val batchIngest: Boolean = true,
     private val apiServiceProvider: (String) -> IrisApiService
 ) {
 
@@ -336,8 +338,113 @@ class SyncUploadManager(
                         onProgress = ::updateProgress,
                     ),
                 )
+                val ingest = BatchIngestTransfer(
+                    context = transfer.context,
+                    single = transfer,
+                    observer = transfer.observer,
+                )
+                var batchSize = if (batchIngest) ingestBatchSize(sessionIdentity) else null
                 try {
-                    val workers = List(maxConcurrentUploads) {
+                    val workers = if (batchSize != null) List(IngestBatchSize.LANES) {
+                        launch(Dispatchers.IO) {
+                            // A photo claimed past the current batch's room starts the next one.
+                            var carried: LocalUploadJob? = null
+                            while (!retryRequested.get()) {
+                                ensureSession(isSessionCurrent)
+                                val size = batchSize ?: break
+                                val observedQueueRevision = workSignal?.snapshot?.revision ?: -1L
+                                val batch = mutableListOf<LocalUploadJob>()
+                                var single: LocalUploadJob? = null
+                                claimMutex.withLock {
+                                    var bytes = 0L
+                                    carried?.let { batch += it; bytes += it.byteSize }
+                                    carried = null
+                                    while (!retryRequested.get()) {
+                                        val job = dbHelper.claimNextPendingJob(accountKey, lastClaimedId) ?: break
+                                        lastClaimedId = job.id
+                                        updateProgress(job.id, job.byteSize, job.nextByteOffset)
+                                        if (!size.takes(job.byteSize)) {
+                                            single = job
+                                            break
+                                        }
+                                        if (!size.fits(batch.size, bytes, job.byteSize)) {
+                                            carried = job
+                                            break
+                                        }
+                                        batch += job
+                                        bytes += job.byteSize
+                                    }
+                                }
+                                if (batch.isEmpty() && single == null) {
+                                    val signal = workSignal ?: break
+                                    val currentSignal = signal.snapshot
+                                    if (currentSignal.revision != observedQueueRevision) continue
+                                    if (currentSignal.scanFinished || currentSignal.workersStopped) break
+                                    signal.awaitChange(observedQueueRevision)
+                                    continue
+                                }
+                                if (firstUploadJobClaimed.compareAndSet(false, true)) {
+                                    onFirstUploadJobClaimed()
+                                }
+                                try {
+                                    if (batch.isNotEmpty()) {
+                                        val outcome = ingest.send(batch)
+                                        IngestBatchSize.from(outcome.limits)?.let { batchSize = it }
+                                        val results = outcome.results.values
+                                        for (result in results) {
+                                            when (result) {
+                                                ResumableUploadTransfer.ItemResult.CONFIRMED -> {
+                                                    confirmedItems.incrementAndGet()
+                                                    speedMeter.recordConfirmedItem()
+                                                }
+                                                ResumableUploadTransfer.ItemResult.RETRY -> anyDeferred.set(true)
+                                                ResumableUploadTransfer.ItemResult.FAILED -> Unit
+                                            }
+                                        }
+                                        // One failed request is one failure, not one per photo in it.
+                                        if (results.any { it == ResumableUploadTransfer.ItemResult.CONFIRMED }) {
+                                            transientFailures.reset()
+                                        } else if (results.isNotEmpty() && results.all { it == ResumableUploadTransfer.ItemResult.RETRY } &&
+                                            transientFailures.recordFailure()
+                                        ) {
+                                            retryRequested.set(true)
+                                            workSignal?.stopWorkers()
+                                        }
+                                    }
+                                    single?.let { job ->
+                                        when (transfer.execute(job)) {
+                                            ResumableUploadTransfer.ItemResult.CONFIRMED -> {
+                                                transientFailures.reset()
+                                                confirmedItems.incrementAndGet()
+                                                speedMeter.recordConfirmedItem()
+                                            }
+                                            ResumableUploadTransfer.ItemResult.FAILED -> Unit
+                                            ResumableUploadTransfer.ItemResult.RETRY -> {
+                                                anyDeferred.set(true)
+                                                dbHelper.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                                                if (transientFailures.recordFailure()) {
+                                                    retryRequested.set(true)
+                                                    workSignal?.stopWorkers()
+                                                }
+                                            }
+                                        }
+                                    }
+                                } finally {
+                                    claimMutex.withLock {
+                                        batch.forEach { removeProgress(it.id) }
+                                        single?.let { removeProgress(it.id) }
+                                    }
+                                }
+                            }
+                            // A photo carried when the pass stopped goes back to the queue.
+                            carried?.let { job ->
+                                withContext(NonCancellable) {
+                                    dbHelper.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                                }
+                                anyDeferred.set(true)
+                            }
+                        }
+                    } else List(maxConcurrentUploads) {
                         launch(Dispatchers.IO) {
                             while (!retryRequested.get()) {
                                 ensureSession(isSessionCurrent)
@@ -460,6 +567,16 @@ class SyncUploadManager(
             val sent = activeProgress.values.sumOf { it.sentBytes }
             _currentProgress.value = if (total > 0L) (sent.toDouble() / total).toFloat() else 0f
         }
+    }
+
+    /** The server's batch limits, or null to keep the resumable path (an older server, or no answer). */
+    private suspend fun ingestBatchSize(sessionIdentity: String): IngestBatchSize? = try {
+        val response = apiServiceProvider(sessionIdentity).getIngestLimits()
+        if (response.isSuccessful) IngestBatchSize.from(response.body()) else null
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
     }
 
     internal companion object {
