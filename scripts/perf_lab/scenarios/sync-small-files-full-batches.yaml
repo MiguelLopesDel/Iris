@@ -1,0 +1,14 @@
+# sync-small-files sent in full batches: one reservation and one ingest request
+# per batch, sized as the server suggests (GET /api/sync/ingest/limits). Sweep
+# the server's batch size with IRIS_INGEST_MAX_ITEMS / IRIS_INGEST_MAX_BYTES.
+name: sync-small-files-full-batches
+library_items: 6000
+duration: 90s
+actors:
+  - kind: syncing
+    devices: 1
+    items: 4000
+    sizes: {"300KB-800KB": 100%}
+    batch: auto
+    batches_in_flight: 1
+    target: {items_per_s: 160}

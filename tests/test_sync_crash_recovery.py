@@ -26,8 +26,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import core.sync_ingest as ingest_module
 import core.sync_upload_service as service_module
-from core import sync_durability
+from core.ingest_policy import IngestPolicy
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_processor import process_upload, process_uploads
 from core.sync_recovery import recover_pending_uploads
 from core.sync_upload_service import SyncUploadError, SyncUploadService
@@ -68,7 +70,46 @@ class InlineWorkers:
         process_upload(
             db_path=user.db_path, media_root=user.media_root, model_name=user.model_name,
             upload_id=upload_id, file_path=file_path, on_finished=on_finished, use_ai=use_ai,
+            write_registry=self.write_registry,
         )
+
+    def __init__(self, write_registry) -> None:
+        self.write_registry = write_registry
+
+
+class _CommittedFuture:
+    def __init__(self, future, after_commit) -> None:
+        self._future = future
+        self._after_commit = after_commit
+
+    def result(self, *args, **kwargs):
+        value = self._future.result(*args, **kwargs)
+        self._after_commit()
+        return value
+
+
+class _CrashAwareRegistry:
+    def __init__(self, server) -> None:
+        self._server = server
+        self._inner = SQLiteWriteCoordinatorRegistry(
+            coordinator_options={"batch_window_s": 0},
+        )
+
+    def submit(self, db_path, callback, *, durable=True):
+        if not durable:
+            # A relaxed commit is not on disk yet: a power loss before the next
+            # FULL commit loses it, so it takes no snapshot.
+            return self._inner.submit(db_path, callback, durable=False)
+        self._server._maybe_crash("before_full_commit")
+        future = self._inner.submit(db_path, callback)
+        return _CommittedFuture(future, self._after_commit)
+
+    def _after_commit(self) -> None:
+        self._server._take_snapshot()
+        self._server._maybe_crash("after_full_commit")
+
+    def shutdown(self, *, timeout=10.0):
+        return self._inner.shutdown(timeout=timeout)
 
 
 class Server:
@@ -80,17 +121,9 @@ class Server:
         self.crash_at: str | None = None
         # Another photo's request syncing the disk right after this chunk.
         self.other_request_syncs_after_chunk = False
-        self._real_make_durable = sync_durability.make_durable
+        self.write_registry = _CrashAwareRegistry(self)
         self._processor_hook = None
-        real_make_durable = sync_durability.make_durable
-
-        def make_durable(db_path):
-            self._maybe_crash("before_barrier")
-            real_make_durable(db_path)
-            self._take_snapshot()
-            self._maybe_crash("after_barrier")
-
-        monkeypatch.setattr(service_module, "make_durable", make_durable)
+        self.service = None
         real_move = service_module.move_upload_into_library
 
         def move(*args, **kwargs):
@@ -106,6 +139,25 @@ class Server:
             self._maybe_crash("after_chunk_written")
 
         monkeypatch.setattr(service_module, "_flush_upload_buffer", flush)
+        real_open, real_write = ingest_module._open_targets, ingest_module._write_segments
+        real_commit = ingest_module.SyncIngestPipeline._commit
+
+        def open_targets(items):
+            self._maybe_crash("ingest_admitted")  # paths claimed, nothing written
+            real_open(items)
+
+        def write_segments(segments):
+            real_write(segments)
+            self._maybe_crash("ingest_mid_write")  # some bytes on disk, unsynced
+
+        def commit(pipeline, *args, **kwargs):
+            self._maybe_crash("ingest_durable")  # files synced, state not recorded
+            real_commit(pipeline, *args, **kwargs)
+            self._maybe_crash("ingest_committed")  # recorded, catalog not written
+
+        monkeypatch.setattr(ingest_module, "_open_targets", open_targets)
+        monkeypatch.setattr(ingest_module, "_write_segments", write_segments)
+        monkeypatch.setattr(ingest_module.SyncIngestPipeline, "_commit", commit)
         self.restart()
 
     def _processor(self, **kwargs):
@@ -138,6 +190,9 @@ class Server:
 
     def restart(self, *, power_loss: bool = False) -> None:
         gc.collect()  # release connections the crashed request left open
+        if self.service is not None:
+            assert self.write_registry.shutdown(timeout=2)
+            self.write_registry = _CrashAwareRegistry(self)
         if power_loss and self.snapshot is not None:
             # The database returns to its last disk sync. Restored through
             # SQLite as well: a real power loss leaves no connection open, but
@@ -152,19 +207,24 @@ class Server:
         service_module._prepared_databases.clear()
         self.service = SyncUploadService(
             upload_processor=self._processor, batch_processor=self._batch_processor,
+            write_registry=self.write_registry,
+            ingest_policy=IngestPolicy(durability_window_s=0),
         )
         if self.user.db_path.exists():
             # What the server does when it starts: resume persisted work.
             recover_pending_uploads(
                 users_db_path=self.user.db_path.parent / "users.db",
                 sync_ai_processing=False, load_model=False, on_finished=lambda *_: None,
-                stop_event=threading.Event(), processing_workers=InlineWorkers(),
+                stop_event=threading.Event(), processing_workers=InlineWorkers(self.write_registry),
+                write_registry=self.write_registry,
                 users=[self.user],
             )
 
     # The protocol, as the app calls it.
-    def reserve(self, digest: str, size: int, client_upload_id: str = "client-1") -> dict:
-        return self.service.reserve_upload_batch(self.user, DEVICE, QUOTA, {"uploads": [{
+    def reserve(
+        self, digest: str, size: int, client_upload_id: str = "client-1", *, ingest: bool = False,
+    ) -> dict:
+        return self.service.reserve_upload_batch(self.user, DEVICE, QUOTA, {"ingest": ingest, "uploads": [{
             "client_upload_id": client_upload_id, "filename": "IMG_0001.jpg", "size": size,
             "sha256": digest, "captured_at": "2026-09-09T12:00:00Z",
         }]})["uploads"][0]
@@ -175,7 +235,7 @@ class Server:
 
         def log_phase(phase, *args, **kwargs):
             if phase == "chunk_durable" and self.other_request_syncs_after_chunk:
-                self._real_make_durable(self.user.db_path)
+                # Chunk progress already crossed the writer's FULL commit.
                 self._take_snapshot()
 
         return asyncio.run(self.service.receive_chunk(
@@ -184,6 +244,18 @@ class Server:
 
     def status(self, upload_id: str) -> dict:
         return self.service.upload_status(self.user, DEVICE, upload_id)
+
+    def ingest(self, entries: list[tuple[str, bytes]]) -> list[dict]:
+        async def body():
+            for _, data in entries:
+                yield data
+
+        manifest = ",".join(f"{upload_id}:{len(data)}" for upload_id, data in entries)
+        return asyncio.run(self.service.ingest_pipeline.ingest(
+            self.user, DEVICE, manifest, sum(len(data) for _, data in entries), body(),
+            sync_ai_processing=False, load_model=False,
+            on_finished=lambda: None, log_phase=lambda *a, **k: None,
+        ))["uploads"]
 
     def complete(self, upload_id: str) -> dict:
         return self.complete_many([upload_id])[0]
@@ -231,13 +303,13 @@ def _sync_like_the_app(
 
 
 STAGES = [
-    "before_barrier",        # reserve committed, never confirmed to the device
-    "after_barrier",         # reserve confirmed on disk, answer lost
+    "before_full_commit",    # no transaction changes have reached durable storage
+    "after_full_commit",     # reservation durable, response lost
     "after_chunk_written",   # chunk synced to its file, database not updated
     "before_move",           # finalizing claimed, file still in the upload area
     "after_move",            # file moved into the library, catalog not written
     "before_catalog",        # finalization recorded, catalog not written
-    "after_catalog",         # cataloged, completion not yet synced to disk
+    "after_catalog",         # cataloged, completion response not yet returned
 ]
 
 
@@ -248,7 +320,7 @@ def test_an_interrupted_sync_stores_the_photo_exactly_once(tmp_path: Path, monke
     server = Server(user, monkeypatch)
     data = _photo()
     server.crash_at = stage
-    # Barrier stages fire at the reserve; completion stages fire later in the flow.
+    # The first full-commit stages fire during reservation; later hooks target completion.
     state = _sync_like_the_app(server, data, power_loss=power_loss)
 
     assert state == "ready"
@@ -403,3 +475,96 @@ def test_a_batch_interrupted_midway_stores_every_photo_exactly_once(
     assert stored == sorted(cataloged), "no orphan copy may be left in the library"
     leftovers = [path for path in (user.db_path.parent / "sync_uploads").rglob("*") if path.is_file()]
     assert leftovers == []
+
+
+def _ingest_like_the_app(server: Server, photos: list[bytes], *, power_loss: bool) -> list[str]:
+    """Reserve, then send whatever is not confirmed in one batch, until all are."""
+    clients = [f"client-{index}" for index in range(len(photos))]
+    ids: dict[str, str] = {}
+    for _ in range(8):
+        crashed = False
+        try:
+            for client, data in zip(clients, photos, strict=True):
+                if client not in ids:
+                    reserved = server.reserve(
+                        hashlib.sha256(data).hexdigest(), len(data), client, ingest=True,
+                    )
+                    ids[client] = reserved["upload_id"]
+            states = {client: server.status(ids[client]) for client in clients}
+            pending = [
+                (ids[client], data) for client, data in zip(clients, photos, strict=True)
+                if states[client]["state"] not in {"ready", "duplicate"}
+            ]
+            if not pending:
+                return [states[client]["state"] for client in clients]
+            server.ingest(pending)
+        except Crash:
+            crashed = True
+        except SyncUploadError as exc:
+            if exc.status_code == 404:
+                ids.clear()  # the server lost the reservations; reserve again
+        if crashed:
+            server.restart(power_loss=power_loss)
+    raise AssertionError("the batch was never confirmed")
+
+
+# Without AI the batch's commit also catalogs it: "ingest_committed" is after
+# the catalog, and there is no separate catalog step to stop at.
+INGEST_STAGES = [
+    "ingest_admitted",
+    "ingest_mid_write",
+    "ingest_durable",
+    "ingest_committed",
+]
+
+
+@pytest.mark.parametrize("power_loss", [False, True], ids=["process-crash", "power-loss"])
+@pytest.mark.parametrize("stage", INGEST_STAGES)
+def test_a_batch_ingest_interrupted_anywhere_stores_every_photo_once(
+    tmp_path: Path, monkeypatch, stage, power_loss,
+):
+    user = _user(tmp_path)
+    server = Server(user, monkeypatch)
+    photos = [_photo(shade) for shade in (15, 95, 175)]
+    server.crash_at = stage
+
+    states = _ingest_like_the_app(server, photos, power_loss=power_loss)
+
+    assert states == ["ready"] * 3, states
+    assert server.crash_at is None, f"the batch never reached {stage}"
+    conn = sqlite3.connect(user.db_path)
+    cataloged = [Path(row[0]) for row in conn.execute("SELECT caminho FROM memes")]
+    upload_states = [row[0] for row in conn.execute("SELECT state FROM sync_uploads")]
+    conn.close()
+    assert sorted(path.read_bytes() for path in cataloged) == sorted(photos)
+    assert set(upload_states) == {"ready"}, upload_states
+    stored = sorted(path for path in user.media_root.rglob("*") if path.is_file())
+    assert stored == sorted(cataloged), "no partial or orphan copy may be left in the library"
+
+
+def test_a_power_loss_after_the_relaxed_commit_is_rebuilt_from_the_files(tmp_path: Path, monkeypatch):
+    # The batch's final commit does not wait for the disk: its uploads'
+    # "receiving" rows (from the reservation's FULL commit) and their synced
+    # files are enough. After a power loss that lost the commit, recovery alone,
+    # without the device sending again, catalogs every photo from its file.
+    user = _user(tmp_path)
+    server = Server(user, monkeypatch)
+    photos = [_photo(shade) for shade in (25, 105, 185)]
+    entries = []
+    for index, data in enumerate(photos):
+        reserved = server.reserve(
+            hashlib.sha256(data).hexdigest(), len(data), f"client-{index}", ingest=True,
+        )
+        entries.append((reserved["upload_id"], data))
+    server.crash_at = "ingest_committed"
+    with pytest.raises(Crash):
+        server.ingest(entries)
+
+    server.restart(power_loss=True)
+
+    conn = sqlite3.connect(user.db_path)
+    states = [row[0] for row in conn.execute("SELECT state FROM sync_uploads")]
+    cataloged = [Path(row[0]) for row in conn.execute("SELECT caminho FROM memes")]
+    conn.close()
+    assert states == ["ready"] * 3, states
+    assert sorted(path.read_bytes() for path in cataloged) == sorted(photos)

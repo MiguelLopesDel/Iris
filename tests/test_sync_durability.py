@@ -1,11 +1,10 @@
-"""Sync commits skip the disk wait; one barrier per request makes them durable."""
+"""The write coordinator uses FULL commits as upload durability barriers."""
 from __future__ import annotations
 
 import asyncio
 import sqlite3
 from pathlib import Path
 
-import core.sync_upload_service as service_module
 from core.sync_durability import connect_deferred, make_durable
 from core.sync_upload_service import SyncUploadService
 from core.users_db import IrisUser
@@ -44,13 +43,11 @@ def test_the_barrier_commits_a_write_with_a_full_sync(tmp_path: Path, monkeypatc
     assert marks == 1
 
 
-def test_a_completion_batch_syncs_the_disk_once(tmp_path: Path, monkeypatch):
+def test_completion_does_not_add_a_second_durability_mark(tmp_path: Path):
     user = IrisUser(
         id=1, username="alice", password_hash="unused", display_name="", is_admin=False,
         db_path=tmp_path / "iris.db", media_root=tmp_path / "media", model_name="", session_version=1,
     )
-    barriers: list[Path] = []
-    monkeypatch.setattr(service_module, "make_durable", barriers.append)
     service = SyncUploadService()
 
     result = asyncio.run(service.complete_upload_batch(
@@ -60,4 +57,8 @@ def test_a_completion_batch_syncs_the_disk_once(tmp_path: Path, monkeypatch):
     ))
 
     assert [item.get("error_code") for item in result["uploads"]] == [404, 404, 404]
-    assert barriers == [user.db_path]
+    with sqlite3.connect(user.db_path) as connection:
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'durability_marks'"
+        ).fetchone() is None
+    assert service._write_registry.shutdown(timeout=5)

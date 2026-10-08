@@ -91,12 +91,18 @@ async def revoke(request: Request, device_id: str):
 
 @router.get("/changes")
 async def changes(request: Request, cursor: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=1000)):
-    def read() -> list:
+    def read() -> tuple[list, int]:
         with _connection(request) as conn:
-            return changes_after(conn, cursor, limit)
+            latest = conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM sync_changes").fetchone()[0]
+            return changes_after(conn, cursor, limit), int(latest)
 
     # SQLite blocks; off the event loop, so other requests keep moving.
-    rows = await run_in_threadpool(read)
+    rows, latest = await run_in_threadpool(read)
+    if cursor > latest:
+        # The device is ahead of this feed: a power loss undid the last
+        # changes (recovery records them again) or the database was restored.
+        # Send it back to the feed's end; the app stores this next_cursor.
+        return {"changes": [], "next_cursor": latest, "has_more": False, "reset": True}
     return {"changes": rows, "next_cursor": rows[-1]["cursor"] if rows else cursor, "has_more": len(rows) == limit}
 
 
@@ -178,6 +184,38 @@ async def upload_chunk(request: Request, upload_id: str, offset: int = Query(...
             int(request.headers.get("content-length", "0") or 0),
             request.stream(),
             lambda phase, started, **fields: _log_sync_phase(request, phase, started, **fields),
+        )
+    except SyncUploadError as exc:
+        _raise_http(exc)
+
+
+@router.get("/ingest/limits")
+async def ingest_limits(request: Request):
+    """How many photos and bytes one batch may carry now."""
+    _user(request)
+    return _upload_service(request).ingest_limits()
+
+
+@router.post("/ingest")
+async def ingest(request: Request):
+    """Receive and finish a batch of small reserved uploads in one request.
+
+    The body is the files back to back; ``X-Iris-Ingest`` lists them in order
+    as ``upload_id:size`` pairs separated by commas. Each upload gets its own
+    result, as from ``complete-batch``.
+    """
+    user = _user(request)
+    try:
+        return await _upload_service(request).ingest_pipeline.ingest(
+            user,
+            getattr(request.state, "iris_device_id", None),
+            request.headers.get("x-iris-ingest", ""),
+            int(request.headers.get("content-length", "0") or 0),
+            request.stream(),
+            sync_ai_processing=request.app.state.sync_ai_processing,
+            load_model=request.app.state.load_model,
+            on_finished=_finished_callback(request, user.id),
+            log_phase=lambda phase, started, **fields: _log_sync_phase(request, phase, started, **fields),
         )
     except SyncUploadError as exc:
         _raise_http(exc)

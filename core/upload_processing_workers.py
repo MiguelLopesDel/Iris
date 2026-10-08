@@ -1,4 +1,5 @@
 """Bounded, lifecycle-managed workers for post-acceptance upload processing."""
+
 from __future__ import annotations
 
 import logging
@@ -8,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_processor import process_upload
 from core.users_db import IrisUser
 
@@ -35,11 +37,17 @@ class UploadProcessingWorkers:
     them up later; transient in-memory work is never the source of truth.
     """
 
-    def __init__(self, *, max_pending: int = 64) -> None:
+    def __init__(
+        self,
+        *,
+        max_pending: int = 64,
+        write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+    ) -> None:
         if max_pending < 1:
             raise ValueError("max_pending must be positive")
         self._jobs: queue.Queue[_ProcessingJob | object] = queue.Queue(maxsize=max_pending)
         self._stopping = threading.Event()
+        self._write_registry = write_registry
         self._keys_lock = threading.Lock()
         self._accepted_keys: set[tuple[str, str]] = set()
         self._thread = threading.Thread(
@@ -112,7 +120,7 @@ class UploadProcessingWorkers:
                 return
             assert isinstance(job, _ProcessingJob)
             try:
-                process_upload(
+                process_options = dict(
                     db_path=job.db_path,
                     media_root=job.media_root,
                     model_name=job.model_name,
@@ -121,6 +129,9 @@ class UploadProcessingWorkers:
                     on_finished=lambda current=job: current.on_finished(current.user_id),
                     use_ai=job.use_ai,
                 )
+                if self._write_registry is not None:
+                    process_options["write_registry"] = self._write_registry
+                process_upload(**process_options)
             except Exception as exc:
                 _logger.error(
                     "upload_processing_worker_failed user_id=%s error_type=%s",

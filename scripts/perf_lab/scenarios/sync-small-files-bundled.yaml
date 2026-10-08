@@ -1,0 +1,14 @@
+# sync-small-files with small files sent in bundles instead of one PUT each.
+# Compare with sync-small-files: same files, same disk.
+name: sync-small-files-bundled
+library_items: 6000
+duration: 90s
+actors:
+  - kind: syncing
+    devices: 1
+    items: 2000
+    sizes: {"300KB-800KB": 100%}
+    concurrency: 64
+    completion_lanes: 1
+    bundle: 8MB
+    target: {items_per_s: 40}

@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from core.sync_db import append_change, now_iso
-from core.sync_file_ops import durable_move_upload
+from core.sync_file_ops import VerifiedUploadSource, durable_move_upload
 
 
 class UnsafeUploadDestinationError(ValueError):
@@ -20,6 +20,7 @@ def move_upload_into_library(
     upload_id: str,
     expected_size: int,
     expected_hash: str,
+    verified_source: VerifiedUploadSource | None = None,
     unsynced_directories: set[Path] | None = None,
 ) -> None:
     """Durably move a reserved original, refusing destinations outside its account library.
@@ -38,6 +39,7 @@ def move_upload_into_library(
         upload_id=upload_id,
         expected_size=expected_size,
         expected_hash=expected_hash,
+        verified_source=verified_source,
         unsynced_directories=unsynced_directories,
     )
 

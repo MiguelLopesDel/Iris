@@ -37,6 +37,7 @@ class ChangeFeedSyncManager(
             val apiService = apiServiceProvider(sessionIdentity)
             var cursor = dbHelper.getLastSyncCursor(accountKey)
             var totalChanges = 0
+            var rewound = false
 
             while (true) {
                 ensureSession(isSessionCurrent)
@@ -51,6 +52,16 @@ class ChangeFeedSyncManager(
                     throw error
                 }
                 ensureSession(isSessionCurrent)
+
+                val rewind = ChangeFeedCursor.rewindTo(cursor, response)
+                if (rewind != null && !rewound) {
+                    // Store it before reading on: an empty page must not leave
+                    // the old cursor in place, past the entries recorded again.
+                    dbHelper.runInWriteTransaction { db -> saveCursor(db, accountKey, rewind) }
+                    cursor = rewind
+                    rewound = true
+                    continue
+                }
 
                 if (response.changes.isEmpty()) {
                     break
@@ -99,12 +110,7 @@ class ChangeFeedSyncManager(
                     }
 
                     // Save next cursor within the same atomic transaction
-                    val cursorValues = ContentValues().apply {
-                        put("account_key", accountKey)
-                        put("last_cursor", response.nextCursor)
-                        put("updated_at", System.currentTimeMillis())
-                    }
-                    db.insertWithOnConflict("sync_cursors", null, cursorValues, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
+                    saveCursor(db, accountKey, response.nextCursor)
                 }
 
                 cursor = response.nextCursor
@@ -117,6 +123,15 @@ class ChangeFeedSyncManager(
         } finally {
             syncMutex.unlock()
         }
+    }
+
+    private fun saveCursor(db: android.database.sqlite.SQLiteDatabase, accountKey: String, cursor: Long) {
+        val cursorValues = ContentValues().apply {
+            put("account_key", accountKey)
+            put("last_cursor", cursor)
+            put("updated_at", System.currentTimeMillis())
+        }
+        db.insertWithOnConflict("sync_cursors", null, cursorValues, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
     }
 
     private suspend fun ensureSession(isSessionCurrent: () -> Boolean) {

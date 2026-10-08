@@ -1,12 +1,15 @@
 """Persist exclusive upload-processing leases and retry state per library."""
+
 from __future__ import annotations
 
 import logging
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_db import append_change, now_iso
 from core.sync_durability import connect_deferred
 from core.upload_catalog_writer import UploadCatalogWriter
@@ -22,36 +25,52 @@ _logger = logging.getLogger("iris.sync")
 class UploadProcessingStore:
     """Own the SQLite state machine for processing claims, leases, and retries."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+    ) -> None:
         self._db_path = db_path
+        self._write_registry = write_registry
+
+    def _write[T](self, callback: Callable[[sqlite3.Connection], T]) -> T:
+        if self._write_registry is not None:
+            return self._write_registry.submit(self._db_path, callback).result()
+        connection = connect_deferred(self._db_path, timeout=30)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            result = callback(connection)
+            connection.commit()
+            return result
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def claim(self, upload_id: str, token: str) -> tuple[str | None, int | str]:
         return self.claim_many([upload_id], token)[upload_id]
 
     def claim_many(
-        self, upload_ids: list[str], token: str,
+        self,
+        upload_ids: list[str],
+        token: str,
     ) -> dict[str, tuple[str | None, int | str]]:
         """Claim uploads for processing under one library lease, in one transaction.
 
         Each answer is ``(token, attempts)`` when claimed, or ``(None, state)``
         when the upload is not this caller's to process now.
         """
-        connection = connect_deferred(self._db_path, timeout=30)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+
+        def claim_batch(connection: sqlite3.Connection):
             now = now_iso()
             lease_until = _lease_deadline()
-            claims = {
+            return {
                 upload_id: _claim_row(connection, upload_id, token, now, lease_until)
                 for upload_id in upload_ids
             }
-            connection.commit()
-            return claims
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+
+        return self._write(claim_batch)
 
     def renew_until_stopped(
         self,
@@ -62,9 +81,8 @@ class UploadProcessingStore:
         upload_ids = [upload_id] if isinstance(upload_id, str) else list(upload_id)
         marks = ", ".join("?" * len(upload_ids))
         while not stop_event.wait(_PROCESSING_HEARTBEAT_SECONDS):
-            connection = connect_deferred(self._db_path, timeout=30)
-            try:
-                connection.execute("BEGIN IMMEDIATE")
+
+            def renew(connection: sqlite3.Connection) -> tuple[int, int]:
                 lease_until = _lease_deadline()
                 upload = connection.execute(
                     f"""UPDATE sync_uploads SET processing_lease_until = ?
@@ -76,22 +94,26 @@ class UploadProcessingStore:
                        WHERE lock_name = ? AND owner_token = ?""",
                     (lease_until, _PROCESSING_LOCK_NAME, token),
                 )
-                connection.commit()
-                if upload.rowcount < 1 or library.rowcount != 1:
+                return upload.rowcount, library.rowcount
+
+            try:
+                upload_count, library_count = self._write(renew)
+                if upload_count < 1 or library_count != 1:
                     stop_event.set()
                     return
-            except sqlite3.Error as exc:
-                connection.rollback()
+            except (sqlite3.Error, RuntimeError) as exc:
                 _logger.warning(
                     "sync_processing_lease_renewal_failed upload_id=%s error_type=%s",
                     upload_ids[0],
                     type(exc).__name__,
                 )
-            finally:
-                connection.close()
 
     def release(
-        self, upload_id: str | list[str], token: str, *, uncount_attempt: bool = False,
+        self,
+        upload_id: str | list[str],
+        token: str,
+        *,
+        uncount_attempt: bool = False,
     ) -> None:
         """Give the uploads and the library lease back.
 
@@ -101,26 +123,24 @@ class UploadProcessingStore:
         upload_ids = [upload_id] if isinstance(upload_id, str) else list(upload_id)
         attempt_change = 1 if uncount_attempt else 0
         marks = ", ".join("?" * len(upload_ids))
-        connection = connect_deferred(self._db_path, timeout=30)
         try:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                f"""UPDATE sync_uploads SET processing_lease_token = NULL,
+
+            def release(connection: sqlite3.Connection) -> None:
+                connection.execute(
+                    f"""UPDATE sync_uploads SET processing_lease_token = NULL,
                            processing_lease_until = '', updated_at = ?,
                            processing_attempts = MAX(0, processing_attempts - ?)
                     WHERE id IN ({marks}) AND processing_lease_token = ?""",
-                (now_iso(), attempt_change, *upload_ids, token),
-            )
-            connection.execute(
-                "DELETE FROM sync_processing_leases WHERE lock_name = ? AND owner_token = ?",
-                (_PROCESSING_LOCK_NAME, token),
-            )
-            connection.commit()
-        except sqlite3.Error:
-            connection.rollback()
+                    (now_iso(), attempt_change, *upload_ids, token),
+                )
+                connection.execute(
+                    "DELETE FROM sync_processing_leases WHERE lock_name = ? AND owner_token = ?",
+                    (_PROCESSING_LOCK_NAME, token),
+                )
+
+            self._write(release)
+        except (sqlite3.Error, RuntimeError):
             _logger.warning("sync_processing_lease_release_failed upload_id=%s", upload_ids[0])
-        finally:
-            connection.close()
 
     def record_failure(
         self,
@@ -129,42 +149,45 @@ class UploadProcessingStore:
         attempts: int,
         error_type: str,
     ) -> dict[str, int | str]:
-        connection = connect_deferred(self._db_path, timeout=30)
-        try:
+        def record(connection: sqlite3.Connection) -> dict[str, int | str]:
             if attempts < _PROCESSING_MAX_ATTEMPTS:
                 delay = _PROCESSING_RETRY_DELAYS_SECONDS[
                     min(attempts - 1, len(_PROCESSING_RETRY_DELAYS_SECONDS) - 1)
                 ]
-                retry_at = (
-                    datetime.now(UTC) + timedelta(seconds=delay)
-                ).isoformat()
+                retry_at = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
                 state = "pending_processing"
                 error = f"Processing failed ({error_type}); retry scheduled."
             else:
                 retry_at = ""
                 state = "failed_processing"
                 error = "Processing failed after automatic retries; check server logs."
-            with connection:
-                changed = connection.execute(
-                    """UPDATE sync_uploads SET state = ?, processing_next_attempt_at = ?,
+            changed = connection.execute(
+                """UPDATE sync_uploads SET state = ?, processing_next_attempt_at = ?,
                               updated_at = ? WHERE id = ? AND processing_lease_token = ?""",
-                    (state, retry_at, now_iso(), upload_id, token),
-                )
-                if changed.rowcount == 1:
-                    append_change(connection, "media", upload_id, "updated", 3, {
+                (state, retry_at, now_iso(), upload_id, token),
+            )
+            if changed.rowcount == 1:
+                append_change(
+                    connection,
+                    "media",
+                    upload_id,
+                    "updated",
+                    3,
+                    {
                         "upload_id": upload_id,
                         "state": state,
                         "retry_at": retry_at,
                         "error": error,
-                    })
-                else:
-                    row = connection.execute(
-                        "SELECT state FROM sync_uploads WHERE id = ?", (upload_id,)
-                    ).fetchone()
-                    return {"upload_id": upload_id, "state": row[0] if row else "missing"}
+                    },
+                )
+            else:
+                row = connection.execute(
+                    "SELECT state FROM sync_uploads WHERE id = ?", (upload_id,)
+                ).fetchone()
+                return {"upload_id": upload_id, "state": row[0] if row else "missing"}
             return {"upload_id": upload_id, "state": state}
-        finally:
-            connection.close()
+
+        return self._write(record)
 
     def result(self, upload_id: str, state: str) -> dict[str, int | str]:
         result: dict[str, int | str] = {"upload_id": upload_id, "state": state}
@@ -185,7 +208,11 @@ class UploadProcessingStore:
 
 
 def _claim_row(
-    connection: sqlite3.Connection, upload_id: str, token: str, now: str, lease_until: str,
+    connection: sqlite3.Connection,
+    upload_id: str,
+    token: str,
+    now: str,
+    lease_until: str,
 ) -> tuple[str | None, int | str]:
     """Claim one upload inside the caller's write transaction."""
     row = connection.execute(
@@ -207,8 +234,7 @@ def _claim_row(
         return None, "processing"
 
     library_lease = connection.execute(
-        "SELECT owner_token, lease_until FROM sync_processing_leases "
-        "WHERE lock_name = ?",
+        "SELECT owner_token, lease_until FROM sync_processing_leases WHERE lock_name = ?",
         (_PROCESSING_LOCK_NAME,),
     ).fetchone()
     if library_lease and library_lease[1] > now and library_lease[0] != token:
@@ -230,10 +256,17 @@ def _claim_row(
     attempts = connection.execute(
         "SELECT processing_attempts FROM sync_uploads WHERE id = ?", (upload_id,)
     ).fetchone()
-    append_change(connection, "media", upload_id, "updated", 2, {
-        "upload_id": upload_id,
-        "state": "processing",
-    })
+    append_change(
+        connection,
+        "media",
+        upload_id,
+        "updated",
+        2,
+        {
+            "upload_id": upload_id,
+            "state": "processing",
+        },
+    )
     return token, int(attempts[0])
 
 

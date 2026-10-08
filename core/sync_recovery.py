@@ -1,4 +1,5 @@
 """Find and resume accepted uploads left unfinished by interruptions."""
+
 from __future__ import annotations
 
 import logging
@@ -7,7 +8,9 @@ import threading
 from pathlib import Path
 
 from core.library_operation_lock import serialize_library_operations
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_db import append_change, now_iso
+from core.sync_file_ops import matches_original
 from core.upload_finalization import move_upload_into_library, record_upload_finalized
 from core.upload_processing_workers import UploadProcessingWorkers
 
@@ -23,9 +26,17 @@ def recover_pending_uploads(
     on_finished,
     stop_event: threading.Event,
     processing_workers: UploadProcessingWorkers,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
     users=None,
+    interrupted_before: str | None = None,
+    settle_batches: bool = True,
 ) -> None:
     """Resume persisted finalization and catalog work for each account.
+
+    With ``settle_batches`` (a single pass at startup), batch uploads left
+    ``receiving`` before ``interrupted_before`` (default: now) are resolved
+    first. The server does that step on its own before accepting uploads
+    and runs its periodic passes without it.
 
     ``sync_uploads`` is the source of truth. File finalization is idempotent,
     and catalog work is claimed through the same durable lease as live uploads.
@@ -39,6 +50,16 @@ def recover_pending_uploads(
     for user in users:
         if stop_event.is_set():
             return
+        if settle_batches:
+            try:
+                # First, so a batch upload found complete joins the work below.
+                _settle_interrupted_batches(user, write_registry, interrupted_before or now_iso())
+            except Exception as exc:
+                _logger.warning(
+                    "sync_recovery_batches_failed user_id=%s error_type=%s",
+                    user.id,
+                    type(exc).__name__,
+                )
         try:
             conn = sqlite3.connect(user.db_path, timeout=30)
             has_uploads = conn.execute(
@@ -73,7 +94,7 @@ def recover_pending_uploads(
             if stop_event.is_set():
                 return
             if state == "finalizing":
-                candidate = _recover_finalizing_upload(user, str(upload_id))
+                candidate = _recover_finalizing_upload(user, str(upload_id), write_registry)
                 if candidate is None:
                     continue
             else:
@@ -83,6 +104,7 @@ def recover_pending_uploads(
                     user.db_path,
                     str(upload_id),
                     "The accepted original is missing from server storage; recovery is required.",
+                    write_registry=write_registry,
                 )
                 _logger.error(
                     "sync_recovery_media_missing user_id=%s upload_id=%s state=%s",
@@ -108,29 +130,148 @@ def recover_pending_uploads(
                 )
 
 
-def _mark_recovery_failure(db_path: Path, upload_id: str, safe_error: str) -> None:
-    conn = sqlite3.connect(db_path)
+def settle_interrupted_batches(
+    *,
+    users_db_path: Path,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+    users=None,
+) -> None:
+    """Resolve every account's batch uploads left ``receiving`` by a stop.
+
+    Runs once at startup, before the server accepts uploads: a device sending
+    one of these uploads again must find it already resolved, not race this
+    step for the same file.
+    """
+    if users is None:
+        from core.users_db import list_users
+
+        users = list_users(users_db_path)
+    before = now_iso()
+    for user in users:
+        try:
+            _settle_interrupted_batches(user, write_registry, before)
+        except Exception as exc:
+            _logger.warning(
+                "sync_recovery_batches_failed user_id=%s error_type=%s",
+                user.id,
+                type(exc).__name__,
+            )
+
+
+def _settle_interrupted_batches(user, write_registry=None, before: str = "") -> None:
+    """Resolve uploads a batch request left in ``receiving`` when the server stopped.
+
+    The batch wrote straight to the final path, so a complete file is checked
+    against its declared size and hash: when it matches, the upload becomes
+    ``finalizing`` and continues like any interrupted completion. Otherwise
+    the upload returns to ``uploading``, so the device sends it again (its
+    bytes were never acknowledged), and only then is the partial file removed:
+    a row this step did not change is never touched on disk.
+    """
+    conn = sqlite3.connect(user.db_path, timeout=30)
     try:
-        state = conn.execute(
-            "SELECT state FROM sync_uploads WHERE id = ?", (upload_id,)
-        ).fetchone()
+        rows = conn.execute(
+            "SELECT id, expected_size, expected_hash, final_path FROM sync_uploads "
+            "WHERE state = 'receiving' AND updated_at < ?",
+            (before,),
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+    if not rows:
+        return
+    complete, partial = [], []
+    for upload_id, size, digest, final_path in rows:
+        path = Path(final_path) if final_path else None
+        if path is not None and path.is_file() and matches_original(path, int(size), str(digest)):
+            complete.append(str(upload_id))
+        else:
+            partial.append((str(upload_id), path))
+
+    def settle(connection: sqlite3.Connection) -> list[Path]:
+        connection.executemany(
+            "UPDATE sync_uploads SET state = 'finalizing', received_size = expected_size, "
+            "updated_at = ? WHERE id = ? AND state = 'receiving' AND updated_at < ?",
+            [(now_iso(), upload_id, before) for upload_id in complete],
+        )
+        reset = []
+        for upload_id, path in partial:
+            changed = connection.execute(
+                "UPDATE sync_uploads SET state = 'uploading', final_path = '', received_size = 0, "
+                "updated_at = ? WHERE id = ? AND state = 'receiving' AND updated_at < ?",
+                (now_iso(), upload_id, before),
+            )
+            if changed.rowcount == 1 and path is not None:
+                reset.append(path)
+        return reset
+
+    if write_registry is not None:
+        reset = write_registry.submit(user.db_path, settle).result()
+    else:
+        conn = sqlite3.connect(user.db_path, timeout=30)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            reset = settle(conn)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    # After the reset is committed: nothing points to these partial files now.
+    for path in reset:
+        path.unlink(missing_ok=True)
+
+
+def _mark_recovery_failure(
+    db_path: Path,
+    upload_id: str,
+    safe_error: str,
+    *,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+) -> None:
+    def mark(conn: sqlite3.Connection) -> None:
+        state = conn.execute("SELECT state FROM sync_uploads WHERE id = ?", (upload_id,)).fetchone()
         if state is None or state[0] not in {"pending_processing", "processing"}:
             return
         conn.execute(
             "UPDATE sync_uploads SET state = 'failed_processing', updated_at = ? WHERE id = ?",
             (now_iso(), upload_id),
         )
-        append_change(conn, "media", upload_id, "updated", 3, {
-            "upload_id": upload_id,
-            "state": "failed_processing",
-            "error": safe_error,
-        })
-        conn.commit()
-    finally:
-        conn.close()
+        append_change(
+            conn,
+            "media",
+            upload_id,
+            "updated",
+            3,
+            {
+                "upload_id": upload_id,
+                "state": "failed_processing",
+                "error": safe_error,
+            },
+        )
+
+    if write_registry is not None:
+        write_registry.submit(db_path, mark).result()
+    else:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            mark(conn)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
-def _recover_finalizing_upload(user, upload_id: str) -> Path | None:
+def _recover_finalizing_upload(
+    user,
+    upload_id: str,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+) -> Path | None:
     """Finish one persisted original move before handing it to the processor."""
     with serialize_library_operations(user.db_path):
         conn = sqlite3.connect(user.db_path)
@@ -162,14 +303,39 @@ def _recover_finalizing_upload(user, upload_id: str) -> Path | None:
             )
             return None
 
-        sequence = record_upload_finalized(
-            conn,
-            upload_id=upload_id,
-            filename=row[0],
-            destination=destination,
-            captured_at=row[5],
-        )
         conn.close()
+
+        def record(connection: sqlite3.Connection) -> int | None:
+            return record_upload_finalized(
+                connection,
+                upload_id=upload_id,
+                filename=row[0],
+                destination=destination,
+                captured_at=row[5],
+                commit=False,
+            )
+
+        try:
+            if write_registry is None:
+                conn = sqlite3.connect(user.db_path)
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    sequence = record(conn)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.close()
+            else:
+                sequence = write_registry.submit(user.db_path, record).result()
+        except sqlite3.Error:
+            _logger.error(
+                "sync_recovery_record_failed user_id=%s upload_id=%s",
+                user.id,
+                upload_id,
+            )
+            return None
         return destination if sequence is not None else None
 
 
@@ -180,6 +346,7 @@ def start_pending_upload_recovery(
     load_model: bool,
     on_finished,
     processing_workers: UploadProcessingWorkers,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
 ) -> tuple[threading.Event, threading.Thread]:
     """Start the periodic recovery worker and return its shutdown handles."""
     stop_event = threading.Event()
@@ -192,6 +359,7 @@ def start_pending_upload_recovery(
             "on_finished": on_finished,
             "stop_event": stop_event,
             "processing_workers": processing_workers,
+            "write_registry": write_registry,
         },
         name="iris-sync-recovery",
         daemon=True,
@@ -208,6 +376,7 @@ def _run_pending_upload_recovery(
     on_finished,
     stop_event: threading.Event,
     processing_workers: UploadProcessingWorkers,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
 ) -> None:
     from core.users_db import list_users
 
@@ -219,8 +388,12 @@ def _run_pending_upload_recovery(
     except Exception as exc:
         _logger.error("sync_recovery_users_failed error_type=%s", type(exc).__name__)
         users = None
+    # Batch uploads left by a stop were settled at startup, before uploads
+    # were accepted (settle_interrupted_batches): a periodic pass never races
+    # a request for the same file.
     while not stop_event.is_set():
         recover_pending_uploads(
+            settle_batches=False,
             users_db_path=users_db_path,
             sync_ai_processing=sync_ai_processing,
             load_model=load_model,
@@ -228,5 +401,6 @@ def _run_pending_upload_recovery(
             stop_event=stop_event,
             users=users,
             processing_workers=processing_workers,
+            write_registry=write_registry,
         )
         stop_event.wait(_RECOVERY_SCAN_INTERVAL_SECONDS)

@@ -1,4 +1,5 @@
 """Account-scoped application workflows for resumable device uploads."""
+
 from __future__ import annotations
 
 import asyncio
@@ -17,11 +18,13 @@ from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
-from core.file_digest import FileDigest
 from core.indexer_db import init_db
+from core.ingest_policy import IngestPolicy
+from core.sqlite_write_coordinator import SQLiteWriteQueueFull
+from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_db import append_change, ensure_tables, now_iso, record_origin
-from core.sync_durability import connect_deferred, make_durable
-from core.sync_file_ops import fsync_directory, matches_original
+from core.sync_durability import connect_deferred
+from core.sync_file_ops import VerifiedUploadSource, fsync_directory, matches_original
 from core.sync_processor import process_upload, process_uploads
 from core.sync_upload_metadata import UploadMetadataError, parse_upload_metadata
 from core.upload_finalization import (
@@ -33,9 +36,7 @@ from core.upload_processing_workers import UploadProcessingWorkers
 from core.upload_reservations import UploadReservationStore
 from core.users_db import IrisUser
 
-_MAX_CHUNK_BYTES = 32 * 1024 * 1024
 _MAX_UPLOAD_INIT_BATCH = 16
-_UPLOAD_DISK_BUFFER_BYTES = 1024 * 1024
 # A speed test measures a path, not a library: large enough for a stable rate
 # over a home connection, small enough that it cannot fill a disk.
 SPEED_TEST_MAX_BYTES = 256 * 1024 * 1024
@@ -60,9 +61,12 @@ def _database_identity(path: Path) -> tuple[str, int, int] | None:
 def _schema_present(connection: sqlite3.Connection) -> bool:
     # A file recreated at the same path can reuse the inode; a fresh
     # database has no sync tables, so it is prepared again.
-    return connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_uploads'"
-    ).fetchone() is not None
+    return (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_uploads'"
+        ).fetchone()
+        is not None
+    )
 
 
 class SyncUploadError(Exception):
@@ -84,6 +88,7 @@ class _Finalization:
     expected_hash: str
     captured_at: str
     temporary: Path
+    verified_source: VerifiedUploadSource | None = None
     destination: Path | None = None
     sequence: int | None = None
     # Settled without a move (a duplicate): the answer, and files to delete
@@ -105,7 +110,11 @@ class SyncUploadService:
         upload_processor: Callable[..., Any] = process_upload,
         processing_workers: UploadProcessingWorkers | None = None,
         batch_processor: Callable[..., Any] | None = None,
+        ingest_policy: IngestPolicy | None = None,
+        write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+        durability: Any = None,
     ) -> None:
+        self._ingest_policy = ingest_policy or IngestPolicy()
         self._upload_processor = upload_processor
         # Catalogs a completion batch at once; a custom single-upload
         # processor without a batch counterpart is called once per upload.
@@ -113,7 +122,57 @@ class SyncUploadService:
             batch_processor = process_uploads
         self._batch_processor = batch_processor
         self._processing_workers = processing_workers
+        # The app injects one registry shared by all account-scoped services.
+        # Standalone service instances (tests/tools) own an isolated registry.
+        self._write_registry = write_registry or SQLiteWriteCoordinatorRegistry()
         self._operation_locks: dict[tuple[int, str, str], tuple[asyncio.Lock, int]] = {}
+        self._durability = durability
+        self._ingest_pipeline = None
+
+    @property
+    def ingest_policy(self) -> IngestPolicy:
+        return self._ingest_policy
+
+    def ingest_limits(self) -> dict[str, int]:
+        """What a batch may hold now, for clients to size their batches.
+
+        ``suggested_items`` is the size the server would like; today it
+        follows the policy, later it can follow load.
+        """
+        return {
+            "max_items": self._ingest_policy.max_items,
+            "max_bytes": self._ingest_policy.max_bytes,
+            "suggested_items": self._ingest_policy.max_items,
+        }
+
+    @property
+    def ingest_pipeline(self):
+        """The batch ingestion path, created on first use."""
+        if self._ingest_pipeline is None:
+            from core.file_durability import FileDurabilityService
+            from core.sync_ingest import SyncIngestPipeline
+
+            if self._durability is None:
+                self._durability = FileDurabilityService(self._ingest_policy)
+            self._ingest_pipeline = SyncIngestPipeline(self, self._durability)
+        return self._ingest_pipeline
+
+    def _submit_write[T](
+        self,
+        user: IrisUser,
+        callback: Callable[[sqlite3.Connection], T],
+        *,
+        durable: bool = True,
+    ) -> T:
+        """Prepare account schema, then run one DB-only callback on its writer."""
+        with closing(self.open_connection(user)):
+            pass
+        try:
+            if durable:
+                return self._write_registry.submit(user.db_path, callback).result()
+            return self._write_registry.submit(user.db_path, callback, durable=False).result()
+        except SQLiteWriteQueueFull as exc:
+            raise SyncUploadError(503, "Servidor ocupado; tente novamente em instantes") from exc
 
     @staticmethod
     def open_connection(user: IrisUser) -> sqlite3.Connection:
@@ -161,8 +220,9 @@ class SyncUploadService:
         upload_id = uuid.uuid4().hex
         root = user.db_path.parent / "sync_uploads"
         temp_path = root / f"{upload_id}.part"
-        with self.open_connection(user) as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        def reserve(connection: sqlite3.Connection) -> dict[str, Any]:
             created_at = now_iso()
             media_id = UploadReservationStore.catalogued_media_id(connection, metadata.sha256)
             # Bytes already in the library cost nothing: they are never sent.
@@ -191,10 +251,21 @@ class SyncUploadService:
                 updated_at=now_iso(),
             )
             if media_id is not None:
-                return _known_duplicate(connection, upload_id, media_id, device_id, metadata.source)
-            root.mkdir(mode=0o700, exist_ok=True)
-        make_durable(user.db_path)
-        return {"upload_id": upload_id, "offset": 0, "chunk_size": _MAX_CHUNK_BYTES}
+                return _known_duplicate(
+                    connection,
+                    upload_id,
+                    media_id,
+                    device_id,
+                    metadata.source,
+                    chunk_size=self._ingest_policy.max_bytes,
+                )
+            return {
+                "upload_id": upload_id,
+                "offset": 0,
+                "chunk_size": self._ingest_policy.max_bytes,
+            }
+
+        return self._submit_write(user, reserve)
 
     def reserve_upload_batch(
         self,
@@ -206,15 +277,20 @@ class SyncUploadService:
         if not device_id:
             raise SyncUploadError(403, "Use uma sessão de dispositivo para sincronizar mídia")
         items = payload.get("uploads") if isinstance(payload, dict) else None
-        if not isinstance(items, list) or not items or len(items) > _MAX_UPLOAD_INIT_BATCH:
-            raise SyncUploadError(400, f"O lote deve conter de 1 a {_MAX_UPLOAD_INIT_BATCH} itens")
+        # A batch-ingest client says so: its reservations are also admitted,
+        # each with its final path, so its ingest request writes no admission.
+        for_ingest = isinstance(payload, dict) and payload.get("ingest") is True
+        # Batch-ingest clients reserve a whole batch at once; the legacy
+        # 16-item cap stays the floor for older clients.
+        limit = max(_MAX_UPLOAD_INIT_BATCH, self._ingest_policy.max_items)
+        if not isinstance(items, list) or not items or len(items) > limit:
+            raise SyncUploadError(400, f"O lote deve conter de 1 a {limit} itens")
         if any(not isinstance(raw, dict) for raw in items):
             raise SyncUploadError(400, "Todos os itens do lote devem conter metadados")
 
         client_upload_ids = [raw.get("client_upload_id") for raw in items]
         if any(
-            not isinstance(client_upload_id, str)
-            or not _UPLOAD_ID.fullmatch(client_upload_id)
+            not isinstance(client_upload_id, str) or not _UPLOAD_ID.fullmatch(client_upload_id)
             for client_upload_id in client_upload_ids
         ):
             raise SyncUploadError(400, "Cada item deve conter um client_upload_id válido")
@@ -227,25 +303,32 @@ class SyncUploadService:
             try:
                 metadata = parse_upload_metadata(raw)
             except UploadMetadataError as exc:
-                prepared.append({
-                    "client_upload_id": client_upload_id,
-                    "error_code": 400,
-                    "error_message": str(exc),
-                })
+                prepared.append(
+                    {
+                        "client_upload_id": client_upload_id,
+                        "error_code": 400,
+                        "error_message": str(exc),
+                    }
+                )
                 continue
-            prepared.append({
-                "client_upload_id": client_upload_id,
-                "filename": metadata.filename,
-                "size": metadata.size,
-                "sha256": metadata.sha256,
-                "captured_at": metadata.captured_at,
-                "source": metadata.source,
-            })
+            prepared.append(
+                {
+                    "client_upload_id": client_upload_id,
+                    "filename": metadata.filename,
+                    "size": metadata.size,
+                    "sha256": metadata.sha256,
+                    "captured_at": metadata.captured_at,
+                    "source": metadata.source,
+                }
+            )
 
         root = user.db_path.parent / "sync_uploads"
-        results: list[dict[str, Any]] = []
-        with self.open_connection(user) as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        if any("error_code" not in item for item in prepared):
+            root.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        def reserve_batch(connection: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
+            results: list[dict[str, Any]] = []
+            planned: list[tuple[str, dict[str, Any]]] = []
             remaining = UploadReservationStore.remaining_bytes(connection, quota_bytes)
             for item in prepared:
                 if "error_code" in item:
@@ -261,37 +344,52 @@ class SyncUploadService:
                 ).fetchone()
                 if existing is not None:
                     expected = (
-                        item["filename"], item["size"], item["sha256"], item["captured_at"],
-                        item["source"]["id"], item["source"]["name"],
-                        item["source"]["relative_path"], item["source"]["volume"],
-                        item["source"]["media_store_id"], item["source"]["generation"],
+                        item["filename"],
+                        item["size"],
+                        item["sha256"],
+                        item["captured_at"],
+                        item["source"]["id"],
+                        item["source"]["name"],
+                        item["source"]["relative_path"],
+                        item["source"]["volume"],
+                        item["source"]["media_store_id"],
+                        item["source"]["generation"],
                         item["source"]["media_kind"],
                     )
                     recorded = tuple(existing[1:4]) + tuple(existing[6:14])
                     if recorded != expected:
-                        results.append({
-                            "client_upload_id": client_upload_id,
-                            "error_code": 409,
-                            "error_message": "ID de envio já foi usado para outra mídia",
-                        })
+                        results.append(
+                            {
+                                "client_upload_id": client_upload_id,
+                                "error_code": 409,
+                                "error_message": "ID de envio já foi usado para outra mídia",
+                            }
+                        )
                     else:
-                        state = "uploading" if existing[5] == "finalizing" else existing[5]
-                        results.append({
-                            "client_upload_id": client_upload_id,
-                            "upload_id": existing[0],
-                            "offset": existing[4],
-                            "chunk_size": _MAX_CHUNK_BYTES,
-                            "state": state,
-                        })
+                        # A batch interrupted mid-transfer is sent again whole.
+                        state = (
+                            "uploading" if existing[5] in {"finalizing", "receiving"} else existing[5]
+                        )
+                        results.append(
+                            {
+                                "client_upload_id": client_upload_id,
+                                "upload_id": existing[0],
+                                "offset": existing[4],
+                                "chunk_size": self._ingest_policy.max_bytes,
+                                "state": state,
+                            }
+                        )
                     continue
 
                 media_id = UploadReservationStore.catalogued_media_id(connection, item["sha256"])
                 if media_id is None and item["size"] > remaining:
-                    results.append({
-                        "client_upload_id": client_upload_id,
-                        "error_code": 413,
-                        "error_message": "Cota da biblioteca excedida",
-                    })
+                    results.append(
+                        {
+                            "client_upload_id": client_upload_id,
+                            "error_code": 413,
+                            "error_message": "Cota da biblioteca excedida",
+                        }
+                    )
                     continue
                 upload_id = uuid.uuid4().hex
                 temp_path = root / f"{upload_id}.part"
@@ -319,26 +417,44 @@ class SyncUploadService:
                     updated_at=timestamp,
                 )
                 if media_id is not None:
-                    results.append({
-                        "client_upload_id": client_upload_id,
-                        **_known_duplicate(connection, upload_id, media_id, device_id, source),
-                    })
+                    results.append(
+                        {
+                            "client_upload_id": client_upload_id,
+                            **_known_duplicate(
+                                connection,
+                                upload_id,
+                                media_id,
+                                device_id,
+                                source,
+                                chunk_size=self._ingest_policy.max_bytes,
+                            ),
+                        }
+                    )
                     continue
                 remaining -= item["size"]
-                results.append({
-                    "client_upload_id": client_upload_id,
-                    "upload_id": upload_id,
-                    "offset": 0,
-                    "chunk_size": _MAX_CHUNK_BYTES,
-                    "state": "uploading",
-                })
-            if any("upload_id" in result for result in results):
-                root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # A reservation or known duplicate the device is told about is on disk.
-        make_durable(user.db_path)
-        return {"uploads": results}
+                planned.append((upload_id, item))
+                results.append(
+                    {
+                        "client_upload_id": client_upload_id,
+                        "upload_id": upload_id,
+                        "offset": 0,
+                        "chunk_size": self._ingest_policy.max_bytes,
+                        "state": "uploading",
+                    }
+                )
+            if for_ingest and planned:
+                from core.sync_ingest import plan_destinations
 
-    def upload_status(self, user: IrisUser, device_id: str | None, upload_id: str) -> dict[str, Any]:
+                plan_destinations(connection, user, device_id, planned)
+            return {"uploads": results}
+
+        # The coordinator's FULL commit is the durability barrier for every
+        # reservation and duplicate-origin/change-feed update in this request.
+        return self._submit_write(user, reserve_batch)
+
+    def upload_status(
+        self, user: IrisUser, device_id: str | None, upload_id: str
+    ) -> dict[str, Any]:
         with self.open_connection(user) as connection:
             row = connection.execute(
                 "SELECT received_size, expected_size, state FROM sync_uploads "
@@ -347,6 +463,9 @@ class SyncUploadService:
             ).fetchone()
         if row is None:
             raise SyncUploadError(404, "Envio não encontrado")
+        if row[2] == "receiving":
+            # Bytes of an unfinished batch are not acknowledged: send it again.
+            return {"upload_id": upload_id, "offset": 0, "size": row[1], "state": "uploading"}
         return {"upload_id": upload_id, "offset": row[0], "size": row[1], "state": row[2]}
 
     async def receive_chunk(
@@ -359,7 +478,7 @@ class SyncUploadService:
         stream: AsyncIterable[bytes],
         log_phase: Callable[..., None],
     ) -> dict[str, Any]:
-        if content_length > _MAX_CHUNK_BYTES:
+        if content_length > self._ingest_policy.max_bytes:
             raise SyncUploadError(413, "Chunk excede o limite")
         phase_started = time.perf_counter()
         async with self._serialize_upload(user.id, device_id or "", upload_id):
@@ -374,17 +493,22 @@ class SyncUploadService:
                     pending = bytearray()
                     async for chunk in stream:
                         received += len(chunk)
-                        if received > _MAX_CHUNK_BYTES or offset + received > expected_size:
+                        if (
+                            received > self._ingest_policy.max_bytes
+                            or offset + received > expected_size
+                        ):
                             raise SyncUploadError(413, "Chunk excede o limite")
                         view = memoryview(chunk)
                         cursor = 0
                         while cursor < len(view):
-                            available = _UPLOAD_DISK_BUFFER_BYTES - len(pending)
+                            available = self._ingest_policy.block_bytes - len(pending)
                             end = min(cursor + available, len(view))
                             pending.extend(view[cursor:end])
                             cursor = end
-                            if len(pending) == _UPLOAD_DISK_BUFFER_BYTES:
-                                await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
+                            if len(pending) == self._ingest_policy.block_bytes:
+                                await run_in_threadpool(
+                                    _write_upload_buffer, output, bytes(pending)
+                                )
                                 pending.clear()
                     if pending:
                         await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
@@ -394,12 +518,24 @@ class SyncUploadService:
                     raise
             finally:
                 await run_in_threadpool(output.close)
-            await run_in_threadpool(self._record_chunk, user, upload_id, offset + received)
+            await run_in_threadpool(
+                self._record_chunk,
+                user,
+                device_id,
+                upload_id,
+                offset,
+                offset + received,
+            )
         log_phase("chunk_durable", phase_started, bytes=received, state="durable")
         return {"upload_id": upload_id, "offset": offset + received}
 
     def _open_chunk_target(
-        self, user: IrisUser, device_id: str | None, upload_id: str, offset: int, content_length: int,
+        self,
+        user: IrisUser,
+        device_id: str | None,
+        upload_id: str,
+        offset: int,
+        content_length: int,
     ) -> tuple[int, Any]:
         """Check the upload and open its file at ``offset``; runs in a worker thread."""
         with closing(self.open_connection(user)) as connection:
@@ -415,38 +551,55 @@ class SyncUploadService:
             if offset + content_length > row[0]:
                 raise SyncUploadError(413, "Chunk ultrapassa o tamanho declarado")
             destination = Path(row[2])
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            file_existed = destination.exists()
-            destination.touch(mode=0o600, exist_ok=True)
-            if not file_existed:
-                fsync_directory(destination.parent)
-            output = destination.open("r+b")
-            try:
-                output.seek(0, 2)
-                file_size = output.tell()
-                if file_size < offset:
-                    connection.execute(
+            expected_size = int(row[0])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        file_existed = destination.exists()
+        destination.touch(mode=0o600, exist_ok=True)
+        if not file_existed:
+            fsync_directory(destination.parent)
+        output = destination.open("r+b")
+        try:
+            output.seek(0, 2)
+            file_size = output.tell()
+            if file_size < offset:
+
+                def reconcile(connection: sqlite3.Connection) -> bool:
+                    changed = connection.execute(
                         "UPDATE sync_uploads SET received_size = ?, updated_at = ? "
-                        "WHERE id = ? AND device_id = ? AND received_size = ?",
+                        "WHERE id = ? AND device_id = ? AND received_size = ? AND state = 'uploading'",
                         (file_size, now_iso(), upload_id, device_id, offset),
                     )
-                    connection.commit()
-                    raise SyncUploadError(409, "Offset reconciliado; consulte o estado do envio")
-                if file_size > offset:
-                    output.truncate(offset)
-                output.seek(offset)
-            except BaseException:
-                output.close()
-                raise
-            return int(row[0]), output
+                    return changed.rowcount == 1
 
-    def _record_chunk(self, user: IrisUser, upload_id: str, received_size: int) -> None:
-        with closing(self.open_connection(user)) as connection:
-            connection.execute(
-                "UPDATE sync_uploads SET received_size = ?, updated_at = ? WHERE id = ?",
-                (received_size, now_iso(), upload_id),
+                if self._submit_write(user, reconcile):
+                    raise SyncUploadError(409, "Offset reconciliado; consulte o estado do envio")
+                raise SyncUploadError(409, "O estado do envio mudou; consulte o estado do envio")
+            if file_size > offset:
+                output.truncate(offset)
+            output.seek(offset)
+            return expected_size, output
+        except BaseException:
+            output.close()
+            raise
+
+    def _record_chunk(
+        self,
+        user: IrisUser,
+        device_id: str | None,
+        upload_id: str,
+        expected_offset: int,
+        received_size: int,
+    ) -> None:
+        def record(connection: sqlite3.Connection) -> bool:
+            changed = connection.execute(
+                "UPDATE sync_uploads SET received_size = ?, updated_at = ? "
+                "WHERE id = ? AND device_id = ? AND received_size = ? AND state = 'uploading'",
+                (received_size, now_iso(), upload_id, device_id, expected_offset),
             )
-            connection.commit()
+            return changed.rowcount == 1
+
+        if not self._submit_write(user, record):
+            raise SyncUploadError(409, "O estado do envio mudou; consulte o estado do envio")
 
     async def receive_speed_test(
         self,
@@ -474,7 +627,9 @@ class SyncUploadService:
         output = None
         try:
             if write_to_disk:
-                scratch = user.db_path.parent / "sync_uploads" / f"speedtest-{uuid.uuid4().hex}.part"
+                scratch = (
+                    user.db_path.parent / "sync_uploads" / f"speedtest-{uuid.uuid4().hex}.part"
+                )
                 scratch.parent.mkdir(parents=True, exist_ok=True)
                 output = scratch.open("wb")
             pending = bytearray()
@@ -485,7 +640,7 @@ class SyncUploadService:
                 if output is None:
                     continue
                 pending.extend(chunk)
-                if len(pending) >= _UPLOAD_DISK_BUFFER_BYTES:
+                if len(pending) >= self._ingest_policy.block_bytes:
                     await run_in_threadpool(_write_upload_buffer, output, bytes(pending))
                     pending.clear()
             if output is not None:
@@ -518,19 +673,15 @@ class SyncUploadService:
     ) -> dict[str, Any]:
         if user is None or not device_id:
             raise SyncUploadError(401, "Autenticação necessária")
-        try:
-            [outcome] = await self._complete_serialized(
-                user,
-                device_id,
-                [upload_id],
-                sync_ai_processing=sync_ai_processing,
-                load_model=load_model,
-                on_finished=on_finished,
-                log_phase=log_phase,
-            )
-        finally:
-            # Whatever the device is answered, success or error, is on disk.
-            await _durability_barrier(user, log_phase, 1)
+        [outcome] = await self._complete_serialized(
+            user,
+            device_id,
+            [upload_id],
+            sync_ai_processing=sync_ai_processing,
+            load_model=load_model,
+            on_finished=on_finished,
+            log_phase=log_phase,
+        )
         if isinstance(outcome, SyncUploadError):
             raise outcome
         return outcome
@@ -554,7 +705,9 @@ class SyncUploadService:
         if any(not isinstance(item, dict) for item in items):
             raise SyncUploadError(400, "Todos os itens devem conter upload_id")
         upload_ids = [item.get("upload_id") for item in items]
-        if any(not isinstance(value, str) or not _UPLOAD_ID.fullmatch(value) for value in upload_ids):
+        if any(
+            not isinstance(value, str) or not _UPLOAD_ID.fullmatch(value) for value in upload_ids
+        ):
             raise SyncUploadError(400, "Cada item deve conter um upload_id válido")
         if len(set(upload_ids)) != len(upload_ids):
             raise SyncUploadError(400, "O lote não pode repetir upload_id")
@@ -570,16 +723,18 @@ class SyncUploadService:
             log_phase=log_phase,
         )
         log_phase("completion_batch", batch_started, item_count=len(upload_ids), state="ok")
-        # One disk sync for the whole batch, before the device is told it is stored.
-        await _durability_barrier(user, log_phase, len(upload_ids))
-        return {"uploads": [
-            {
-                "upload_id": upload_id,
-                "error_code": outcome.status_code,
-                "error_message": outcome.detail[:500],
-            } if isinstance(outcome, SyncUploadError) else outcome
-            for upload_id, outcome in zip(upload_ids, outcomes, strict=True)
-        ]}
+        return {
+            "uploads": [
+                {
+                    "upload_id": upload_id,
+                    "error_code": outcome.status_code,
+                    "error_message": outcome.detail[:500],
+                }
+                if isinstance(outcome, SyncUploadError)
+                else outcome
+                for upload_id, outcome in zip(upload_ids, outcomes, strict=True)
+            ]
+        }
 
     async def _complete_serialized(
         self,
@@ -624,74 +779,96 @@ class SyncUploadService:
         3. one transaction records them all as moved;
         4. the catalog takes them in turn.
         """
-        outcomes: dict[str, dict[str, Any] | SyncUploadError] = {}
-        claimed: list[_Finalization] = []
         with closing(self.open_connection(user)) as connection:
-            # Hash before the write transaction, so its lock is not held
-            # while files are read.
+            # Hash before submitting a write, so the account's serialized
+            # writer is never held while file contents are read.
             digests = self._received_digests(connection, device_id, upload_ids, log_phase)
-            try:
-                # Destination selection reads both the catalog and other
-                # uploads' final_path claims. Take SQLite's writer lock first
-                # so concurrent completion requests cannot make that decision
-                # from the same stale snapshot.
-                connection.execute("BEGIN IMMEDIATE")
-                for upload_id in upload_ids:
-                    try:
-                        claim = self._claim_finalization(
-                            connection, user, device_id, upload_id, digests.get(upload_id)
-                        )
-                    except SyncUploadError as exc:
-                        outcomes[upload_id] = exc
-                        continue
-                    if isinstance(claim, dict):
-                        outcomes[upload_id] = claim
-                        continue
-                    claimed.append(claim)
-                    if claim.answer is not None:
-                        outcomes[upload_id] = claim.answer
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
-            # Files of uploads settled as duplicates go once that is committed.
-            for finalization in claimed:
-                for path in finalization.leftovers:
-                    path.unlink(missing_ok=True)
-            claimed = [finalization for finalization in claimed if finalization.answer is None]
 
-            moved = self._move_into_library(user, claimed, outcomes, log_phase)
-
-            try:
-                for finalization in moved:
-                    finalization.sequence = record_upload_finalized(
-                        connection,
-                        upload_id=finalization.upload_id,
-                        filename=finalization.filename,
-                        destination=finalization.destination,
-                        captured_at=finalization.captured_at,
-                        commit=False,
+        def claim_batch(connection: sqlite3.Connection):
+            outcomes: dict[str, dict[str, Any] | SyncUploadError] = {}
+            claimed: list[_Finalization] = []
+            # The coordinator starts BEGIN IMMEDIATE before this callback.
+            # Keep selection plus final_path claims in that one transaction.
+            for upload_id in upload_ids:
+                try:
+                    claim = self._claim_finalization(
+                        connection, user, device_id, upload_id, digests.get(upload_id)
                     )
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
+                except SyncUploadError as exc:
+                    outcomes[upload_id] = exc
+                    continue
+                if isinstance(claim, dict):
+                    outcomes[upload_id] = claim
+                    continue
+                claimed.append(claim)
+                if claim.answer is not None:
+                    outcomes[upload_id] = claim.answer
+            return outcomes, claimed
 
+        # Future completion is the FULL-commit barrier. No media file is
+        # removed or moved until its final_path claim is durable.
+        outcomes, claimed = self._submit_write(user, claim_batch)
+        for finalization in claimed:
+            for path in finalization.leftovers:
+                path.unlink(missing_ok=True)
+        claimed = [finalization for finalization in claimed if finalization.answer is None]
+
+        moved = self._move_into_library(user, claimed, outcomes, log_phase)
+
+        def record_moved(connection: sqlite3.Connection) -> None:
+            for finalization in moved:
+                finalization.sequence = record_upload_finalized(
+                    connection,
+                    upload_id=finalization.upload_id,
+                    filename=finalization.filename,
+                    destination=finalization.destination,
+                    captured_at=finalization.captured_at,
+                    commit=False,
+                )
+
+        if moved:
+            # The catalog/processing stage may only observe files after both
+            # their contents and directory entries have been synced.
+            self._submit_write(user, record_moved)
+
+        outcomes.update(self.register_finalized(
+            user, moved,
+            sync_ai_processing=sync_ai_processing, load_model=load_model,
+            on_finished=on_finished, log_phase=log_phase,
+        ))
+        return [outcomes[upload_id] for upload_id in upload_ids]
+
+    def register_finalized(
+        self,
+        user: IrisUser,
+        finalized: list[_Finalization],
+        *,
+        sync_ai_processing: bool,
+        load_model: bool,
+        on_finished: Callable[[], None],
+        log_phase: Callable[..., None],
+    ) -> dict[str, dict[str, Any] | SyncUploadError]:
+        """Hand stored, recorded uploads to the catalog; the outcome of each."""
+        outcomes: dict[str, dict[str, Any] | SyncUploadError] = {}
         inline = not (sync_ai_processing and load_model)
         batched = [
-            finalization for finalization in moved
+            finalization
+            for finalization in finalized
             if inline and finalization.sequence is not None and self._batch_processor is not None
         ]
         if len(batched) > 1:
             outcomes.update(self._register_batch(user, batched, on_finished, log_phase))
-        for finalization in moved:
+        for finalization in finalized:
             if finalization.upload_id not in outcomes:
                 outcomes[finalization.upload_id] = self._register(
-                    user, finalization,
-                    sync_ai_processing=sync_ai_processing, load_model=load_model,
-                    on_finished=on_finished, log_phase=log_phase,
+                    user,
+                    finalization,
+                    sync_ai_processing=sync_ai_processing,
+                    load_model=load_model,
+                    on_finished=on_finished,
+                    log_phase=log_phase,
                 )
-        return [outcomes[upload_id] for upload_id in upload_ids]
+        return outcomes
 
     def _register_batch(
         self,
@@ -703,13 +880,22 @@ class SyncUploadService:
         """Catalog moved uploads together; an upload without a result is left out."""
         catalog_started = time.perf_counter()
         try:
-            results = self._batch_processor(
+            processor_options = dict(
                 db_path=user.db_path,
                 media_root=user.media_root,
                 model_name=user.model_name,
                 uploads=[(item.upload_id, item.destination) for item in batch],
                 on_finished=on_finished,
             )
+            if self._batch_processor is process_uploads:
+                processor_options["write_registry"] = self._write_registry
+            results = self._batch_processor(**processor_options)
+        except SyncUploadError as exc:
+            if exc.status_code == 503:
+                raise
+            return {}
+        except SQLiteWriteQueueFull:
+            raise
         except Exception:
             # Each upload then goes through the single path, which records
             # its failure.
@@ -724,8 +910,11 @@ class SyncUploadService:
             else:
                 outcomes[item.upload_id] = result
         log_phase(
-            "catalog_registration", catalog_started, bytes=sum(item.size for item in batch),
-            item_count=len(batch), state="ok",
+            "catalog_registration",
+            catalog_started,
+            bytes=sum(item.size for item in batch),
+            item_count=len(batch),
+            state="ok",
         )
         return outcomes
 
@@ -735,9 +924,9 @@ class SyncUploadService:
         device_id: str,
         upload_ids: list[str],
         log_phase: Callable[..., None],
-    ) -> dict[str, str]:
-        """The hash of each of the device's fully received uploads."""
-        digests: dict[str, str] = {}
+    ) -> dict[str, VerifiedUploadSource]:
+        """Stable digest snapshots for the device's fully received uploads."""
+        digests: dict[str, VerifiedUploadSource] = {}
         for upload_id in upload_ids:
             row = connection.execute(
                 "SELECT expected_size, expected_hash, received_size, temp_path, state "
@@ -750,10 +939,12 @@ class SyncUploadService:
             if not temporary.is_file():
                 continue
             hash_started = time.perf_counter()
-            digests[upload_id] = FileDigest.sha256(temporary)
+            digests[upload_id] = VerifiedUploadSource.calculate(temporary)
             log_phase(
-                "verify_hash", hash_started, bytes=row[0],
-                state="ok" if digests[upload_id] == row[1] else "mismatch",
+                "verify_hash",
+                hash_started,
+                bytes=row[0],
+                state="ok" if digests[upload_id].sha256 == row[1] else "mismatch",
             )
         return digests
 
@@ -763,7 +954,7 @@ class SyncUploadService:
         user: IrisUser,
         device_id: str,
         upload_id: str,
-        digest: str | None,
+        verified_source: VerifiedUploadSource | None,
     ) -> dict[str, Any] | _Finalization:
         """Settle one upload in the batch's transaction, or claim it for its move.
 
@@ -781,15 +972,26 @@ class SyncUploadService:
         ).fetchone()
         if row is None or row[6] != device_id:
             raise SyncUploadError(404, "Envio não encontrado")
-        if row[5] in {"duplicate", "pending_processing", "processing", "ready", "failed_processing"}:
+        if row[5] in {
+            "duplicate",
+            "pending_processing",
+            "processing",
+            "ready",
+            "failed_processing",
+        }:
             return {"upload_id": upload_id, "state": row[5]}
         if row[5] not in {"uploading", "finalizing"}:
             raise SyncUploadError(409, "Envio não pode ser concluído neste estado")
         if row[5] == "uploading" and row[1] != row[3]:
             raise SyncUploadError(409, "Envio incompleto")
         finalization = _Finalization(
-            upload_id=upload_id, filename=row[0], size=row[1], expected_hash=row[2],
-            captured_at=row[7], temporary=Path(row[4]),
+            upload_id=upload_id,
+            filename=row[0],
+            size=row[1],
+            expected_hash=row[2],
+            captured_at=row[7],
+            temporary=Path(row[4]),
+            verified_source=verified_source,
         )
         if row[5] == "finalizing":
             if not row[15]:
@@ -798,12 +1000,17 @@ class SyncUploadService:
             return finalization
 
         source = {
-            "id": row[8], "name": row[9], "relative_path": row[10],
-            "volume": row[11], "media_store_id": row[12],
-            "generation": row[13], "media_kind": row[14],
+            "id": row[8],
+            "name": row[9],
+            "relative_path": row[10],
+            "volume": row[11],
+            "media_store_id": row[12],
+            "generation": row[13],
+            "media_kind": row[14],
         }
         destination_dir, primary, alternate = _upload_destinations(user, device_id, upload_id, row)
         recovered: Path | None = None
+        digest = verified_source.sha256 if verified_source is not None else None
         if digest is None:
             # After a power loss the database can be behind the files:
             # "fully received" while the original was already moved into
@@ -816,9 +1023,13 @@ class SyncUploadService:
                 ) and matches_original(candidate, row[1], row[2]):
                     recovered = candidate
                     break
-            if recovered is None and connection.execute(
-                "SELECT 1 FROM memes WHERE content_hash = ? LIMIT 1", (row[2],)
-            ).fetchone() is None:
+            if (
+                recovered is None
+                and connection.execute(
+                    "SELECT 1 FROM memes WHERE content_hash = ? LIMIT 1", (row[2],)
+                ).fetchone()
+                is None
+            ):
                 # Nothing to recover: ask for the bytes again rather
                 # than failing a photo the device still has.
                 connection.execute(
@@ -844,7 +1055,11 @@ class SyncUploadService:
             )
             record_origin(connection, media_id, device_id, source)
             sequence = append_change(
-                connection, "media", str(media_id), "unchanged", 1,
+                connection,
+                "media",
+                str(media_id),
+                "unchanged",
+                1,
                 {"media_id": media_id, "state": "duplicate"},
             )
             finalization.leftovers.append(finalization.temporary)
@@ -853,12 +1068,13 @@ class SyncUploadService:
             ):
                 finalization.leftovers.append(recovered)
             finalization.answer = {
-                "upload_id": upload_id, "media_id": media_id,
-                "state": "duplicate", "cursor": sequence,
+                "upload_id": upload_id,
+                "media_id": media_id,
+                "state": "duplicate",
+                "cursor": sequence,
             }
             return finalization
 
-        destination_dir.mkdir(parents=True, exist_ok=True)
         if recovered is not None:
             destination = recovered
         elif not _referenced_elsewhere(connection, primary, upload_id, user.media_root) and (
@@ -901,6 +1117,7 @@ class SyncUploadService:
                     upload_id=finalization.upload_id,
                     expected_size=finalization.size,
                     expected_hash=finalization.expected_hash,
+                    verified_source=finalization.verified_source,
                     unsynced_directories=unsynced,
                 )
             except UnsafeUploadDestinationError:
@@ -927,7 +1144,10 @@ class SyncUploadService:
             fsync_directory(directory)
         if unsynced:
             log_phase(
-                "directory_sync", sync_started, item_count=len(unsynced), state="ok",
+                "directory_sync",
+                sync_started,
+                item_count=len(unsynced),
+                state="ok",
             )
         return moved
 
@@ -955,13 +1175,15 @@ class SyncUploadService:
                     on_finished=lambda _user_id: on_finished(),
                 )
             return {
-                "upload_id": upload_id, "state": "pending_processing",
-                "cursor": finalization.sequence, "path": str(destination),
+                "upload_id": upload_id,
+                "state": "pending_processing",
+                "cursor": finalization.sequence,
+                "path": str(destination),
             }
 
         catalog_started = time.perf_counter()
         try:
-            result = self._upload_processor(
+            processor_options = dict(
                 db_path=user.db_path,
                 media_root=user.media_root,
                 model_name=user.model_name,
@@ -970,27 +1192,51 @@ class SyncUploadService:
                 on_finished=on_finished,
                 use_ai=False,
             )
+            if self._upload_processor is process_upload:
+                processor_options["write_registry"] = self._write_registry
+            result = self._upload_processor(**processor_options)
             if result is None or result.get("state") == "failed_processing":
                 return SyncUploadError(500, "Não foi possível registrar a mídia na biblioteca")
             log_phase(
-                "catalog_registration", catalog_started, bytes=finalization.size, item_count=1,
+                "catalog_registration",
+                catalog_started,
+                bytes=finalization.size,
+                item_count=1,
                 state=str(result.get("state", "ok")),
             )
             return result
+        except SyncUploadError as exc:
+            if exc.status_code == 503:
+                return exc
+            raise
+        except SQLiteWriteQueueFull:
+            return SyncUploadError(503, "Servidor ocupado; tente novamente em instantes")
         except Exception:
-            with closing(self.open_connection(user)) as connection:
+
+            def mark_failed(connection: sqlite3.Connection) -> None:
                 connection.execute(
                     "UPDATE sync_uploads SET state = 'failed_processing', updated_at = ? WHERE id = ?",
                     (now_iso(), upload_id),
                 )
-                append_change(connection, "media", upload_id, "updated", 3, {
-                    "upload_id": upload_id,
-                    "state": "failed_processing",
-                    "error": "Catalog registration failed; original preserved for recovery.",
-                })
-                connection.commit()
+                append_change(
+                    connection,
+                    "media",
+                    upload_id,
+                    "updated",
+                    3,
+                    {
+                        "upload_id": upload_id,
+                        "state": "failed_processing",
+                        "error": "Catalog registration failed; original preserved for recovery.",
+                    },
+                )
+
+            self._submit_write(user, mark_failed)
             log_phase(
-                "catalog_registration", catalog_started, bytes=finalization.size, item_count=1,
+                "catalog_registration",
+                catalog_started,
+                bytes=finalization.size,
+                item_count=1,
                 state="failed",
             )
             return SyncUploadError(500, "Não foi possível registrar a mídia na biblioteca")
@@ -1016,17 +1262,11 @@ class SyncUploadService:
                 self._operation_locks[key] = (lock, refcount - 1)
 
 
-async def _durability_barrier(
-    user: IrisUser, log_phase: Callable[..., None], item_count: int,
-) -> None:
-    """Sync the account database to disk, timed: it is the wait every answer ends with."""
-    started = time.perf_counter()
-    await run_in_threadpool(make_durable, user.db_path)
-    log_phase("durability_barrier", started, item_count=item_count, state="durable")
-
-
 def _upload_destinations(
-    user: IrisUser, device_id: str, upload_id: str, row: Any,
+    user: IrisUser,
+    device_id: str,
+    upload_id: str,
+    row: Any,
 ) -> tuple[Path, Path, Path]:
     """Where an upload is stored: its directory, the usual name, the fallback name.
 
@@ -1041,26 +1281,33 @@ def _upload_destinations(
 
 
 def _referenced_elsewhere(
-    connection: sqlite3.Connection, path: Path, upload_id: str, media_root: Path,
+    connection: sqlite3.Connection,
+    path: Path,
+    upload_id: str,
+    media_root: Path,
 ) -> bool:
     """Whether the catalog or another upload points to ``path``."""
     names = (str(path), str(path.resolve()))
-    if connection.execute(
-        "SELECT 1 FROM memes WHERE caminho IN (?, ?) LIMIT 1", names
-    ).fetchone():
+    if connection.execute("SELECT 1 FROM memes WHERE caminho IN (?, ?) LIMIT 1", names).fetchone():
         return True
     try:
         relative = path.resolve().relative_to(media_root.resolve()).as_posix()
     except ValueError:
         relative = None
-    if relative is not None and connection.execute(
-        "SELECT 1 FROM memes WHERE storage_path = ? LIMIT 1", (relative,)
-    ).fetchone():
+    if (
+        relative is not None
+        and connection.execute(
+            "SELECT 1 FROM memes WHERE storage_path = ? LIMIT 1", (relative,)
+        ).fetchone()
+    ):
         return True
-    return connection.execute(
-        "SELECT 1 FROM sync_uploads WHERE final_path IN (?, ?) AND id != ? LIMIT 1",
-        (*names, upload_id),
-    ).fetchone() is not None
+    return (
+        connection.execute(
+            "SELECT 1 FROM sync_uploads WHERE final_path IN (?, ?) AND id != ? LIMIT 1",
+            (*names, upload_id),
+        ).fetchone()
+        is not None
+    )
 
 
 def _known_duplicate(
@@ -1069,6 +1316,8 @@ def _known_duplicate(
     media_id: int,
     device_id: str,
     source: dict[str, str | int],
+    *,
+    chunk_size: int,
 ) -> dict[str, Any]:
     """Settle a reservation whose content the library already has, before any byte is sent.
 
@@ -1078,12 +1327,20 @@ def _known_duplicate(
     """
     record_origin(connection, media_id, device_id, source)
     sequence = append_change(
-        connection, "media", str(media_id), "unchanged", 1,
+        connection,
+        "media",
+        str(media_id),
+        "unchanged",
+        1,
         {"media_id": media_id, "state": "duplicate"},
     )
     return {
-        "upload_id": upload_id, "media_id": media_id, "offset": 0,
-        "chunk_size": _MAX_CHUNK_BYTES, "state": "duplicate", "cursor": sequence,
+        "upload_id": upload_id,
+        "media_id": media_id,
+        "offset": 0,
+        "chunk_size": chunk_size,
+        "state": "duplicate",
+        "cursor": sequence,
     }
 
 
