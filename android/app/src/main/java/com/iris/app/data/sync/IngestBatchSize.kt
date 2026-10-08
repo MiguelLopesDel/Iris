@@ -16,8 +16,6 @@ internal data class IngestBatchSize(val maxItems: Int, val maxBytes: Long, val m
         count < maxItems && bytes + nextSize <= maxBytes
 
     companion object {
-        /** Batches in flight: one reserves while the others send (measured best on an HDD server). */
-        const val LANES = 3
         const val MAX_FILE_BYTES = 8L * 1024 * 1024
 
         /** Null when the server reports no usable limits (an older server: keep the resumable path). */
