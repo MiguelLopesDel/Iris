@@ -1,6 +1,8 @@
 package com.iris.app.data.remote
 
 import com.iris.app.data.model.ChangesResponse
+import com.iris.app.data.model.IngestLimits
+import com.iris.app.data.model.IngestResponse
 import com.iris.app.data.model.CollectionMembersResponse
 import com.iris.app.data.model.CollectionsResponse
 import com.iris.app.data.model.ConceptsResponse
@@ -40,6 +42,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -103,6 +106,20 @@ interface IrisApiService {
     suspend fun completeUploadBatch(
         @Body request: UploadCompleteBatchRequest
     ): UploadCompleteBatchResponse
+
+    /** What a batch may hold now; 404 from a server without batch ingest. */
+    @GET("api/sync/ingest/limits")
+    suspend fun getIngestLimits(): Response<IngestLimits>
+
+    /**
+     * Sends reserved uploads whole, back to back, and finishes them; [manifest]
+     * lists them in body order as `upload_id:size`, separated by commas.
+     */
+    @POST("api/sync/ingest")
+    suspend fun ingest(
+        @Header("X-Iris-Ingest") manifest: String,
+        @Body body: RequestBody
+    ): Response<IngestResponse>
 
     // ── Change Feed Sync ────────────────────────────────────────────────────
     @GET("api/sync/changes")

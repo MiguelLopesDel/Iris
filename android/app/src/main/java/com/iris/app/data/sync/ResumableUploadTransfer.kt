@@ -19,8 +19,8 @@ import kotlin.math.min
 
 /** Runs one account-scoped item's resumable upload protocol. */
 internal class ResumableUploadTransfer(
-    private val context: Context,
-    private val observer: Observer,
+    internal val context: Context,
+    internal val observer: Observer,
 ) {
     internal data class Context(
         val accountKey: String,
@@ -83,7 +83,7 @@ internal class ResumableUploadTransfer(
      * the old size, the server got different bytes and refused them. A
      * changed size is cheap to see, and the file is hashed again only then.
      */
-    private suspend fun withCurrentContent(job: LocalUploadJob): LocalUploadJob {
+    internal suspend fun withCurrentContent(job: LocalUploadJob): LocalUploadJob {
         // MediaStore removes a photo's location unless ACCESS_MEDIA_LOCATION is
         // granted *when the file is read*, through any URI. Granting or
         // revoking it after hashing changes the bytes the same URI returns, so
@@ -100,7 +100,7 @@ internal class ResumableUploadTransfer(
         return refreshContent(job)
     }
 
-    private suspend fun refreshContent(job: LocalUploadJob): LocalUploadJob {
+    internal suspend fun refreshContent(job: LocalUploadJob): LocalUploadJob {
         val content = context.mediaPayloadSource.computeContent(Uri.parse(job.localUri))
         context.dbHelper.setContent(
             context.accountKey, job.id, content.sha256, content.size, content.original, content.withLocation,
@@ -115,7 +115,7 @@ internal class ResumableUploadTransfer(
         )
     }
 
-    private suspend fun markSourceMissing(job: LocalUploadJob): ItemResult {
+    internal suspend fun markSourceMissing(job: LocalUploadJob): ItemResult {
         context.dbHelper.updateJobState(
             context.accountKey, job.id, UploadJobState.FAILED, SOURCE_MISSING_MESSAGE,
         )
@@ -316,7 +316,7 @@ internal class ResumableUploadTransfer(
         }
     }
 
-    private fun clientUploadId(job: LocalUploadJob): String {
+    internal fun clientUploadId(job: LocalUploadJob): String {
         val source = job.source
         val stableFields = listOf(
             job.id.toString(), job.filename, job.byteSize.toString(), job.sha256, job.capturedAt,

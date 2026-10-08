@@ -11,6 +11,11 @@ import com.iris.app.data.model.UploadSource
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -122,16 +127,20 @@ class MediaStoreScanner(
 
     /** Publishes progress every few items: one update per item only adds UI churn. */
     private inner class ProgressCounter(private val total: Int) {
-        private var examined = 0
+        // Advanced by several hashing workers at once.
+        private val examined = java.util.concurrent.atomic.AtomicInteger(0)
 
         init {
             _scanProgress.value = ScanProgress(0, total)
         }
 
         fun advance() {
-            examined++
-            if (examined % PROGRESS_STEP == 0 || examined == total) {
-                _scanProgress.value = ScanProgress(examined, total)
+            val now = examined.incrementAndGet()
+            if (now % PROGRESS_STEP == 0 || now == total) {
+                // Workers finish out of order: never move the shown count back.
+                _scanProgress.update { current ->
+                    if (current == null || current.examined < now) ScanProgress(now, total) else current
+                }
             }
         }
     }
@@ -214,7 +223,7 @@ class MediaStoreScanner(
         val selection = "${MediaStore.MediaColumns.SIZE} > 0"
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
 
-        var enqueued = 0
+        val enqueued = java.util.concurrent.atomic.AtomicInteger(0)
         val cursor = contentResolver.query(
             collectionUri,
             projection(),
@@ -222,6 +231,17 @@ class MediaStoreScanner(
             null,
             sortOrder
         ) ?: throw IllegalStateException("MediaStore returned no cursor for a media scan")
+        // The cursor is read on this coroutine alone; each row's check (and the
+        // hash of a new or changed file, which reads it whole) runs on one of
+        // HASH_PARALLELISM workers. One at a time, a first sync of a large
+        // library spent its time waiting on single file reads; side by side,
+        // it is bound by how fast storage can read.
+        coroutineScope {
+        val rows = Channel<suspend () -> Unit>(HASH_PARALLELISM * 2)
+        val workers = List(HASH_PARALLELISM) {
+            launch(Dispatchers.IO) { for (row in rows) row() }
+        }
+        try {
         cursor.use {
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
@@ -255,6 +275,14 @@ class MediaStoreScanner(
 
                 val itemUri = ContentUris.withAppendedId(collectionUri, id)
                 val generation = if (generationColumn >= 0) cursor.getLong(generationColumn) else 0L
+                val dateModifiedSeconds = if (dateModifiedColumn >= 0 && !cursor.isNull(dateModifiedColumn)) {
+                    cursor.getLong(dateModifiedColumn)
+                } else {
+                    0L
+                }
+                val sourceName = cursor.stringOrEmpty(bucketNameColumn, "Unknown source")
+                val relativePath = cursor.stringOrEmpty(relativePathColumn, "")
+                rows.send {
                 val outcome = uploadManager.reconcileMedia(
                     accountKey = accountKey,
                     uri = itemUri,
@@ -262,18 +290,14 @@ class MediaStoreScanner(
                     capturedAtIso = capturedAtIso,
                     fingerprint = MediaFingerprint(
                         size = size,
-                        dateModifiedSeconds = if (dateModifiedColumn >= 0 && !cursor.isNull(dateModifiedColumn)) {
-                            cursor.getLong(dateModifiedColumn)
-                        } else {
-                            0L
-                        },
+                        dateModifiedSeconds = dateModifiedSeconds,
                         generation = generation,
                     ),
                     fullVerificationStartedAt = verificationStartedAt,
                     source = UploadSource(
                         id = sourceId,
-                        name = cursor.stringOrEmpty(bucketNameColumn, "Unknown source"),
-                        relativePath = cursor.stringOrEmpty(relativePathColumn, ""),
+                        name = sourceName,
+                        relativePath = relativePath,
                         volume = volume,
                         mediaStoreId = id.toString(),
                         generation = generation,
@@ -285,17 +309,26 @@ class MediaStoreScanner(
                 if (outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW ||
                     outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW_VERSION
                 ) {
-                    enqueued++
+                    enqueued.incrementAndGet()
                     onNewJobEnqueued()
                 }
                 progress.advance()
+                }
             }
         }
-        return enqueued
+        } finally {
+            rows.close()
+        }
+        workers.joinAll()
+        }
+        return enqueued.get()
     }
 
     private companion object {
         const val PROGRESS_STEP = 25
+
+        /** Files hashed side by side; beyond a few, storage reads are the limit. */
+        const val HASH_PARALLELISM = 4
     }
 
     private fun sourceId(volume: String, bucketId: String, mediaKind: String): String =

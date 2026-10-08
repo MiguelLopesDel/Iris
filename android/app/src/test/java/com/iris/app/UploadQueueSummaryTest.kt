@@ -64,4 +64,23 @@ class UploadQueueSummaryTest {
 
         assertEquals(0, summary.total)
     }
+
+    @Test
+    fun `the three counters split everything into saved, remaining and failed`() {
+        val summary = UploadQueueSummary.from(
+            mapOf(
+                UploadJobState.QUEUED to 4,
+                UploadJobState.UPLOADING to 2,
+                UploadJobState.PENDING_PROCESSING to 3,
+                UploadJobState.READY to 10,
+                UploadJobState.DUPLICATE to 5,
+                UploadJobState.FAILED to 1,
+            )
+        )
+
+        assertEquals(25, summary.total)
+        assertEquals(18, summary.saved)
+        assertEquals(6, summary.remaining)
+        assertEquals(summary.total, summary.saved + summary.remaining + summary.failed)
+    }
 }
