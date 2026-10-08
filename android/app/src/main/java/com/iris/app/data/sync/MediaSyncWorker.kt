@@ -2,6 +2,7 @@ package com.iris.app.data.sync
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.util.Log
 import androidx.work.Constraints
@@ -42,6 +43,8 @@ class MediaSyncWorker(
     params: WorkerParameters
 ) : CoroutineWorker(context, params) {
 
+    private var runNumberAtStart = Long.MAX_VALUE
+
     override suspend fun doWork(): Result {
         val app = applicationContext as? IrisApplication ?: return Result.failure()
 
@@ -65,6 +68,9 @@ class MediaSyncWorker(
         }
         val isPeriodic = inputData.getBoolean(PERIODIC_SYNC_KEY, false)
         val forceScan = inputData.getBoolean(FORCE_SCAN_KEY, false)
+        // The meter keeps the last upload run; only a run started by this
+        // execution counts as its progress.
+        runNumberAtStart = app.syncUploadManager.speedMeter.snapshot().runNumber
         val recorder = SyncRunRecorder(app.dbHelper, app.syncUploadManager.speedMeter, accountKey)
         recorder.start(
             trigger = when {
@@ -100,7 +106,7 @@ class MediaSyncWorker(
                 Log.w(TAG, "Background sync retry stage=$stage error=${healthResult.exceptionOrNull()?.javaClass?.simpleName ?: "Unknown"}")
                 app.settingsRepository.markCloudUnavailable(accountKey)
                 outcomeDetail = "server_unreachable"
-                return Result.retry()
+                return afterIncompleteRun(app, syncSettings.wifiOnly, syncSettings.chargingOnly, forceScan)
             }
             app.settingsRepository.markCloudConnected(accountKey)
             val requeued = app.syncUploadManager.bindServerInstance(accountKey, healthResult.getOrNull()?.instanceId)
@@ -221,7 +227,7 @@ class MediaSyncWorker(
             Log.w(TAG, "Background sync retry stage=$stage reason=upload_queue_incomplete")
             app.settingsRepository.markCloudSyncFailed(accountKey)
             outcomeDetail = "upload_incomplete"
-            return Result.retry()
+            return afterIncompleteRun(app, syncSettings.wifiOnly, syncSettings.chargingOnly, forceScan)
         } catch (cancelled: CancellationException) {
             outcome = SyncRunOutcome.STOPPED
             if (isStopped) {
@@ -244,7 +250,9 @@ class MediaSyncWorker(
                 if (reachable) app.settingsRepository.markCloudSyncFailed(accountKey)
                 else app.settingsRepository.markCloudUnavailable(accountKey)
             }
-            return Result.retry()
+            val settings = runCatching { app.settingsRepository.syncSettingsForAccount(accountKey).first() }.getOrNull()
+                ?: return Result.retry()
+            return afterIncompleteRun(app, settings.wifiOnly, settings.chargingOnly, forceScan)
         } finally {
             checkpoints.cancel()
             withContext(NonCancellable) {
@@ -287,6 +295,35 @@ class MediaSyncWorker(
         }
     }
 
+    /**
+     * See [IncompleteRunPolicy]. Returns success when a continuation was
+     * queued: it is the retry, and the screen shows it as pending.
+     */
+    private suspend fun afterIncompleteRun(
+        app: IrisApplication,
+        wifiOnly: Boolean,
+        chargingOnly: Boolean,
+        forceScan: Boolean,
+    ): Result {
+        val meter = app.syncUploadManager.speedMeter.snapshot()
+        val madeProgress = meter.runNumber > runNumberAtStart && meter.runItems > 0
+        val attempts = if (madeProgress) 0 else inputData.getInt(CONTINUATIONS_WITHOUT_PROGRESS_KEY, 0) + 1
+        val network = hasUsableNetwork(applicationContext)
+        val reachable = network && app.irisRepository.checkServerHealth().isSuccess
+        return when (IncompleteRunPolicy.after(network, reachable, attempts)) {
+            IncompleteRunPolicy.Next.BACK_OFF -> Result.retry()
+            IncompleteRunPolicy.Next.CONTINUE_WHEN_CONNECTED -> runCatching {
+                enqueueContinuation(applicationContext, wifiOnly, chargingOnly, forceScan, attempts)
+            }.fold(onSuccess = { Result.success() }, onFailure = { Result.retry() })
+        }
+    }
+
+    private fun hasUsableNetwork(context: Context): Boolean {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
     private fun isActiveNetworkMetered(context: Context): Boolean =
         context.getSystemService(ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
 
@@ -310,6 +347,8 @@ class MediaSyncWorker(
         private const val ONE_TIME_WORK_TAG = "iris_immediate_sync"
         private const val FORCE_SCAN_KEY = "force_media_scan"
         private const val PERIODIC_SYNC_KEY = "periodic_cloud_sync"
+        private const val CONTINUATION_TAG = "iris_sync_continuation"
+        private const val CONTINUATIONS_WITHOUT_PROGRESS_KEY = "continuations_without_progress"
         private const val RUN_CHECKPOINT_MILLIS = 15_000L
         private const val NOTIFICATION_UPDATE_MILLIS = 2_000L
 
@@ -358,6 +397,31 @@ class MediaSyncWorker(
                 .setInputData(workDataOf(FORCE_SCAN_KEY to true))
                 .build()
 
+            enqueueUnlessRunning(context, request)
+        }
+
+        /** Continue an incomplete run as soon as the network allows it; see [IncompleteRunPolicy]. */
+        internal suspend fun enqueueContinuation(
+            context: Context,
+            wifiOnly: Boolean,
+            chargingOnly: Boolean,
+            forceScan: Boolean,
+            attemptsWithoutProgress: Int,
+        ) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                .setRequiresCharging(chargingOnly)
+                .build()
+            val request = OneTimeWorkRequestBuilder<MediaSyncWorker>()
+                .setConstraints(constraints)
+                .addTag(CONTINUATION_TAG)
+                .setInputData(
+                    workDataOf(
+                        FORCE_SCAN_KEY to forceScan,
+                        CONTINUATIONS_WITHOUT_PROGRESS_KEY to attemptsWithoutProgress,
+                    )
+                )
+                .build()
             enqueueUnlessRunning(context, request)
         }
 
@@ -411,7 +475,12 @@ class MediaSyncWorker(
                 workManager.getWorkInfosForUniqueWorkFlow(PERIODIC_WORK_TAG),
             ) { oneTime, periodic ->
                 ObsoleteRetry.inBackoff(
-                    (oneTime + periodic).map { ObsoleteRetry.Work(it.state == WorkInfo.State.ENQUEUED, it.runAttemptCount) }
+                    (oneTime + periodic).map { work ->
+                        // A continuation waiting for the network is a retry too,
+                        // although WorkManager counts no attempt for it.
+                        val attempts = if (CONTINUATION_TAG in work.tags) maxOf(1, work.runAttemptCount) else work.runAttemptCount
+                        ObsoleteRetry.Work(work.state == WorkInfo.State.ENQUEUED, attempts)
+                    }
                 )
             }
         }
