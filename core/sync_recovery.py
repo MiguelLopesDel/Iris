@@ -29,13 +29,14 @@ def recover_pending_uploads(
     write_registry: SQLiteWriteCoordinatorRegistry | None = None,
     users=None,
     interrupted_before: str | None = None,
+    settle_batches: bool = True,
 ) -> None:
     """Resume persisted finalization and catalog work for each account.
 
-    ``interrupted_before`` is when this process started: only a batch upload
-    left ``receiving`` before then can have been interrupted. One received
-    since may still be in flight in this process. Defaults to now, for a
-    single pass at startup.
+    With ``settle_batches`` (a single pass at startup), batch uploads left
+    ``receiving`` before ``interrupted_before`` (default: now) are resolved
+    first. The server does that step on its own before accepting uploads
+    and runs its periodic passes without it.
 
     ``sync_uploads`` is the source of truth. File finalization is idempotent,
     and catalog work is claimed through the same durable lease as live uploads.
@@ -49,15 +50,16 @@ def recover_pending_uploads(
     for user in users:
         if stop_event.is_set():
             return
-        try:
-            # First, so a batch upload found complete joins the work below.
-            _settle_interrupted_batches(user, write_registry, interrupted_before or now_iso())
-        except Exception as exc:
-            _logger.warning(
-                "sync_recovery_batches_failed user_id=%s error_type=%s",
-                user.id,
-                type(exc).__name__,
-            )
+        if settle_batches:
+            try:
+                # First, so a batch upload found complete joins the work below.
+                _settle_interrupted_batches(user, write_registry, interrupted_before or now_iso())
+            except Exception as exc:
+                _logger.warning(
+                    "sync_recovery_batches_failed user_id=%s error_type=%s",
+                    user.id,
+                    type(exc).__name__,
+                )
         try:
             conn = sqlite3.connect(user.db_path, timeout=30)
             has_uploads = conn.execute(
@@ -128,14 +130,43 @@ def recover_pending_uploads(
                 )
 
 
+def settle_interrupted_batches(
+    *,
+    users_db_path: Path,
+    write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+    users=None,
+) -> None:
+    """Resolve every account's batch uploads left ``receiving`` by a stop.
+
+    Runs once at startup, before the server accepts uploads: a device sending
+    one of these uploads again must find it already resolved, not race this
+    step for the same file.
+    """
+    if users is None:
+        from core.users_db import list_users
+
+        users = list_users(users_db_path)
+    before = now_iso()
+    for user in users:
+        try:
+            _settle_interrupted_batches(user, write_registry, before)
+        except Exception as exc:
+            _logger.warning(
+                "sync_recovery_batches_failed user_id=%s error_type=%s",
+                user.id,
+                type(exc).__name__,
+            )
+
+
 def _settle_interrupted_batches(user, write_registry=None, before: str = "") -> None:
     """Resolve uploads a batch request left in ``receiving`` when the server stopped.
 
     The batch wrote straight to the final path, so a complete file is checked
     against its declared size and hash: when it matches, the upload becomes
     ``finalizing`` and continues like any interrupted completion. Otherwise
-    the partial file is removed and the upload returns to ``uploading``, so
-    the device sends it again; its bytes were never acknowledged.
+    the upload returns to ``uploading``, so the device sends it again (its
+    bytes were never acknowledged), and only then is the partial file removed:
+    a row this step did not change is never touched on disk.
     """
     conn = sqlite3.connect(user.db_path, timeout=30)
     try:
@@ -156,35 +187,41 @@ def _settle_interrupted_batches(user, write_registry=None, before: str = "") -> 
         if path is not None and path.is_file() and matches_original(path, int(size), str(digest)):
             complete.append(str(upload_id))
         else:
-            if path is not None:
-                path.unlink(missing_ok=True)
-            partial.append(str(upload_id))
+            partial.append((str(upload_id), path))
 
-    def settle(connection: sqlite3.Connection) -> None:
+    def settle(connection: sqlite3.Connection) -> list[Path]:
         connection.executemany(
             "UPDATE sync_uploads SET state = 'finalizing', received_size = expected_size, "
             "updated_at = ? WHERE id = ? AND state = 'receiving' AND updated_at < ?",
             [(now_iso(), upload_id, before) for upload_id in complete],
         )
-        connection.executemany(
-            "UPDATE sync_uploads SET state = 'uploading', final_path = '', received_size = 0, "
-            "updated_at = ? WHERE id = ? AND state = 'receiving' AND updated_at < ?",
-            [(now_iso(), upload_id, before) for upload_id in partial],
-        )
+        reset = []
+        for upload_id, path in partial:
+            changed = connection.execute(
+                "UPDATE sync_uploads SET state = 'uploading', final_path = '', received_size = 0, "
+                "updated_at = ? WHERE id = ? AND state = 'receiving' AND updated_at < ?",
+                (now_iso(), upload_id, before),
+            )
+            if changed.rowcount == 1 and path is not None:
+                reset.append(path)
+        return reset
 
     if write_registry is not None:
-        write_registry.submit(user.db_path, settle).result()
-        return
-    conn = sqlite3.connect(user.db_path, timeout=30)
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        settle(conn)
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+        reset = write_registry.submit(user.db_path, settle).result()
+    else:
+        conn = sqlite3.connect(user.db_path, timeout=30)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            reset = settle(conn)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    # After the reset is committed: nothing points to these partial files now.
+    for path in reset:
+        path.unlink(missing_ok=True)
 
 
 def _mark_recovery_failure(
@@ -351,12 +388,12 @@ def _run_pending_upload_recovery(
     except Exception as exc:
         _logger.error("sync_recovery_users_failed error_type=%s", type(exc).__name__)
         users = None
-    # Batch uploads still in flight are newer than this; only older ones can
-    # have been interrupted by a stop.
-    started = now_iso()
+    # Batch uploads left by a stop were settled at startup, before uploads
+    # were accepted (settle_interrupted_batches): a periodic pass never races
+    # a request for the same file.
     while not stop_event.is_set():
         recover_pending_uploads(
-            interrupted_before=started,
+            settle_batches=False,
             users_db_path=users_db_path,
             sync_ai_processing=sync_ai_processing,
             load_model=load_model,

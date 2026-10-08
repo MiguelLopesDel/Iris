@@ -541,3 +541,63 @@ def test_a_batch_keeps_only_the_files_it_is_writing_open(tmp_path: Path, monkeyp
 
     assert [entry["state"] for entry in results] == ["ready"] * 30
     assert open_counts and max(open_counts) <= 1
+
+
+def test_a_periodic_recovery_pass_leaves_receiving_uploads_alone(tmp_path: Path):
+    # Batch uploads left by a stop are resolved once at startup, before the
+    # server accepts uploads; a later pass racing a device that sends one
+    # again could remove the file it is writing.
+    user, upload_id, destination, _photo_bytes = _left_receiving(tmp_path, complete=False)
+
+    _recover(user, settle_batches=False)
+
+    assert _states(user)[upload_id] == "receiving"
+    assert destination.exists()
+
+
+def test_the_server_resolves_interrupted_batches_before_it_accepts_requests(tmp_path: Path) -> None:
+    script = r'''
+import hashlib, sqlite3
+from pathlib import Path
+from core.auth import hash_password
+from core.users_db import create_user, list_users
+from core.sync_upload_service import SyncUploadService
+
+data = Path("data")
+create_user(data / "users.db", data, username="alice", is_admin=True,
+            password_hash=hash_password("synthetic password 1"))
+[user] = list_users(data / "users.db")
+photo = b"\xff\xd8" + b"p" * 5000
+service = SyncUploadService()
+[entry] = service.reserve_upload_batch(user, "phone", 1 << 40, {"ingest": True, "uploads": [{
+    "client_upload_id": "c1", "filename": "IMG_0001.jpg", "size": len(photo),
+    "sha256": hashlib.sha256(photo).hexdigest(), "captured_at": "2026-09-09T12:00:00Z",
+}]})["uploads"]
+with sqlite3.connect(user.db_path) as conn:
+    final_path = Path(conn.execute("SELECT final_path FROM sync_uploads").fetchone()[0])
+final_path.parent.mkdir(parents=True, exist_ok=True)
+final_path.write_bytes(photo[:1000])  # the stop cut this file short
+
+import server
+from fastapi.testclient import TestClient
+
+with TestClient(server.app):
+    # Startup has run, no request yet: the upload is already resolved.
+    with sqlite3.connect(user.db_path) as conn:
+        state = conn.execute("SELECT state, final_path FROM sync_uploads").fetchone()
+    assert state == ("uploading", ""), state
+    assert not final_path.exists()
+print("ok")
+'''
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(Path(__file__).resolve().parents[1]),
+        IRIS_SERVER_MODE="private",
+        IRIS_SESSION_HTTPS_ONLY="false",
+        IRIS_LOAD_MODEL="0",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip().endswith("ok")

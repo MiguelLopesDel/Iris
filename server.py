@@ -709,8 +709,15 @@ async def lifespan(app: FastAPI):
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
         )
-        from core.sync_recovery import start_pending_upload_recovery
+        from core.sync_recovery import settle_interrupted_batches, start_pending_upload_recovery
 
+        # Before the app accepts requests: a device re-sending a batch upload
+        # left by a stop must find it resolved, not race recovery for its file.
+        await asyncio.to_thread(
+            settle_interrupted_batches,
+            users_db_path=app.state.users_db_path,
+            write_registry=write_registry,
+        )
         stop_event, worker = start_pending_upload_recovery(
             users_db_path=app.state.users_db_path,
             sync_ai_processing=app.state.sync_ai_processing,
