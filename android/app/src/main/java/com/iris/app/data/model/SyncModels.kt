@@ -182,7 +182,10 @@ data class SyncChange(
 data class ChangesResponse(
     @SerialName("changes") val changes: List<SyncChange> = emptyList(),
     @SerialName("next_cursor") val nextCursor: Long = 0L,
-    @SerialName("has_more") val hasMore: Boolean = false
+    @SerialName("has_more") val hasMore: Boolean = false,
+    // The server sends the device back to the feed's end (next_cursor): a
+    // power loss undid its last entries, or the library was restored.
+    @SerialName("reset") val reset: Boolean = false
 )
 
 enum class UploadJobState {

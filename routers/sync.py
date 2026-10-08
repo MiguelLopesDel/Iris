@@ -101,7 +101,7 @@ async def changes(request: Request, cursor: int = Query(0, ge=0), limit: int = Q
     if cursor > latest:
         # The device is ahead of this feed: a power loss undid the last
         # changes (recovery records them again) or the database was restored.
-        # Send it back to the feed's end; devices store next_cursor as is.
+        # Send it back to the feed's end; the app stores this next_cursor.
         return {"changes": [], "next_cursor": latest, "has_more": False, "reset": True}
     return {"changes": rows, "next_cursor": rows[-1]["cursor"] if rows else cursor, "has_more": len(rows) == limit}
 

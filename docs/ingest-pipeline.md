@@ -111,8 +111,9 @@ cache flush, whatever its size. A batch now pays about one:
   `relaxed_barrier_s` (1 s), with the next durable batch, or when it stops.
 - **Feed rewind.** A power loss can undo the feed's last changes, which
   recovery records again. `GET /api/sync/changes` with a cursor past the
-  feed's end answers `next_cursor` = the end and `reset: true`; devices store
-  `next_cursor` as is, so they rewind without an app change.
+  feed's end answers `next_cursor` = the end and `reset: true`. The Android
+  app stores that cursor before ending the read (an empty page used to end it
+  first, keeping the old cursor past the entries recorded again).
 
 `IngestPolicy.from_env()` reads `IRIS_INGEST_<FIELD>` overrides, so the
 performance lab can sweep the policy without code changes.
