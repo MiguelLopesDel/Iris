@@ -8,7 +8,8 @@ certificado próprio ou rede local.
 ## O modelo
 
 O servidor Iris atende HTTP em `127.0.0.1` (porta `8501` por padrão) e não abre
-nenhuma porta na rede por conta própria. Entre os aparelhos e ele sempre existe
+nenhuma porta na rede por conta própria (ou HTTPS, se você ligar o
+[`IRIS_TLS`](#https-servido-pelo-próprio-iris-iris_tls)). Entre os aparelhos e ele sempre existe
 alguma coisa que transporta o tráfego e, quase sempre, cuida do TLS:
 
 ```
@@ -17,6 +18,28 @@ aparelho ──(HTTPS ou rede privada)──► proxy / túnel / malha ──(HT
 
 Quem escolhe essa peça é o administrador. O Iris não depende de nenhuma em
 particular, e o app se adapta a cada uma pelas opções de confiança descritas abaixo.
+
+## HTTPS servido pelo próprio Iris (`IRIS_TLS`)
+
+Sem nada na frente, o Iris também pode atender HTTPS sozinho. O administrador escolhe
+o modo no `.env`:
+
+| `IRIS_TLS` | Certificado | App | Navegador |
+|---|---|---|---|
+| `off` (padrão) | nenhum: HTTP local, e o TLS fica com o proxy/malha da frente | confia no certificado do proxy (tabela abaixo) | conforme o proxy |
+| `self` | autoassinado, feito com a [chave de identidade](#identidade-do-servidor) do servidor | fixa a chave pelo QR do pareamento; nada mais a configurar | avisa que o certificado não é confiável |
+| `custom` | o seu: `cert.pem` (cadeia completa) e `key.pem` em `data/tls/`, ou os caminhos em `IRIS_TLS_CERT` e `IRIS_TLS_KEY` | confia conforme a autoridade que o emitiu | aceita, se a autoridade for pública (Let's Encrypt, por exemplo) |
+
+- **`self`** nomeia no certificado os endereços de pareamento configurados na
+  interface web, os nomes extras de `IRIS_TLS_NAMES` e `localhost`. Ele é reemitido
+  sozinho quando esses nomes mudam ou o prazo se aproxima do fim, sempre com a mesma
+  chave, então os aparelhos pareados não precisam parear de novo.
+- **`custom`** é conferido antes de o servidor subir: arquivo ausente, certificado
+  vencido ou chave que não corresponde ao certificado param a subida com uma mensagem
+  que diz qual dos três. Renovar é trocar os arquivos e reiniciar o container.
+- Com `self` ou `custom`, cadastre os endereços de pareamento com `https://`, porque
+  o servidor deixa de atender HTTP simples. Em todos os modos, os aparelhos pareados
+  continuam conferindo a identidade do servidor.
 
 ## Cenários e o que cada um exige
 

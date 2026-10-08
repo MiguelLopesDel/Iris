@@ -54,8 +54,10 @@ RUN mkdir -p data media \
 
 EXPOSE 8501
 
+# HTTPS when IRIS_TLS serves it; -k because this only asks whether the process answers.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -fsS http://localhost:8501/healthz || exit 1
+    CMD scheme=http; [ "${IRIS_TLS:-off}" = off ] || scheme=https; \
+        curl -fsSk "$scheme://localhost:8501/healthz" || exit 1
 
 ENV PYTHONPATH=/app \
     IRIS_COMMIT=${IRIS_COMMIT} \
@@ -66,6 +68,5 @@ ENV PYTHONPATH=/app \
 
 USER iris
 
-CMD ["python3", "-m", "uvicorn", "server:app", \
-     "--host=0.0.0.0", \
-     "--port=8501"]
+# Plain uvicorn, or uvicorn over HTTPS when IRIS_TLS asks for it (scripts/serve.py).
+CMD ["python3", "scripts/serve.py"]
