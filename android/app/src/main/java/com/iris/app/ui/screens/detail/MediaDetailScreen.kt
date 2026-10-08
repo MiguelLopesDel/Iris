@@ -8,6 +8,18 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
@@ -57,7 +69,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -181,7 +192,20 @@ fun MediaDetailScreen(
             exit = fadeOut() + slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
-            ViewerTopBar(title = record?.cleanFilename.orEmpty(), onBack = onBack)
+            val title = remember(record, uiState.metadata) {
+                ViewerTitle.of(
+                    capturedAt = uiState.metadata?.curated?.textOf("captured_at"),
+                    fileMtime = record?.fileMtime,
+                    place = uiState.metadata?.curated?.textOf("location_label"),
+                    fileName = record?.cleanFilename.orEmpty(),
+                )
+            }
+            ViewerTopBar(
+                title = title,
+                onBack = onBack,
+                onRename = record?.let { { renaming = true } },
+                onSendToGroup = record?.let { { pickingSpace = true } },
+            )
         }
 
         if (record != null) {
@@ -193,11 +217,9 @@ fun MediaDetailScreen(
             ) {
                 val mediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
                 ViewerActionBar(
-                    onDownload = { download(mediaUrl, record.cleanFilename) },
-                    onDetails = { showDetails = true },
                     onShare = { share(mediaUrl, record.cleanFilename) },
-                    onSpace = { pickingSpace = true },
-                    onRename = { renaming = true }
+                    onSave = { download(mediaUrl, record.cleanFilename) },
+                    onInfo = { showDetails = true },
                 )
             }
         }
@@ -528,88 +550,130 @@ private fun VideoStage(
     )
 }
 
+/** Back, when and where the photo was taken, and the rarer actions behind ⋮. */
 @Composable
-private fun ViewerTopBar(title: String, onBack: () -> Unit) {
+private fun ViewerTopBar(
+    title: ViewerTitle,
+    onBack: () -> Unit,
+    onRename: (() -> Unit)?,
+    onSendToGroup: (() -> Unit)?,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.Black.copy(alpha = 0.55f))
             .pointerInput(Unit) { detectTapGestures { } }
             .statusBarsPadding()
-            .padding(horizontal = 4.dp, vertical = 8.dp),
+            .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButtonWithLabel(Icons.AutoMirrored.Filled.ArrowBack, "Voltar", onBack)
-        Spacer(Modifier.width(4.dp))
-        Text(
-            text = title,
-            color = Color.White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1
-        )
+        IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+        }
+        Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
+            Text(
+                text = title.headline,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            title.subline?.let {
+                Text(
+                    text = it,
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (onRename != null || onSendToGroup != null) {
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(52.dp)) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Mais opções", tint = Color.White)
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    onSendToGroup?.let { action ->
+                        MenuItem(Icons.Default.Group, "Enviar para um grupo") {
+                            menuOpen = false
+                            action()
+                        }
+                    }
+                    onRename?.let { action ->
+                        MenuItem(Icons.Default.DriveFileRenameOutline, "Renomear") {
+                            menuOpen = false
+                            action()
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
+private fun MenuItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(label, fontSize = 16.sp) },
+        leadingIcon = { Icon(icon, contentDescription = null) },
+        onClick = onClick,
+        modifier = Modifier.height(52.dp)
+    )
+}
+
+/**
+ * The three things people do with a photo, where a gallery app has them:
+ * large, each with its name under the icon. The rest is behind ⋮ above.
+ */
+@Composable
 private fun ViewerActionBar(
-    onDownload: () -> Unit,
-    onDetails: () -> Unit,
     onShare: () -> Unit,
-    onSpace: () -> Unit,
-    onRename: () -> Unit,
+    onSave: () -> Unit,
+    onInfo: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.Black.copy(alpha = 0.55f))
-            // Sem isto, um toque no espaço entre dois botões atravessa a barra,
-            // chega na foto e fecha os controles — parece que o botão falhou.
+            // Without this, a tap between two buttons reaches the photo and hides
+            // the controls, which looks like the button failed.
             .pointerInput(Unit) { detectTapGestures { } }
             .navigationBarsPadding()
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ActionItem(Icons.Default.Download, "Baixar", onDownload)
         ActionItem(Icons.Default.Share, "Compartilhar", onShare)
-        ActionItem(Icons.Default.Group, "Espaço", onSpace)
-        ActionItem(Icons.Default.DriveFileRenameOutline, "Renomear", onRename)
-        ActionItem(Icons.Default.Info, "Detalhes", onDetails)
+        ActionItem(Icons.Default.Download, "Salvar no celular", onSave)
+        ActionItem(Icons.Default.Info, "Informações", onInfo)
     }
 }
 
 @Composable
-private fun ActionItem(
+private fun RowScope.ActionItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     onClick: () -> Unit,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = Modifier
-            .padding(horizontal = 6.dp)
-            .pointerInput(label) { detectTapGestures(onTap = { onClick() }) }
+            .weight(1f)
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick, role = Role.Button)
+            .padding(vertical = 6.dp)
     ) {
-        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
         Spacer(Modifier.height(4.dp))
-        Text(label, color = Color.White, fontSize = 11.sp)
-    }
-}
-
-@Composable
-private fun IconButtonWithLabel(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .pointerInput(label) { detectTapGestures(onTap = { onClick() }) },
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(icon, contentDescription = label, tint = Color.White)
+        Text(label, color = Color.White, fontSize = 13.sp, maxLines = 1)
     }
 }
 

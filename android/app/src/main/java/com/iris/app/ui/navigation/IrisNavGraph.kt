@@ -150,7 +150,7 @@ fun IrisNavGraph(
         ),
         BottomNavItem(
             route = NavRoute.Spaces.route,
-            label = "Espaços",
+            label = "Grupos",
             selectedIcon = Icons.Filled.Group,
             unselectedIcon = Icons.Outlined.Group
         ),
