@@ -3,10 +3,13 @@ package com.iris.app
 import com.iris.app.data.model.CollectionsResponse
 import com.iris.app.data.model.ConceptsResponse
 import com.iris.app.data.model.PersonsResponse
+import com.iris.app.data.model.RecordMetadataResponse
 import com.iris.app.data.model.RecordsResponse
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.ui.components.decodeThumbGrid
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -99,4 +102,18 @@ class ServerContractTest {
 
         assertEquals(2, decoded.totalRecords)
     }
+
+    @Test
+    fun `record metadata decodes, so the viewer can show when and where`() {
+        val decoded = json.decodeFromString<RecordMetadataResponse>(fixture("record_metadata.json"))
+
+        // The model once required an "index" the server never sends: every
+        // decode failed and the capture date and place were never shown.
+        assertEquals("2025-03-12T14:32:05", decoded.curated?.textOf("captured_at"))
+        assertEquals("Lisboa, PT", decoded.curated?.textOf("location_label"))
+        assertEquals("64", decoded.full?.textOf("width"))
+        assertTrue(decoded.pathExists)
+    }
+
+    private fun JsonObject.textOf(key: String): String? = (this[key] as? JsonPrimitive)?.content
 }

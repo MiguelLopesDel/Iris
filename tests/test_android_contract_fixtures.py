@@ -154,12 +154,16 @@ def _seed_catalog(root: Path) -> Path:
         conn.execute(
             """
             INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia, tags,
-                               file_size, file_mtime, embedding, desc_embedding, thumb_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               file_size, file_mtime, embedding, desc_embedding, thumb_hash,
+                               metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             ("meme.png", str(image_path), "texto no meme", "descrição automática",
              "engraçado,gato", 1234, 1_700_000_000.0, embedding.tobytes(),
-             embedding.tobytes(), thumb_hash),
+             embedding.tobytes(), thumb_hash,
+             # What the viewer's title and information panel read.
+             json.dumps({"captured_at": "2025-03-12T14:32:05", "location_label": "Lisboa, PT",
+                         "device": "Camera", "source_app": "", "gps": None})),
         )
         # Mídia sem placeholder: catálogo antigo, ainda sem backfill.
         conn.execute(

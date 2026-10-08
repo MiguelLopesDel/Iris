@@ -1,10 +1,10 @@
 {
   "curated": {
-    "captured_at": "",
+    "captured_at": "2025-03-12T14:32:05",
+    "location_label": "Lisboa, PT",
+    "device": "Camera",
     "source_app": "",
-    "device": "",
-    "gps": null,
-    "location_label": ""
+    "gps": null
   },
   "full": {
     "kind": "image",
