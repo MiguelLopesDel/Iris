@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.iris.app.data.remote.security.AddressOutcome
+import com.iris.app.data.remote.security.ConnectionMessages
 import com.iris.app.data.remote.security.ConnectionProblem
 import com.iris.app.data.remote.security.PairingCode
 import com.iris.app.data.remote.security.PairingCodeException
@@ -259,18 +260,7 @@ class SettingsViewModel(
         }
     }
 
-    private fun describe(problem: ConnectionProblem): String = when (problem) {
-        is ConnectionProblem.CleartextNotAllowed ->
-            "Este endereço usa HTTP, sem criptografia, e ainda não foi autorizado neste aparelho."
-        is ConnectionProblem.UntrustedCertificate ->
-            "O certificado do servidor não foi emitido por uma autoridade em que este aparelho confia."
-        is ConnectionProblem.NameMismatch ->
-            "O certificado é válido, mas não foi emitido para ${problem.origin.host}. Use o endereço que " +
-                "consta no certificado ou emita um certificado que inclua este."
-        is ConnectionProblem.NotHttps ->
-            "Algo respondeu em ${problem.origin}, mas não com HTTPS. Confira a porta, ou use http:// se o " +
-                "servidor não usa TLS."
-    }
+    private fun describe(problem: ConnectionProblem): String = ConnectionMessages.describe(problem)
 
     /** Reads a pairing link and asks the user to confirm it; nothing changes yet. */
     fun readPairingCode(text: String) {
