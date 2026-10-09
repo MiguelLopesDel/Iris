@@ -52,7 +52,8 @@ RUN mkdir -p data media \
     && chmod 1777 /home/iris /home/iris/.cache /home/iris/.cache/huggingface \
         /home/iris/.cache/whisper /home/iris/.insightface /home/iris/.EasyOCR
 
-EXPOSE 8501
+# 8501: HTTP for browsers. 8443: HTTPS for devices, when IRIS_TLS is self or custom.
+EXPOSE 8501 8443
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -fsS http://localhost:8501/healthz || exit 1
@@ -66,6 +67,5 @@ ENV PYTHONPATH=/app \
 
 USER iris
 
-CMD ["python3", "-m", "uvicorn", "server:app", \
-     "--host=0.0.0.0", \
-     "--port=8501"]
+# HTTP for browsers, plus HTTPS for devices when IRIS_TLS asks for it (scripts/serve.py).
+CMD ["python3", "scripts/serve.py"]

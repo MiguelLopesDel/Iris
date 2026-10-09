@@ -12,6 +12,8 @@ services:
     user: "${IRIS_UID:-1000}:${IRIS_GID:-1000}"
     ports:
       - "${IRIS_BIND:-127.0.0.1}:${IRIS_PORT:-8501}:8501"
+      # HTTPS for devices (IRIS_TLS=self or custom); nothing listens there when it is off.
+      - "${IRIS_BIND:-127.0.0.1}:${IRIS_TLS_PORT:-8443}:8443"
     volumes:
       - ./data:/app/data
       - ./media:/app/media
@@ -25,6 +27,12 @@ services:
       IRIS_MULTIUSER: ${IRIS_MULTIUSER:-auto}
       IRIS_SERVER_MODE: ${IRIS_SERVER_MODE:-private}
       IRIS_SESSION_HTTPS_ONLY: ${IRIS_SESSION_HTTPS_ONLY:-auto}
+      IRIS_TLS: ${IRIS_TLS:-off}
+      # The host port devices reach HTTPS at, for the addresses the pairing code offers.
+      IRIS_TLS_PUBLIC_PORT: ${IRIS_TLS_PORT:-8443}
+      IRIS_TLS_NAMES: ${IRIS_TLS_NAMES:-}
+      IRIS_TLS_CERT: ${IRIS_TLS_CERT:-}
+      IRIS_TLS_KEY: ${IRIS_TLS_KEY:-}
       IRIS_ENGINE_CACHE_SIZE: ${IRIS_ENGINE_CACHE_SIZE:-1}
       IRIS_SEARCH_WORKERS: ${IRIS_SEARCH_WORKERS:-2}
       IRIS_LOAD_MODEL: ${IRIS_LOAD_MODEL:-1}

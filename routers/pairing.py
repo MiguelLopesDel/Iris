@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from core import instance_settings, pairing, server_identity
+from core import instance_settings, pairing, server_identity, tls
 from routers.admin import _admin
 
 router = APIRouter(tags=["pairing"])
@@ -33,7 +33,9 @@ def pairing_code(request: Request, current: str = Query("", max_length=300)):
     configured = str(
         instance_settings.resolve_all(request.app.state.users_db_path)["pairing_addresses"].value
     ).split()
-    addresses = pairing.pairing_addresses(configured, current or None)
+    addresses = pairing.device_addresses(
+        pairing.pairing_addresses(configured, current or None), tls.device_https_port()
+    )
     ca = pairing.ca_fingerprint(data_dir)
     instance = pairing.instance_id(data_dir)
     key = server_identity.server_identity(data_dir).fingerprint

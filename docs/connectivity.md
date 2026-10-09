@@ -8,7 +8,8 @@ certificado próprio ou rede local.
 ## O modelo
 
 O servidor Iris atende HTTP em `127.0.0.1` (porta `8501` por padrão) e não abre
-nenhuma porta na rede por conta própria. Entre os aparelhos e ele sempre existe
+nenhuma porta na rede por conta própria (ou HTTPS, se você ligar o
+[`IRIS_TLS`](#https-servido-pelo-próprio-iris-iris_tls)). Entre os aparelhos e ele sempre existe
 alguma coisa que transporta o tráfego e, quase sempre, cuida do TLS:
 
 ```
@@ -17,6 +18,35 @@ aparelho ──(HTTPS ou rede privada)──► proxy / túnel / malha ──(HT
 
 Quem escolhe essa peça é o administrador. O Iris não depende de nenhuma em
 particular, e o app se adapta a cada uma pelas opções de confiança descritas abaixo.
+
+## HTTPS servido pelo próprio Iris (`IRIS_TLS`)
+
+A interface web fica **sempre em HTTP** na porta de sempre (`IRIS_PORT`), como em outros
+servidores de mídia auto-hospedados: instalar e usar o Iris no navegador nunca mostra
+aviso de certificado. Para os aparelhos, o Iris pode atender também **HTTPS numa
+segunda porta** (`IRIS_TLS_PORT`, 8443 por padrão):
+
+| `IRIS_TLS` | HTTPS para os aparelhos | Como o app confia |
+|---|---|---|
+| `off` (padrão) | nenhum; um proxy/malha na frente pode fazer TLS | conforme o proxy (tabela abaixo) |
+| `self` | certificado autoassinado feito com a [chave de identidade](#identidade-do-servidor) | pela chave que veio no QR; nada a configurar |
+| `custom` | o seu certificado: `cert.pem` (cadeia completa) e `key.pem` em `data/tls/`, ou os caminhos em `IRIS_TLS_CERT` e `IRIS_TLS_KEY` | conforme a autoridade que o emitiu, mais a identidade |
+
+- Com `self` ou `custom`, **o código de pareamento leva os aparelhos para o HTTPS** sozinho:
+  mesmo aberto por `http://host:8501`, o QR oferece `https://host:8443`. Endereços já
+  `https://` (um domínio atrás de um proxy) ficam como estão.
+- **`self`** nomeia no certificado os endereços de pareamento configurados, os nomes extras
+  de `IRIS_TLS_NAMES` e `localhost`, e é reemitido sozinho quando esses nomes mudam ou o
+  prazo se aproxima do fim, sempre com a mesma chave: os aparelhos pareados não precisam
+  parear de novo. O app confia pela chave, então o nome no certificado não o impede de
+  usar outro endereço.
+- **`custom`** é conferido antes de o servidor subir: arquivo ausente, certificado vencido
+  ou chave que não corresponde param a subida com uma mensagem que diz qual. Renovar é
+  trocar os arquivos e reiniciar o container.
+- A porta HTTP continua aberta: a senha digitada **no navegador** viaja sem criptografia,
+  como em outros servidores do tipo. Numa rede que não seja de confiança, use o navegador
+  por um proxy com HTTPS (ou mantenha `IRIS_BIND` numa rede privada); o app está
+  protegido de qualquer jeito.
 
 ## Cenários e o que cada um exige
 

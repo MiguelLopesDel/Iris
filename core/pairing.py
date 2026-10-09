@@ -179,6 +179,28 @@ def remove_ca(data_dir: Path) -> None:
     (data_dir / CA_FILE).unlink(missing_ok=True)
 
 
+def device_addresses(addresses: list[str], https_port: int | None) -> list[str]:
+    """The addresses a pairing code offers when the server also serves HTTPS.
+
+    The web interface stays on HTTP, so the page showing the code may itself
+    be on ``http://``. With HTTPS on (``https_port``), every ``http://``
+    address becomes ``https://`` on that port: devices pair over HTTPS and
+    trust the server by its identity key. ``https://`` addresses (a domain
+    behind a proxy, say) are kept as they are.
+    """
+    if not https_port:
+        return addresses
+    offered: list[str] = []
+    for address in addresses:
+        parts = urlsplit(address)
+        if parts.scheme == "http" and parts.hostname:
+            host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+            address = f"https://{host}" + ("" if https_port == 443 else f":{https_port}")
+        if address not in offered:
+            offered.append(address)
+    return offered
+
+
 def pairing_uri(
     instance: str, addresses: list[str], ca_sha256: str | None, key_sha256: str | None = None
 ) -> str:
