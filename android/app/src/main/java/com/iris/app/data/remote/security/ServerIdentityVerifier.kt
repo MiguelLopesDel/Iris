@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.security.KeyFactory
+import java.security.cert.X509Certificate
 import java.security.SecureRandom
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
@@ -28,8 +29,11 @@ class ServerIdentityMismatchException(val origin: ServerOrigin, reason: String) 
  * machine that took over the address does not have the private key and
  * cannot answer, so nothing is sent to it.
  *
- * A success is remembered for [ttlMillis] per address and key: the check costs
- * one request, and a sync makes thousands. A failure is never remembered.
+ * A success is remembered for [ttlMillis] per address and key only when the
+ * TLS leaf certificate uses that same key. With a proxy or custom TLS
+ * certificate, the TLS connection authenticates the proxy, not the Iris
+ * backend, so every request needs a fresh identity proof. A failure is never
+ * remembered.
  */
 class ServerIdentityVerifier(
     private val client: () -> OkHttpClient,
@@ -60,17 +64,25 @@ class ServerIdentityVerifier(
                     .build()
             )
             .build()
-        val body = client().newCall(request).execute().use { response ->
+        val (body, tlsUsesIdentityKey) = client().newCall(request).execute().use { response ->
             when {
                 response.code == 404 -> throw ServerIdentityMismatchException(origin, "ele não sabe provar a identidade")
                 !response.isSuccessful -> throw IOException("HTTP ${response.code} ao verificar a identidade")
-                else -> response.body?.string().orEmpty()
+                else -> {
+                    val leaf = response.handshake?.peerCertificates?.firstOrNull() as? X509Certificate
+                    val certificateKey = leaf?.publicKey?.encoded?.let { ConnectionSecurity.keySha256(it) }
+                    response.body?.string().orEmpty() to (url.isHttps && certificateKey == expectedKeySha256)
+                }
             }
         }
         val answer = runCatching { json.decodeFromString(Answer.serializer(), body) }
             .getOrElse { throw ServerIdentityMismatchException(origin, "resposta de identidade inválida") }
         verify(origin, answer, nonce, address, expectedKeySha256, expectedInstanceId)
-        verifiedUntil[cacheKey] = nowMillis() + ttlMillis
+        if (tlsUsesIdentityKey) {
+            verifiedUntil[cacheKey] = nowMillis() + ttlMillis
+        } else {
+            verifiedUntil.remove(cacheKey)
+        }
     }
 
     /** Drops what was verified, so the next request asks again (the policy changed). */

@@ -20,6 +20,7 @@ import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The app checks a server's identity key: against an answer produced by the
@@ -126,6 +127,41 @@ class ServerIdentityTest {
         return server
     }
 
+    /** A TLS-terminating proxy certificate that is independent from the Iris identity key. */
+    private fun proxyServer(identityKeys: AtomicReference<KeyPair>): Pair<MockWebServer, HeldCertificate> {
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.requestUrl?.encodedPath != "/api/identity") return MockResponse().setResponseCode(404)
+                val keys = identityKeys.get()
+                val nonce = request.requestUrl!!.queryParameter("nonce")!!
+                val address = request.requestUrl!!.queryParameter("address")!!
+                val signature = Signature.getInstance("SHA256withECDSA").run {
+                    initSign(keys.private)
+                    update(ServerIdentityVerifier.message(id, nonce, address))
+                    sign()
+                }
+                val encoder = Base64.getEncoder()
+                return MockResponse().setBody(
+                    """{"version":1,"algorithm":"ecdsa-p256-sha256","instance_id":"$id",""" +
+                        """"public_key":"${encoder.encodeToString(keys.public.encoded)}","key_sha256":"${keySha256(keys)}",""" +
+                        """"signature":"${encoder.encodeToString(signature)}"}"""
+                )
+            }
+        }
+        server.start()
+        val proxyCertificate = HeldCertificate.Builder()
+            .commonName("TLS proxy")
+            .addSubjectAlternativeName(server.hostName)
+            .build()
+        server.useHttps(
+            HandshakeCertificates.Builder().heldCertificate(proxyCertificate).build().sslSocketFactory(),
+            false,
+        )
+        servers += server
+        return server to proxyCertificate
+    }
+
     private fun address(server: MockWebServer) = server.url("/").toString().trimEnd('/')
 
     private fun code(address: String, key: String) =
@@ -168,6 +204,35 @@ class ServerIdentityTest {
         val asked = generateSequence { server.takeRequest(100, java.util.concurrent.TimeUnit.MILLISECONDS) }
             .count { it.requestUrl?.encodedPath == "/api/identity" }
         assertEquals(1, asked)
+    }
+
+    @Test
+    fun `a proxy certificate never caches identity proof across a backend replacement`() {
+        val pairedKeys = ecKeyPair()
+        val activeBackendKey = AtomicReference(pairedKeys)
+        val (proxy, proxyCertificate) = proxyServer(activeBackendKey)
+        val url = proxy.url("/")
+        val origin = ServerOrigin.of(url)
+        val proxyTrust = ServerSecurity(
+            trustMode = TrustMode.PINNED,
+            pinnedCertificates = listOf(proxyCertificate.certificate.encoded),
+            identityKeySha256 = keySha256(pairedKeys),
+        )
+        val client = security.trying(origin, proxyTrust).apply(OkHttpClient.Builder()).build()
+        val verifier = ServerIdentityVerifier(client = { client })
+
+        verifier.requireIdentity(url, keySha256(pairedKeys), id)
+        activeBackendKey.set(ecKeyPair())
+
+        try {
+            verifier.requireIdentity(url, keySha256(pairedKeys), id)
+            fail("a replacement backend must prove the paired identity again")
+        } catch (_: ServerIdentityMismatchException) {
+            // The proxy's HTTPS certificate stayed the same; only a fresh backend proof detects this.
+        }
+        val identityRequests = generateSequence { proxy.takeRequest(100, java.util.concurrent.TimeUnit.MILLISECONDS) }
+            .count { it.requestUrl?.encodedPath == "/api/identity" }
+        assertEquals(2, identityRequests)
     }
 
     @Test
