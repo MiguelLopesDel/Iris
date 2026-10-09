@@ -13,6 +13,8 @@ import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
+import javax.net.ssl.SSLSocket
 
 /** The server at an address did not prove it holds the identity key this app paired with. */
 class ServerIdentityMismatchException(val origin: ServerOrigin, reason: String) :
@@ -64,17 +66,26 @@ class ServerIdentityVerifier(
                     .build()
             )
             .build()
-        val (body, tlsUsesIdentityKey) = client().newCall(request).execute().use { response ->
+        // The key of the certificate this very connection presented. Read from the TLS
+        // session itself: OkHttp's Handshake.peerCertificates is "cleaned" against the
+        // system authorities only and comes back empty for the server's own certificate.
+        val presentedKey = AtomicReference<String?>(null)
+        val recording = client().newBuilder()
+            .addNetworkInterceptor { chain ->
+                val session = (chain.connection()?.socket() as? SSLSocket)?.session
+                val leaf = runCatching { session?.peerCertificates?.firstOrNull() as? X509Certificate }.getOrNull()
+                presentedKey.set(leaf?.publicKey?.encoded?.let(ConnectionSecurity::keySha256))
+                chain.proceed(chain.request())
+            }
+            .build()
+        val body = recording.newCall(request).execute().use { response ->
             when {
                 response.code == 404 -> throw ServerIdentityMismatchException(origin, "ele não sabe provar a identidade")
                 !response.isSuccessful -> throw IOException("HTTP ${response.code} ao verificar a identidade")
-                else -> {
-                    val leaf = response.handshake?.peerCertificates?.firstOrNull() as? X509Certificate
-                    val certificateKey = leaf?.publicKey?.encoded?.let { ConnectionSecurity.keySha256(it) }
-                    response.body?.string().orEmpty() to (url.isHttps && certificateKey == expectedKeySha256)
-                }
+                else -> response.body?.string().orEmpty()
             }
         }
+        val tlsUsesIdentityKey = url.isHttps && presentedKey.get() == expectedKeySha256
         val answer = runCatching { json.decodeFromString(Answer.serializer(), body) }
             .getOrElse { throw ServerIdentityMismatchException(origin, "resposta de identidade inválida") }
         verify(origin, answer, nonce, address, expectedKeySha256, expectedInstanceId)
