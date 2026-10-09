@@ -1,10 +1,13 @@
 """Pairing a device with this server from a QR code or a link.
 
-The pairing code is a link, ``iris://pair?v=1&id=...&u=...&ca=...``, carrying:
+The pairing code is a link, ``iris://pair?v=1&id=...&u=...&ca=...&k=...``, carrying:
 
 * ``id``  -- this installation's identifier, so a device can tell it is
   talking to the same server whatever address it uses;
 * ``u``   -- one or more addresses the device may use, in order of preference;
+* ``k``   -- the SHA-256 fingerprint of this installation's public key
+  (:mod:`core.server_identity`): the device pins it and, before it sends any
+  credential, checks that the server signs a fresh challenge with that key;
 * ``ca``  -- optionally, the SHA-256 fingerprint of the certificate authority
   the device should trust for this server. The certificate itself is served
   at ``/api/pairing/ca.pem``; the device accepts it only if its fingerprint
@@ -176,10 +179,15 @@ def remove_ca(data_dir: Path) -> None:
     (data_dir / CA_FILE).unlink(missing_ok=True)
 
 
-def pairing_uri(instance: str, addresses: list[str], ca_sha256: str | None) -> str:
+def pairing_uri(
+    instance: str, addresses: list[str], ca_sha256: str | None, key_sha256: str | None = None
+) -> str:
     query = [("v", VERSION), ("id", instance)] + [("u", address) for address in addresses]
     if ca_sha256:
         query.append(("ca", ca_sha256))
+    if key_sha256:
+        # Apps that predate it ignore unknown parameters and pair as before.
+        query.append(("k", key_sha256))
     return f"{SCHEME}?{urlencode(query)}"
 
 

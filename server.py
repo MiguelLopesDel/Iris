@@ -53,6 +53,7 @@ from core import (
     library_trash,
     pairing,
     perf_probe,
+    server_identity,
     session_cookie,
     space_catalog,
 )
@@ -663,6 +664,7 @@ async def lifespan(app: FastAPI):
     server_lock = instance_lock.hold_for_server(_DATA_DIR) if app.state.multiuser_enabled else None
     if app.state.multiuser_enabled:
         pairing.instance_id(_DATA_DIR)  # the identifier pairing codes and /healthz report
+        server_identity.server_identity(_DATA_DIR)  # the key paired devices verify
     if app.state.setup_required:
         # Whoever completes setup becomes the administrator; the code proves
         # they can read this console or the data folder, not just reach the page.
@@ -837,6 +839,8 @@ async def authenticate_library_request(request: Request, call_next):
         "/api/auth/devices/login",
         "/api/auth/devices/refresh",
         "/api/pairing/ca.pem",
+        # A device proves who it is talking to before it signs in.
+        "/api/identity",
     } or path.startswith("/static/")
     if public:
         return await call_next(request)
