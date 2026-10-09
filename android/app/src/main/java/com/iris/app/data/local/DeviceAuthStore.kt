@@ -12,6 +12,8 @@ interface DeviceAuthStore {
     fun getDeviceId(): String?
     fun getServerOrigin(): String? = null
     fun getSessionIdentity(): String? = null
+    /** The server installation the session was made on, once known. */
+    fun serverInstanceId(): String? = null
     fun getSessionCredentials(expectedIdentity: String): DeviceSessionCredentials? {
         if (getSessionIdentity() != expectedIdentity) return null
         val token = getAccessToken()?.takeIf(String::isNotBlank) ?: return null

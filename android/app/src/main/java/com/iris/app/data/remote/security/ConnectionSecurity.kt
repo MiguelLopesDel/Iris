@@ -5,6 +5,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Connection
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.internal.tls.OkHostnameVerifier
 import java.io.IOException
 import java.net.InetAddress
 import java.net.Socket
@@ -16,6 +17,7 @@ import java.security.cert.X509Certificate
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLHandshakeException
@@ -55,14 +57,22 @@ data class ServerSecurity(
     val pinnedCertificates: List<ByteArray> = emptyList(),
     /** Unencrypted HTTP, allowed only after the user accepted it for this server. */
     val cleartextAllowed: Boolean = false,
+    /**
+     * SHA-256 (lowercase hex) of the server's identity key, from the pairing code.
+     * The server must prove it holds that key before the app sends it any
+     * credential ([ServerIdentityVerifier]); a certificate made from that key
+     * (the server's own self-signed one) is trusted as is.
+     */
+    val identityKeySha256: String? = null,
 ) {
     override fun equals(other: Any?): Boolean =
         other is ServerSecurity && trustMode == other.trustMode && cleartextAllowed == other.cleartextAllowed &&
+            identityKeySha256 == other.identityKeySha256 &&
             pinnedCertificates.size == other.pinnedCertificates.size &&
             pinnedCertificates.zip(other.pinnedCertificates).all { (a, b) -> a.contentEquals(b) }
 
     override fun hashCode(): Int =
-        listOf(trustMode, cleartextAllowed, pinnedCertificates.map { it.contentHashCode() }).hashCode()
+        listOf(trustMode, cleartextAllowed, identityKeySha256, pinnedCertificates.map { it.contentHashCode() }).hashCode()
 }
 
 /** Persists [ServerSecurity] per [ServerOrigin]. Reads must be fast: they happen during TLS handshakes. */
@@ -161,11 +171,27 @@ open class ConnectionSecurity(
 
     open fun apply(builder: OkHttpClient.Builder): OkHttpClient.Builder = builder
         .sslSocketFactory(socketFactory, trustManager)
+        .hostnameVerifier(hostnameVerifier)
         // Refuses HTTP before anything is dialled.
         .addInterceptor(cleartextGuard)
         // Runs for every exchange on the network: after each redirect and on every
         // reused (possibly multiplexed) connection, which the line above never sees.
         .addNetworkInterceptor(exchangeGuard)
+
+    /**
+     * OkHttp's name check, except for the server's own certificate (made from the
+     * pinned identity key): the key already proves the server, and the address in
+     * use may be one the certificate was not issued for.
+     */
+    private val hostnameVerifier = HostnameVerifier { host, session ->
+        val leaf = runCatching { session.peerCertificates.firstOrNull() as? X509Certificate }.getOrNull()
+        val pinned = securityFor(ServerOrigin(host.lowercase(), session.peerPort)).identityKeySha256
+        if (leaf != null && pinned != null && keySha256(leaf.publicKey.encoded) == pinned) {
+            true
+        } else {
+            OkHostnameVerifier.verify(host, session)
+        }
+    }
 
     private val cleartextGuard = Interceptor { chain ->
         requireCleartextConsent(chain.request().url)
@@ -231,6 +257,11 @@ open class ConnectionSecurity(
             CertificateFactory.getInstance("X.509")
                 .generateCertificates(bytes.inputStream())
                 .filterIsInstance<X509Certificate>()
+
+        /** SHA-256 (lowercase hex) of a public key in X.509 form: what pairing codes carry as `k`. */
+        fun keySha256(subjectPublicKeyInfo: ByteArray): String =
+            MessageDigest.getInstance("SHA-256").digest(subjectPublicKeyInfo)
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
         fun sha256(certificate: X509Certificate): String =
             MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
@@ -331,6 +362,12 @@ internal class PolicyTrustManager(
         val origin = if (host != null && port > 0) ServerOrigin(host.lowercase(), port) else null
         val security = origin?.let(policyFor) ?: ServerSecurity()
         try {
+            // The server's own certificate, made from the identity key the pairing code
+            // named: the key is the trust, whatever authority or name the certificate has.
+            if (presentsIdentityKey(chain, security)) {
+                if (origin != null) acceptedAuthTypes[origin.key] = authType
+                return
+            }
             when (security.trustMode) {
                 TrustMode.SYSTEM -> check(system)
                 TrustMode.DEVICE_CAS -> check(deviceCas.value ?: system)
@@ -345,6 +382,13 @@ internal class PolicyTrustManager(
             if (origin != null) onRejected(origin, chain.toList(), authType)
             throw failure
         }
+    }
+
+    private fun presentsIdentityKey(chain: Array<X509Certificate>, security: ServerSecurity): Boolean {
+        val pinned = security.identityKeySha256 ?: return false
+        val leaf = chain.firstOrNull() ?: return false
+        if (runCatching { leaf.checkValidity() }.isFailure) return false
+        return ConnectionSecurity.keySha256(leaf.publicKey.encoded) == pinned
     }
 
     private fun pinnedManager(anchors: List<ByteArray>): X509TrustManager {

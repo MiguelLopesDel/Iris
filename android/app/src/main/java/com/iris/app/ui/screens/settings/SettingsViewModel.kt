@@ -19,6 +19,7 @@ import com.iris.app.data.remote.security.ConnectionProblem
 import com.iris.app.data.remote.security.PairingCode
 import com.iris.app.data.remote.security.PairingCodeException
 import com.iris.app.data.remote.security.PairingConnector
+import com.iris.app.data.remote.security.PairingSessionPolicy
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.ServerOrigin
 import com.iris.app.data.remote.security.ServerSecurity
@@ -51,6 +52,8 @@ data class SecuritySummary(
     val trustMode: TrustMode,
     val pinnedFingerprints: List<String>,
     val cleartextAllowed: Boolean,
+    /** The identity key pinned at pairing, if this server was paired by code. */
+    val identityKeySha256: String? = null,
 ) {
     val isDefault: Boolean get() = trustMode == TrustMode.SYSTEM && !cleartextAllowed
 }
@@ -191,6 +194,7 @@ class SettingsViewModel(
                         ConnectionSecurity.parseCertificates(der).firstOrNull()?.let(ConnectionSecurity::sha256)
                     },
                     cleartextAllowed = current.cleartextAllowed,
+                    identityKeySha256 = current.identityKeySha256,
                 )
             )
         }
@@ -234,7 +238,9 @@ class SettingsViewModel(
     }
 
     /** Back to the strictest policy: public authorities only, no HTTP. */
-    fun resetSecurity() = changeSecurity { ServerSecurity() }
+    // Certificate trust and HTTP go back to the default; the paired identity stays,
+    // since only a new pairing code can say which key the server holds.
+    fun resetSecurity() = changeSecurity { ServerSecurity(identityKeySha256 = it.identityKeySha256) }
 
     fun dismissSecurityMessage() = _uiState.update { it.copy(securityMessage = null) }
 
@@ -290,6 +296,12 @@ class SettingsViewModel(
             }
             val result = outcome.getOrNull()
             if (result?.address != null) {
+                val previousInstance = irisRepository.credentialsStore.serverInstanceId()
+                if (PairingSessionPolicy.shouldEndSession(previousInstance, code.instanceId)) {
+                    // A different installation cannot reuse this device session.
+                    irisRepository.credentialsStore.clearCredentials()
+                }
+                irisRepository.apiClient.forgetVerifiedIdentities()
                 settingsRepository.updateServerUrl(result.address)
                 irisRepository.apiClient.updateBaseUrl(result.address)
                 withContext(Dispatchers.IO) { irisRepository.apiClient.resetConnections() }

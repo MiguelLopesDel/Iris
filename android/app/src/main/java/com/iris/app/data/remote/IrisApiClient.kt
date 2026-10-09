@@ -5,6 +5,9 @@ import com.iris.app.performance.IrisPerformanceEventListener
 import com.iris.app.performance.PerformanceMonitor
 import kotlinx.serialization.json.Json
 import com.iris.app.data.remote.security.ConnectionSecurity
+import com.iris.app.data.remote.security.ServerIdentityMismatchException
+import com.iris.app.data.remote.security.ServerIdentityVerifier
+import com.iris.app.data.remote.security.ServerOrigin
 import okhttp3.Authenticator
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
@@ -78,16 +81,22 @@ class IrisApiClient(
         val requestUrl = original.url
         val path = requestUrl.encodedPath
 
-        // Do not add Bearer token to login or refresh endpoints
-        if (path.contains("/auth/devices/login") || path.contains("/auth/devices/refresh")) {
-            return@Interceptor chain.proceed(original)
-        }
-
         // Host security check: NEVER leak Bearer token to a different host or port
         val currentBaseHttpUrl = baseUrl.toHttpUrlOrNull()
         val isTargetingCurrentServer = currentBaseHttpUrl != null &&
             requestUrl.host == currentBaseHttpUrl.host &&
             requestUrl.port == currentBaseHttpUrl.port
+
+        // Nothing that carries a credential leaves for a server that has not proved
+        // it is the one this app paired with (password, tokens, refresh alike).
+        if (isTargetingCurrentServer) {
+            identityRefusal(original)?.let { return@Interceptor it }
+        }
+
+        // Do not add Bearer token to login or refresh endpoints
+        if (path.contains("/auth/devices/login") || path.contains("/auth/devices/refresh")) {
+            return@Interceptor chain.proceed(original)
+        }
 
         val sessionCredentials = if (expectedSessionIdentity == null) null else {
             credentialsStore?.getSessionCredentials(expectedSessionIdentity)
@@ -128,6 +137,52 @@ class IrisApiClient(
 
         response
     }
+
+    /** Checks the paired server's identity key ([ServerIdentityVerifier]) where one was pinned. */
+    private val identityVerifier = ServerIdentityVerifier(client = { bareOkHttpClient })
+
+    /**
+     * Null when the request may go: the server proved its identity, or this
+     * server was paired before identity keys existed. Otherwise a local answer
+     * that says so; nothing reached the network. A server that cannot be
+     * asked raises the usual network error.
+     */
+    private fun identityRefusal(request: Request): Response? {
+        val url = request.url
+        val pinned = connectionSecurity.securityFor(ServerOrigin.of(url)).identityKeySha256 ?: return null
+        // A challenge over cleartext HTTP cannot bind the proof to the later
+        // request that carries credentials. Require TLS for identity-paired servers.
+        if (!url.isHttps) {
+            return Response.Builder()
+                .request(request)
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(HTTPS_REQUIRED_CODE)
+                .message("HTTPS required for paired server")
+                .body(
+                    "{\"detail\":\"Este servidor foi pareado com uma identidade. Use o endereço HTTPS do código de pareamento; credenciais não são enviadas por HTTP.\"}"
+                        .toResponseBody("application/json".toMediaType())
+                )
+                .build()
+        }
+        return try {
+            identityVerifier.requireIdentity(url, pinned, credentialsStore?.serverInstanceId())
+            null
+        } catch (mismatch: ServerIdentityMismatchException) {
+            Response.Builder()
+                .request(request)
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(IDENTITY_MISMATCH_CODE)
+                .message("Server identity not proven")
+                .body(
+                    """{"detail":"Este não é o seu servidor Iris: ${mismatch.message?.replace("\"", "'")}. Nada foi enviado a ele. Se você reinstalou o servidor, pareie de novo pelo código."}"""
+                        .toResponseBody("application/json".toMediaType())
+                )
+                .build()
+        }
+    }
+
+    /** Forget verified identities: the next request proves the server again. */
+    fun forgetVerifiedIdentities() = identityVerifier.forget()
 
     private fun sessionChangedResponse(request: Request): Response = Response.Builder()
         .request(request)
@@ -206,6 +261,7 @@ class IrisApiClient(
                     .build()
             }
             if (System.currentTimeMillis() - lastRefreshFailedAt < 10_000L) return@synchronized null
+            if (identityRefusal(response.request) != null) return@synchronized null
 
             val refreshRequest = Request.Builder()
                 .url("${baseUrl.removeSuffix("/")}/api/auth/devices/refresh")
@@ -389,6 +445,10 @@ class IrisApiClient(
     }
 
     companion object {
+        /** The local answer when a server did not prove its identity ("misdirected request"). */
+        const val IDENTITY_MISMATCH_CODE = 421
+        /** A paired identity cannot protect credentials sent over cleartext HTTP. */
+        const val HTTPS_REQUIRED_CODE = 426
         /**
          * How every server response is decoded. Exposed so tests assert against
          * the real configuration instead of a copy that can drift from it —
