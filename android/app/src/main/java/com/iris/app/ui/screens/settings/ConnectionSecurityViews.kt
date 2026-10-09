@@ -59,7 +59,7 @@ fun ConnectionProblemDialog(problem: ConnectionProblem, actions: ConnectionProbl
         is ConnectionProblem.CleartextNotAllowed -> CleartextDialog(problem, actions)
         is ConnectionProblem.UntrustedCertificate -> UntrustedCertificateDialog(problem, actions)
         // Nothing to choose: the card under the address already explains these.
-        is ConnectionProblem.NameMismatch, is ConnectionProblem.NotHttps -> Unit
+        is ConnectionProblem.NameMismatch, is ConnectionProblem.NotHttps, is ConnectionProblem.Unreachable -> Unit
     }
 }
 
