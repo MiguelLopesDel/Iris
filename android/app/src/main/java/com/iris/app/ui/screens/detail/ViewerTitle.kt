@@ -7,18 +7,21 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * The viewer's title: when and where the photo was taken, the way people
- * recall a photo, instead of its file name.
+ * recall a photo and the way the phone's gallery names it ("8 de out." over
+ * the time), instead of its file name.
  */
 internal data class ViewerTitle(val headline: String, val subline: String?) {
     companion object {
-        private val locale = Locale("pt", "BR")
-        private val dateFormat = DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", locale)
-        private val timeFormat = DateTimeFormatter.ofPattern("HH:mm", locale)
+        // Fixed tables: the platform's short names differ between Android
+        // versions and the JVM ("out" or "out."), and the title must not.
+        private val months = listOf(
+            "jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
+            "jul.", "ago.", "set.", "out.", "nov.", "dez.",
+        )
+        private val weekdays = listOf("Seg.", "Ter.", "Qua.", "Qui.", "Sex.", "Sáb.", "Dom.")
 
         /**
          * [capturedAt] is an ISO capture time. Explicit offsets are converted
@@ -34,31 +37,35 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
             today: LocalDate = LocalDate.now(),
             zone: ZoneId = ZoneId.systemDefault(),
         ): ViewerTitle {
-            val taken = parse(capturedAt, zone)
-                ?: fileMtime?.takeIf { it > 0.0 }?.let {
-                    LocalDateTime.ofInstant(Instant.ofEpochMilli((it * 1000).toLong()), zone)
-                }
+            val taken = takenAt(capturedAt, fileMtime, zone)
                 ?: return ViewerTitle(fileName, place?.ifBlank { null })
-            val day = when (taken.toLocalDate()) {
-                today -> "Hoje"
-                today.minusDays(1) -> "Ontem"
-                else -> taken.format(dateFormat)
+            val date = taken.toLocalDate()
+            val day = when {
+                date == today -> "Hoje"
+                date == today.minusDays(1) -> "Ontem"
+                // The year only when it is not this one, as a gallery does.
+                date.year == today.year -> "${date.dayOfMonth} de ${months[date.monthValue - 1]}"
+                else -> "${date.dayOfMonth} de ${months[date.monthValue - 1]} de ${date.year}"
             }
-            val sub = listOfNotNull(taken.format(timeFormat), place?.ifBlank { null }).joinToString(" · ")
+            val sub = listOfNotNull(time(taken), place?.ifBlank { null }).joinToString(" · ")
             return ViewerTitle(day, sub)
         }
 
-        private val fullFormat = DateTimeFormatter.ofPattern("EEEE, d 'de' MMMM 'de' yyyy 'às' HH:mm", locale)
-
-        /** The capture time in full, for the information panel; null when unknown. */
+        /** The capture time in full for the information panel ("Qui., 8 de out. de 2026 • 07:23"); null when unknown. */
         fun fullDate(capturedAt: String?, fileMtime: Double?, zone: ZoneId = ZoneId.systemDefault()): String? {
-            val taken = parse(capturedAt, zone)
+            val taken = takenAt(capturedAt, fileMtime, zone) ?: return null
+            val date = taken.toLocalDate()
+            return "${weekdays[date.dayOfWeek.value - 1]}, ${date.dayOfMonth} de " +
+                "${months[date.monthValue - 1]} de ${date.year} • ${time(taken)}"
+        }
+
+        private fun time(taken: LocalDateTime) = "%02d:%02d".format(taken.hour, taken.minute)
+
+        private fun takenAt(capturedAt: String?, fileMtime: Double?, zone: ZoneId): LocalDateTime? =
+            parse(capturedAt, zone)
                 ?: fileMtime?.takeIf { it > 0.0 }?.let {
                     LocalDateTime.ofInstant(Instant.ofEpochMilli((it * 1000).toLong()), zone)
                 }
-                ?: return null
-            return taken.format(fullFormat).replaceFirstChar { it.uppercase(locale) }
-        }
 
         private fun parse(value: String?, zone: ZoneId): LocalDateTime? {
             if (value.isNullOrBlank()) return null

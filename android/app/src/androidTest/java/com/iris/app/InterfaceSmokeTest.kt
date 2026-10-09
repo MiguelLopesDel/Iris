@@ -303,7 +303,7 @@ class InterfaceSmokeTest {
         waitForRequestPath("/api/records/0")
         waitForText("Salvar no celular")
         compose.onNodeWithText("Informações").performClick()
-        waitForText("Quando e onde")
+        waitForText("Detalhes")
         scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
 
         assertTrue("No unexpected API paths: ${unhandledPaths.joinToString()}", unhandledPaths.isEmpty())

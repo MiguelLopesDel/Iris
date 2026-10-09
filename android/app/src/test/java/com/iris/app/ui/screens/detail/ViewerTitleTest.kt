@@ -13,7 +13,7 @@ class ViewerTitleTest {
     fun `the capture date and place name the photo`() {
         val title = ViewerTitle.of("2025-03-12T14:32:05", null, "Lisboa, PT", "IMG_0001.jpg", today)
 
-        assertEquals("12 de março de 2025", title.headline)
+        assertEquals("12 de mar. de 2025", title.headline)
         assertEquals("14:32 · Lisboa, PT", title.subline)
     }
 
@@ -51,8 +51,13 @@ class ViewerTitleTest {
         // 2025-01-02T03:04:00Z
         val title = ViewerTitle.of("", 1_735_787_040.0, null, "a.jpg", today, ZoneOffset.UTC)
 
-        assertEquals("2 de janeiro de 2025", title.headline)
+        assertEquals("2 de jan. de 2025", title.headline)
         assertEquals("03:04", title.subline)
+    }
+
+    @Test
+    fun `a date in this year leaves the year out`() {
+        assertEquals("3 de mai.", ViewerTitle.of("2026-05-03T10:00:00", null, null, "a.jpg", today).headline)
     }
 
     @Test
@@ -66,7 +71,7 @@ class ViewerTitleTest {
     @Test
     fun `the panel gives the date in full`() {
         assertEquals(
-            "Quarta-feira, 12 de março de 2025 às 14:32",
+            "Qua., 12 de mar. de 2025 • 14:32",
             ViewerTitle.fullDate("2025-03-12T14:32:05", null),
         )
         assertEquals(null, ViewerTitle.fullDate(null, null))
