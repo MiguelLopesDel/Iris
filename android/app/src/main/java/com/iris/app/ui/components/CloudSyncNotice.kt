@@ -20,7 +20,7 @@ import com.iris.app.R
 import com.iris.app.data.model.CloudConnectionState
 import com.iris.app.data.model.CloudSyncStatus
 import com.iris.app.ui.theme.IrisDanger
-import com.iris.app.ui.theme.IrisDarkSurface
+import com.iris.app.ui.theme.IrisSurface
 
 @Composable
 fun CloudSyncNotice(
@@ -40,7 +40,7 @@ fun CloudSyncNotice(
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+        colors = CardDefaults.cardColors(containerColor = IrisSurface),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),

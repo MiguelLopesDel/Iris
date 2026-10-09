@@ -41,6 +41,7 @@ class ServerSettingsRepository(private val context: Context) {
     private object PreferencesKeys {
         val SERVER_URL = stringPreferencesKey("server_url")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val THEME_COLORS = stringPreferencesKey("theme_colors")
         val SEARCH_BALANCE = floatPreferencesKey("search_balance")
         val SEARCH_THRESHOLD = floatPreferencesKey("search_threshold")
         val TEXT_BONUS = floatPreferencesKey("text_bonus")
@@ -79,8 +80,14 @@ class ServerSettingsRepository(private val context: Context) {
         preferences[PreferencesKeys.SERVER_URL] ?: DEFAULT_SERVER_URL
     }
 
+    /** Light, dark or the system's (see ui.theme.ThemeMode); light when never chosen. */
     val themeMode: Flow<String> = context.dataStore.data.map { preferences ->
-        preferences[PreferencesKeys.THEME_MODE] ?: "system"
+        preferences[PreferencesKeys.THEME_MODE] ?: "light"
+    }
+
+    /** Where the theme's colours come from (see ui.theme.ThemeColors). */
+    val themeColors: Flow<String> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.THEME_COLORS] ?: "iris"
     }
 
     val searchBalance: Flow<Float> = context.dataStore.data.map { preferences ->
@@ -187,6 +194,12 @@ class ServerSettingsRepository(private val context: Context) {
     suspend fun updateThemeMode(mode: String) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.THEME_MODE] = mode
+        }
+    }
+
+    suspend fun updateThemeColors(colors: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.THEME_COLORS] = colors
         }
     }
 

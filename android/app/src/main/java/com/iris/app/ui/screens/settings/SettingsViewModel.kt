@@ -1,5 +1,10 @@
 package com.iris.app.ui.screens.settings
 
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import com.iris.app.ui.theme.ThemeMode
+import com.iris.app.ui.theme.ThemeColors
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -63,6 +68,20 @@ class SettingsViewModel(
     private val irisRepository: IrisRepository,
     private val pairingRequests: MutableStateFlow<String?> = MutableStateFlow(null),
 ) : ViewModel() {
+
+    /** The app's theme; the activity applies it as soon as it changes. */
+    val themeMode = settingsRepository.themeMode.map(ThemeMode::fromKey)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemeMode.DEFAULT)
+    val themeColors = settingsRepository.themeColors.map(ThemeColors::fromKey)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemeColors.DEFAULT)
+
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch { settingsRepository.updateThemeMode(mode.key) }
+    }
+
+    fun setThemeColors(colors: ThemeColors) {
+        viewModelScope.launch { settingsRepository.updateThemeColors(colors.key) }
+    }
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()

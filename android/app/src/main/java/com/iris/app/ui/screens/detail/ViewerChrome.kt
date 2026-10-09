@@ -12,7 +12,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -66,7 +65,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.iris.app.ui.theme.IrisTheme
 import kotlinx.coroutines.launch
 
 /** One action of a viewer bar or menu. */
@@ -167,45 +165,43 @@ internal fun ViewerScaffold(
         ) { bottomBar() }
 
         if (progress > 0f) {
-            // The photo stays on black; the panel follows the system's light or dark setting.
-            IrisTheme(darkTheme = isSystemInDarkTheme()) {
-                Column(
+            // The photo stays on black; the panel takes the app's theme.
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(with(density) { panelHeight.toDp() })
+                    .graphicsLayer { translationY = panelHeight * (1f - progress) + drag.pull }
+                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .nestedScroll(connection)
+            ) {
+                Box(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .height(with(density) { panelHeight.toDp() })
-                        .graphicsLayer { translationY = panelHeight * (1f - progress) + drag.pull }
-                        .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .nestedScroll(connection)
+                        .height(28.dp)
+                        .pointerInput(drag) {
+                            detectVerticalDragGestures(
+                                onDragEnd = { release(0f) },
+                                onDragCancel = { release(0f) },
+                                onVerticalDrag = { change, amount ->
+                                    change.consume()
+                                    if (amount < 0f) drag.beforeScroll(amount) else drag.afterScroll(amount)
+                                },
+                            )
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(28.dp)
-                            .pointerInput(drag) {
-                                detectVerticalDragGestures(
-                                    onDragEnd = { release(0f) },
-                                    onDragCancel = { release(0f) },
-                                    onVerticalDrag = { change, amount ->
-                                        change.consume()
-                                        if (amount < 0f) drag.beforeScroll(amount) else drag.afterScroll(amount)
-                                    },
-                                )
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            Modifier
-                                .size(width = 36.dp, height = 4.dp)
-                                .background(
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    RoundedCornerShape(2.dp)
-                                )
-                        )
-                    }
-                    panel()
+                        Modifier
+                            .size(width = 36.dp, height = 4.dp)
+                            .background(
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                RoundedCornerShape(2.dp)
+                            )
+                    )
                 }
+                panel()
             }
             // The way back stays in reach above the panel.
             IconButton(
