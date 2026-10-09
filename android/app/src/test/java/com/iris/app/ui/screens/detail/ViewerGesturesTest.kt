@@ -49,4 +49,27 @@ class ViewerGesturesTest {
         assertFalse(ViewerGestures.isVertical(Offset(0f, 5f), slop = 10f))
         assertTrue(ViewerGestures.isVertical(Offset(10f, 60f), slop = 10f))
     }
+
+    @Test
+    fun `quick zoom doubles the scale per quarter screen dragged down and stays in range`() {
+        assertEquals(2f, ViewerGestures.quickZoomScale(1f, dragY = 500f, height = 2000f), 0.001f)
+        assertEquals(1f, ViewerGestures.quickZoomScale(2f, dragY = -500f, height = 2000f), 0.001f)
+        assertEquals(1f, ViewerGestures.quickZoomScale(1f, dragY = -900f, height = 2000f), 0.001f)
+        assertEquals(ViewerGestures.MAX_SCALE, ViewerGestures.quickZoomScale(1f, dragY = 5000f, height = 2000f), 0.001f)
+    }
+
+    @Test
+    fun `pushing a zoomed photo past its edge turns the page`() {
+        assertEquals(1, ViewerGestures.edgePage(overscrollX = -200f, threshold = 150f))
+        assertEquals(-1, ViewerGestures.edgePage(overscrollX = 200f, threshold = 150f))
+        assertEquals(0, ViewerGestures.edgePage(overscrollX = -100f, threshold = 150f))
+    }
+
+    @Test
+    fun `a photo dragged down shrinks and fades`() {
+        assertEquals(1f to 1f, ViewerGestures.closingLook(0f, 2000f))
+        val (scale, alpha) = ViewerGestures.closingLook(1000f, 2000f)
+        assertTrue(scale < 1f && alpha < 1f && scale > 0.5f && alpha > 0.5f)
+    }
 }
+
