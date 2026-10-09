@@ -143,6 +143,13 @@ class PairingConnector(
         for (address in code.addresses) {
             val origin = ServerOrigin.of(address) ?: continue
             val https = address.startsWith("https://")
+            if (!https && code.keySha256 != null) {
+                outcomes += AddressOutcome.Skipped(
+                    address,
+                    "Este código confirma a identidade do servidor e exige HTTPS; use o endereço HTTPS incluído no código.",
+                )
+                continue
+            }
             if (!https && !allowCleartext) {
                 outcomes += AddressOutcome.Skipped(address, "HTTP sem criptografia não foi permitido")
                 continue

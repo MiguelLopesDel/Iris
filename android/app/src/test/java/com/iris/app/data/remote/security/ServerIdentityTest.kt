@@ -167,6 +167,12 @@ class ServerIdentityTest {
     private fun code(address: String, key: String) =
         PairingCode.parse("iris://pair?v=1&id=$id&u=${URLEncoder.encode(address, "UTF-8")}&k=$key")
 
+    private fun code(addresses: List<String>, key: String) = PairingCode.parse(
+        "iris://pair?v=1&id=$id&" + addresses.joinToString("&") {
+            "u=${URLEncoder.encode(it, "UTF-8")}"
+        } + "&k=$key"
+    )
+
     @Test
     fun `pairing trusts the server's own certificate by its key and checks its signature`() {
         val keys = ecKeyPair()
@@ -176,6 +182,40 @@ class ServerIdentityTest {
 
         assertEquals(address(server), result.address)
         assertEquals(keySha256(keys), store.get(ServerOrigin.of(server.url("/"))).identityKeySha256)
+    }
+
+    @Test
+    fun `identity pairing skips an earlier http address and continues to https`() {
+        val plain = MockWebServer().apply { start() }
+        servers += plain
+        val pairedKeys = ecKeyPair()
+        val secure = irisServer(pairedKeys)
+
+        val result = PairingConnector(security).connect(
+            code(listOf(plain.url("/").toString().trimEnd('/'), address(secure)), keySha256(pairedKeys)),
+            allowCleartext = true,
+        )
+
+        assertEquals(address(secure), result.address)
+        assertTrue(result.outcomes.first() is com.iris.app.data.remote.security.AddressOutcome.Skipped)
+        assertEquals("HTTP must not be contacted for an identity-bearing code", 0, plain.requestCount)
+        assertEquals(keySha256(pairedKeys), store.get(ServerOrigin.of(secure.url("/"))).identityKeySha256)
+    }
+
+    @Test
+    fun `identity pairing without an https address explains refusal without contacting or saving http`() {
+        val plain = MockWebServer().apply { start() }
+        servers += plain
+        val plainAddress = plain.url("/").toString().trimEnd('/')
+        val pairedKey = keySha256(ecKeyPair())
+
+        val result = PairingConnector(security).connect(code(listOf(plainAddress), pairedKey), allowCleartext = true)
+
+        assertNull(result.address)
+        val skipped = result.outcomes.single() as AddressOutcome.Skipped
+        assertTrue(skipped.reason.contains("exige HTTPS"))
+        assertEquals("HTTP must not be contacted for an identity-bearing code", 0, plain.requestCount)
+        assertEquals(ServerSecurity(), store.get(ServerOrigin.of(plainAddress)!!))
     }
 
     @Test
