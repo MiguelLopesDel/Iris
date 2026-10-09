@@ -4172,6 +4172,20 @@ a.btn {
   font-size: 13px;
 }
 
+.pairing-identity {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  margin: 0;
+  text-align: center;
+}
+
+.pairing-identity strong {
+  font-family: ui-monospace, monospace;
+  font-size: 22px;
+  letter-spacing: 0.06em;
+}
+
 .pairing-addresses {
   margin: 0;
   padding-left: 18px;

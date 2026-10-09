@@ -44,8 +44,12 @@ export async function showPairing() {
     <ol class="pairing-steps">
       <li>No celular, abra a câmera ou o leitor de QR e aponte para o código; ou, no app Iris,
         use <strong>Configurações → Parear com código</strong>.</li>
-      <li>Confirme o servidor no app e entre com a sua conta.</li>
+      <li>Confira se o app mostra o mesmo <strong>código do servidor</strong> que aparece aqui embaixo,
+        toque em <strong>Confiar</strong> e entre com a sua conta.</li>
     </ol>
+    ${code.identity_code ? `<p class="pairing-identity">Código do servidor
+      <strong>${escapeHtml(code.identity_code)}</strong>
+      <span class="system-hint">Se o celular mostrar outro código, cancele: não é este servidor.</span></p>` : ''}
     <p class="system-hint">Endereços oferecidos, em ordem:</p>
     <ul class="pairing-addresses">${code.addresses.map((a) => `<li><code>${escapeHtml(a)}</code></li>`).join('')}</ul>
     ${code.ca_sha256 ? `<p class="system-hint">Autoridade de certificado (SHA-256):<br><code class="pairing-fingerprint">${escapeHtml(groupedFingerprint(code.ca_sha256))}</code></p>` : ''}

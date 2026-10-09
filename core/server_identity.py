@@ -58,8 +58,26 @@ class ServerIdentity:
         """SHA-256 of the public key, in lowercase hex: what the pairing code carries."""
         return hashlib.sha256(self.public_key_der).hexdigest()
 
+    @property
+    def short_code(self) -> str:
+        """The fingerprint as people compare it by eye (see :func:`short_code`)."""
+        return short_code(self.fingerprint)
+
     def sign(self, message: bytes) -> bytes:
         return self.private_key.sign(message, ec.ECDSA(hashes.SHA256()))
+
+
+def short_code(fingerprint: str) -> str:
+    """The first 48 bits of a key fingerprint as ``XXXX-XXXX-XXXX``.
+
+    Shown on the pairing page, in ``server.sh status`` and by the app before it
+    trusts a server, so a person can check by eye that the app is about to
+    trust this server. The app still verifies the whole fingerprint; the short
+    code only has to make a substitution visible, not resist a search for a
+    colliding key.
+    """
+    head = fingerprint[:12].upper()
+    return "-".join(head[i : i + 4] for i in range(0, 12, 4))
 
 
 def challenge_message(instance_id: str, nonce: str, address: str) -> bytes:

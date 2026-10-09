@@ -39,6 +39,12 @@ def test_the_key_is_created_once_private_and_kept(tmp_path: Path) -> None:
     assert server_identity.read_identity(tmp_path).fingerprint == first.fingerprint
 
 
+def test_the_short_code_is_the_start_of_the_fingerprint_in_groups(tmp_path: Path) -> None:
+    assert server_identity.short_code("4f2a91c30b7de215" + "0" * 48) == "4F2A-91C3-0B7D"
+    identity = server_identity.server_identity(tmp_path)
+    assert identity.short_code == server_identity.short_code(identity.fingerprint)
+
+
 def test_reading_never_creates_a_key(tmp_path: Path) -> None:
     assert server_identity.read_identity(tmp_path) is None
     assert not (tmp_path / server_identity.KEY_FILE).exists()

@@ -58,6 +58,15 @@ class PairingTest {
     }
 
     @Test
+    fun `the identity code is the one the server shows`() {
+        // Same vector as tests/test_server_identity.py: the page, /healthz and the app must agree.
+        val key = "4f2a91c30b7de215" + "0".repeat(48)
+        assertEquals("4F2A-91C3-0B7D", identityCode(key))
+        assertEquals("4F2A-91C3-0B7D", PairingCode(id, listOf("https://iris.example"), null, key).identityCode)
+        assertNull(PairingCode(id, listOf("https://iris.example"), null).identityCode)
+    }
+
+    @Test
     fun `a pairing link is read as the server writes it`() {
         val parsed = PairingCode.parse(
             "iris://pair?v=1&id=$id&u=http%3A%2F%2F192.168.1.20%3A8501&u=https%3A%2F%2Firis.example&ca=" + "a".repeat(64)

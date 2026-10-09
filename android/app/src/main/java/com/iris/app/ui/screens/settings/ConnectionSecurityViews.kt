@@ -35,6 +35,7 @@ import com.iris.app.data.remote.security.ConnectionProblem
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.PairingCode
 import com.iris.app.data.remote.security.TrustMode
+import com.iris.app.data.remote.security.identityCode
 import com.iris.app.ui.theme.IrisAccentInk
 import com.iris.app.ui.theme.IrisAccentLime
 import com.iris.app.ui.theme.IrisDanger
@@ -219,7 +220,7 @@ fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
             val identity = summary.identityKeySha256
             Text(
                 if (identity != null) {
-                    "Identidade do servidor: fixada pelo código de pareamento (${identity.take(16).chunked(4).joinToString(" ")}…)"
+                    "Identidade do servidor: fixada pelo pareamento (código ${identityCode(identity)})"
                 } else {
                     "Identidade do servidor: não fixada. Pareie pelo código para que o app só fale com este servidor."
                 },
@@ -267,37 +268,85 @@ fun PairingEntryDialog(onScan: () -> Unit, onPaste: (String) -> Unit, onDismiss:
     )
 }
 
-/** What the code will do, before anything changes. */
+/**
+ * Asks before the app trusts a server from a pairing code, in plain words: the
+ * server's short identity code to compare with the one on the server's page,
+ * what trusting means, and the technical details on request.
+ */
 @Composable
 fun PairingConfirmDialog(code: PairingCode, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    var showDetails by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text("Parear com este servidor?") },
+        title = { Text("Confiar neste servidor?") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("O app vai usar o primeiro destes endereços que responder como este servidor:", fontSize = 13.sp)
-                code.addresses.forEach { Text("• $it", fontSize = 13.sp, fontFamily = FontFamily.Monospace) }
-                code.caSha256?.let { sha ->
-                    Text("Autoridade de certificado (SHA-256), que passa a ser confiável para o endereço https que responder como este servidor:",
-                        fontSize = 12.sp, color = IrisTextMuted)
-                    Text(sha.uppercase().chunked(2).joinToString(":"), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                val identity = code.identityCode
+                if (identity != null) {
+                    Text("Código do servidor", fontSize = 14.sp, color = IrisTextSoft)
+                    Text(
+                        identity,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Código do servidor: " + identity.replace("-", " ").toList().joinToString(" ")
+                        },
+                    )
+                    Text(
+                        "Confira se é o mesmo código que aparece na tela do Iris onde você leu o QR. " +
+                            "Se for diferente, toque em Cancelar.",
+                        fontSize = 15.sp,
+                    )
+                    Text(
+                        "Ao confiar, o app passa a aceitar o certificado deste servidor e só conversa com ele: " +
+                            "outro aparelho que tente se passar por ele é recusado.",
+                        fontSize = 14.sp,
+                        color = IrisTextSoft,
+                    )
+                } else {
+                    // Codes from servers without an identity key: only the addresses can be shown.
+                    Text(
+                        "Este servidor é de uma versão do Iris que não mostra um código de identidade. " +
+                            "Só confirme se você leu o QR na tela do seu próprio servidor.",
+                        fontSize = 15.sp,
+                    )
                 }
                 if (code.usesCleartext) {
                     Text(
-                        "Os endereços http:// trafegam sem criptografia. Se um deles for o usado, você permite HTTP para ele; " +
-                            "faça isso só numa rede de confiança ou que já criptografa o tráfego.",
-                        fontSize = 12.sp,
+                        "Alguns endereços deste código não usam criptografia (http://). Se o app usar um deles, " +
+                            "faça isso só em uma rede de confiança.",
+                        fontSize = 14.sp,
                         color = IrisDanger,
                     )
                 }
-                Text("Parear não dá acesso à conta: depois, entre com o seu usuário e senha.",
-                    fontSize = 12.sp, color = IrisTextMuted)
+                Text(
+                    "Confiar não dá acesso à sua conta: depois, entre com o seu usuário e senha.",
+                    fontSize = 14.sp,
+                    color = IrisTextSoft,
+                )
+                TextButton(onClick = { showDetails = !showDetails }) {
+                    Text(if (showDetails) "Ocultar detalhes técnicos" else "Mostrar detalhes técnicos")
+                }
+                if (showDetails) {
+                    Text("O app usa o primeiro destes endereços que responder como este servidor:", fontSize = 13.sp)
+                    code.addresses.forEach { Text("• $it", fontSize = 13.sp, fontFamily = FontFamily.Monospace) }
+                    code.keySha256?.let { sha ->
+                        Text("Chave de identidade (SHA-256):", fontSize = 12.sp, color = IrisTextMuted)
+                        Text(sha.uppercase().chunked(2).joinToString(":"), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    }
+                    code.caSha256?.let { sha ->
+                        Text("Autoridade de certificado (SHA-256), que passa a ser confiável para o endereço https que responder como este servidor:",
+                            fontSize = 12.sp, color = IrisTextMuted)
+                        Text(sha.uppercase().chunked(2).joinToString(":"), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
             }
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Parear") } },
+        confirmButton = { Button(onClick = onConfirm) { Text("Confiar") } },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancelar") } },
     )
 }
