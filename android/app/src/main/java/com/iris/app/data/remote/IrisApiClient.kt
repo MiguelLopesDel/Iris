@@ -150,6 +150,20 @@ class IrisApiClient(
     private fun identityRefusal(request: Request): Response? {
         val url = request.url
         val pinned = connectionSecurity.securityFor(ServerOrigin.of(url)).identityKeySha256 ?: return null
+        // A challenge over cleartext HTTP cannot bind the proof to the later
+        // request that carries credentials. Require TLS for identity-paired servers.
+        if (!url.isHttps) {
+            return Response.Builder()
+                .request(request)
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(HTTPS_REQUIRED_CODE)
+                .message("HTTPS required for paired server")
+                .body(
+                    "{\"detail\":\"Este servidor foi pareado com uma identidade. Use o endereço HTTPS do código de pareamento; credenciais não são enviadas por HTTP.\"}"
+                        .toResponseBody("application/json".toMediaType())
+                )
+                .build()
+        }
         return try {
             identityVerifier.requireIdentity(url, pinned, credentialsStore?.serverInstanceId())
             null
@@ -433,6 +447,8 @@ class IrisApiClient(
     companion object {
         /** The local answer when a server did not prove its identity ("misdirected request"). */
         const val IDENTITY_MISMATCH_CODE = 421
+        /** A paired identity cannot protect credentials sent over cleartext HTTP. */
+        const val HTTPS_REQUIRED_CODE = 426
         /**
          * How every server response is decoded. Exposed so tests assert against
          * the real configuration instead of a copy that can drift from it —

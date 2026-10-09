@@ -17,6 +17,8 @@ import com.iris.app.data.remote.IrisApiClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -208,7 +210,7 @@ class IrisApiClientAuthTest {
         }
     }
 
-    /** A client paired with [pairedKeys] for this server (over HTTP, which the user allowed). */
+    /** A client paired with [pairedKeys] for this server over HTTP. */
     private fun pairedClient(pairedKeys: java.security.KeyPair): IrisApiClient {
         val store = InMemoryServerSecurityStore()
         store.put(
@@ -219,13 +221,43 @@ class IrisApiClientAuthTest {
         return IrisApiClient(server.url("/").toString(), FakeCredentials(accessToken = "private-token"), connectionSecurity = security)
     }
 
+    private fun serveHttpsWithCertificateKey(keys: java.security.KeyPair) {
+        server.shutdown()
+        server = MockWebServer()
+        val certificate = HeldCertificate.Builder()
+            .keyPair(keys)
+            .commonName("Iris")
+            .addSubjectAlternativeName("localhost")
+            .build()
+        server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+        server.start()
+    }
+
     private fun recordedPaths(): List<Pair<String, String?>> =
         generateSequence { server.takeRequest(200, java.util.concurrent.TimeUnit.MILLISECONDS) }
             .map { (it.requestUrl?.encodedPath ?: "") to it.getHeader("Authorization") }.toList()
 
     @Test
-    fun the_paired_server_proves_its_key_and_then_gets_the_token() {
+    fun an_identity_paired_server_over_http_never_receives_credentials() {
         val keys = ecKeys()
+        answerIdentityWith(keys)
+        val client = pairedClient(keys)
+
+        client.authenticatedOkHttpClient.newCall(Request.Builder().url(server.url("/api/records/1")).build())
+            .execute().use { assertEquals(IrisApiClient.HTTPS_REQUIRED_CODE, it.code) }
+
+        val login = Request.Builder().url(server.url("/api/auth/devices/login"))
+            .post(okhttp3.FormBody.Builder().add("password", "synthetic password").build()).build()
+        client.authenticatedOkHttpClient.newCall(login).execute().use {
+            assertEquals(IrisApiClient.HTTPS_REQUIRED_CODE, it.code)
+        }
+        assertTrue("HTTP must not even receive an identity challenge", recordedPaths().isEmpty())
+    }
+
+    @Test
+    fun the_paired_https_server_proves_its_key_and_then_gets_the_token() {
+        val keys = ecKeys()
+        serveHttpsWithCertificateKey(keys)
         answerIdentityWith(keys)
         val client = pairedClient(keys)
 
@@ -240,8 +272,10 @@ class IrisApiClientAuthTest {
 
     @Test
     fun an_impostor_at_the_paired_address_gets_neither_token_nor_password() {
+        val pairedKeys = ecKeys()
+        serveHttpsWithCertificateKey(pairedKeys)
         answerIdentityWith(ecKeys()) // another machine, with a key of its own
-        val client = pairedClient(ecKeys())
+        val client = pairedClient(pairedKeys)
 
         client.authenticatedOkHttpClient.newCall(Request.Builder().url(server.url("/api/records/1")).build())
             .execute().use { assertEquals(IrisApiClient.IDENTITY_MISMATCH_CODE, it.code) }
