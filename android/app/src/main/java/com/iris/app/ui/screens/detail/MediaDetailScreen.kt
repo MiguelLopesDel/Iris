@@ -1,77 +1,45 @@
 package com.iris.app.ui.screens.detail
 
 import android.graphics.Color as AndroidColor
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.IconButton
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -83,7 +51,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -110,7 +77,6 @@ import com.iris.app.ui.components.rememberMediaShare
 import com.iris.app.ui.screens.spaces.SpacePickerDialog
 import com.iris.app.ui.theme.IrisAccentLime
 import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisTheme
 import kotlinx.coroutines.launch
 
 /**
@@ -146,67 +112,34 @@ fun MediaDetailScreen(
     var renaming by remember { mutableStateOf(false) }
     var pickingSpace by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val panelProgress by animateFloatAsState(if (showDetails) 1f else 0f, label = "info panel")
 
     LaunchedEffect(pagerState.currentPage) { zoomed = false }
-    BackHandler(enabled = showDetails) { showDetails = false }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        HorizontalPager(
-            state = pagerState,
-            userScrollEnabled = !zoomed,
-            key = { sequence[it] },
-            beyondViewportPageCount = 1,
-            modifier = Modifier
-                .fillMaxWidth()
-                // The panel takes the bottom of the screen; the photo keeps the rest.
-                .fillMaxHeight(1f - PANEL_HEIGHT_FRACTION * panelProgress)
-                .align(Alignment.TopCenter)
-        ) { page ->
-            val pageViewModel = viewModelFor(sequence[page])
-            val pageState by pageViewModel.uiState.collectAsStateWithLifecycle()
-            val isCurrent = page == pagerState.currentPage
-            MediaPage(
-                state = pageState,
-                apiClient = apiClient,
-                isCurrent = isCurrent,
-                onToggleChrome = { if (showDetails) showDetails = false else chromeVisible = !chromeVisible },
-                onZoomChanged = { if (isCurrent) zoomed = it },
-                onSwipe = { swipe ->
-                    when (swipe) {
-                        // With the panel up, dragging the photo down lowers the panel first.
-                        ViewerGestures.Swipe.CLOSE -> if (showDetails) showDetails = false else onBack()
-                        ViewerGestures.Swipe.SHOW_INFO -> showDetails = true
-                        ViewerGestures.Swipe.NONE -> Unit
-                    }
-                },
-                onRetry = { pageViewModel.loadDetail() }
-            )
+    val viewModel = viewModelFor(sequence[pagerState.currentPage])
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val download = rememberMediaDownload { viewModel.showNotice(it) }
+    val share = rememberMediaShare { viewModel.showNotice(it) }
+    val record = uiState.record
+    val mediaUrl = record?.let { apiClient.resolveMediaUrl(it.resolvedPath ?: it.caminho) }
+
+    uiState.notice?.let { notice ->
+        LaunchedEffect(notice) {
+            android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_SHORT).show()
+            viewModel.clearNotice()
         }
-
-        val viewModel = viewModelFor(sequence[pagerState.currentPage])
-        val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-        val download = rememberMediaDownload { viewModel.showNotice(it) }
-        val share = rememberMediaShare { viewModel.showNotice(it) }
-
-        uiState.notice?.let { notice ->
-            LaunchedEffect(notice) {
-                android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_SHORT).show()
-                viewModel.clearNotice()
-            }
+    }
+    if (showDetails && record != null) {
+        LaunchedEffect(record.index) {
+            viewModel.loadSimilars()
+            viewModel.loadBackupState()
         }
+    }
 
-        val record = uiState.record
-        AnimatedVisibility(
-            visible = chromeVisible && !showDetails,
-            enter = fadeIn() + slideInVertically { -it },
-            exit = fadeOut() + slideOutVertically { -it },
-            modifier = Modifier.align(Alignment.TopCenter)
-        ) {
+    ViewerScaffold(
+        panelOpen = showDetails && record != null,
+        onClosePanel = { showDetails = false },
+        chromeVisible = chromeVisible,
+        topBar = {
             val title = remember(record, uiState.metadata) {
                 ViewerTitle.of(
                     capturedAt = uiState.metadata?.curated?.textOf("captured_at"),
@@ -218,151 +151,110 @@ fun MediaDetailScreen(
             ViewerTopBar(
                 title = title,
                 onBack = onBack,
-                onInfo = record?.let { { showDetails = true } },
-                onRename = record?.let { { renaming = true } },
+                onTitleClick = record?.let { { showDetails = true } },
+                menu = if (record == null || mediaUrl == null) emptyList() else listOf(
+                    ViewerAction(Icons.Outlined.Info, "Sobre") { showDetails = true },
+                    ViewerAction(Icons.Outlined.DriveFileRenameOutline, "Renomear") { renaming = true },
+                    ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
+                        download(mediaUrl, record.cleanFilename)
+                    },
+                ),
             )
-        }
-
-        if (record != null) {
-            AnimatedVisibility(
-                visible = chromeVisible && !showDetails,
-                enter = fadeIn() + slideInVertically { it },
-                exit = fadeOut() + slideOutVertically { it },
-                modifier = Modifier.align(Alignment.BottomCenter)
-            ) {
-                val mediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
+        },
+        bottomBar = {
+            if (record != null && mediaUrl != null) {
                 ViewerActionBar(
-                    onShare = { share(mediaUrl, record.cleanFilename) },
-                    onAddTo = { pickingSpace = true },
-                    onSave = { download(mediaUrl, record.cleanFilename) },
-                    onInfo = { showDetails = true },
+                    listOf(
+                        ViewerAction(Icons.Outlined.Share, "Compartilhar") { share(mediaUrl, record.cleanFilename) },
+                        ViewerAction(Icons.Default.Add, "Adicionar a") { pickingSpace = true },
+                        ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
+                            download(mediaUrl, record.cleanFilename)
+                        },
+                        ViewerAction(Icons.Outlined.Info, "Informações") { showDetails = true },
+                    )
                 )
             }
-        }
-
-        if (panelProgress > 0f && record != null) {
-            LaunchedEffect(record.index) {
-                viewModel.loadSimilars()
-                viewModel.loadBackupState()
-            }
-            // The photo stays on black; the panel follows the system's light or dark setting.
-            IrisTheme(darkTheme = isSystemInDarkTheme()) {
-                InfoPanel(
-                    progress = panelProgress,
-                    onClose = { showDetails = false },
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                ) {
-                    MediaDetailsSheet(
-                        state = uiState,
-                        onPersonClick = onPersonClick,
-                        onMediaClick = { index ->
-                            showDetails = false
-                            ViewerSequence.set(uiState.similarRecords.map { it.index })
-                            onMediaClick(index)
-                        },
-                        onSearchText = onSearchText,
-                    )
-                }
-            }
-            // The way back stays in reach above the panel.
-            IconButton(
-                onClick = { showDetails = false },
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(8.dp)
-                    .size(48.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), CircleShape)
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Fechar informações", tint = Color.White)
-            }
-        }
-
-        if (pickingSpace && record != null) {
-            SpacePickerDialog(
-                repository = application.irisRepository,
-                onDismiss = { pickingSpace = false },
-                onPick = { space ->
-                    pickingSpace = false
-                    val dbId = record.dbId
-                    if (dbId == null) {
-                        viewModel.showNotice("Esta mídia ainda não pode ser enviada")
-                    } else {
-                        scope.launch {
-                            application.irisRepository.addToSpace(space.id, dbId)
-                                .onSuccess { added ->
-                                    viewModel.showNotice(
-                                        if (added.created) "Enviada para ${space.name}"
-                                        else "Já estava em ${space.name}"
-                                    )
-                                }
-                                .onFailure { e ->
-                                    viewModel.showNotice(e.localizedMessage ?: "Não foi possível enviar")
-                                }
+        },
+        panel = {
+            MediaDetailsSheet(
+                state = uiState,
+                onPersonClick = onPersonClick,
+                onMediaClick = { index ->
+                    showDetails = false
+                    ViewerSequence.set(uiState.similarRecords.map { it.index })
+                    onMediaClick(index)
+                },
+                onSearchText = onSearchText,
+            )
+        },
+        photo = { photoModifier ->
+            HorizontalPager(
+                state = pagerState,
+                userScrollEnabled = !zoomed,
+                key = { sequence[it] },
+                beyondViewportPageCount = 1,
+                modifier = photoModifier
+            ) { page ->
+                val pageViewModel = viewModelFor(sequence[page])
+                val pageState by pageViewModel.uiState.collectAsStateWithLifecycle()
+                val isCurrent = page == pagerState.currentPage
+                MediaPage(
+                    state = pageState,
+                    apiClient = apiClient,
+                    isCurrent = isCurrent,
+                    onToggleChrome = { if (showDetails) showDetails = false else chromeVisible = !chromeVisible },
+                    onZoomChanged = { if (isCurrent) zoomed = it },
+                    onSwipe = { swipe ->
+                        when (swipe) {
+                            // With the panel up, dragging the photo down lowers the panel first.
+                            ViewerGestures.Swipe.CLOSE -> if (showDetails) showDetails = false else onBack()
+                            ViewerGestures.Swipe.SHOW_INFO -> showDetails = true
+                            ViewerGestures.Swipe.NONE -> Unit
                         }
+                    },
+                    onRetry = { pageViewModel.loadDetail() }
+                )
+            }
+        },
+    )
+
+    if (pickingSpace && record != null) {
+        SpacePickerDialog(
+            repository = application.irisRepository,
+            onDismiss = { pickingSpace = false },
+            onPick = { space ->
+                pickingSpace = false
+                val dbId = record.dbId
+                if (dbId == null) {
+                    viewModel.showNotice("Esta mídia ainda não pode ser enviada")
+                } else {
+                    scope.launch {
+                        application.irisRepository.addToSpace(space.id, dbId)
+                            .onSuccess { added ->
+                                viewModel.showNotice(
+                                    if (added.created) "Enviada para ${space.name}"
+                                    else "Já estava em ${space.name}"
+                                )
+                            }
+                            .onFailure { e ->
+                                viewModel.showNotice(e.localizedMessage ?: "Não foi possível enviar")
+                            }
                     }
                 }
-            )
-        }
-
-        if (renaming && record != null) {
-            RenameDialog(
-                currentName = record.cleanFilename,
-                isWorking = uiState.isRenaming,
-                onDismiss = { renaming = false },
-                onConfirm = { novo ->
-                    renaming = false
-                    viewModel.rename(novo)
-                }
-            )
-        }
+            }
+        )
     }
-}
 
-/** Share of the screen height the information panel takes; the photo keeps the rest. */
-private const val PANEL_HEIGHT_FRACTION = 0.68f
-
-/**
- * The information panel's frame: rounded top, a handle that can be dragged
- * down to close it, and the panel's own colours. It slides up with [progress].
- */
-@Composable
-private fun InfoPanel(
-    progress: Float,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val closeDistance = with(LocalDensity.current) { 64.dp.toPx() }
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .fillMaxHeight(PANEL_HEIGHT_FRACTION)
-            .graphicsLayer { translationY = size.height * (1f - progress) }
-            .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-            .background(MaterialTheme.colorScheme.surface)
-    ) {
-        var dragged by remember { mutableFloatStateOf(0f) }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragStart = { dragged = 0f },
-                        onDragEnd = { if (dragged > closeDistance) onClose() },
-                        onVerticalDrag = { _, amount -> dragged += amount },
-                    )
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                Modifier
-                    .size(width = 36.dp, height = 4.dp)
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
-            )
-        }
-        content()
+    if (renaming && record != null) {
+        RenameDialog(
+            currentName = record.cleanFilename,
+            isWorking = uiState.isRenaming,
+            onDismiss = { renaming = false },
+            onConfirm = { novo ->
+                renaming = false
+                viewModel.rename(novo)
+            }
+        )
     }
 }
 
@@ -630,165 +522,6 @@ private fun VideoStage(
         },
         modifier = Modifier.fillMaxSize()
     )
-}
-
-/**
- * Back, the date centred as a gallery shows it (a tap, or the ›, opens the
- * information panel), and the rarer actions behind ⋮.
- */
-@Composable
-private fun ViewerTopBar(
-    title: ViewerTitle,
-    onBack: () -> Unit,
-    onInfo: (() -> Unit)?,
-    onRename: (() -> Unit)?,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.55f))
-            .pointerInput(Unit) { detectTapGestures { } }
-            .statusBarsPadding()
-            .padding(horizontal = 4.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
-        }
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .then(if (onInfo != null) Modifier.clickable(onClick = onInfo, role = Role.Button) else Modifier)
-                .padding(vertical = 2.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = title.headline,
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (onInfo != null) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-            title.subline?.let {
-                Text(
-                    text = it,
-                    color = Color.White.copy(alpha = 0.8f),
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        Box {
-            IconButton(
-                onClick = { menuOpen = true },
-                enabled = onInfo != null || onRename != null,
-                modifier = Modifier.size(52.dp)
-            ) {
-                Icon(Icons.Default.MoreVert, contentDescription = "Mais opções", tint = Color.White)
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                onInfo?.let { action ->
-                    MenuItem(Icons.Outlined.Info, "Informações") {
-                        menuOpen = false
-                        action()
-                    }
-                }
-                onRename?.let { action ->
-                    MenuItem(Icons.Outlined.DriveFileRenameOutline, "Renomear") {
-                        menuOpen = false
-                        action()
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MenuItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
-    DropdownMenuItem(
-        text = { Text(label, fontSize = 17.sp) },
-        leadingIcon = { Icon(icon, contentDescription = null) },
-        onClick = onClick,
-        modifier = Modifier.height(56.dp)
-    )
-}
-
-/**
- * The everyday actions, where a gallery app has them: each a large icon with
- * its name under it. "Adicionar a" sends the photo to a group.
- */
-@Composable
-private fun ViewerActionBar(
-    onShare: () -> Unit,
-    onAddTo: () -> Unit,
-    onSave: () -> Unit,
-    onInfo: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.55f))
-            // Without this, a tap between two buttons reaches the photo and hides
-            // the controls, which looks like the button failed.
-            .pointerInput(Unit) { detectTapGestures { } }
-            .navigationBarsPadding()
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        ActionItem(Icons.Outlined.Share, "Compartilhar", onShare)
-        ActionItem(Icons.Default.Add, "Adicionar a", onAddTo)
-        ActionItem(Icons.Outlined.FileDownload, "Salvar no celular", onSave)
-        ActionItem(Icons.Outlined.Info, "Informações", onInfo)
-    }
-}
-
-@Composable
-private fun RowScope.ActionItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top,
-        modifier = Modifier
-            .weight(1f)
-            .heightIn(min = 64.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick, role = Role.Button)
-            .padding(vertical = 6.dp, horizontal = 2.dp)
-    ) {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(
-            label,
-            color = Color.White,
-            fontSize = 13.sp,
-            maxLines = 2,
-            textAlign = TextAlign.Center,
-            lineHeight = 15.sp
-        )
-    }
 }
 
 @Composable

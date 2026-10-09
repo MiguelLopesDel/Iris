@@ -232,7 +232,8 @@ class InterfaceSmokeTest {
                     .fetchSemanticsNodes().isEmpty()
         }
         compose.onNodeWithContentDescription("local-only-fixture.jpg", substring = true).performClick()
-        waitForText("Mídia do aparelho")
+        // The device viewer has the server viewer's bars; its title is the photo's date.
+        waitForText("Informações")
         assertTrue("Opening device media must not request a server record", requestedPaths.none { it == "/api/records/-1" })
     }
 

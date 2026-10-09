@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Search
@@ -36,11 +37,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.iris.app.IrisApplication
+import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.data.model.MediaPersonRef
 import com.iris.app.ui.components.MediaCard
 import java.util.Locale
@@ -174,16 +176,18 @@ fun MediaDetailsSheet(
             Spacer(Modifier.height(4.dp))
         }
 
-        // Where the item is kept.
+        // Where the item is kept: Iris holds the original as it was sent.
         DetailCard(icon = Icons.Outlined.CloudDone) {
             Text(
                 listOfNotNull("Salva no Iris", record.fileSize?.let(::formatBytes)).joinToString(" • "),
                 fontSize = 16.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            if (state.onDevice == true) {
-                Text("Também neste aparelho", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text("Qualidade original", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        state.deviceCopy?.let { copy ->
+            Spacer(Modifier.height(4.dp))
+            DeviceCopyCard(copy)
         }
         Spacer(Modifier.height(4.dp))
 
@@ -224,7 +228,8 @@ fun MediaDetailsSheet(
                 Spacer(Modifier.height(8.dp))
                 full?.textOf("format")?.let { DetailLine("Formato", it) }
                 curated?.textOf("device")?.let { DetailLine("Aparelho", it) }
-                curated?.textOf("source_app")?.let { DetailLine("Origem", it) }
+                (state.deviceCopy?.ownerPackage?.let { appLabel(it) } ?: curated?.textOf("source_app"))
+                    ?.let { DetailLine("Criada por", it) }
                 record.resolvedPath?.let { DetailLine("No servidor", it) }
             }
         }
@@ -232,7 +237,7 @@ fun MediaDetailsSheet(
 }
 
 @Composable
-private fun Section(
+internal fun Section(
     title: String,
     content: @Composable () -> Unit,
 ) {
@@ -265,7 +270,7 @@ private fun TextCard(text: String) {
  * copy it, or search the library for it.
  */
 @Composable
-private fun PhotoTextCard(text: String, thumbnailUrl: String?, onSearch: () -> Unit) {
+internal fun PhotoTextCard(text: String, thumbnailUrl: String?, onSearch: () -> Unit) {
     val apiClient = (LocalContext.current.applicationContext as IrisApplication).apiClient
     val clipboard = LocalClipboardManager.current
     Column(
@@ -319,7 +324,7 @@ private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
 
 /** A rounded card with a leading icon, as the gallery shows each detail. */
 @Composable
-private fun DetailCard(
+internal fun DetailCard(
     icon: ImageVector,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
@@ -351,7 +356,7 @@ private fun DetailCard(
 }
 
 @Composable
-private fun SmallChip(text: String) {
+internal fun SmallChip(text: String) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -363,7 +368,7 @@ private fun SmallChip(text: String) {
 }
 
 @Composable
-private fun DetailLine(label: String, value: String) {
+internal fun DetailLine(label: String, value: String) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -449,6 +454,38 @@ internal fun formatBytes(bytes: Long): String = when {
     bytes >= 1_048_576 -> String.format(Locale("pt", "BR"), "%.1f MB", bytes / 1_048_576.0)
     bytes >= 1024 -> String.format(Locale("pt", "BR"), "%.0f kB", bytes / 1024.0)
     else -> "$bytes B"
+}
+
+/** The copy on this phone: its size and the folder it sits in, as the gallery shows it. */
+@Composable
+internal fun DeviceCopyCard(copy: DeviceMediaDetails) {
+    DetailCard(icon = Icons.Outlined.PhoneAndroid) {
+        Text(
+            listOfNotNull("No dispositivo", copy.sizeBytes?.let(::formatBytes)).joinToString(" • "),
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        copy.folder?.let {
+            Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/**
+ * The name people know an app by. Android may hide other apps from this one;
+ * then the package is shown as the gallery does ("App desconhecido (…)").
+ */
+@Composable
+internal fun appLabel(packageName: String): String {
+    val packageManager = LocalContext.current.packageManager
+    return remember(packageName) {
+        try {
+            val info = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(info).toString()
+        } catch (_: Exception) {
+            "App desconhecido ($packageName)"
+        }
+    }
 }
 
 /**

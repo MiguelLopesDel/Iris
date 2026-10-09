@@ -1,6 +1,11 @@
 package com.iris.app.ui.navigation
 
+import android.net.Uri
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Face
@@ -47,6 +52,7 @@ import com.iris.app.ui.screens.collections.CollectionsViewModel
 import com.iris.app.ui.screens.detail.MediaDetailScreen
 import com.iris.app.ui.screens.detail.MediaDetailViewModel
 import com.iris.app.ui.screens.detail.ViewerSequence
+import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.ui.screens.search.PendingSearch
 import com.iris.app.ui.screens.gallery.GalleryScreen
 import com.iris.app.ui.screens.gallery.GalleryViewModel
@@ -217,7 +223,20 @@ fun IrisNavGraph(
             }
         },
         containerColor = IrisDarkBg
-    ) { paddingValues ->
+    ) { scaffoldPadding ->
+        // The viewers draw the photo edge to edge, under the status bar, as a
+        // gallery does; their own bars pad for it.
+        val fullBleed = currentDestination?.route in setOf(NavRoute.Detail.route, NavRoute.LocalMediaDetail.route)
+        val layoutDirection = LocalLayoutDirection.current
+        val paddingValues = if (fullBleed) {
+            PaddingValues(
+                start = scaffoldPadding.calculateStartPadding(layoutDirection),
+                end = scaffoldPadding.calculateEndPadding(layoutDirection),
+                bottom = scaffoldPadding.calculateBottomPadding(),
+            )
+        } else {
+            scaffoldPadding
+        }
         NavHost(
             navController = navController,
             startDestination = NavRoute.Gallery.route,
@@ -377,7 +396,9 @@ fun IrisNavGraph(
                     viewModelFor = { index ->
                         viewModel(
                             key = "detail_$index",
-                            factory = MediaDetailViewModel.Factory(index, application.irisRepository)
+                            factory = MediaDetailViewModel.Factory(index, application.irisRepository) { uri ->
+                                DeviceMediaDetails.read(application.contentResolver, Uri.parse(uri))
+                            }
                         )
                     },
                     onBack = { navController.popBackStack() },
