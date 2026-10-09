@@ -19,6 +19,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from _path import ensure_project_root
 
@@ -59,7 +60,21 @@ def _ports(environ: dict[str, str]) -> tuple[int, int]:
     return int(environ.get("IRIS_HTTP_PORT", "8501")), int(environ.get("IRIS_HTTPS_PORT", "8443"))
 
 
-def _serve_both(files: tls.TlsFiles, http_port: int, https_port: int) -> None:
+async def _stop_follower_before_lifespan_shutdown(
+    follower: Any,
+    follower_stopped: asyncio.Event,
+) -> None:
+    """Drain the secondary listener before the primary app lifespan is stopped."""
+    follower.should_exit = True
+    await follower_stopped.wait()
+
+
+def _serve_both(
+    files: tls.TlsFiles,
+    http_port: int,
+    https_port: int,
+    app: str = "server:app",
+) -> None:
     import uvicorn
 
     class Secondary(uvicorn.Server):
@@ -70,21 +85,42 @@ def _serve_both(files: tls.TlsFiles, http_port: int, https_port: int) -> None:
             return contextlib.nullcontext()
 
     class Primary(uvicorn.Server):
-        def __init__(self, config: uvicorn.Config, follower: uvicorn.Server) -> None:
+        def __init__(
+            self,
+            config: uvicorn.Config,
+            follower: uvicorn.Server,
+            follower_stopped: asyncio.Event,
+        ) -> None:
             super().__init__(config)
             self.follower = follower
+            self.follower_stopped = follower_stopped
 
         def handle_exit(self, sig, frame) -> None:  # type: ignore[override]
             super().handle_exit(sig, frame)
             self.follower.should_exit = self.should_exit
             self.follower.force_exit = self.force_exit
 
+        async def shutdown(self, sockets=None) -> None:  # type: ignore[override]
+            # Stop accepting HTTP requests while HTTPS finishes its in-flight
+            # requests. Only then may the HTTP listener shut down app services.
+            for listener in getattr(self, "servers", ()):
+                listener.close()
+            await _stop_follower_before_lifespan_shutdown(
+                self.follower, self.follower_stopped
+            )
+            await super().shutdown(sockets)
+
     # One app, two listeners: the HTTP one runs its startup and shutdown.
     https = Secondary(uvicorn.Config(
-        "server:app", host=HOST, port=https_port, lifespan="off",
+        app, host=HOST, port=https_port, lifespan="off",
         ssl_certfile=str(files.certfile), ssl_keyfile=str(files.keyfile),
     ))
-    http = Primary(uvicorn.Config("server:app", host=HOST, port=http_port, lifespan="on"), https)
+    follower_stopped = asyncio.Event()
+    http = Primary(
+        uvicorn.Config(app, host=HOST, port=http_port, lifespan="on"),
+        https,
+        follower_stopped,
+    )
 
     async def run() -> None:
         first = asyncio.create_task(http.serve())
@@ -94,9 +130,31 @@ def _serve_both(files: tls.TlsFiles, http_port: int, https_port: int) -> None:
                 await first
                 return
             await asyncio.sleep(0.05)
-        second = asyncio.create_task(https.serve())
+
+        async def serve_https() -> None:
+            try:
+                await https.serve()
+            finally:
+                follower_stopped.set()
+
+        second = asyncio.create_task(serve_https())
         try:
-            await asyncio.gather(first, second)
+            done, _ = await asyncio.wait(
+                (first, second), return_when=asyncio.FIRST_COMPLETED
+            )
+            # If either listener exits unexpectedly, stop the other and still
+            # await both shutdown paths before leaving the shared lifespan.
+            if first in done:
+                https.should_exit = True
+            if second in done:
+                http.should_exit = True
+            results = await asyncio.gather(first, second, return_exceptions=True)
+            failure = next(
+                (result for result in results if isinstance(result, BaseException)),
+                None,
+            )
+            if failure is not None:
+                raise failure
         finally:
             http.should_exit = https.should_exit = True
 

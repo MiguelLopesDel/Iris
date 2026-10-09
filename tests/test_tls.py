@@ -127,6 +127,25 @@ def test_the_launcher_prepares_a_certificate_only_when_asked(tmp_path: Path) -> 
         serve.tls_files({"IRIS_DATA_DIR": str(tmp_path), "IRIS_TLS": "custom"})
 
 
+def test_shared_lifespan_waits_until_the_secondary_listener_has_stopped() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    async def check() -> None:
+        follower = SimpleNamespace(should_exit=False, force_exit=False)
+        follower_stopped = asyncio.Event()
+        shutdown = asyncio.create_task(serve._stop_follower_before_lifespan_shutdown(follower, follower_stopped))
+
+        await asyncio.sleep(0)
+        assert follower.should_exit is True
+        assert not shutdown.done()
+
+        follower_stopped.set()
+        await shutdown
+
+    asyncio.run(check())
+
+
 def test_devices_get_the_https_port_only_when_iris_serves_https() -> None:
     assert tls.device_https_port({}) is None
     assert tls.device_https_port({"IRIS_TLS": "self"}) == 8443
@@ -195,11 +214,139 @@ def test_the_server_answers_browsers_over_http_and_devices_over_https(tmp_path: 
     finally:
         process.send_signal(signal.SIGTERM)
         try:
-            # One signal stops both listeners after the app's shutdown ran; uvicorn
-            # then re-raises the signal it caught, as it does on its own.
+            # One signal drains HTTPS first, then shuts down the shared app lifespan.
             assert process.wait(timeout=20) in (0, -signal.SIGTERM)
             output = process.stdout.read() if process.stdout else ""
             assert "Application shutdown complete." in output
         finally:
             if process.poll() is None:
                 process.kill()
+
+
+def test_https_in_flight_request_finishes_before_shared_services_shutdown(tmp_path: Path) -> None:
+    import os
+    import signal
+    import subprocess
+    import threading
+    import time
+    import urllib.request
+
+    root = Path(__file__).resolve().parents[1]
+    scripts = root / "scripts"
+    active_file = tmp_path / "https-request-active"
+    shutdown_file = tmp_path / "lifespan-shutdown"
+    app_file = tmp_path / "slow_asgi.py"
+    app_file.write_text(
+        """import asyncio, os
+from pathlib import Path
+
+async def app(scope, receive, send):
+    if scope['type'] == 'lifespan':
+        while True:
+            event = await receive()
+            if event['type'] == 'lifespan.startup':
+                await send({'type': 'lifespan.startup.complete'})
+            elif event['type'] == 'lifespan.shutdown':
+                Path(os.environ['IRIS_TEST_SHUTDOWN']).write_text('shutdown')
+                await send({'type': 'lifespan.shutdown.complete'})
+                return
+    elif scope['type'] == 'http':
+        if scope['path'] == '/slow':
+            Path(os.environ['IRIS_TEST_ACTIVE']).write_text('active')
+            await asyncio.sleep(1.5)
+        await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+        await send({'type': 'http.response.body', 'body': b'ok'})
+""".lstrip(),
+        encoding="utf-8",
+    )
+    cert_dir = tmp_path / "certs"
+    cert_dir.mkdir()
+    cert, key = _issue(cert_dir)
+    http_port, https_port = _free_port(), _free_port()
+    while https_port == http_port:
+        https_port = _free_port()
+    runner = (
+        "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+        "import serve; from core.tls import TlsFiles; "
+        "serve._serve_both(TlsFiles(Path(sys.argv[2]), Path(sys.argv[3])), "
+        "int(sys.argv[4]), int(sys.argv[5]), app='slow_asgi:app')"
+    )
+    env = dict(
+        os.environ,
+        PYTHONPATH=os.pathsep.join((str(root), str(scripts), str(tmp_path))),
+        IRIS_TEST_ACTIVE=str(active_file),
+        IRIS_TEST_SHUTDOWN=str(shutdown_file),
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable, "-c", runner, str(scripts), str(cert), str(key),
+            str(http_port), str(https_port),
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    request_result: list[object] = []
+
+    def request_slow_https() -> None:
+        try:
+            with urllib.request.urlopen(
+                f"https://127.0.0.1:{https_port}/slow",
+                timeout=10,
+                context=ssl._create_unverified_context(),
+            ) as response:
+                request_result.append(response.status)
+        except Exception as error:  # surfaced by the assertion below
+            request_result.append(f"error: {error}")
+
+    request_thread = threading.Thread(target=request_slow_https)
+    try:
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{http_port}/ready", timeout=1).close()
+                break
+            except OSError:
+                assert process.poll() is None, process.stdout.read() if process.stdout else ""
+                assert time.monotonic() < deadline, "server did not start"
+                time.sleep(0.05)
+
+        while True:
+            try:
+                urllib.request.urlopen(
+                    f"https://127.0.0.1:{https_port}/ready",
+                    timeout=1,
+                    context=ssl._create_unverified_context(),
+                ).close()
+                break
+            except OSError:
+                assert process.poll() is None, process.stdout.read() if process.stdout else ""
+                assert time.monotonic() < deadline, "HTTPS listener did not start"
+                time.sleep(0.05)
+
+        request_thread.start()
+        deadline = time.monotonic() + 10
+        while not active_file.exists() and request_thread.is_alive():
+            assert process.poll() is None, process.stdout.read() if process.stdout else ""
+            assert time.monotonic() < deadline, "HTTPS request did not start"
+            time.sleep(0.05)
+        assert active_file.exists(), f"HTTPS request failed before entering the app: {request_result}"
+        # The fixture marks the request before sleeping; wait until it is in flight.
+        time.sleep(0.1)
+        process.send_signal(signal.SIGTERM)
+        time.sleep(0.2)
+        assert not shutdown_file.exists(), (
+            "shared app services shut down before HTTPS drained"
+        )
+        request_thread.join(timeout=10)
+        assert not request_thread.is_alive(), "HTTPS request was not drained"
+        assert request_result == [200]
+        assert process.wait(timeout=10) in (0, -signal.SIGTERM)
+        assert shutdown_file.read_text(encoding="utf-8") == "shutdown"
+    finally:
+        if process.poll() is None:
+            process.kill()
+        if request_thread.is_alive():
+            request_thread.join(timeout=1)
