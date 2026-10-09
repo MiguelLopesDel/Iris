@@ -538,7 +538,7 @@ private fun RenameDialog(
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = IrisBackground,
-        title = { Text("Renomear", color = Color.White) },
+        title = { Text("Renomear", color = MaterialTheme.colorScheme.onSurface) },
         text = {
             Column {
                 OutlinedTextField(
@@ -552,7 +552,7 @@ private fun RenameDialog(
                 Text(
                     "A extensão é mantida pelo servidor.",
                     fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
@@ -563,7 +563,7 @@ private fun RenameDialog(
             ) { Text("Renomear", color = IrisAccent) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar", color = Color.White) }
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
         }
     )
 }
