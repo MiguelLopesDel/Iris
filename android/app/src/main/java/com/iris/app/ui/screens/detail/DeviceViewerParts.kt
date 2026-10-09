@@ -225,6 +225,7 @@ internal fun LocalVideoPlayer(uri: Uri) {
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
+            playWhenReady = true
             prepare()
         }
     }

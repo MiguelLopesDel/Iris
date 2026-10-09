@@ -204,6 +204,11 @@ internal fun ZoomableMedia(
                                 scope.launch {
                                     animate(from, size.height * 0.6f, animationSpec = tween(160)) { value, _ -> dragY = value }
                                     onSwipe(verdict)
+                                    // Closing the information panel keeps this page mounted.
+                                    // Return the image to its resting position after the dismissal.
+                                    ViewerGestures.dragOffsetAfterSwipe(verdict)?.let { target ->
+                                        animate(dragY, target, animationSpec = tween(180)) { value, _ -> dragY = value }
+                                    }
                                 }
                             } else {
                                 onSwipe(verdict)

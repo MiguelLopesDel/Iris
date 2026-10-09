@@ -93,7 +93,13 @@ class IrisRepository(
 
     suspend fun getUploadQueue(): List<LocalUploadJob> {
         val accountKey = credentialsStore.accountIdentity.value ?: return emptyList()
-        return dbHelper.getAllJobs(accountKey)
+        return getUploadQueue(accountKey)
+    }
+
+    /** Reads only the requested account's queue, and refuses stale UI work after an account switch. */
+    suspend fun getUploadQueue(expectedAccountIdentity: String): List<LocalUploadJob> {
+        if (credentialsStore.accountIdentity.value != expectedAccountIdentity) return emptyList()
+        return dbHelper.getAllJobs(expectedAccountIdentity)
     }
 
     /** Newest jobs only: the screen shows a window, never the whole queue. */

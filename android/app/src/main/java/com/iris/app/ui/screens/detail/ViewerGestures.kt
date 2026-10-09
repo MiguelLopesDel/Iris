@@ -41,6 +41,9 @@ internal object ViewerGestures {
         else -> Swipe.NONE
     }
 
+    /** A close swipe can dismiss only the panel, leaving this page mounted; restore its drag offset. */
+    fun dragOffsetAfterSwipe(swipe: Swipe): Float? = if (swipe == Swipe.CLOSE) 0f else null
+
     /** A drag is vertical once it moved past [slop] mostly up or down; sideways is the pager's. */
     fun isVertical(total: Offset, slop: Float): Boolean =
         abs(total.y) > slop && abs(total.y) > abs(total.x) * 1.5f
@@ -74,4 +77,3 @@ internal object ViewerGestures {
         return (1f - 0.35f * progress) to (1f - 0.6f * progress)
     }
 }
-

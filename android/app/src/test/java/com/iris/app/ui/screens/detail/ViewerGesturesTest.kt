@@ -44,6 +44,13 @@ class ViewerGesturesTest {
     }
 
     @Test
+    fun `closing swipe restores the image drag offset after dismissing the panel`() {
+        assertEquals(0f, ViewerGestures.dragOffsetAfterSwipe(ViewerGestures.Swipe.CLOSE)!!, 0f)
+        assertEquals(null, ViewerGestures.dragOffsetAfterSwipe(ViewerGestures.Swipe.SHOW_INFO))
+        assertEquals(null, ViewerGestures.dragOffsetAfterSwipe(ViewerGestures.Swipe.NONE))
+    }
+
+    @Test
     fun `a sideways drag is left to the pager`() {
         assertFalse(ViewerGestures.isVertical(Offset(80f, 40f), slop = 10f))
         assertFalse(ViewerGestures.isVertical(Offset(0f, 5f), slop = 10f))
@@ -72,4 +79,3 @@ class ViewerGesturesTest {
         assertTrue(scale < 1f && alpha < 1f && scale > 0.5f && alpha > 0.5f)
     }
 }
-

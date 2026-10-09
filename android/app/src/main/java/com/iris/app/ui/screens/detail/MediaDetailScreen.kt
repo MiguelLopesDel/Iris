@@ -69,6 +69,31 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Identity for the device-backup lookup shown by the information panel. */
+internal data class DeviceBackupLookup(val uri: String, val accountIdentity: String, val panelRevision: Int)
+
+internal data class DeviceBackupSnapshot(val lookup: DeviceBackupLookup, val state: DeviceBackupState)
+
+internal fun deviceBackupLookup(
+    uri: String?,
+    accountIdentity: String?,
+    panelOpen: Boolean,
+    panelRevision: Int,
+): DeviceBackupLookup? = if (panelOpen && uri != null && accountIdentity != null) {
+    DeviceBackupLookup(uri, accountIdentity, panelRevision)
+} else {
+    null
+}
+
+internal fun visibleDeviceBackupState(
+    lookup: DeviceBackupLookup?,
+    snapshot: DeviceBackupSnapshot?,
+    currentAccountIdentity: String?,
+): DeviceBackupState? {
+    if (lookup?.accountIdentity != currentAccountIdentity) return null
+    return snapshot?.takeIf { it.lookup == lookup }?.state
+}
+
 /**
  * Full-bleed media viewer, behaving like the phone's own gallery.
  *
@@ -96,15 +121,22 @@ internal fun MediaDetailScreen(
     val context = LocalContext.current
     val application = context.applicationContext as IrisApplication
     val apiClient = application.apiClient
+    val accountIdentity by application.credentialsStore.accountIdentity.collectAsStateWithLifecycle()
     val sequence = remember(start) { ViewerSequence.around(start) }
     val pagerState = rememberPagerState(initialPage = sequence.indexOf(start).coerceAtLeast(0)) { sequence.size }
 
     var chromeVisible by remember { mutableStateOf(true) }
     var zoomed by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
+    var detailPanelRevision by remember { mutableStateOf(0) }
     var renaming by remember { mutableStateOf(false) }
     var pickingSpace by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    fun openDetails() {
+        if (!showDetails) detailPanelRevision++
+        showDetails = true
+    }
 
     LaunchedEffect(pagerState.currentPage) { zoomed = false }
     // Light icons over the black viewer; the navigation bar's follow the panel when it is up.
@@ -129,12 +161,22 @@ internal fun MediaDetailScreen(
         }
     }
     val notInBackup = deviceUri?.let { rememberNotInBackupNotice(application, it) }
-    val deviceBackup by produceState<DeviceBackupState?>(initialValue = null, deviceUri, showDetails) {
-        if (deviceUri != null && showDetails && value == null) {
-            value = runCatching { DeviceBackupState.of(deviceUri, application.irisRepository.getUploadQueue()) }
-                .getOrDefault(DeviceBackupState.NOT_QUEUED)
+    val backupLookup = deviceBackupLookup(deviceUri, accountIdentity, showDetails, detailPanelRevision)
+    val backupSnapshot by produceState<DeviceBackupSnapshot?>(initialValue = null, backupLookup) {
+        value = null
+        val lookup = backupLookup ?: return@produceState
+        val jobs = runCatching {
+            withContext(Dispatchers.IO) { application.irisRepository.getUploadQueue(lookup.accountIdentity) }
+        }.getOrElse { emptyList() }
+        if (application.credentialsStore.accountIdentity.value == lookup.accountIdentity) {
+            value = DeviceBackupSnapshot(lookup, DeviceBackupState.of(lookup.uri, jobs))
         }
     }
+    val deviceBackup = visibleDeviceBackupState(
+        backupLookup,
+        backupSnapshot,
+        application.credentialsStore.accountIdentity.value,
+    )
 
     uiState?.notice?.let { notice ->
         LaunchedEffect(notice) {
@@ -173,16 +215,16 @@ internal fun MediaDetailScreen(
             ViewerTopBar(
                 title = title,
                 onBack = onBack,
-                onTitleClick = if (record != null || details != null) ({ showDetails = true }) else null,
+                onTitleClick = if (record != null || details != null) ({ openDetails() }) else null,
                 menu = when {
                     record != null && mediaUrl != null -> listOf(
-                        ViewerAction(Icons.Outlined.Info, "Sobre") { showDetails = true },
+                        ViewerAction(Icons.Outlined.Info, "Sobre") { openDetails() },
                         ViewerAction(Icons.Outlined.DriveFileRenameOutline, "Renomear") { renaming = true },
                         ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
                             download(mediaUrl, record.cleanFilename)
                         },
                     )
-                    details != null -> listOf(ViewerAction(Icons.Outlined.Info, "Sobre") { showDetails = true })
+                    details != null -> listOf(ViewerAction(Icons.Outlined.Info, "Sobre") { openDetails() })
                     else -> emptyList()
                 },
             )
@@ -196,7 +238,7 @@ internal fun MediaDetailScreen(
                         ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
                             download(mediaUrl, record.cleanFilename)
                         },
-                        ViewerAction(Icons.Outlined.Info, "Informações") { showDetails = true },
+                        ViewerAction(Icons.Outlined.Info, "Informações") { openDetails() },
                     )
                 )
                 deviceUri != null -> Column {
@@ -207,7 +249,7 @@ internal fun MediaDetailScreen(
                             ViewerAction(Icons.Outlined.Share, "Compartilhar") {
                                 shareDeviceMedia(context, Uri.parse(deviceUri), deviceDetails?.mimeType)
                             },
-                            ViewerAction(Icons.Outlined.Info, "Informações") { showDetails = true },
+                            ViewerAction(Icons.Outlined.Info, "Informações") { openDetails() },
                         )
                     )
                 }
@@ -245,7 +287,7 @@ internal fun MediaDetailScreen(
                         when (swipe) {
                             // With the panel up, dragging the photo down lowers the panel first.
                             ViewerGestures.Swipe.CLOSE -> if (showDetails) showDetails = false else onBack()
-                            ViewerGestures.Swipe.SHOW_INFO -> showDetails = true
+                            ViewerGestures.Swipe.SHOW_INFO -> openDetails()
                             ViewerGestures.Swipe.NONE -> Unit
                         }
                     },
