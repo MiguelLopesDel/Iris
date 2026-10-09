@@ -1,19 +1,8 @@
 package com.iris.app.ui.screens.detail
 
+import android.app.Activity
 import android.graphics.Color as AndroidColor
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.outlined.DriveFileRenameOutline
-import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.animation.core.animate
-import androidx.compose.foundation.background
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectTapGestures
+import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -22,40 +11,39 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -64,36 +52,66 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.iris.app.IrisApplication
-import com.iris.app.data.model.MediaRecord
+import com.iris.app.data.local.DeviceBackupState
+import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.remote.IrisMediaDataSourceFactory
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.decodeThumbHash
 import com.iris.app.ui.components.rememberMediaDownload
 import com.iris.app.ui.components.rememberMediaShare
+import com.iris.app.ui.screens.gallery.rememberNotInBackupNotice
 import com.iris.app.ui.screens.spaces.SpacePickerDialog
 import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisBackground
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Identity for the device-backup lookup shown by the information panel. */
+internal data class DeviceBackupLookup(val uri: String, val accountIdentity: String, val panelRevision: Int)
+
+internal data class DeviceBackupSnapshot(val lookup: DeviceBackupLookup, val state: DeviceBackupState)
+
+internal fun deviceBackupLookup(
+    uri: String?,
+    accountIdentity: String?,
+    panelOpen: Boolean,
+    panelRevision: Int,
+): DeviceBackupLookup? = if (panelOpen && uri != null && accountIdentity != null) {
+    DeviceBackupLookup(uri, accountIdentity, panelRevision)
+} else {
+    null
+}
+
+internal fun visibleDeviceBackupState(
+    lookup: DeviceBackupLookup?,
+    snapshot: DeviceBackupSnapshot?,
+    currentAccountIdentity: String?,
+): DeviceBackupState? {
+    if (lookup?.accountIdentity != currentAccountIdentity) return null
+    return snapshot?.takeIf { it.lookup == lookup }?.state
+}
 
 /**
  * Full-bleed media viewer, behaving like the phone's own gallery.
  *
  * It opens with its controls showing, so it is plain what can be done; a tap
- * hides them. Swiping sideways goes to the next or previous item of the grid
- * it was opened from ([ViewerSequence]); a double tap zooms; dragging down
- * closes and dragging up opens the information panel. Every gesture also has
- * a visible button, for whoever does not know it.
+ * hides them. Swiping sideways goes through the grid it was opened from
+ * ([ViewerSequence]), Iris's items and the phone's own alike; the gestures
+ * are those of [ZoomableMedia]. Every gesture also has a visible button, for
+ * whoever does not know it.
  *
  * The information panel rises from the bottom and pushes the photo up rather
- * than covering it, so the photo it describes stays in view.
+ * than covering it, so the photo it describes stays in view. It and the bars
+ * follow the item shown: Iris's has its catalog, actions and similar photos;
+ * a phone's file has what the media store knows and where it stands with the
+ * backup.
  */
 @Composable
-fun MediaDetailScreen(
-    startIndex: Int,
+internal fun MediaDetailScreen(
+    start: ViewerItem,
     viewModelFor: @Composable (Int) -> MediaDetailViewModel,
     onBack: () -> Unit,
     onMediaClick: (Int) -> Unit,
@@ -103,26 +121,64 @@ fun MediaDetailScreen(
     val context = LocalContext.current
     val application = context.applicationContext as IrisApplication
     val apiClient = application.apiClient
-    val sequence = remember(startIndex) { ViewerSequence.around(startIndex) }
-    val pagerState = rememberPagerState(initialPage = sequence.indexOf(startIndex)) { sequence.size }
+    val accountIdentity by application.credentialsStore.accountIdentity.collectAsStateWithLifecycle()
+    val sequence = remember(start) { ViewerSequence.around(start) }
+    val pagerState = rememberPagerState(initialPage = sequence.indexOf(start).coerceAtLeast(0)) { sequence.size }
 
     var chromeVisible by remember { mutableStateOf(true) }
     var zoomed by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
+    var detailPanelRevision by remember { mutableStateOf(0) }
     var renaming by remember { mutableStateOf(false) }
     var pickingSpace by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    fun openDetails() {
+        if (!showDetails) detailPanelRevision++
+        showDetails = true
+    }
+
     LaunchedEffect(pagerState.currentPage) { zoomed = false }
+    // Light icons over the black viewer; the navigation bar's follow the panel when it is up.
+    val lightPanel = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    ViewerSystemBarIcons(darkNavigationIcons = showDetails && lightPanel)
 
-    val viewModel = viewModelFor(sequence[pagerState.currentPage])
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val download = rememberMediaDownload { viewModel.showNotice(it) }
-    val share = rememberMediaShare { viewModel.showNotice(it) }
-    val record = uiState.record
+    val current = sequence[pagerState.currentPage]
+
+    // The current item, when it is Iris's.
+    val viewModel = (current as? ViewerItem.Server)?.let { viewModelFor(it.index) }
+    val uiState = viewModel?.uiState?.collectAsStateWithLifecycle()?.value
+    val record = uiState?.record
     val mediaUrl = record?.let { apiClient.resolveMediaUrl(it.resolvedPath ?: it.caminho) }
+    val download = rememberMediaDownload { message -> viewModel?.showNotice(message) }
+    val share = rememberMediaShare { message -> viewModel?.showNotice(message) }
 
-    uiState.notice?.let { notice ->
+    // The current item, when it is only on the phone.
+    val deviceUri = (current as? ViewerItem.Device)?.uri
+    val deviceDetails by produceState<DeviceMediaDetails?>(initialValue = null, deviceUri) {
+        value = deviceUri?.let { uri ->
+            withContext(Dispatchers.IO) { DeviceMediaDetails.read(context.contentResolver, Uri.parse(uri)) }
+        }
+    }
+    val notInBackup = deviceUri?.let { rememberNotInBackupNotice(application, it) }
+    val backupLookup = deviceBackupLookup(deviceUri, accountIdentity, showDetails, detailPanelRevision)
+    val backupSnapshot by produceState<DeviceBackupSnapshot?>(initialValue = null, backupLookup) {
+        value = null
+        val lookup = backupLookup ?: return@produceState
+        val jobs = runCatching {
+            withContext(Dispatchers.IO) { application.irisRepository.getUploadQueue(lookup.accountIdentity) }
+        }.getOrElse { emptyList() }
+        if (application.credentialsStore.accountIdentity.value == lookup.accountIdentity) {
+            value = DeviceBackupSnapshot(lookup, DeviceBackupState.of(lookup.uri, jobs))
+        }
+    }
+    val deviceBackup = visibleDeviceBackupState(
+        backupLookup,
+        backupSnapshot,
+        application.credentialsStore.accountIdentity.value,
+    )
+
+    uiState?.notice?.let { notice ->
         LaunchedEffect(notice) {
             android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_SHORT).show()
             viewModel.clearNotice()
@@ -136,84 +192,118 @@ fun MediaDetailScreen(
     }
 
     ViewerScaffold(
-        panelOpen = showDetails && record != null,
+        panelOpen = showDetails && (record != null || deviceDetails != null),
         onClosePanel = { showDetails = false },
         chromeVisible = chromeVisible,
         topBar = {
-            val title = remember(record, uiState.metadata) {
-                ViewerTitle.of(
+            val details = deviceDetails
+            val title = when {
+                record != null -> ViewerTitle.of(
                     capturedAt = uiState.metadata?.curated?.textOf("captured_at"),
-                    fileMtime = record?.fileMtime,
+                    fileMtime = record.fileMtime,
                     place = uiState.metadata?.curated?.textOf("location_label"),
-                    fileName = record?.cleanFilename.orEmpty(),
+                    fileName = record.cleanFilename,
                 )
+                details != null -> ViewerTitle.of(
+                    capturedAt = null,
+                    fileMtime = details.takenAtMillis?.let { it / 1000.0 },
+                    place = null,
+                    fileName = details.name,
+                )
+                else -> ViewerTitle("", null)
             }
             ViewerTopBar(
                 title = title,
                 onBack = onBack,
-                onTitleClick = record?.let { { showDetails = true } },
-                menu = if (record == null || mediaUrl == null) emptyList() else listOf(
-                    ViewerAction(Icons.Outlined.Info, "Sobre") { showDetails = true },
-                    ViewerAction(Icons.Outlined.DriveFileRenameOutline, "Renomear") { renaming = true },
-                    ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
-                        download(mediaUrl, record.cleanFilename)
-                    },
-                ),
+                onTitleClick = if (record != null || details != null) ({ openDetails() }) else null,
+                menu = when {
+                    record != null && mediaUrl != null -> listOf(
+                        ViewerAction(Icons.Outlined.Info, "Sobre") { openDetails() },
+                        ViewerAction(Icons.Outlined.DriveFileRenameOutline, "Renomear") { renaming = true },
+                        ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
+                            download(mediaUrl, record.cleanFilename)
+                        },
+                    )
+                    details != null -> listOf(ViewerAction(Icons.Outlined.Info, "Sobre") { openDetails() })
+                    else -> emptyList()
+                },
             )
         },
         bottomBar = {
-            if (record != null && mediaUrl != null) {
-                ViewerActionBar(
+            when {
+                record != null && mediaUrl != null -> ViewerActionBar(
                     listOf(
                         ViewerAction(Icons.Outlined.Share, "Compartilhar") { share(mediaUrl, record.cleanFilename) },
                         ViewerAction(Icons.Default.Add, "Adicionar a") { pickingSpace = true },
                         ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
                             download(mediaUrl, record.cleanFilename)
                         },
-                        ViewerAction(Icons.Outlined.Info, "Informações") { showDetails = true },
+                        ViewerAction(Icons.Outlined.Info, "Informações") { openDetails() },
                     )
                 )
+                deviceUri != null -> Column {
+                    // Why it will not reach Iris, where it can be fixed at once.
+                    notInBackup?.let { NotInBackupBanner(it) }
+                    ViewerActionBar(
+                        listOf(
+                            ViewerAction(Icons.Outlined.Share, "Compartilhar") {
+                                shareDeviceMedia(context, Uri.parse(deviceUri), deviceDetails?.mimeType)
+                            },
+                            ViewerAction(Icons.Outlined.Info, "Informações") { openDetails() },
+                        )
+                    )
+                }
             }
         },
         panel = {
-            MediaDetailsSheet(
-                state = uiState,
-                onPersonClick = onPersonClick,
-                onMediaClick = { index ->
-                    showDetails = false
-                    ViewerSequence.set(uiState.similarRecords.map { it.index })
-                    onMediaClick(index)
-                },
-                onSearchText = onSearchText,
-            )
+            val details = deviceDetails
+            when {
+                record != null && uiState != null -> MediaDetailsSheet(
+                    state = uiState,
+                    onPersonClick = onPersonClick,
+                    onMediaClick = { index ->
+                        showDetails = false
+                        ViewerSequence.setRecords(uiState.similarRecords)
+                        onMediaClick(index)
+                    },
+                    onSearchText = onSearchText,
+                )
+                details != null -> DeviceMediaSheet(details, deviceBackup, notInBackup)
+            }
         },
         photo = { photoModifier ->
             HorizontalPager(
                 state = pagerState,
                 userScrollEnabled = !zoomed,
-                key = { sequence[it] },
+                key = { sequence[it].key },
                 beyondViewportPageCount = 1,
                 modifier = photoModifier
             ) { page ->
-                val pageViewModel = viewModelFor(sequence[page])
-                val pageState by pageViewModel.uiState.collectAsStateWithLifecycle()
                 val isCurrent = page == pagerState.currentPage
-                MediaPage(
-                    state = pageState,
-                    apiClient = apiClient,
-                    isCurrent = isCurrent,
-                    onToggleChrome = { if (showDetails) showDetails = false else chromeVisible = !chromeVisible },
+                val gestures = PageGestures(
+                    onTap = { if (showDetails) showDetails = false else chromeVisible = !chromeVisible },
                     onZoomChanged = { if (isCurrent) zoomed = it },
                     onSwipe = { swipe ->
                         when (swipe) {
                             // With the panel up, dragging the photo down lowers the panel first.
                             ViewerGestures.Swipe.CLOSE -> if (showDetails) showDetails = false else onBack()
-                            ViewerGestures.Swipe.SHOW_INFO -> showDetails = true
+                            ViewerGestures.Swipe.SHOW_INFO -> openDetails()
                             ViewerGestures.Swipe.NONE -> Unit
                         }
                     },
-                    onRetry = { pageViewModel.loadDetail() }
+                    onTurnPage = { step ->
+                        val target = (pagerState.currentPage + step).coerceIn(0, sequence.size - 1)
+                        scope.launch { pagerState.animateScrollToPage(target) }
+                    },
                 )
+                when (val item = sequence[page]) {
+                    is ViewerItem.Server -> {
+                        val pageViewModel = viewModelFor(item.index)
+                        val pageState by pageViewModel.uiState.collectAsStateWithLifecycle()
+                        ServerPage(item, pageState, apiClient, isCurrent, gestures, onRetry = { pageViewModel.loadDetail() })
+                    }
+                    is ViewerItem.Device -> DevicePage(item, isCurrent, gestures)
+                }
             }
         },
     )
@@ -245,7 +335,7 @@ fun MediaDetailScreen(
         )
     }
 
-    if (renaming && record != null) {
+    if (renaming && record != null && uiState != null) {
         RenameDialog(
             currentName = record.cleanFilename,
             isWorking = uiState.isRenaming,
@@ -258,20 +348,45 @@ fun MediaDetailScreen(
     }
 }
 
-/** One item of the pager: its loading and error states, and the media itself. */
+/** What every page reports up to the viewer. */
+private class PageGestures(
+    val onTap: () -> Unit,
+    val onZoomChanged: (Boolean) -> Unit,
+    val onSwipe: (ViewerGestures.Swipe) -> Unit,
+    val onTurnPage: (Int) -> Unit,
+)
+
+/** An item of Iris: its loading and error states, and the media itself. */
 @Composable
-private fun MediaPage(
+private fun ServerPage(
+    item: ViewerItem.Server,
     state: MediaDetailUiState,
     apiClient: IrisApiClient,
     isCurrent: Boolean,
-    onToggleChrome: () -> Unit,
-    onZoomChanged: (Boolean) -> Unit,
-    onSwipe: (ViewerGestures.Swipe) -> Unit,
+    gestures: PageGestures,
     onRetry: () -> Unit,
 ) {
     val record = state.record
     when {
-        record != null -> MediaStage(record, apiClient, isCurrent, onToggleChrome, onZoomChanged, onSwipe)
+        record != null -> {
+            val mediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
+            val placeholder = remember(record.thumbHash) { decodeThumbHash(record.thumbHash) }
+            ZoomableMedia(
+                content = MediaContent(
+                    key = item.key,
+                    image = if (record.isVideo) apiClient.resolveThumbnailUrl(record.thumbnailUrl) else mediaUrl,
+                    placeholder = placeholder,
+                    isVideo = record.isVideo,
+                    description = record.cleanFilename,
+                ),
+                isCurrent = isCurrent,
+                onTap = gestures.onTap,
+                onZoomChanged = gestures.onZoomChanged,
+                onSwipe = gestures.onSwipe,
+                onTurnPage = gestures.onTurnPage,
+                video = { VideoStage(mediaUrl = mediaUrl, okHttpClient = apiClient.authenticatedOkHttpClient) },
+            )
+        }
         state.error != null -> EmptyState(
             title = "Erro ao carregar",
             message = state.error,
@@ -284,194 +399,22 @@ private fun MediaPage(
     }
 }
 
-/**
- * The media itself, filling the screen. A tap toggles the controls, a double
- * tap zooms in or back out, two fingers zoom, and once zoomed one finger
- * pans. Unzoomed, a sideways drag is left to the pager and a vertical one
- * closes the viewer (down) or opens the information panel (up).
- */
+/** An item only on the phone, read straight from its media store URI. */
 @Composable
-private fun MediaStage(
-    record: MediaRecord,
-    apiClient: IrisApiClient,
-    isCurrent: Boolean,
-    onToggleChrome: () -> Unit,
-    onZoomChanged: (Boolean) -> Unit,
-    onSwipe: (ViewerGestures.Swipe) -> Unit,
-) {
+private fun DevicePage(item: ViewerItem.Device, isCurrent: Boolean, gestures: PageGestures) {
     val context = LocalContext.current
-    val fullMediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
-    val scope = rememberCoroutineScope()
-    val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
-
-    var scale by remember(record.index) { mutableFloatStateOf(1f) }
-    var offset by remember(record.index) { mutableStateOf(Offset.Zero) }
-    var dragY by remember(record.index) { mutableFloatStateOf(0f) }
-    var size by remember { mutableStateOf(Size.Zero) }
-    var playing by remember(record.index) { mutableStateOf(false) }
-    val zoomable = !record.isVideo
-
-    // Leaving a page puts it back the way it opened.
-    LaunchedEffect(isCurrent) {
-        if (!isCurrent) {
-            scale = 1f
-            offset = Offset.Zero
-            playing = false
-        }
-    }
-
-    fun zoomTo(target: Float, point: Offset) {
-        val startScale = scale
-        val startOffset = offset
-        scope.launch {
-            animate(startScale, target) { value, _ ->
-                scale = value
-                offset = if (target > startScale) {
-                    ViewerGestures.offsetKeeping(point, size, value)
-                } else {
-                    // Zooming out: shrink the translation along with the scale.
-                    val progress = if (startScale > 1f) (value - 1f) / (startScale - 1f) else 0f
-                    startOffset * progress
-                }
-            }
-            onZoomChanged(scale > 1f)
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // A zoomed image stays inside the page, off the status bar and the next page.
-            .clipToBounds()
-            .onSizeChanged { size = it.toSize() }
-            .pointerInput(record.index) {
-                detectTapGestures(
-                    onTap = { onToggleChrome() },
-                    onDoubleTap = { point ->
-                        if (!zoomable) return@detectTapGestures
-                        if (scale > 1f) zoomTo(1f, point) else zoomTo(ViewerGestures.DOUBLE_TAP_SCALE, point)
-                    }
-                )
-            }
-            .pointerInput(record.index, playing) {
-                if (playing) return@pointerInput
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    var total = Offset.Zero
-                    var vertical = false
-                    var transformed = false
-                    var panning = false
-                    do {
-                        val event = awaitPointerEvent()
-                        val pressed = event.changes.count { it.pressed }
-                        when {
-                            zoomable && pressed >= 2 -> {
-                                scale = (scale * event.calculateZoom()).coerceIn(1f, ViewerGestures.MAX_SCALE)
-                                offset = if (scale > 1f) {
-                                    ViewerGestures.clampOffset(offset + event.calculatePan(), size, scale)
-                                } else {
-                                    Offset.Zero
-                                }
-                                transformed = true
-                                onZoomChanged(scale > 1f)
-                                event.changes.forEach { it.consume() }
-                            }
-                            scale > 1f -> {
-                                total += event.calculatePan()
-                                // A still finger is a tap (the double tap that zooms back out);
-                                // only a real drag pans and is kept from the tap detector.
-                                if (panning || total.getDistance() > viewConfiguration.touchSlop) {
-                                    panning = true
-                                    offset = ViewerGestures.clampOffset(offset + event.calculatePan(), size, scale)
-                                    event.changes.forEach { it.consume() }
-                                }
-                            }
-                            !transformed -> {
-                                total += event.calculatePan()
-                                if (!vertical && ViewerGestures.isVertical(total, viewConfiguration.touchSlop)) {
-                                    vertical = true
-                                }
-                                if (vertical) {
-                                    dragY = total.y
-                                    event.changes.forEach { it.consume() }
-                                }
-                            }
-                        }
-                    } while (event.changes.any { it.pressed })
-                    if (vertical) {
-                        onSwipe(ViewerGestures.swipeVerdict(dragY, swipeThreshold))
-                        val from = dragY
-                        scope.launch { animate(from, 0f) { value, _ -> dragY = value } }
-                    }
-                }
-            }
-            .graphicsLayer {
-                // Follows the finger down while closing; the panel takes over going up.
-                translationY = dragY.coerceAtLeast(0f)
-                alpha = 1f - (dragY.coerceAtLeast(0f) / (swipeThreshold * 4f)).coerceAtMost(0.5f)
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        if (record.isVideo) {
-            if (playing) {
-                VideoStage(
-                    mediaUrl = fullMediaUrl,
-                    okHttpClient = apiClient.authenticatedOkHttpClient,
-                )
-            } else {
-                // A still with a large play button: plain to see, and the pager
-                // can still be swiped, which a live player view would capture.
-                AsyncImage(
-                    model = apiClient.resolveThumbnailUrl(record.thumbnailUrl),
-                    contentDescription = record.cleanFilename,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)
-                        .pointerInput(Unit) { detectTapGestures(onTap = { playing = true }) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Reproduzir vídeo",
-                        tint = Color.White,
-                        modifier = Modifier.size(48.dp)
-                    )
-                }
-            }
-        } else {
-            val placeholder = remember(record.thumbHash) { decodeThumbHash(record.thumbHash) }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                if (placeholder != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = placeholder,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data(fullMediaUrl).crossfade(true).build(),
-                    contentDescription = record.cleanFilename,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-        }
-    }
+    val uri = remember(item.uri) { Uri.parse(item.uri) }
+    val video = remember(item.uri) { isVideo(context, uri) }
+    ZoomableMedia(
+        // Coil draws a video's frame from its content URI.
+        content = MediaContent(key = item.key, image = uri, isVideo = video, description = "Mídia do aparelho"),
+        isCurrent = isCurrent,
+        onTap = gestures.onTap,
+        onZoomChanged = gestures.onZoomChanged,
+        onSwipe = gestures.onSwipe,
+        onTurnPage = gestures.onTurnPage,
+        video = { LocalVideoPlayer(uri) },
+    )
 }
 
 // Custom data source and shutter colour are Media3 APIs marked unstable.
@@ -566,4 +509,27 @@ private fun RenameDialog(
             TextButton(onClick = onDismiss) { Text("Cancelar") }
         }
     )
+}
+
+/**
+ * Light status bar icons while the viewer, black in every theme, is shown, and
+ * navigation bar icons that suit what lies under them; the app's own come back
+ * when it closes.
+ */
+@Composable
+private fun ViewerSystemBarIcons(darkNavigationIcons: Boolean) {
+    val view = LocalView.current
+    val controller = remember(view) {
+        (view.context as? Activity)?.window?.let { WindowCompat.getInsetsController(it, view) }
+    }
+    DisposableEffect(controller) {
+        val status = controller?.isAppearanceLightStatusBars
+        val navigation = controller?.isAppearanceLightNavigationBars
+        controller?.isAppearanceLightStatusBars = false
+        onDispose {
+            status?.let { controller.isAppearanceLightStatusBars = it }
+            navigation?.let { controller.isAppearanceLightNavigationBars = it }
+        }
+    }
+    SideEffect { controller?.isAppearanceLightNavigationBars = darkNavigationIcons }
 }

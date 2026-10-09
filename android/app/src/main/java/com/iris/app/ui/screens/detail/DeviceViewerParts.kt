@@ -1,15 +1,11 @@
-package com.iris.app.ui.screens.gallery
+package com.iris.app.ui.screens.detail
 
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.net.Uri
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,19 +17,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MobileOff
 import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -43,16 +36,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,150 +52,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import coil.compose.AsyncImage
-import com.iris.app.IrisApplication
 import com.iris.app.R
 import com.iris.app.data.local.DeviceBackupState
 import com.iris.app.data.local.DeviceMediaDetails
-import com.iris.app.ui.screens.detail.DetailCard
-import com.iris.app.ui.screens.detail.DetailLine
-import com.iris.app.ui.screens.detail.DeviceCopyCard
-import com.iris.app.ui.screens.detail.SmallChip
-import com.iris.app.ui.screens.detail.ViewerAction
-import com.iris.app.ui.screens.detail.ViewerActionBar
-import com.iris.app.ui.screens.detail.ViewerGestures
-import com.iris.app.ui.screens.detail.ViewerScaffold
-import com.iris.app.ui.screens.detail.ViewerTitle
-import com.iris.app.ui.screens.detail.ViewerTopBar
-import com.iris.app.ui.screens.detail.appLabel
-import com.iris.app.ui.screens.detail.megapixels
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-
-/**
- * Why a device item will not be backed up, with the action that fixes it.
- * [message] already names the folder or media kind left out.
- */
-data class NotInBackupNotice(val message: String, val onInclude: () -> Unit)
-
-/**
- * Viewer for media that is only on the phone, not on the server yet. It
- * looks and behaves like the server viewer (date as the title, the same bars,
- * the same information panel), with what the phone's media store knows: when
- * it was taken, the file, its folder, the app that made it, and where it
- * stands with the backup.
- */
-@Composable
-fun LocalMediaViewerScreen(
-    mediaUri: String,
-    onBack: () -> Unit,
-    notInBackup: NotInBackupNotice? = null,
-) {
-    val uri = remember(mediaUri) { Uri.parse(mediaUri) }
-    val context = LocalContext.current
-    val application = context.applicationContext as IrisApplication
-    val details by produceState<DeviceMediaDetails?>(initialValue = null, uri) {
-        value = withContext(Dispatchers.IO) { DeviceMediaDetails.read(context.contentResolver, uri) }
-    }
-    val isVideo = details?.isVideo ?: remember(context, uri) { isVideo(context, uri) }
-
-    var chromeVisible by remember { mutableStateOf(true) }
-    var panelOpen by remember { mutableStateOf(false) }
-    val backup by produceState<DeviceBackupState?>(initialValue = null, mediaUri, panelOpen) {
-        // The producer's State survives key changes. Refresh on every opening
-        // instead of treating the first lookup as a live view of the queue.
-        if (panelOpen) {
-            value = runCatching { DeviceBackupState.of(mediaUri, application.irisRepository.getUploadQueue()) }
-                .getOrDefault(DeviceBackupState.NOT_QUEUED)
-        }
-    }
-
-    ViewerScaffold(
-        panelOpen = panelOpen,
-        onClosePanel = { panelOpen = false },
-        chromeVisible = chromeVisible,
-        topBar = {
-            val title = remember(details) {
-                ViewerTitle.of(
-                    capturedAt = null,
-                    fileMtime = details?.takenAtMillis?.let { it / 1000.0 },
-                    place = null,
-                    fileName = details?.name ?: "Mídia do aparelho",
-                )
-            }
-            ViewerTopBar(
-                title = title,
-                onBack = onBack,
-                onTitleClick = { panelOpen = true },
-                menu = listOf(ViewerAction(Icons.Outlined.Info, "Sobre") { panelOpen = true }),
-            )
-        },
-        bottomBar = {
-            Column {
-                // Why it will not reach Iris, where it can be fixed at once.
-                if (notInBackup != null) NotInBackupBanner(notInBackup)
-                ViewerActionBar(
-                    listOf(
-                        ViewerAction(Icons.Outlined.Share, "Compartilhar") { shareDeviceMedia(context, uri, details?.mimeType) },
-                        ViewerAction(Icons.Outlined.Info, "Informações") { panelOpen = true },
-                    )
-                )
-            }
-        },
-        panel = {
-            details?.let { DeviceMediaSheet(it, backup, notInBackup) }
-        },
-        photo = { photoModifier ->
-            val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
-            Box(
-                modifier = photoModifier
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = {
-                            if (panelOpen) panelOpen = false else chromeVisible = !chromeVisible
-                        })
-                    }
-                    .pointerInput(isVideo) {
-                        if (isVideo) return@pointerInput
-                        // Up opens the panel, down closes it or the viewer, as in the server viewer.
-                        awaitEachGesture {
-                            awaitFirstDown(requireUnconsumed = false)
-                            var total = Offset.Zero
-                            var vertical = false
-                            do {
-                                val event = awaitPointerEvent()
-                                total += event.calculatePan()
-                                if (!vertical && ViewerGestures.isVertical(total, viewConfiguration.touchSlop)) vertical = true
-                                if (vertical) event.changes.forEach { it.consume() }
-                            } while (event.changes.any { it.pressed })
-                            if (vertical) {
-                                when (ViewerGestures.swipeVerdict(total.y, swipeThreshold)) {
-                                    ViewerGestures.Swipe.SHOW_INFO -> panelOpen = true
-                                    ViewerGestures.Swipe.CLOSE -> if (panelOpen) panelOpen = false else onBack()
-                                    ViewerGestures.Swipe.NONE -> Unit
-                                }
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                if (isVideo) {
-                    LocalVideoPlayer(uri)
-                } else {
-                    AsyncImage(
-                        model = uri,
-                        contentDescription = details?.name ?: "Mídia do aparelho",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-        },
-    )
-}
+import com.iris.app.ui.screens.gallery.NotInBackupNotice
 
 /** The panel for a device item: the date, where it stands with the backup, the copy on the phone and the file. */
 @Composable
-private fun DeviceMediaSheet(
+internal fun DeviceMediaSheet(
     details: DeviceMediaDetails,
     backup: DeviceBackupState?,
     notInBackup: NotInBackupNotice?,
@@ -281,7 +133,7 @@ private fun DeviceMediaSheet(
 }
 
 @Composable
-private fun BackupCard(backup: DeviceBackupState?, notInBackup: NotInBackupNotice?) {
+internal fun BackupCard(backup: DeviceBackupState?, notInBackup: NotInBackupNotice?) {
     val (icon, title, note) = when {
         notInBackup != null -> Triple(Icons.Outlined.CloudOff, "Fora do backup", notInBackup.message)
         backup == DeviceBackupState.QUEUED -> Triple(Icons.Outlined.CloudUpload, "Na fila para o Iris", "Vai no próximo envio")
@@ -305,7 +157,7 @@ private fun BackupCard(backup: DeviceBackupState?, notInBackup: NotInBackupNotic
 }
 
 @Composable
-private fun NotInBackupBanner(notice: NotInBackupNotice) {
+internal fun NotInBackupBanner(notice: NotInBackupNotice) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -349,7 +201,7 @@ internal fun formatDuration(millis: Long): String {
 }
 
 /** Shares the phone's own file: it is already here, nothing to fetch. */
-private fun shareDeviceMedia(context: Context, uri: Uri, mimeType: String?) {
+internal fun shareDeviceMedia(context: Context, uri: Uri, mimeType: String?) {
     val send = Intent(Intent.ACTION_SEND).apply {
         type = mimeType ?: context.contentResolver.getType(uri) ?: "image/*"
         putExtra(Intent.EXTRA_STREAM, uri)
@@ -361,18 +213,19 @@ private fun shareDeviceMedia(context: Context, uri: Uri, mimeType: String?) {
     )
 }
 
-private fun isVideo(context: Context, uri: Uri): Boolean = runCatching {
+internal fun isVideo(context: Context, uri: Uri): Boolean = runCatching {
     context.contentResolver.getType(uri)?.startsWith("video/") == true
 }.getOrDefault(false)
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
-private fun LocalVideoPlayer(uri: Uri) {
+internal fun LocalVideoPlayer(uri: Uri) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
+            playWhenReady = true
             prepare()
         }
     }
