@@ -19,6 +19,7 @@ import com.iris.app.data.remote.security.ConnectionProblem
 import com.iris.app.data.remote.security.PairingCode
 import com.iris.app.data.remote.security.PairingCodeException
 import com.iris.app.data.remote.security.PairingConnector
+import com.iris.app.data.remote.security.PairingSessionPolicy
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.ServerOrigin
 import com.iris.app.data.remote.security.ServerSecurity
@@ -295,6 +296,12 @@ class SettingsViewModel(
             }
             val result = outcome.getOrNull()
             if (result?.address != null) {
+                val previousInstance = irisRepository.credentialsStore.serverInstanceId()
+                if (PairingSessionPolicy.shouldEndSession(previousInstance, code.instanceId)) {
+                    // A different installation cannot reuse this device session.
+                    irisRepository.credentialsStore.clearCredentials()
+                }
+                irisRepository.apiClient.forgetVerifiedIdentities()
                 settingsRepository.updateServerUrl(result.address)
                 irisRepository.apiClient.updateBaseUrl(result.address)
                 withContext(Dispatchers.IO) { irisRepository.apiClient.resetConnections() }

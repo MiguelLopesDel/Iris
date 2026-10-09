@@ -87,6 +87,14 @@ sealed interface AddressOutcome {
 
 data class PairingResult(val address: String?, val outcomes: List<AddressOutcome>)
 
+/** Decides whether a confirmed pairing invalidates the currently authenticated installation. */
+internal object PairingSessionPolicy {
+    fun shouldEndSession(
+        currentInstanceId: String?,
+        pairedInstanceId: String,
+    ): Boolean = currentInstanceId != null && currentInstanceId != pairedInstanceId
+}
+
 /** The code's CA could not be obtained, or did not match its fingerprint. */
 class PairingAuthorityException(message: String) : IOException(message)
 

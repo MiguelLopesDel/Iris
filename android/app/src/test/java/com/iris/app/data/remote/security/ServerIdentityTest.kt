@@ -9,6 +9,7 @@ import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -77,6 +78,13 @@ class ServerIdentityTest {
             PairingCode.parse("iris://pair?v=1&id=$id&u=https%3A%2F%2Firis.example&k=zz"); fail("accepted a bad key")
         } catch (_: PairingCodeException) {
         }
+    }
+
+    @Test
+    fun `pairing a different installation ends the old device session`() {
+        assertTrue(PairingSessionPolicy.shouldEndSession(id, "b".repeat(32)))
+        assertFalse(PairingSessionPolicy.shouldEndSession(id, id))
+        assertFalse(PairingSessionPolicy.shouldEndSession(null, "b".repeat(32)))
     }
 
     // --- An HTTPS server with its own identity, as IRIS_TLS=self serves it -------
