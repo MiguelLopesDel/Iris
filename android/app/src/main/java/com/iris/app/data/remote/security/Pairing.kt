@@ -28,6 +28,9 @@ data class PairingCode(
 ) {
     val usesCleartext: Boolean get() = addresses.any { it.startsWith("http://") }
 
+    /** The short code the server's pairing page shows, to be compared by eye ([identityCode]). */
+    val identityCode: String? get() = keySha256?.let(::identityCode)
+
     companion object {
         const val MAX_ADDRESSES = 8
 
@@ -72,6 +75,15 @@ data class PairingCode(
         }
     }
 }
+
+/**
+ * The first 48 bits of an identity key fingerprint as `XXXX-XXXX-XXXX`: the
+ * code the server shows on its pairing page and in `server.sh status`, so a
+ * person can see that the app is about to trust that server. The whole
+ * fingerprint is what the app pins and verifies.
+ */
+fun identityCode(keySha256: String): String =
+    keySha256.take(12).uppercase().chunked(4).joinToString("-")
 
 class PairingCodeException(message: String) : IllegalArgumentException(message)
 

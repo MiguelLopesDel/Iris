@@ -397,7 +397,11 @@ case "${1:-}" in
     status)
         require_compose
         docker compose ps
-        curl --fail --silent "$(local_url)/healthz"; echo
+        health=$(curl --fail --silent "$(local_url)/healthz")
+        echo "$health"
+        # The code the app shows before trusting this server: they must match.
+        code=$(printf '%s' "$health" | sed -n 's/.*"identity_code":"\([A-F0-9-]*\)".*/\1/p')
+        if [ -n "$code" ]; then echo "Server identity code: $code"; fi
         ;;
     logs)
         require_compose

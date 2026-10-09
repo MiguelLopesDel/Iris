@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from core import pairing
+from core import pairing, server_identity
 from tests.test_server_identity import verify_identity
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,7 +108,9 @@ def signed_in(name):
 root, ana = signed_in("root"), signed_in("ana")
 anonymous = TestClient(server.app)
 out = {}
-out["health_id"] = anonymous.get("/healthz").json()["instance_id"]
+health = anonymous.get("/healthz").json()
+out["health_id"] = health["instance_id"]
+out["health_code"] = health["identity_code"]
 out["anonymous_code"] = anonymous.get("/api/pairing").status_code
 out["no_address"] = ana.get("/api/pairing", params={"current": "http://127.0.0.1:8501"}).json()
 out["bad_setting"] = root.put("/api/admin/settings", json={"pairing_addresses": "ftp://x"}).status_code
@@ -160,3 +162,7 @@ def test_signed_in_people_get_a_code_and_only_administrators_set_its_ca(tmp_path
     assert identity["key_sha256"] == code["key_sha256"] and identity["instance_id"] == out["health_id"]
     assert verify_identity(identity, "n" * 32, "http://192.168.1.20:8501")
     assert out["identity_bad_nonce"] == 422
+
+    # People compare the short code by eye: the page, /healthz and the app derive it from that key.
+    assert code["identity_code"] == server_identity.short_code(code["key_sha256"])
+    assert out["health_code"] == code["identity_code"]

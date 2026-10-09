@@ -664,7 +664,8 @@ async def lifespan(app: FastAPI):
     server_lock = instance_lock.hold_for_server(_DATA_DIR) if app.state.multiuser_enabled else None
     if app.state.multiuser_enabled:
         pairing.instance_id(_DATA_DIR)  # the identifier pairing codes and /healthz report
-        server_identity.server_identity(_DATA_DIR)  # the key paired devices verify
+        # The key paired devices verify; its short code is what /healthz reports.
+        app.state.identity_code = server_identity.server_identity(_DATA_DIR).short_code
     if app.state.setup_required:
         # Whoever completes setup becomes the administrator; the code proves
         # they can read this console or the data folder, not just reach the page.
@@ -1650,6 +1651,9 @@ async def healthz():
         # A random identifier: lets a paired device recognise this server at any address.
         # Created at startup; a probe only reads it.
         "instance_id": pairing.read_instance_id(_DATA_DIR),
+        # The short code of the key paired devices verify, for `server.sh status`
+        # and for comparing with the app. Public: the TLS certificate carries the key.
+        "identity_code": getattr(app.state, "identity_code", None),
     }
 
 
