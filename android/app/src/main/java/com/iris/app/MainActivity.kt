@@ -15,6 +15,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.rememberNavController
 import com.iris.app.ui.navigation.IrisNavGraph
 import com.iris.app.ui.theme.IrisTheme
+import com.iris.app.ui.theme.ThemeColors
+import com.iris.app.ui.theme.ThemeMode
 
 class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
@@ -36,7 +38,12 @@ class MainActivity : ComponentActivity() {
         receivePairingCode(intent)
 
         setContent {
-            IrisTheme(darkTheme = true) {
+            val themeMode by app.settingsRepository.themeMode.collectAsStateWithLifecycle(ThemeMode.DEFAULT.key)
+            val themeColors by app.settingsRepository.themeColors.collectAsStateWithLifecycle(ThemeColors.DEFAULT.key)
+            IrisTheme(
+                darkTheme = ThemeMode.fromKey(themeMode).isDark(),
+                colors = ThemeColors.fromKey(themeColors),
+            ) {
                 val isServerConfigurationReady by app.isServerConfigurationReady.collectAsStateWithLifecycle()
                 if (isServerConfigurationReady) {
                     val navController = rememberNavController()

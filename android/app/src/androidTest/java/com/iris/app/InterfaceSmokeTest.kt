@@ -28,6 +28,7 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
@@ -295,7 +296,11 @@ class InterfaceSmokeTest {
         compose.onNodeWithText("Galeria").performClick()
         compose.onNodeWithContentDescription("Configurações").performClick()
         waitForText("Configurações do Servidor")
-        waitForText("Servidor Iris Conectado")
+        // Below the appearance choices, which open the screen.
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithText("Servidor Iris Conectado").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Servidor Iris Conectado").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("Voltar").performClick()
 
         // Open a media record: the viewer opens with its actions showing.

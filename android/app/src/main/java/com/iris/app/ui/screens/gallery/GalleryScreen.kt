@@ -83,10 +83,10 @@ import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.CloudSyncNotice
 import com.iris.app.ui.components.MediaCard
 import com.iris.app.ui.components.ServerStatusBadge
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -228,11 +228,11 @@ fun GalleryScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = IrisDarkBg
+                    containerColor = IrisBackground
                 )
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -251,8 +251,8 @@ fun GalleryScreen(
                     onClick = { viewModel.setMediaType("all") },
                     label = { Text("Todas") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
                 FilterChip(
@@ -260,8 +260,8 @@ fun GalleryScreen(
                     onClick = { viewModel.setMediaType("image") },
                     label = { Text("Imagens") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
                 FilterChip(
@@ -269,8 +269,8 @@ fun GalleryScreen(
                     onClick = { viewModel.setMediaType("video") },
                     label = { Text("Vídeos") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
             }
@@ -466,7 +466,7 @@ private fun GalleryPreviewSkeleton() {
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(RoundedCornerShape(12.dp))
-            .background(IrisDarkSurface)
+            .background(IrisSurface)
     )
 }
 
@@ -482,7 +482,7 @@ private fun LoadingMoreFooter(loaded: Int, total: Int) {
         CircularProgressIndicator(
             modifier = Modifier.size(16.dp),
             strokeWidth = 2.dp,
-            color = IrisAccentLime
+            color = IrisAccent
         )
         Spacer(modifier = Modifier.width(10.dp))
         Text(
@@ -660,12 +660,12 @@ private fun FastScrollbar(
                             y = (thumbY() + thumbHeightPx / 2 - 16.dp.toPx()).roundToInt()
                         )
                     }
-                    .background(IrisAccentLime, RoundedCornerShape(8.dp))
+                    .background(IrisAccent, RoundedCornerShape(8.dp))
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
                 Text(
                     text = activeLabel,
-                    color = IrisAccentInk,
+                    color = IrisOnAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1
@@ -680,7 +680,7 @@ private fun FastScrollbar(
                 .offset { IntOffset(x = 0, y = thumbY().roundToInt()) }
                 .width(4.dp)
                 .height(32.dp)
-                .background(IrisAccentLime, RoundedCornerShape(2.dp))
+                .background(IrisAccent, RoundedCornerShape(2.dp))
         )
     }
 }
