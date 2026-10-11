@@ -41,7 +41,39 @@ internal object ViewerGestures {
         else -> Swipe.NONE
     }
 
+    /** A close swipe can dismiss only the panel, leaving this page mounted; restore its drag offset. */
+    fun dragOffsetAfterSwipe(swipe: Swipe): Float? = if (swipe == Swipe.CLOSE) 0f else null
+
     /** A drag is vertical once it moved past [slop] mostly up or down; sideways is the pager's. */
     fun isVertical(total: Offset, slop: Float): Boolean =
         abs(total.y) > slop && abs(total.y) > abs(total.x) * 1.5f
+
+    /**
+     * Double tap and drag ("quick zoom"): the scale follows the finger of the
+     * second tap, down to enlarge and up to shrink, as galleries do. A drag of
+     * a quarter of the screen height doubles or halves the scale.
+     */
+    fun quickZoomScale(startScale: Float, dragY: Float, height: Float): Float {
+        if (height <= 0f) return startScale
+        val factor = Math.pow(2.0, (dragY / (height / 4f)).toDouble()).toFloat()
+        return (startScale * factor).coerceIn(1f, MAX_SCALE)
+    }
+
+    /**
+     * Panning a zoomed photo past its edge: far enough, it moves to the next
+     * photo (dragging left past the right edge, -1 from the drag, so +1) or
+     * the previous one; 0 keeps it.
+     */
+    fun edgePage(overscrollX: Float, threshold: Float): Int = when {
+        overscrollX <= -threshold -> 1
+        overscrollX >= threshold -> -1
+        else -> 0
+    }
+
+    /** How a photo dragged down to close looks: it shrinks and fades as it goes. */
+    fun closingLook(dragY: Float, height: Float): Pair<Float, Float> {
+        if (height <= 0f || dragY <= 0f) return 1f to 1f
+        val progress = (dragY / height).coerceIn(0f, 1f)
+        return (1f - 0.35f * progress) to (1f - 0.6f * progress)
+    }
 }

@@ -89,12 +89,12 @@ import com.iris.app.data.model.UploadQueueSummary
 import com.iris.app.R
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.CloudSyncNotice
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisDanger
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
+import com.iris.app.ui.theme.IrisSurfaceBright
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import com.iris.app.ui.theme.IrisViolet
@@ -228,10 +228,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar fila")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         LazyColumn(
             modifier = Modifier
@@ -258,7 +258,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 if (!uiState.isLoggedIn) {
                     Card(
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                        colors = CardDefaults.cardColors(containerColor = IrisSurface),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -266,7 +266,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 Icon(
                                     imageVector = Icons.Default.Lock,
                                     contentDescription = null,
-                                    tint = IrisAccentLime
+                                    tint = IrisAccent
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
@@ -312,9 +312,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = IrisDarkSurfaceBright,
-                                    unfocusedContainerColor = IrisDarkSurfaceBright,
-                                    focusedBorderColor = IrisAccentLime
+                                    focusedContainerColor = IrisSurfaceBright,
+                                    unfocusedContainerColor = IrisSurfaceBright,
+                                    focusedBorderColor = IrisAccent
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -330,9 +330,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = IrisDarkSurfaceBright,
-                                    unfocusedContainerColor = IrisDarkSurfaceBright,
-                                    focusedBorderColor = IrisAccentLime
+                                    focusedContainerColor = IrisSurfaceBright,
+                                    unfocusedContainerColor = IrisSurfaceBright,
+                                    focusedBorderColor = IrisAccent
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -347,9 +347,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = IrisDarkSurfaceBright,
-                                    unfocusedContainerColor = IrisDarkSurfaceBright,
-                                    focusedBorderColor = IrisAccentLime
+                                    focusedContainerColor = IrisSurfaceBright,
+                                    unfocusedContainerColor = IrisSurfaceBright,
+                                    focusedBorderColor = IrisAccent
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -371,8 +371,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     uiState.loginUsernameInput.isNotBlank() && uiState.loginPasswordInput.isNotBlank(),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = IrisAccentLime,
-                                    contentColor = IrisAccentInk
+                                    containerColor = IrisAccent,
+                                    contentColor = IrisOnAccent
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -381,7 +381,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 if (uiState.isLoggingIn) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(20.dp),
-                                        color = IrisAccentInk,
+                                        color = IrisOnAccent,
                                         strokeWidth = 2.dp
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
@@ -396,7 +396,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     // Logged in device info card
                     Card(
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                        colors = CardDefaults.cardColors(containerColor = IrisSurface),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -409,13 +409,13 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     Box(
                                         modifier = Modifier
                                             .size(40.dp)
-                                            .background(IrisDarkSurfaceBright, CircleShape),
+                                            .background(IrisSurfaceBright, CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.AccountCircle,
                                             contentDescription = null,
-                                            tint = IrisAccentLime
+                                            tint = IrisAccent
                                         )
                                     }
                                     Spacer(modifier = Modifier.width(12.dp))
@@ -429,7 +429,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                             Box(
                                                 modifier = Modifier
                                                     .size(6.dp)
-                                                    .background(IrisAccentLime, CircleShape)
+                                                    .background(IrisAccent, CircleShape)
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
@@ -465,7 +465,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             item {
                 Card(
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                    colors = CardDefaults.cardColors(containerColor = IrisSurface),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -499,7 +499,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                         SyncActivity.IDLE -> stringResource(R.string.sync_status_idle)
                                     },
                                     fontSize = 12.sp,
-                                    color = if (activity.isRunning) IrisAccentLime else IrisTextSoft
+                                    color = if (activity.isRunning) IrisAccent else IrisTextSoft
                                 )
                             }
 
@@ -508,8 +508,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 enabled = uiState.isLoggedIn && !SyncActivity.of(uiState).isRunning,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = IrisAccentLime,
-                                    contentColor = IrisAccentInk
+                                    containerColor = IrisAccent,
+                                    contentColor = IrisOnAccent
                                 )
                             ) {
                                 Icon(
@@ -546,8 +546,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(6.dp),
-                                color = IrisAccentLime,
-                                trackColor = IrisDarkSurfaceBright
+                                color = IrisAccent,
+                                trackColor = IrisSurfaceBright
                             )
                         }
 
@@ -568,7 +568,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
-                        HorizontalDivider(color = IrisDarkSurfaceBright)
+                        HorizontalDivider(color = IrisSurfaceBright)
                         Spacer(modifier = Modifier.height(12.dp))
 
                         // Preferences switches
@@ -925,8 +925,8 @@ private fun PreferenceSwitch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = IrisAccentLime,
-                checkedTrackColor = IrisDarkSurfaceBright
+                checkedThumbColor = IrisAccent,
+                checkedTrackColor = IrisSurfaceBright
             )
         )
     }
@@ -936,7 +936,7 @@ private fun PreferenceSwitch(
 private fun UploadJobCard(job: LocalUploadJob) {
     Card(
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+        colors = CardDefaults.cardColors(containerColor = IrisSurface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -973,7 +973,7 @@ private fun UploadJobCard(job: LocalUploadJob) {
                     Text(
                         text = "$progressPercent%",
                         fontSize = 12.sp,
-                        color = IrisAccentLime,
+                        color = IrisAccent,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -987,8 +987,8 @@ private fun UploadJobCard(job: LocalUploadJob) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(4.dp),
-                    color = IrisAccentLime,
-                    trackColor = IrisDarkSurfaceBright
+                    color = IrisAccent,
+                    trackColor = IrisSurfaceBright
                 )
             }
 
@@ -1007,8 +1007,8 @@ private fun UploadJobCard(job: LocalUploadJob) {
 @Composable
 private fun JobStateBadge(state: UploadJobState) {
     val (label, bg, fg) = when (state) {
-        UploadJobState.QUEUED -> Triple("Pendente", IrisDarkSurfaceBright, IrisTextSoft)
-        UploadJobState.UPLOADING -> Triple("Enviando…", IrisAccentLime, IrisAccentInk)
+        UploadJobState.QUEUED -> Triple("Pendente", IrisSurfaceBright, IrisTextSoft)
+        UploadJobState.UPLOADING -> Triple("Enviando…", IrisAccent, IrisOnAccent)
         UploadJobState.PENDING_PROCESSING -> Triple("Processando (Backup OK)", IrisViolet, Color.White)
         UploadJobState.PROCESSING -> Triple("Processando…", IrisViolet, Color.White)
         UploadJobState.READY -> Triple("Pronto", Color(0xFF2E7D32), Color.White)

@@ -22,8 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisAccentInk
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisOnAccent
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 
@@ -68,8 +68,8 @@ fun EmptyState(
             Button(
                 onClick = onAction,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = IrisAccentLime,
-                    contentColor = IrisAccentInk
+                    containerColor = IrisAccent,
+                    contentColor = IrisOnAccent
                 )
             ) {
                 Text(text = actionLabel, fontWeight = FontWeight.Bold)

@@ -68,11 +68,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.MediaCard
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
+import com.iris.app.ui.theme.IrisSurfaceBright
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import com.iris.app.ui.theme.IrisViolet
@@ -101,14 +101,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         Icon(
                             imageVector = Icons.Default.Casino,
                             contentDescription = "Aleatório",
-                            tint = IrisAccentLime
+                            tint = IrisAccent
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -118,14 +118,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             // Mode Tabs: Semântica vs Nome de arquivo
             TabRow(
                 selectedTabIndex = if (uiState.mode == SearchMode.SEMANTIC) 0 else 1,
-                containerColor = IrisDarkBg,
-                contentColor = IrisAccentLime,
+                containerColor = IrisBackground,
+                contentColor = IrisAccent,
                 indicator = { tabPositions ->
                     TabRowDefaults.SecondaryIndicator(
                         Modifier.tabIndicatorOffset(
                             tabPositions[if (uiState.mode == SearchMode.SEMANTIC) 0 else 1]
                         ),
-                        color = IrisAccentLime
+                        color = IrisAccent
                     )
                 }
             ) {
@@ -177,10 +177,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     }),
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = IrisDarkSurface,
-                        unfocusedContainerColor = IrisDarkSurface,
-                        focusedBorderColor = IrisAccentLime,
-                        unfocusedBorderColor = IrisDarkSurfaceBright
+                        focusedContainerColor = IrisSurface,
+                        unfocusedContainerColor = IrisSurface,
+                        focusedBorderColor = IrisAccent,
+                        unfocusedBorderColor = IrisSurfaceBright
                     ),
                     modifier = Modifier.weight(1f)
                 )
@@ -191,14 +191,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         onClick = { viewModel.toggleFilters() },
                         modifier = Modifier
                             .background(
-                                if (uiState.showFilters) IrisAccentLime else IrisDarkSurfaceBright,
+                                if (uiState.showFilters) IrisAccent else IrisSurfaceBright,
                                 RoundedCornerShape(12.dp)
                             )
                     ) {
                         Icon(
                             imageVector = Icons.Default.Tune,
                             contentDescription = "Filtros",
-                            tint = if (uiState.showFilters) IrisAccentInk else IrisTextSoft
+                            tint = if (uiState.showFilters) IrisOnAccent else IrisTextSoft
                         )
                     }
                 }
@@ -215,7 +215,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurface)
+                    colors = CardDefaults.cardColors(containerColor = IrisSurface)
                 ) {
                     SemanticBalanceControl(
                         balance = uiState.balance,
@@ -240,8 +240,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     onClick = { viewModel.setMediaType("all") },
                     label = { Text("Todas") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
                 FilterChip(
@@ -249,8 +249,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     onClick = { viewModel.setMediaType("image") },
                     label = { Text("Imagens") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
                 FilterChip(
@@ -258,8 +258,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     onClick = { viewModel.setMediaType("video") },
                     label = { Text("Vídeos") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
 
@@ -282,7 +282,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = IrisAccentLime)
+                            CircularProgressIndicator(color = IrisAccent)
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
                                 text = "Buscando com embeddings de IA…",
@@ -372,7 +372,7 @@ private fun SemanticBalanceControl(
             Text(
                 text = balanceLabel,
                 fontSize = 13.sp,
-                color = IrisAccentLime,
+                color = IrisAccent,
                 fontWeight = FontWeight.Medium
             )
         }
@@ -383,9 +383,9 @@ private fun SemanticBalanceControl(
             onValueChangeFinished = { onBalanceChangeFinished(localBalance) },
             valueRange = 0.0f..1.0f,
             colors = SliderDefaults.colors(
-                thumbColor = IrisAccentLime,
-                activeTrackColor = IrisAccentLime,
-                inactiveTrackColor = IrisDarkSurfaceBright
+                thumbColor = IrisAccent,
+                activeTrackColor = IrisAccent,
+                inactiveTrackColor = IrisSurfaceBright
             )
         )
 

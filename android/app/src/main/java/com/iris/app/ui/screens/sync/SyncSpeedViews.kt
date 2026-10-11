@@ -23,9 +23,9 @@ import com.iris.app.data.model.SyncRunOutcome
 import com.iris.app.data.model.SyncRunTrigger
 import com.iris.app.data.sync.ServerSpeedTest
 import com.iris.app.data.sync.UploadSpeedSnapshot
-import com.iris.app.ui.theme.IrisAccentLime
+import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisDanger
-import com.iris.app.ui.theme.IrisDarkSurface
+import com.iris.app.ui.theme.IrisSurface
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import java.text.DateFormat
@@ -44,7 +44,7 @@ internal fun UploadSpeedPanel(speed: UploadSpeedSnapshot, remainingBytes: Long) 
                 stringResource(R.string.sync_speed_now, SyncMetricsFormat.speed(speed.currentBytesPerSecond)),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = IrisAccentLime
+                color = IrisAccent
             )
             Text(
                 stringResource(R.string.sync_speed_average, SyncMetricsFormat.speed(speed.averageBytesPerSecond)),
@@ -123,7 +123,7 @@ internal fun SyncRunCard(run: SyncRun, activeRunIds: Set<Long>) {
 
     Card(
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+        colors = CardDefaults.cardColors(containerColor = IrisSurface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {

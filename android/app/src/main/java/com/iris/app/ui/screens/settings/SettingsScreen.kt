@@ -60,12 +60,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisDanger
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
+import com.iris.app.ui.theme.IrisSurfaceBright
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import com.iris.app.performance.PerformanceMonitor
@@ -166,10 +166,10 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -178,11 +178,23 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val themeColors by viewModel.themeColors.collectAsStateWithLifecycle()
+            AppearanceSettings(
+                mode = themeMode,
+                colors = themeColors,
+                onMode = viewModel::setThemeMode,
+                onColors = viewModel::setThemeColors,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = IrisSurfaceBright)
+            Spacer(modifier = Modifier.height(16.dp))
+
             Text(
                 text = "Conexão com o Servidor Iris",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = IrisAccentLime
+                color = IrisAccent
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
@@ -204,10 +216,10 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = IrisDarkSurface,
-                    unfocusedContainerColor = IrisDarkSurface,
-                    focusedBorderColor = IrisAccentLime,
-                    unfocusedBorderColor = IrisDarkSurfaceBright
+                    focusedContainerColor = IrisSurface,
+                    unfocusedContainerColor = IrisSurface,
+                    focusedBorderColor = IrisAccent,
+                    unfocusedBorderColor = IrisSurfaceBright
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -227,8 +239,8 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                     onClick = { viewModel.onServerUrlChange("http://10.0.2.2:8000/") },
                     label = { Text("Emulador (10.0.2.2)") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
                 FilterChip(
@@ -236,8 +248,8 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                     onClick = { viewModel.onServerUrlChange("http://localhost:8000/") },
                     label = { Text("Localhost") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccentLime,
-                        selectedLabelColor = IrisAccentInk
+                        selectedContainerColor = IrisAccent,
+                        selectedLabelColor = IrisOnAccent
                     )
                 )
             }
@@ -249,8 +261,8 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 enabled = !uiState.isTestingConnection && uiState.serverUrl.isNotBlank(),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = IrisAccentLime,
-                    contentColor = IrisAccentInk
+                    containerColor = IrisAccent,
+                    contentColor = IrisOnAccent
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -259,7 +271,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 if (uiState.isTestingConnection) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        color = IrisAccentInk,
+                        color = IrisOnAccent,
                         strokeWidth = 2.dp
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -291,7 +303,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 val isOnline = uiState.isServerOnline == true
                 Card(
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                    colors = CardDefaults.cardColors(containerColor = IrisSurface),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -301,7 +313,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         Icon(
                             imageVector = if (isOnline) Icons.Default.CheckCircle else Icons.Default.Error,
                             contentDescription = null,
-                            tint = if (isOnline) IrisAccentLime else IrisDanger,
+                            tint = if (isOnline) IrisAccent else IrisDanger,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -310,7 +322,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                                 text = if (isOnline) "Servidor Iris Conectado" else "Falha de Conexão",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isOnline) IrisAccentLime else IrisDanger
+                                color = if (isOnline) IrisAccent else IrisDanger
                             )
                             Text(
                                 text = uiState.connectionTestResult ?: "",
@@ -331,7 +343,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             Spacer(modifier = Modifier.height(16.dp))
             Card(
                 shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                colors = CardDefaults.cardColors(containerColor = IrisSurface),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -347,13 +359,13 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                             Box(
                                 modifier = Modifier
                                     .size(8.dp)
-                                    .background(IrisAccentLime, CircleShape)
+                                    .background(IrisAccent, CircleShape)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Dispositivo autenticado como ${uiState.loggedInUsername}",
                                 fontSize = 13.sp,
-                                color = IrisAccentLime,
+                                color = IrisAccent,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -394,7 +406,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             if (uiState.serverInfo != null) {
                 val info = uiState.serverInfo!!
                 Spacer(modifier = Modifier.height(24.dp))
-                HorizontalDivider(color = IrisDarkSurfaceBright)
+                HorizontalDivider(color = IrisSurfaceBright)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
@@ -407,7 +419,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
 
                 Card(
                     shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                    colors = CardDefaults.cardColors(containerColor = IrisSurface),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -430,7 +442,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            HorizontalDivider(color = IrisDarkSurfaceBright)
+            HorizontalDivider(color = IrisSurfaceBright)
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Diagnóstico de desempenho",
@@ -451,8 +463,8 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 },
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (performanceReport.enabled) IrisDarkSurfaceBright else IrisAccentLime,
-                    contentColor = if (performanceReport.enabled) IrisTextSoft else IrisAccentInk
+                    containerColor = if (performanceReport.enabled) IrisSurfaceBright else IrisAccent,
+                    contentColor = if (performanceReport.enabled) IrisTextSoft else IrisOnAccent
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -462,7 +474,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 Spacer(modifier = Modifier.height(12.dp))
                 Card(
                     shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                    colors = CardDefaults.cardColors(containerColor = IrisSurface),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -520,6 +532,6 @@ private fun InfoRow(label: String, value: String) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(text = label, fontSize = 13.sp, color = IrisTextSoft)
-        Text(text = value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = IrisAccentLime)
+        Text(text = value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = IrisAccent)
     }
 }

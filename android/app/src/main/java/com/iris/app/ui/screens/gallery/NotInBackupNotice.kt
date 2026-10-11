@@ -24,6 +24,13 @@ import kotlinx.coroutines.withContext
  * covered (or nobody is signed in). Its action includes the folder, and the
  * media kind when that is what was left out, then starts a sync.
  */
+
+/**
+ * Why a device item will not be backed up, with the action that fixes it.
+ * [message] already names the folder or media kind left out.
+ */
+data class NotInBackupNotice(val message: String, val onInclude: () -> Unit)
+
 @Composable
 fun rememberNotInBackupNotice(application: IrisApplication, mediaUri: String): NotInBackupNotice? {
     val accountKey by application.credentialsStore.accountIdentity.collectAsState()

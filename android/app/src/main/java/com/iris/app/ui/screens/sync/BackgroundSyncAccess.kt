@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.iris.app.R
-import com.iris.app.ui.theme.IrisDarkSurface
+import com.iris.app.ui.theme.IrisSurface
 import com.iris.app.ui.theme.IrisTextSoft
 
 /**
@@ -73,7 +73,7 @@ internal fun BackgroundSyncAccessCard(
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+        colors = CardDefaults.cardColors(containerColor = IrisSurface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

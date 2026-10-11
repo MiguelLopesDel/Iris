@@ -21,9 +21,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.data.model.ServerInfo
-import com.iris.app.ui.theme.IrisAccentLime
+import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisDanger
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
+import com.iris.app.ui.theme.IrisSurfaceBright
 import com.iris.app.ui.theme.IrisTextSoft
 
 @Composable
@@ -43,7 +43,7 @@ fun ServerStatusBadge(
         isConnecting -> Color(0xFFFFB300)
         !isOnline -> IrisDanger
         !isDeviceLoggedIn -> Color(0xFFFFB300)
-        else -> IrisAccentLime
+        else -> IrisAccent
     }
     val label = when {
         isConnecting -> "Conectando…"
@@ -56,7 +56,7 @@ fun ServerStatusBadge(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(IrisDarkSurfaceBright)
+            .background(IrisSurfaceBright)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically

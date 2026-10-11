@@ -53,9 +53,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.R
 import com.iris.app.data.model.DeviceMediaSource
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisSurfaceBright
 import com.iris.app.ui.theme.IrisDanger
 import com.iris.app.ui.theme.IrisTextSoft
 
@@ -124,7 +124,7 @@ internal fun DeviceMediaSourcePicker(
                 Spacer(modifier = Modifier.height(12.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = IrisDarkSurfaceBright),
+                    colors = CardDefaults.cardColors(containerColor = IrisSurfaceBright),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
@@ -213,7 +213,7 @@ internal fun DeviceMediaSourcePicker(
                 ) { activeFilter = DeviceMediaSourceFilter.SELECTED }
             }
 
-            HorizontalDivider(color = IrisDarkSurfaceBright)
+            HorizontalDivider(color = IrisSurfaceBright)
 
             when {
                 isLoading -> SourcePickerLoading()
@@ -254,8 +254,8 @@ internal fun DeviceMediaSourcePicker(
                     .padding(bottom = 20.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = IrisAccentLime,
-                    contentColor = IrisAccentInk
+                    containerColor = IrisAccent,
+                    contentColor = IrisOnAccent
                 )
             ) {
                 Icon(Icons.Default.Check, contentDescription = null)
@@ -332,7 +332,7 @@ private fun SourcePickerLoading() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        CircularProgressIndicator(color = IrisAccentLime, modifier = Modifier.size(28.dp))
+        CircularProgressIndicator(color = IrisAccent, modifier = Modifier.size(28.dp))
         Spacer(modifier = Modifier.height(10.dp))
         Text(stringResource(R.string.sync_source_picker_loading), color = IrisTextSoft)
     }

@@ -53,10 +53,10 @@ import coil.request.ImageRequest
 import com.iris.app.IrisApplication
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.MediaCard
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
+import com.iris.app.ui.theme.IrisSurfaceBright
 import com.iris.app.ui.theme.IrisTextSoft
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,10 +84,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         PullToRefreshBox(
             isRefreshing = uiState.isRefreshing,
@@ -102,7 +102,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(color = IrisAccentLime)
+                        CircularProgressIndicator(color = IrisAccent)
                     }
                 }
 
@@ -143,7 +143,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                             Card(
                                 shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                                colors = CardDefaults.cardColors(containerColor = IrisSurface),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(16.dp))
@@ -159,7 +159,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                         modifier = Modifier
                                             .size(72.dp)
                                             .clip(CircleShape)
-                                            .background(IrisDarkSurfaceBright),
+                                            .background(IrisSurfaceBright),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (faceThumbUrl != null) {
@@ -175,7 +175,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                                     CircularProgressIndicator(
                                                         modifier = Modifier.size(20.dp),
                                                         strokeWidth = 2.dp,
-                                                        color = IrisAccentLime
+                                                        color = IrisAccent
                                                     )
                                                 },
                                                 error = {
@@ -262,10 +262,10 @@ fun PersonMediaScreen(
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         when {
             uiState.isLoading -> {
@@ -275,7 +275,7 @@ fun PersonMediaScreen(
                         .padding(paddingValues),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(color = IrisAccentLime)
+                    CircularProgressIndicator(color = IrisAccent)
                 }
             }
 

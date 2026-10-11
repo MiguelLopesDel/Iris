@@ -84,10 +84,12 @@ import com.iris.app.data.model.SpaceSummary
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.rememberMediaDownload
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
+import com.iris.app.ui.theme.IrisDanger
+import com.iris.app.ui.theme.IrisText
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 
@@ -121,23 +123,23 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         Icon(Icons.Default.Refresh, contentDescription = "Atualizar")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground),
             )
         },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { creating = true },
-                containerColor = IrisAccentLime,
-                contentColor = IrisAccentInk,
+                containerColor = IrisAccent,
+                contentColor = IrisOnAccent,
             ) { Icon(Icons.Default.Add, contentDescription = "Novo grupo") }
         },
         snackbarHost = { SnackbarHost(snackbar) },
-        containerColor = IrisDarkBg,
+        containerColor = IrisBackground,
     ) { padding ->
         when {
             uiState.isLoading && uiState.spaces.isEmpty() -> Box(
                 Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center,
-            ) { CircularProgressIndicator(color = IrisAccentLime) }
+            ) { CircularProgressIndicator(color = IrisAccent) }
 
             uiState.error != null && uiState.spaces.isEmpty() -> EmptyState(
                 title = "Não foi possível carregar os grupos",
@@ -163,14 +165,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             ) {
                 items(uiState.spaces, key = { it.id }) { space ->
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                        colors = CardDefaults.cardColors(containerColor = IrisSurface),
                         modifier = Modifier.fillMaxWidth().clickable { onSpaceClick(space.id, space.name) },
                     ) {
                         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Group, contentDescription = null, tint = IrisAccentLime)
+                            Icon(Icons.Default.Group, contentDescription = null, tint = IrisAccent)
                             Spacer(Modifier.size(14.dp))
                             Column {
-                                Text(space.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                Text(space.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = IrisText)
                                 Text(space.roleLabel, fontSize = 12.sp, color = IrisTextSoft)
                             }
                         }
@@ -255,10 +257,10 @@ fun SpaceScreen(
                         Icon(Icons.Default.Refresh, contentDescription = "Atualizar")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground),
             )
         },
-        containerColor = IrisDarkBg,
+        containerColor = IrisBackground,
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             SpaceFilters(
@@ -272,7 +274,7 @@ fun SpaceScreen(
                 when {
                     uiState.isLoading && uiState.items.isEmpty() -> Box(
                         Modifier.fillMaxSize(), contentAlignment = Alignment.Center,
-                    ) { CircularProgressIndicator(color = IrisAccentLime) }
+                    ) { CircularProgressIndicator(color = IrisAccent) }
 
                     uiState.error != null && uiState.items.isEmpty() -> EmptyState(
                         title = "Não foi possível abrir o grupo",
@@ -329,9 +331,9 @@ fun SpaceScreen(
     }
 
     if (showMembers) {
-        ModalBottomSheet(onDismissRequest = { showMembers = false }, containerColor = IrisDarkBg) {
+        ModalBottomSheet(onDismissRequest = { showMembers = false }, containerColor = IrisBackground) {
             Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-                Text("Membros", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Membros", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = IrisText)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Convites e papéis são administrados pela web.",
@@ -343,7 +345,7 @@ fun SpaceScreen(
                         Column(Modifier.weight(1f)) {
                             Text(
                                 (member.displayName.ifBlank { member.username }) + if (member.isYou) " (você)" else "",
-                                color = Color.White,
+                                color = IrisText,
                             )
                             Text(member.username, fontSize = 12.sp, color = IrisTextMuted)
                         }
@@ -352,7 +354,7 @@ fun SpaceScreen(
                 }
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = { confirmLeave = true }) {
-                    Text("Sair do grupo", color = Color(0xFFFF8A9A))
+                    Text("Sair do grupo", color = IrisDanger)
                 }
             }
         }
@@ -383,7 +385,7 @@ private fun SpaceThumbnail(item: SpaceItem, onClick: () -> Unit) {
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(RoundedCornerShape(8.dp))
-            .background(IrisDarkSurface)
+            .background(IrisSurface)
             .clickable(onClick = onClick),
     ) {
         AsyncImage(
@@ -491,7 +493,7 @@ fun SpacePickerDialog(
         text = {
             val result = loaded
             when {
-                result == null -> CircularProgressIndicator(color = IrisAccentLime)
+                result == null -> CircularProgressIndicator(color = IrisAccent)
                 result.isFailure -> Text(result.exceptionOrNull()?.localizedMessage ?: "Erro ao carregar grupos")
                 else -> {
                     val spaces = result.getOrDefault(emptyList()).filter { it.canAdd }
@@ -512,7 +514,7 @@ fun SpacePickerDialog(
                                     Modifier.fillMaxWidth().clickable { onPick(space) }.padding(vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Icon(Icons.Default.Group, contentDescription = null, tint = IrisAccentLime)
+                                    Icon(Icons.Default.Group, contentDescription = null, tint = IrisAccent)
                                     Spacer(Modifier.size(12.dp))
                                     Column {
                                         Text(space.name, fontWeight = FontWeight.SemiBold)
