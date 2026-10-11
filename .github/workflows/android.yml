@@ -1,7 +1,9 @@
 name: Android checks
 
 on:
+  # As in ci.yml: pull requests are checked by their pull_request run only.
   push:
+    branches: [main]
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
@@ -12,6 +14,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   unit-and-build:
