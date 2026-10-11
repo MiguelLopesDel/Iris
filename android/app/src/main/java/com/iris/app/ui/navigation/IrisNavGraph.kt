@@ -74,10 +74,10 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.outlined.CloudUpload
 import com.iris.app.ui.screens.settings.SettingsScreen
 import com.iris.app.ui.screens.settings.SettingsViewModel
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import com.iris.app.performance.Metric
@@ -183,8 +183,8 @@ fun IrisNavGraph(
         bottomBar = {
             if (showBottomBar) {
                 NavigationBar(
-                    containerColor = IrisDarkSurface,
-                    contentColor = IrisAccentLime
+                    containerColor = IrisSurface,
+                    contentColor = IrisAccent
                 ) {
                     bottomNavItems.forEach { item ->
                         val selected = currentDestination?.route == item.route
@@ -211,9 +211,9 @@ fun IrisNavGraph(
                             },
                             label = { Text(item.label) },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = IrisAccentInk,
-                                selectedTextColor = IrisAccentLime,
-                                indicatorColor = IrisAccentLime,
+                                selectedIconColor = IrisOnAccent,
+                                selectedTextColor = IrisAccent,
+                                indicatorColor = IrisAccent,
                                 unselectedIconColor = IrisTextSoft,
                                 unselectedTextColor = IrisTextMuted
                             )
@@ -222,7 +222,7 @@ fun IrisNavGraph(
                 }
             }
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { scaffoldPadding ->
         // The viewers draw the photo edge to edge, under the status bar, as a
         // gallery does; their own bars pad for it.

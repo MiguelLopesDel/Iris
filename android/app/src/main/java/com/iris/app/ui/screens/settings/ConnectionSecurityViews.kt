@@ -35,10 +35,10 @@ import com.iris.app.data.remote.security.ConnectionProblem
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.PairingCode
 import com.iris.app.data.remote.security.TrustMode
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisDanger
-import com.iris.app.ui.theme.IrisDarkSurface
+import com.iris.app.ui.theme.IrisSurface
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import java.security.cert.X509Certificate
@@ -115,7 +115,7 @@ private fun UntrustedCertificateDialog(
                 if (top !== problem.leaf) CertificateDetails("Emitido por", top)
 
                 if (problem.trustedByDeviceCas) {
-                    Text("A autoridade deste certificado está instalada no aparelho.", color = IrisAccentLime)
+                    Text("A autoridade deste certificado está instalada no aparelho.", color = IrisAccent)
                     ChoiceButton("Usar autoridades instaladas no aparelho", primary = true, onClick = actions.trustDeviceCertificates)
                 }
                 if (problem.canTrustPresentedCertificate) {
@@ -141,7 +141,7 @@ private fun ChoiceButton(label: String, primary: Boolean, onClick: () -> Unit) {
     if (primary) {
         Button(
             onClick = onClick,
-            colors = ButtonDefaults.buttonColors(containerColor = IrisAccentLime, contentColor = IrisAccentInk),
+            colors = ButtonDefaults.buttonColors(containerColor = IrisAccent, contentColor = IrisOnAccent),
             modifier = Modifier.fillMaxWidth(),
         ) { Text(label) }
     } else {
@@ -154,7 +154,7 @@ private fun CertificateDetails(title: String, certificate: X509Certificate) {
     val fingerprint = ConnectionSecurity.sha256(certificate)
     Card(
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+        colors = CardDefaults.cardColors(containerColor = IrisSurface),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -188,7 +188,7 @@ internal fun commonName(distinguishedName: String): String =
 fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
     Card(
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+        colors = CardDefaults.cardColors(containerColor = IrisSurface),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

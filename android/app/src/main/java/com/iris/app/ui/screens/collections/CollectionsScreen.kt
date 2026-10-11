@@ -58,11 +58,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.MediaCard
-import com.iris.app.ui.theme.IrisAccentInk
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkBg
-import com.iris.app.ui.theme.IrisDarkSurface
-import com.iris.app.ui.theme.IrisDarkSurfaceBright
+import com.iris.app.ui.theme.IrisOnAccent
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisBackground
+import com.iris.app.ui.theme.IrisSurface
+import com.iris.app.ui.theme.IrisSurfaceBright
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 import com.iris.app.ui.theme.IrisViolet
@@ -91,10 +91,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -103,12 +103,12 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
         ) {
             TabRow(
                 selectedTabIndex = uiState.selectedTab,
-                containerColor = IrisDarkBg,
-                contentColor = IrisAccentLime,
+                containerColor = IrisBackground,
+                contentColor = IrisAccent,
                 indicator = { tabPositions ->
                     TabRowDefaults.SecondaryIndicator(
                         Modifier.tabIndicatorOffset(tabPositions[uiState.selectedTab]),
-                        color = IrisAccentLime
+                        color = IrisAccent
                     )
                 }
             ) {
@@ -135,7 +135,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(color = IrisAccentLime)
+                            CircularProgressIndicator(color = IrisAccent)
                         }
                     }
 
@@ -161,7 +161,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 ) { col ->
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
-                                        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                                        colors = CardDefaults.cardColors(containerColor = IrisSurface),
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(14.dp))
@@ -176,7 +176,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                             Icon(
                                                 imageVector = Icons.Default.Folder,
                                                 contentDescription = null,
-                                                tint = IrisAccentLime,
+                                                tint = IrisAccent,
                                                 modifier = Modifier.size(32.dp)
                                             )
                                             Spacer(modifier = Modifier.width(16.dp))
@@ -221,7 +221,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 ) { concept ->
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
-                                        colors = CardDefaults.cardColors(containerColor = IrisDarkSurface),
+                                        colors = CardDefaults.cardColors(containerColor = IrisSurface),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Column(modifier = Modifier.padding(16.dp)) {
@@ -247,7 +247,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                                 Text(
                                                     text = "${concept.matchCount} mídias",
                                                     fontSize = 12.sp,
-                                                    color = IrisAccentLime,
+                                                    color = IrisAccent,
                                                     fontWeight = FontWeight.SemiBold
                                                 )
                                             }
@@ -334,10 +334,10 @@ fun CollectionMediaScreen(
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisDarkBg)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
             )
         },
-        containerColor = IrisDarkBg
+        containerColor = IrisBackground
     ) { paddingValues ->
         when {
             uiState.isLoading -> {
@@ -347,7 +347,7 @@ fun CollectionMediaScreen(
                         .padding(paddingValues),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(color = IrisAccentLime)
+                    CircularProgressIndicator(color = IrisAccent)
                 }
             }
 
@@ -398,7 +398,7 @@ fun CollectionMediaScreen(
                                     .aspectRatio(1f),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator(color = IrisAccentLime)
+                                CircularProgressIndicator(color = IrisAccent)
                             }
                         }
                     }

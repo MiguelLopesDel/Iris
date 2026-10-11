@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -75,8 +76,8 @@ import com.iris.app.ui.components.decodeThumbHash
 import com.iris.app.ui.components.rememberMediaDownload
 import com.iris.app.ui.components.rememberMediaShare
 import com.iris.app.ui.screens.spaces.SpacePickerDialog
-import com.iris.app.ui.theme.IrisAccentLime
-import com.iris.app.ui.theme.IrisDarkBg
+import com.iris.app.ui.theme.IrisAccent
+import com.iris.app.ui.theme.IrisBackground
 import kotlinx.coroutines.launch
 
 /**
@@ -279,7 +280,7 @@ private fun MediaPage(
             onAction = onRetry
         )
         else -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-            CircularProgressIndicator(color = IrisAccentLime)
+            CircularProgressIndicator(color = IrisAccent)
         }
     }
 }
@@ -537,8 +538,8 @@ private fun RenameDialog(
     }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = IrisDarkBg,
-        title = { Text("Renomear", color = Color.White) },
+        containerColor = IrisBackground,
+        title = { Text("Renomear", color = MaterialTheme.colorScheme.onSurface) },
         text = {
             Column {
                 OutlinedTextField(
@@ -552,7 +553,7 @@ private fun RenameDialog(
                 Text(
                     "A extensão é mantida pelo servidor.",
                     fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
@@ -560,10 +561,10 @@ private fun RenameDialog(
             TextButton(
                 onClick = { onConfirm(value.trim()) },
                 enabled = !isWorking && value.isNotBlank()
-            ) { Text("Renomear", color = IrisAccentLime) }
+            ) { Text("Renomear", color = IrisAccent) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar", color = Color.White) }
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
         }
     )
 }
