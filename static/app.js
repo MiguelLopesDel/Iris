@@ -22,7 +22,7 @@ import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runG
 import { initCollections } from './collections.js?v=35';
 import { initConcepts } from './concepts.js?v=36';
 import { initDuplicates } from './duplicates.js?v=35';
-import { initSystem } from './system.js?v=47';
+import { initSystem } from './system.js?v=48';
 import { initPersons } from './persons.js?v=9';
 import { initImportReview } from './import-review.js?v=10';
 import { chooseSpaceFor, initSpaces } from './spaces.js?v=5';

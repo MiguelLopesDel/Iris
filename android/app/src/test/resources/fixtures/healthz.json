@@ -1,5 +1,6 @@
 {
   "status": "ok",
   "mode": "legacy",
-  "instance_id": "<masked>"
+  "instance_id": "<masked>",
+  "identity_code": null
 }

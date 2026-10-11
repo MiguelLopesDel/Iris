@@ -38,13 +38,16 @@ def pairing_code(request: Request, current: str = Query("", max_length=300)):
     )
     ca = pairing.ca_fingerprint(data_dir)
     instance = pairing.instance_id(data_dir)
-    key = server_identity.server_identity(data_dir).fingerprint
+    identity = server_identity.server_identity(data_dir)
+    key = identity.fingerprint
     uri = pairing.pairing_uri(instance, addresses, ca, key)
     return {
         "instance_id": instance,
         "addresses": addresses,
         "ca_sha256": ca,
         "key_sha256": key,
+        # What the app shows before trusting the server, to be compared by eye.
+        "identity_code": identity.short_code,
         "uri": uri,
         "qr_svg": pairing.qr_svg(uri) if addresses else None,
     }
