@@ -28,10 +28,12 @@ fun CloudSyncNotice(
     modifier: Modifier = Modifier,
     serverUnavailable: Boolean = false,
     queueRefreshFailed: Boolean = false,
+    /** Why the server did not answer, in plain words, added to the offline message when known. */
+    offlineReason: String? = null,
 ) {
     val message = when {
         serverUnavailable || status.connectionState == CloudConnectionState.OFFLINE ->
-            stringResource(R.string.cloud_connection_unavailable)
+            listOfNotNull(stringResource(R.string.cloud_connection_unavailable), offlineReason).joinToString("\n\n")
         status.syncError != null -> stringResource(R.string.cloud_sync_retrying)
         queueRefreshFailed -> stringResource(R.string.cloud_queue_numbers_stale)
         else -> null

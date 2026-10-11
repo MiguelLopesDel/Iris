@@ -9,6 +9,9 @@ import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.model.CloudConnectionState
 import com.iris.app.data.model.CloudSyncStatus
+import com.iris.app.data.remote.security.ConnectionMessages
+import com.iris.app.data.remote.security.ConnectionProblem
+import com.iris.app.data.remote.security.ServerOrigin
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.GalleryDataSource
 import com.iris.app.data.repository.ServerSettingsRepository
@@ -27,6 +30,8 @@ data class GalleryUiState(
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val error: String? = null,
+    /** With error SERVER_OFFLINE: why the server did not answer, in plain words, when that is known. */
+    val offlineReason: String? = null,
     val isServerOnline: Boolean? = null,
     val isDeviceLoggedIn: Boolean = false,
     val page: Int = 1,
@@ -58,6 +63,13 @@ class GalleryViewModel(
     /** MediaStore changes ([com.iris.app.data.local.DeviceMediaChanges]); none in tests by default. */
     deviceMediaChanges: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
 ) : ViewModel() {
+
+    /** What the user can check when the server did not answer; null when the failure says nothing useful. */
+    private fun offlineReason(failure: Throwable?): String? {
+        val origin = ServerOrigin.of(repository.apiClient.baseUrl) ?: return null
+        val problem = failure?.let { ConnectionProblem.from(it, origin, repository.apiClient.connectionSecurity) }
+        return problem?.let(ConnectionMessages::describe)
+    }
 
     private val _uiState = MutableStateFlow(GalleryUiState())
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
@@ -385,7 +397,8 @@ class GalleryViewModel(
                         isServerOnline = false,
                         isDeviceLoggedIn = requestedSessionKey != null,
                         serverInfo = null,
-                        error = "SERVER_OFFLINE"
+                        error = "SERVER_OFFLINE",
+                        offlineReason = offlineReason(healthResult.exceptionOrNull()),
                     )
                 }
                 return@launch
@@ -540,7 +553,8 @@ class GalleryViewModel(
                     it.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        error = errorMsg
+                        error = errorMsg,
+                        offlineReason = if (errorMsg == "SERVER_OFFLINE") offlineReason(ex) else null,
                     )
                 }
             }

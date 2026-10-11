@@ -298,6 +298,7 @@ fun GalleryScreen(
                 CloudSyncNotice(
                     status = uiState.cloudSyncStatus,
                     serverUnavailable = uiState.isServerOnline == false,
+                    offlineReason = uiState.offlineReason.takeIf { uiState.error == "SERVER_OFFLINE" },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
@@ -327,7 +328,8 @@ fun GalleryScreen(
                         EmptyState(
                             title = "Não foi possível conectar",
                             message = if (uiState.error == "SERVER_OFFLINE") {
-                                "Não foi possível alcançar o servidor Iris. Verifique se ele está rodando e a URL em Configurações."
+                                uiState.offlineReason
+                                    ?: "Não foi possível alcançar o servidor Iris. Verifique se ele está rodando e a URL em Configurações."
                             } else {
                                 uiState.error ?: "Verifique se o servidor Iris está em execução."
                             },
