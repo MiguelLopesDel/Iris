@@ -51,13 +51,12 @@ import com.iris.app.ui.screens.collections.CollectionsScreen
 import com.iris.app.ui.screens.collections.CollectionsViewModel
 import com.iris.app.ui.screens.detail.MediaDetailScreen
 import com.iris.app.ui.screens.detail.MediaDetailViewModel
+import com.iris.app.ui.screens.detail.ViewerItem
 import com.iris.app.ui.screens.detail.ViewerSequence
 import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.ui.screens.search.PendingSearch
 import com.iris.app.ui.screens.gallery.GalleryScreen
 import com.iris.app.ui.screens.gallery.GalleryViewModel
-import com.iris.app.ui.screens.gallery.LocalMediaViewerScreen
-import com.iris.app.ui.screens.gallery.rememberNotInBackupNotice
 import com.iris.app.ui.screens.persons.PersonMediaScreen
 import com.iris.app.ui.screens.persons.PersonMediaViewModel
 import com.iris.app.ui.screens.persons.PersonsScreen
@@ -179,6 +178,7 @@ fun IrisNavGraph(
     // Hide bottom navigation bar on detail screens or settings
     val showBottomBar = bottomNavItems.any { it.route == currentDestination?.route }
 
+    val fullBleed = currentDestination?.route in setOf(NavRoute.Detail.route, NavRoute.LocalMediaDetail.route)
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
@@ -226,13 +226,11 @@ fun IrisNavGraph(
     ) { scaffoldPadding ->
         // The viewers draw the photo edge to edge, under the status bar, as a
         // gallery does; their own bars pad for it.
-        val fullBleed = currentDestination?.route in setOf(NavRoute.Detail.route, NavRoute.LocalMediaDetail.route)
         val layoutDirection = LocalLayoutDirection.current
         val paddingValues = if (fullBleed) {
             PaddingValues(
                 start = scaffoldPadding.calculateStartPadding(layoutDirection),
                 end = scaffoldPadding.calculateEndPadding(layoutDirection),
-                bottom = scaffoldPadding.calculateBottomPadding(),
             )
         } else {
             scaffoldPadding
@@ -259,13 +257,12 @@ fun IrisNavGraph(
                 GalleryScreen(
                     viewModel = viewModel,
                     onMediaClick = { index ->
-                        // Items only on the device open in their own viewer; the pager skips them.
-                        ViewerSequence.set(
-                            viewModel.uiState.value.records.filter { it.deviceUri == null }.map { it.index }
-                        )
+                        ViewerSequence.setRecords(viewModel.uiState.value.records)
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     },
                     onDeviceMediaClick = { uri ->
+                        // The phone's own items page along with Iris's, in the grid's order.
+                        ViewerSequence.setRecords(viewModel.uiState.value.records)
                         navController.navigate(NavRoute.LocalMediaDetail.createRoute(uri))
                     },
                     onSettingsClick = {
@@ -282,11 +279,7 @@ fun IrisNavGraph(
                 arguments = listOf(navArgument("mediaUri") { type = NavType.StringType })
             ) { backStackEntry ->
                 val mediaUri = backStackEntry.arguments?.getString("mediaUri").orEmpty()
-                LocalMediaViewerScreen(
-                    mediaUri = mediaUri,
-                    onBack = { navController.popBackStack() },
-                    notInBackup = rememberNotInBackupNotice(application, mediaUri),
-                )
+                Viewer(ViewerItem.Device(mediaUri), navController, application)
             }
 
             composable(NavRoute.Search.route) {
@@ -298,7 +291,7 @@ fun IrisNavGraph(
                 SearchScreen(
                     viewModel = viewModel,
                     onMediaClick = { index ->
-                        ViewerSequence.set(viewModel.uiState.value.results.map { it.index })
+                        ViewerSequence.setRecords(viewModel.uiState.value.results)
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     }
                 )
@@ -336,7 +329,7 @@ fun IrisNavGraph(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() },
                     onMediaClick = { index ->
-                        ViewerSequence.set(viewModel.uiState.value.media.map { it.index })
+                        ViewerSequence.setRecords(viewModel.uiState.value.media)
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     }
                 )
@@ -380,7 +373,7 @@ fun IrisNavGraph(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() },
                     onMediaClick = { index ->
-                        ViewerSequence.set(viewModel.uiState.value.members.map { it.index })
+                        ViewerSequence.setRecords(viewModel.uiState.value.members)
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     }
                 )
@@ -391,28 +384,7 @@ fun IrisNavGraph(
                 arguments = listOf(navArgument("recordIndex") { type = NavType.IntType })
             ) { backStackEntry ->
                 val recordIndex = backStackEntry.arguments?.getInt("recordIndex") ?: 0
-                MediaDetailScreen(
-                    startIndex = recordIndex,
-                    viewModelFor = { index ->
-                        viewModel(
-                            key = "detail_$index",
-                            factory = MediaDetailViewModel.Factory(index, application.irisRepository) { uri ->
-                                DeviceMediaDetails.read(application.contentResolver, Uri.parse(uri))
-                            }
-                        )
-                    },
-                    onBack = { navController.popBackStack() },
-                    onMediaClick = { index ->
-                        navController.navigate(NavRoute.Detail.createRoute(index))
-                    },
-                    onPersonClick = { personId, personName ->
-                        navController.navigate(NavRoute.PersonMedia.createRoute(personId, personName))
-                    },
-                    onSearchText = { text ->
-                        PendingSearch.set(text)
-                        navController.navigate(NavRoute.Search.route) { launchSingleTop = true }
-                    }
-                )
+                Viewer(ViewerItem.Server(recordIndex), navController, application)
             }
 
             composable(NavRoute.Spaces.route) {
@@ -486,4 +458,31 @@ private fun BottomNavItem.navigationMetric(): Metric = when (route) {
     NavRoute.Sync.route -> Metric.NavigationSync
     NavRoute.Spaces.route -> Metric.NavigationSpaces
     else -> Metric.NavigationGallery
+}
+
+/** The media viewer, opened on [start] and paging through [ViewerSequence]. */
+@Composable
+private fun Viewer(start: ViewerItem, navController: NavHostController, application: IrisApplication) {
+    MediaDetailScreen(
+        start = start,
+        viewModelFor = { index ->
+            viewModel(
+                key = "detail_$index",
+                factory = MediaDetailViewModel.Factory(index, application.irisRepository) { uri ->
+                    DeviceMediaDetails.read(application.contentResolver, Uri.parse(uri))
+                }
+            )
+        },
+        onBack = { navController.popBackStack() },
+        onMediaClick = { index ->
+            navController.navigate(NavRoute.Detail.createRoute(index))
+        },
+        onPersonClick = { personId, personName ->
+            navController.navigate(NavRoute.PersonMedia.createRoute(personId, personName))
+        },
+        onSearchText = { text ->
+            PendingSearch.set(text)
+            navController.navigate(NavRoute.Search.route) { launchSingleTop = true }
+        }
+    )
 }

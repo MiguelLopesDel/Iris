@@ -2,7 +2,7 @@ package com.iris.app.data.local
 
 import com.iris.app.data.model.LocalUploadJob
 import com.iris.app.data.model.UploadJobState
-import com.iris.app.ui.screens.gallery.formatDuration
+import com.iris.app.ui.screens.detail.formatDuration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
