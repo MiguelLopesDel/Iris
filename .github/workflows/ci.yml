@@ -1,11 +1,20 @@
 name: Iris CI
 
 on:
+  # Branches with a pull request are checked by the pull_request run (the
+  # branch merged into its base); a push run on top of it only doubled the work.
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+# A new push to a pull request supersedes the run still going for the old one.
+# Runs on main are never cancelled: every commit there keeps its result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
