@@ -10,6 +10,20 @@ val configuredIrisServerUrl = providers.gradleProperty("irisServerUrl")
     .orNull
     .orEmpty()
 
+// The app carries the server's version (pyproject.toml), so a release of both
+// is one number. versionCode orders releases: 0.7.0 -> 700, 1.2.3 -> 10203.
+private val versionLine = rootProject.file("../pyproject.toml").readLines()
+    .firstNotNullOf { Regex("""^version = "((\d+)\.(\d+)\.(\d+)[^"]*)"$""").find(it) }
+    .groupValues
+val irisVersion: String = versionLine[1]
+val irisVersionCode: Int = versionLine[2].toInt() * 10000 + versionLine[3].toInt() * 100 + versionLine[4].toInt()
+
+// The release key never enters the repository: its file and passwords come from
+// Gradle properties or the environment. Without them the release APK is unsigned.
+fun releaseSetting(name: String): String? =
+    providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull?.takeIf { it.isNotBlank() }
+val releaseKeystore = releaseSetting("IRIS_RELEASE_KEYSTORE")
+
 fun escapeBuildConfigString(value: String): String = value
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
@@ -22,8 +36,8 @@ android {
         applicationId = "com.iris.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = irisVersionCode
+        versionName = irisVersion
 
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -33,6 +47,17 @@ android {
     }
 
     testBuildType = "lab"
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = releaseSetting("IRIS_RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = releaseSetting("IRIS_RELEASE_KEY_ALIAS") ?: "iris"
+                keyPassword = releaseSetting("IRIS_RELEASE_KEY_PASSWORD") ?: storePassword
+            }
+        }
+    }
 
     buildTypes {
         getByName("debug") {
@@ -50,6 +75,7 @@ android {
             isDebuggable = true
         }
         release {
+            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
             buildConfigField(
                 "String",
                 "IRIS_DEFAULT_SERVER_URL",

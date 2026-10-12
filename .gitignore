@@ -188,3 +188,8 @@ MAPA.md
 
 # Per-volume trash created by Send2Trash on mounted drives
 .Trash-*/
+
+# Android release signing key: kept outside git, see docs/process.md
+/.release-keys/
+*.jks
+*.keystore
