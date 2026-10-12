@@ -104,9 +104,22 @@ cujo `version` em `pyproject.toml` é `X.Y.Z`. Para isso, um PR
   - **mudança incompatível** sobe o primeiro: formato de dados que não volta atrás,
     protocolo do app que versões antigas não entendem.
 - A tag dispara o workflow de release, que roda o smoke e publica as imagens
-  `X.Y.Z`, `X.Y` e `latest` (CPU e `-cuda`). **(A construir:)** o APK de release
-  assinado com a chave fixa do projeto, anexado ao GitHub Release com as notas, e o
-  app com `versionName` igual à versão do servidor.
+  `X.Y.Z`, `X.Y` e `latest` (CPU e `-cuda`).
+- O app tem a mesma versão: `versionName` vem do `pyproject.toml` e `versionCode`
+  é `maior·10000 + menor·100 + patch` (`0.7.0` → `700`).
+- O APK de release é assinado com a **chave fixa do projeto**, que nunca entra no
+  git (`.release-keys/` e `*.jks` são ignorados). O build a encontra pelas variáveis
+  `IRIS_RELEASE_KEYSTORE`, `IRIS_RELEASE_KEYSTORE_PASSWORD` e
+  `IRIS_RELEASE_KEY_ALIAS` (ou propriedades Gradle de mesmo nome); sem elas, o APK
+  sai sem assinatura:
+
+  ```bash
+  set -a; . .release-keys/release.env; set +a
+  (cd android && ./gradlew :app:assembleRelease)   # app/build/outputs/apk/release/app-release.apk
+  ```
+
+  Perder a chave impede atualizar o app por cima: guarde a chave e a senha em dois
+  lugares fora deste computador. **(A construir:)** anexar o APK ao GitHub Release.
 - Pré-lançamentos (`v0.7.0-rc.1`) nunca são escolhidos automaticamente; só rodam
   quando fixados com `IRIS_VERSION`.
 
