@@ -740,7 +740,7 @@ input[type="range"] {
 .btn-danger {
   border-color: rgba(255, 102, 125, 0.3);
   background: rgba(255, 102, 125, 0.09);
-  color: #ff9cab;
+  color: var(--danger);
 }
 
 .btn-danger:hover {
@@ -2313,7 +2313,7 @@ img[data-lightbox-src] {
 
 .btn-danger {
   border-color: rgba(255, 102, 125, 0.45);
-  color: #ff9cab;
+  color: var(--danger);
 }
 
 .btn-danger.btn-primary {
@@ -2607,7 +2607,9 @@ body.detail-open {
   overflow-y: auto;
   padding: 24px 24px 32px;
   border-left: 1px solid var(--border);
-  background: rgba(13, 16, 22, 0.98);
+  /* The panel follows the theme; the photo beside it stays on black. */
+  background: var(--surface-solid);
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -2623,10 +2625,9 @@ body.detail-open {
 }
 
 .detail-head .detail-title {
-  margin: 6px 0 4px;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 22px;
-  font-weight: 400;
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.15;
   word-break: break-word;
@@ -2647,9 +2648,30 @@ body.detail-open {
 }
 
 .detail-actions .btn {
-  font-size: 11px;
-  padding: 6px 12px;
+  font-size: 13px;
+  padding: 8px 14px;
   margin-bottom: 8px;
+}
+
+.detail-where {
+  margin: 0 0 4px;
+  color: var(--text-soft);
+  font-size: 14px;
+}
+
+.detail-where a {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.detail-space-list {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-space-choice {
+  justify-content: flex-start;
+  width: 100%;
 }
 
 .detail-section h4,
@@ -2682,7 +2704,7 @@ body.detail-open {
   overflow-y: auto;
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   font-size: 11px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -2714,7 +2736,7 @@ body.detail-open {
   padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   color: var(--text-soft);
   font-size: 11px;
   cursor: pointer;
