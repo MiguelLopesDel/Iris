@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=59">
+  <link rel="stylesheet" href="/static/style.css?v=60">
 </head>
 <body>
 
@@ -219,16 +219,9 @@
           </label>
         </div>
       </div>
-      <div class="section-lead">
-        <div>
-          <span class="eyebrow">Visão geral</span>
-          <h3>Sua biblioteca, em foco.</h3>
-          <p>Explore, compare e organize cada arquivo indexado pelo Iris.</p>
-        </div>
-        <div class="page-status">
-          <span>Página atual</span>
-          <strong id="gallery-page-info">—</strong>
-        </div>
+      <div class="gallery-toolbar">
+        <strong id="gallery-page-info" class="gallery-toolbar-info">—</strong>
+        <button class="btn btn-primary" type="button" data-go-tab="system" data-go-target="import-section">+ Adicionar fotos</button>
       </div>
 
       <details id="gallery-controls-disclosure" class="gallery-controls-disclosure">
@@ -237,9 +230,9 @@
         <div class="control-field">
           <label for="gallery-sort">Ordenar por</label>
           <select id="gallery-sort">
+            <option value="data" selected>Data</option>
             <option value="importacao">Importação</option>
             <option value="nome">Nome</option>
-            <option value="data">Data do arquivo</option>
             <option value="tamanho">Tamanho</option>
             <option value="tipo">Tipo</option>
           </select>
@@ -280,7 +273,7 @@
         <span id="gallery-context-label"></span>
         <button id="gallery-context-clear" class="btn btn-subtle" type="button">Limpar</button>
       </div>
-      <div id="gallery-grid" class="media-grid"></div>
+      <div id="gallery-grid" class="media-grid timeline"></div>
       <div id="gallery-pagination-bottom"></div>
     </section>
 
@@ -672,7 +665,7 @@
           <button id="system-save" class="btn btn-primary">Aplicar e recarregar</button>
         </section>
 
-        <section class="detail-panel system-card system-card-wide">
+        <section id="import-section" class="detail-panel system-card system-card-wide">
           <span class="eyebrow">Entrada de mídia</span>
           <h4>Importar e indexar</h4>
           <p id="private-library-health" class="system-status" hidden></p>
@@ -862,7 +855,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=75"></script>
+<script type="module" src="/static/app.js?v=77"></script>
 
 </body>
 </html>

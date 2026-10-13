@@ -4280,3 +4280,132 @@ a.btn {
   font-size: 13px;
   color: var(--text-muted);
 }
+
+/* Gallery as a timeline of tiles, like a phone's gallery: dense square
+   pictures under a heading per day. Scoped to the gallery grid; other tabs
+   keep their cards. */
+.gallery-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.gallery-toolbar-info {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.media-grid.timeline {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px;
+}
+
+.timeline .grid-day {
+  grid-column: 1 / -1;
+  margin: 18px 2px 6px;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.timeline .grid-day:first-child {
+  margin-top: 4px;
+}
+
+.timeline .media-card {
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  background: var(--surface);
+}
+
+.timeline .media-card:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.timeline .media-card-img::after {
+  display: none;
+}
+
+.timeline .media-card:hover .media-card-img img {
+  transform: none;
+  filter: brightness(0.92);
+}
+
+.timeline .media-card-img img {
+  cursor: pointer;
+}
+
+.timeline .tile-missing {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--surface);
+  font-size: 28px;
+  cursor: pointer;
+}
+
+.timeline .media-checkbox {
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+}
+
+.timeline .tile-actions {
+  position: absolute;
+  z-index: 5;
+  left: 6px;
+  bottom: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--ease);
+}
+
+.timeline .tile-action {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 15px;
+  line-height: 30px;
+  cursor: pointer;
+}
+
+/* Shown on hover and keyboard focus; always shown once something is selected. */
+.timeline .media-card:hover .media-checkbox,
+.timeline .media-card:focus-within .media-checkbox,
+.timeline .media-checkbox:checked,
+.timeline .media-card:hover .tile-actions,
+.timeline .media-card:focus-within .tile-actions {
+  opacity: 1;
+}
+
+.timeline .play-overlay::before {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .media-grid.timeline {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .timeline .media-card {
+    border-radius: 0;
+  }
+
+  /* No hover on touch: the viewer has these actions. */
+  .timeline .tile-actions {
+    display: none;
+  }
+}

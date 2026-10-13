@@ -18,7 +18,7 @@ import {
   rejectEnrichmentSuggestion,
   trashRecords
 } from './api.js?v=46';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=42';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=43';
 import { initCollections } from './collections.js?v=35';
 import { initConcepts } from './concepts.js?v=36';
 import { initDuplicates } from './duplicates.js?v=35';
@@ -89,6 +89,18 @@ document.addEventListener('click', async function(event) {
 });
 
 // ── Tab routing ──────────────────────────────────────────────────────────
+
+// A shortcut to one control on a tab (the upload, say), not just the tab. The
+// tab loads its content after it shows, which moves the target down; keep it
+// in view while that settles.
+function revealWhileLoading(target) {
+  var center = function() { target.scrollIntoView({ block: 'center' }); };
+  center();
+  if (typeof ResizeObserver === 'undefined') return;
+  var observer = new ResizeObserver(center);
+  observer.observe(target.closest('.tab-pane') || document.body);
+  setTimeout(function() { observer.disconnect(); }, 1500);
+}
 
 function switchTab(name) {
   var paneName = name === 'search' ? 'gallery' : name;
@@ -981,7 +993,10 @@ window.__showStats = async function() {
   syncExperienceControls();
   document.addEventListener('click', function(event) {
     var destination = event.target.closest('[data-go-tab]');
-    if (destination) switchTab(destination.dataset.goTab);
+    if (!destination) return;
+    switchTab(destination.dataset.goTab);
+    var target = destination.dataset.goTarget && document.getElementById(destination.dataset.goTarget);
+    if (target) revealWhileLoading(target);
   });
   document.getElementById('home-search-form').addEventListener('submit', function(event) {
     event.preventDefault();
