@@ -725,7 +725,7 @@ async def lifespan(app: FastAPI):
             users_db_path=app.state.users_db_path,
             sync_ai_processing=app.state.sync_ai_processing,
             load_model=app.state.load_model,
-            on_finished=app.state.backend_registry.invalidate,
+            on_finished=app.state.backend_registry.refresh,
             processing_workers=processing_workers,
             write_registry=write_registry,
         )
@@ -936,7 +936,8 @@ async def authenticate_library_request(request: Request, call_next):
     # blocked the event loop, distorting the measurement it serves.
     if path != "/api/sync" and not path.startswith(("/api/sync/", "/api/_perf/")):
         try:
-            backend = request.app.state.backend_registry.get(user.id)
+            # Building a backend loads the whole catalog; never on the event loop.
+            backend = await run_in_threadpool(request.app.state.backend_registry.get, user.id)
         except KeyError:
             session.clear()
             return Response(
@@ -3400,7 +3401,7 @@ def _catalog_changed() -> None:
         rebuild_indexes_in_background(
             db_path=user.db_path,
             model_name=user.model_name,
-            on_finished=lambda: registry.invalidate(user.id),
+            on_finished=lambda: registry.refresh(user.id),
         )
     else:
         rebuild_indexes_in_background(
