@@ -504,6 +504,7 @@ function setBrowseControlsDisabled(disabled) {
 
 function enterSearchMode() {
   searchActive = true;
+  renderBottomPager();
   document.getElementById('gallery-clear-search').hidden = false;
   setBrowseControlsDisabled(true);
 }
@@ -540,7 +541,58 @@ function renderSkeletons(n) {
   return html;
 }
 
+// Page numbers to offer: the first, the last, and a window around the
+// current one; gaps become an ellipsis. 1 … 4 5 [6] 7 8 … 20
+export function pageWindow(current, total, radius = 2) {
+  const pages = new Set([1, total]);
+  for (let p = current - radius; p <= current + radius; p++) {
+    if (p >= 1 && p <= total) pages.add(p);
+  }
+  const sorted = [...pages].sort((a, b) => a - b);
+  const items = [];
+  sorted.forEach((page, i) => {
+    if (i && page - sorted[i - 1] > 1) items.push('…');
+    items.push(page);
+  });
+  return items;
+}
+
+// The pager under the grid: where the eye is after scrolling through a page.
+function renderBottomPager() {
+  const pager = document.getElementById('gallery-pagination-bottom');
+  if (!pager) return;
+  if (searchActive || totalPages <= 1) {
+    pager.innerHTML = '';
+    pager.hidden = true;
+    return;
+  }
+  pager.hidden = false;
+  const numbers = pageWindow(currentPage, totalPages).map((item) => (
+    item === '…'
+      ? '<span class="pager-gap" aria-hidden="true">…</span>'
+      : `<button type="button" class="pager-page${item === currentPage ? ' is-current' : ''}"
+           data-page="${item}" ${item === currentPage ? 'aria-current="page"' : ''}
+           aria-label="Página ${item}">${item}</button>`
+  )).join('');
+  pager.innerHTML = `
+    <nav class="pager" aria-label="Páginas da galeria">
+      <button type="button" class="btn pager-step" data-page="${currentPage - 1}"
+              ${currentPage <= 1 ? 'disabled' : ''}>← Anterior</button>
+      <div class="pager-pages">${numbers}</div>
+      <button type="button" class="btn pager-step" data-page="${currentPage + 1}"
+              ${currentPage >= totalPages ? 'disabled' : ''}>Próxima →</button>
+    </nav>
+    <p class="pager-info">Página ${currentPage} de ${totalPages}</p>`;
+  pager.querySelectorAll('[data-page]').forEach((button) => {
+    button.onclick = () => {
+      goToPage(parseInt(button.dataset.page, 10));
+      document.getElementById('gallery-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  });
+}
+
 function updatePaginationUI() {
+  renderBottomPager();
   document.getElementById('gallery-page-info').textContent =
     `Pag ${currentPage} / ${totalPages}`;
   document.getElementById('gallery-prev').disabled = currentPage <= 1;

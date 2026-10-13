@@ -4218,3 +4218,65 @@ a.btn {
   width: auto;
   margin: 8px 8px 0 0;
 }
+
+/* Gallery pager, under the grid. */
+#gallery-pagination-bottom {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin: 24px 0 8px;
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pager-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pager-page {
+  min-width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pager-page:hover {
+  border-color: var(--accent);
+}
+
+.pager-page.is-current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.pager-gap {
+  align-self: center;
+  padding: 0 4px;
+  color: var(--text-muted);
+}
+
+.pager-step[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pager-info {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
