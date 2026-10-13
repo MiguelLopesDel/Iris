@@ -54,6 +54,7 @@ import com.iris.app.ui.screens.detail.MediaDetailViewModel
 import com.iris.app.ui.screens.detail.ViewerItem
 import com.iris.app.ui.screens.detail.ViewerSequence
 import com.iris.app.data.local.DeviceMediaDetails
+import com.iris.app.data.local.DeviceName
 import com.iris.app.ui.screens.search.PendingSearch
 import com.iris.app.ui.screens.gallery.GalleryScreen
 import com.iris.app.ui.screens.gallery.GalleryViewModel
@@ -425,6 +426,7 @@ fun IrisNavGraph(
                         application.settingsRepository,
                         application.credentialsStore,
                         MediaSyncWorker.retryPending(application),
+                        deviceName = { DeviceName.of(application) },
                     )
                 )
                 SyncScreen(
