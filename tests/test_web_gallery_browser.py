@@ -75,14 +75,60 @@ def server(tmp_path: Path):
                 time.sleep(0.1)
         else:
             pytest.fail("server did not start")
-        yield base
+        yield base, tmp_path / "data" / "users" / "1" / "media"
     finally:
         process.terminate()
         process.wait(timeout=20)
 
 
+def _signed_in_gallery(playwright, base: str):
+    try:
+        browser = playwright.chromium.launch()
+    except Exception as exc:  # browser binaries missing
+        if REQUIRED:
+            raise
+        pytest.skip(f"Chromium unavailable: {exc}")
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(base + "/login")
+    page.fill("input[name=username]", "ana")
+    page.fill("input[name=password]", PASSWORD)
+    page.click("button[type=submit]")
+    page.wait_for_url(base + "/")
+    page.evaluate("window.location.hash = 'gallery'")
+    return browser, page
+
+
+def test_the_viewer_renames_and_moves_a_photo_to_the_trash(server) -> None:
+    base, media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        tiles = page.locator("#gallery-grid .media-card")
+        sync_api.expect(tiles).to_have_count(24)
+        tiles.first.locator("img").click()
+
+        aside = page.locator("#detail-aside")
+        # Headed by when the photo was taken, as in the app; the file name is secondary.
+        sync_api.expect(aside.locator(".detail-title")).to_contain_text(" · ")
+        sync_api.expect(aside.locator(".detail-meta")).to_contain_text("IMG_0029.jpg")
+        sync_api.expect(aside.get_by_role("link", name="Baixar")).to_have_attribute("download", "IMG_0029.jpg")
+
+        aside.get_by_role("button", name="Renomear").click()
+        page.locator(".app-modal input").fill("praia")
+        page.locator(".app-modal").get_by_role("button", name="Renomear").click()
+        sync_api.expect(aside.locator(".detail-meta")).to_contain_text("praia.jpg")
+        assert (media / "praia.jpg").is_file() and not (media / "IMG_0029.jpg").exists()
+
+        aside.get_by_role("button", name="Mover para a lixeira").click()
+        page.locator(".app-modal").get_by_role("button", name="Mover para a lixeira").click()
+        # The viewer moves on to the next photo, and the gallery behind it lost one.
+        sync_api.expect(aside.locator(".detail-meta")).to_contain_text("IMG_0028.jpg")
+        page.keyboard.press("Escape")
+        sync_api.expect(page.locator("#gallery-page-info")).to_contain_text(f"{ITEMS - 1} itens")
+        browser.close()
+
+
 def test_the_pager_under_the_grid_moves_between_pages(server) -> None:
-    base = server
+    base, _ = server
     with sync_api.sync_playwright() as playwright:
         try:
             browser = playwright.chromium.launch()
