@@ -324,7 +324,7 @@ class IrisRepository(
     }
 
     // ── Shared spaces ────────────────────────────────────────────────────
-    // Failures carry the server's own sentence ("O espaço precisa de pelo
+    // Failures carry the server's own sentence ("O grupo precisa de pelo
     // menos um gestor..."), which says more than an HTTP status code.
 
     suspend fun getSpaces(): Result<List<SpaceSummary>> = serverCall {
