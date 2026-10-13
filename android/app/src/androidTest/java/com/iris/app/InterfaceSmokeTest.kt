@@ -44,6 +44,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import okio.Buffer
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -368,15 +369,18 @@ class InterfaceSmokeTest {
 
         compose.onNodeWithText("Nome de usuário").performTextInput("ui-teste")
         compose.onNodeWithText("Senha").performTextInput("senha-fixture-segura")
-        compose.onNodeWithText("Nome do Aparelho").performTextClearance()
-        compose.onNodeWithText("Nome do Aparelho").performTextInput("Emulador de Teste")
         compose.onNodeWithText("Entrar e Sincronizar").performClick()
 
         waitForText("Dispositivo Conectado")
         assertTrue("Login endpoint was not called", fixture.loginRequestBodies.isNotEmpty())
         val body = fixture.loginRequestBodies.last()
         assertTrue("Username missing from login form body: $body", body.contains("username=ui-teste"))
-        assertTrue("Device name missing from login form body: $body", body.contains("device_name=Emulador%20de%20Teste"))
+        // The phone names itself; nobody has to type it.
+        val sentName = body.split('&').first { it.startsWith("device_name=") }.substringAfter('=')
+        assertEquals(
+            com.iris.app.data.local.DeviceName.of(app),
+            java.net.URLDecoder.decode(sentName.replace("+", "%2B"), "UTF-8"),
+        )
         assertTrue("Password missing from login form body", body.contains("password=senha-fixture-segura"))
         assertTrue("The successful login was not persisted", app.credentialsStore.hasValidCredentials())
         assertTrue("No unexpected API paths: ${unhandledPaths.joinToString()}", unhandledPaths.isEmpty())
