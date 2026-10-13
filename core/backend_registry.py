@@ -63,6 +63,26 @@ class BackendRegistry:
                 self._backends.popitem(last=False)
             return backend
 
+    def records_of(self, user_id: int):
+        """The account's records for background work, without disturbing the cache.
+
+        The cached backend when there is one; otherwise a detached one built
+        just for this call (no model), so a busy account is never evicted.
+        """
+        with self._lock:
+            cached = self._backends.get(user_id)
+        if cached is not None:
+            return cached.get_all_records()
+        user = self.get_user(user_id)
+        if user is None:
+            return []
+        init_db(user.db_path).close()
+        detached = create_backend(
+            db_path=str(user.db_path), media_root=str(user.media_root),
+            model_name=resolve_embedding_model(user.model_name), load_model=False,
+        )
+        return detached.get_all_records()
+
     def invalidate(self, user_id: int) -> None:
         with self._lock:
             self._backends.pop(user_id, None)

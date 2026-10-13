@@ -55,3 +55,29 @@ def test_environment_model_overrides_existing_user_model(
     BackendRegistry(users_db, load_model=False).get(user.id)
 
     assert selected_models == ["google/siglip2-base-patch16-224"]
+
+
+def test_records_for_background_work_never_evict_the_cached_backend(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    users_db = tmp_path / "users.db"
+    busy = create_user(users_db, tmp_path, username="ana", password_hash="hash-ana")
+    other = create_user(users_db, tmp_path, username="bia", password_hash="hash-bia")
+
+    class FakeBackend:
+        def __init__(self, name: str):
+            self.name = name
+
+        def get_all_records(self):
+            return [self.name]
+
+    monkeypatch.setattr(
+        "core.backend_registry.create_backend", lambda *, db_path, **_k: FakeBackend(db_path)
+    )
+    registry = BackendRegistry(users_db, cache_size=1, load_model=False)
+    in_use = registry.get(busy.id)
+
+    assert registry.records_of(busy.id) == [str(busy.db_path)]
+    assert registry.records_of(other.id) == [str(other.db_path)]
+    # The account being browsed keeps its backend: nothing was rebuilt for it.
+    assert registry.get(busy.id) is in_use
