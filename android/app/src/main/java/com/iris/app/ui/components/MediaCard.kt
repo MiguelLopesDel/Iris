@@ -58,8 +58,9 @@ fun MediaCard(
     val context = LocalContext.current
     val apiClient = (context.applicationContext as IrisApplication).apiClient
 
-    val imageRequest = remember(record.index, record.deviceUri, record.thumbnailUrl, record.resolvedPath, record.caminho) {
-        val resolvedThumbUrl = record.deviceUri ?: if (!record.thumbnailUrl.isNullOrBlank()) {
+    val imageRequest = remember(record.index, record.deviceUri, record.localCopyUri, record.thumbnailUrl, record.resolvedPath, record.caminho) {
+        // A file on this phone is drawn from the phone: at once, and without the server.
+        val resolvedThumbUrl = record.deviceUri ?: record.localCopyUri ?: if (!record.thumbnailUrl.isNullOrBlank()) {
             apiClient.resolveThumbnailUrl(record.thumbnailUrl)
         } else {
             apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)

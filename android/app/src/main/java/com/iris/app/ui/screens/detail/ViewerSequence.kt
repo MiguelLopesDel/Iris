@@ -7,7 +7,8 @@ internal sealed interface ViewerItem {
     /** Stable across the pager's lifetime, unique within a sequence. */
     val key: String
 
-    data class Server(val index: Int) : ViewerItem {
+    /** [localUri]: the phone's copy of the file, shown instead of downloading it ([MediaRecord.localCopyUri]). */
+    data class Server(val index: Int, val localUri: String? = null) : ViewerItem {
         override val key: String get() = "server:$index"
     }
 
@@ -17,7 +18,8 @@ internal sealed interface ViewerItem {
 
     companion object {
         /** The item a grid record opens: the phone's file when it has one, Iris's otherwise. */
-        fun of(record: MediaRecord): ViewerItem = record.deviceUri?.let(::Device) ?: Server(record.index)
+        fun of(record: MediaRecord): ViewerItem =
+            record.deviceUri?.let(::Device) ?: Server(record.index, record.localCopyUri)
     }
 }
 
@@ -39,6 +41,11 @@ internal object ViewerSequence {
 
     fun setRecords(records: List<MediaRecord>) = set(records.map(ViewerItem::of))
 
-    /** The sequence to page through, always containing [start]. */
-    fun around(start: ViewerItem): List<ViewerItem> = items.takeIf { start in it } ?: listOf(start)
+    /**
+     * The sequence to page through, always containing [start]. Items are
+     * matched by [ViewerItem.key]: a route only knows the index, the grid also
+     * knows the phone's copy.
+     */
+    fun around(start: ViewerItem): List<ViewerItem> =
+        items.takeIf { list -> list.any { it.key == start.key } } ?: listOf(start)
 }

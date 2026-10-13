@@ -13,7 +13,23 @@ class GalleryRecordMergerTest {
         val remote = record(index = 1, hash = "ab12", mtime = 10.0)
         val localDuplicate = record(index = 2, hash = "AB12", mtime = 20.0, deviceUri = "content://local/2")
 
-        assertEquals(listOf(remote), merger.merge(listOf(remote), listOf(localDuplicate)))
+        assertEquals(
+            listOf(remote.copy(localCopyUri = "content://local/2")),
+            merger.merge(listOf(remote), listOf(localDuplicate)),
+        )
+    }
+
+    @Test
+    fun `an item on the phone and in Iris keeps the phone's file to show`() {
+        // Drawn from the phone, it shows at once and without the server; Iris's record keeps its features.
+        val remote = record(index = 1, hash = "ab12", mtime = 10.0)
+        val local = record(index = 2, hash = "AB12", mtime = 20.0, deviceUri = "content://local/2")
+
+        val merged = merger.merge(listOf(remote), listOf(local)).single()
+
+        assertEquals(1, merged.index)
+        assertEquals(null, merged.deviceUri)
+        assertEquals("content://local/2", merged.localCopyUri)
     }
 
     @Test
