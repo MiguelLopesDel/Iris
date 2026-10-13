@@ -222,7 +222,9 @@ async def ingest(request: Request):
 
 
 def _finished_callback(request: Request, user_id: int):
-    return lambda: request.app.state.backend_registry.invalidate(user_id)
+    # Rebuilt in the background: the gallery keeps answering while a phone
+    # syncs, and the uploads of one batch share a single rebuild.
+    return lambda: request.app.state.backend_registry.refresh(user_id)
 
 
 @router.post("/speedtest")
