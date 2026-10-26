@@ -130,6 +130,37 @@ def test_generation_is_atomic_so_a_reader_never_sees_a_partial_file(tmp_path, th
     assert not any(p.name.startswith(".") for p in thumb_dir.iterdir()), "sobrou temporário"
 
 
+def test_concurrent_requests_for_one_missing_thumbnail_build_it_once(tmp_path, thumb_dir, monkeypatch):
+    """A card loaded twice, two devices, or the warm-up and the gallery at once."""
+    import threading
+    import time
+
+    source = tmp_path / "photo.jpg"
+    Image.new("RGB", (900, 600), (40, 200, 40)).save(source)
+    destination = thumb_dir / "abc.jpg"
+    builds: list[int] = []
+    original = server._generate_image_thumbnail
+
+    def slow_build(image_path, thumb_path):
+        builds.append(1)
+        time.sleep(0.2)  # long enough for every caller to arrive meanwhile
+        original(image_path, thumb_path)
+
+    monkeypatch.setattr(server, "_generate_image_thumbnail", slow_build)
+    callers = [
+        threading.Thread(target=server._generate_thumbnail, args=(str(source), destination))
+        for _ in range(4)
+    ]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(timeout=10)
+
+    assert builds == [1]
+    assert destination.is_file()
+    assert server._thumbnail_builds == {}  # nothing left behind
+
+
 def _get(path: str):
     import asyncio
 
