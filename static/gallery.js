@@ -8,8 +8,9 @@ import { openDetail } from './detail.js?v=7';
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
 let totalPages = 1;
+let totalItems = 0;
 let perPage = 24;
-let sortBy = 'importacao';
+let sortBy = 'data';
 let sortAsc = 0;
 let searchActive = false;
 
@@ -167,6 +168,7 @@ async function loadPage(page) {
     const cached = pageCache.get(page);
     currentPage = page;
     totalPages = cached.total_pages;
+    totalItems = cached.total;
     updatePaginationUI();
     renderGrid(cached.records);
     prefetchAdjacent(page);
@@ -183,6 +185,7 @@ async function loadPage(page) {
     pageCache.set(data.page, data);
     currentPage = data.page;
     totalPages = data.total_pages;
+    totalItems = data.total;
     updatePaginationUI();
     renderGrid(data.records);
     prefetchAdjacent(data.page);
@@ -230,69 +233,66 @@ function renderGrid(records) {
     grid.innerHTML = '<div class="empty-state"><span class="empty-state-icon">⌕</span><p>Nenhum item encontrado.</p><small>Ajuste os termos da busca ou limpe os filtros da barra lateral.</small></div>';
     return;
   }
-  grid.innerHTML = records.map(r => renderCard(r)).join('');
+  // By date, the grid reads like the phone's gallery: a heading per day.
+  const byDay = !searchActive && sortBy === 'data';
+  let lastDay = null;
+  grid.innerHTML = records.map((record) => {
+    let heading = '';
+    if (byDay) {
+      const day = dayLabel(record.file_mtime);
+      if (day !== lastDay) {
+        heading = `<h3 class="grid-day">${escapeHtml(day)}</h3>`;
+        lastDay = day;
+      }
+    }
+    return heading + renderCard(record);
+  }).join('');
   observeLazyImages(grid);
 }
 
-// Chips of named persons present in the media (comes for free in the records
-// payload). Click → browse all media of that person.
-function personChips(record) {
-  const named = (record.persons || []).filter(p => p.name);
-  if (!named.length) return '';
-  const shown = named.slice(0, 2);
-  const extra = named.length - shown.length;
-  const chips = shown.map(p =>
-    `<button class="person-chip" data-person-chip="${p.id}" title="Ver mídias de ${escapeHtml(p.name)}">${escapeHtml(p.name)}</button>`
-  ).join('');
-  const more = extra > 0 ? `<span class="person-chip-more">+${extra}</span>` : '';
-  return `<div class="card-persons">${chips}${more}</div>`;
+// "Hoje", "Ontem", "9 de outubro", "9 de outubro de 2024", or "Sem data".
+export function dayLabel(epochSeconds, now = new Date()) {
+  if (!epochSeconds) return 'Sem data';
+  const date = new Date(epochSeconds * 1000);
+  const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOf(now) - startOf(date)) / 86400000);
+  if (days === 0) return 'Hoje';
+  if (days === 1) return 'Ontem';
+  const options = { day: 'numeric', month: 'long' };
+  if (date.getFullYear() !== now.getFullYear()) options.year = 'numeric';
+  return date.toLocaleDateString('pt-BR', options);
 }
 
+// A tile, as in a phone gallery: the picture opens the viewer. Selection and
+// the shortcuts to similar photos and to this person show on hover or focus.
 function renderCard(record) {
   const sel = window.__irisSelection.has(record.index) ? 'checked' : '';
   const thumb = record.thumbnail_url || '';
-  const name = escapeHtml(record.arquivo).slice(0, 50);
+  const name = escapeHtml(record.arquivo || '');
+  const isVideo = record.media_type === 'video';
   const score = record.score != null
     ? `<span class="score-badge">${Number(record.score).toFixed(3)}</span>`
     : '';
-
-  if (!thumb) {
-    return `<div class="media-card" data-index="${record.index}">
-      <div class="placeholder-card">
-        <span class="icon">${record.media_type === 'video' ? '🎬' : '🖼️'}</span>
-        <span>indisponivel</span>
-      </div>
-      <div class="media-card-body">
-        <div class="caption" title="${escapeHtml(record.arquivo)}">${name}</div>
-        ${personChips(record)}
-        <div class="actions">
-          <button class="btn" data-action="similar" data-index="${record.index}">Similares</button>
-          <button class="btn" data-action="face" data-index="${record.index}" title="Buscar a pessoa desta mídia">Pessoa</button>
-          <button class="btn" data-action="detail" data-index="${record.index}">Detalhes</button>
-        </div>
-      </div>
-    </div>`;
-  }
-
-  const imgTag = `<img src="${thumb}" loading="lazy" alt="${name}" data-open-detail="${record.index}">`;
-  const playBtn = record.media_type === 'video'
-    ? `<button class="play-overlay" data-index="${record.index}">▶</button>`
+  const picture = thumb
+    ? `<img src="${thumb}" loading="lazy" alt="${name}" data-open-detail="${record.index}">`
+    : `<button class="tile-missing" type="button" data-action="detail" data-index="${record.index}"
+         aria-label="Abrir ${name}"><span aria-hidden="true">${isVideo ? '🎬' : '🖼️'}</span></button>`;
+  const video = isVideo
+    ? `<button class="play-overlay" type="button" data-index="${record.index}" aria-label="Reproduzir ${name}">▶</button>`
     : '';
 
-  return `<div class="media-card" data-index="${record.index}">
+  return `<div class="media-card" data-index="${record.index}" title="${name}">
     <div class="media-card-img" id="card-img-${record.index}">
-      ${imgTag}
-      ${playBtn}
+      ${picture}
+      ${video}
       ${score}
-      <input type="checkbox" class="media-checkbox" id="sel_${record.index}" data-index="${record.index}" ${sel}>
-    </div>
-    <div class="media-card-body">
-      <div class="caption" title="${escapeHtml(record.arquivo)}">${name}</div>
-      ${personChips(record)}
-      <div class="actions">
-        <button class="btn" data-action="similar" data-index="${record.index}">Similares</button>
-        <button class="btn" data-action="face" data-index="${record.index}" title="Buscar a pessoa desta mídia">Pessoa</button>
-        <button class="btn" data-action="detail" data-index="${record.index}">Detalhes</button>
+      <input type="checkbox" class="media-checkbox" id="sel_${record.index}" data-index="${record.index}"
+             aria-label="Selecionar ${name}" ${sel}>
+      <div class="tile-actions">
+        <button class="tile-action" type="button" data-action="similar" data-index="${record.index}"
+                title="Fotos parecidas" aria-label="Fotos parecidas com ${name}">≈</button>
+        <button class="tile-action" type="button" data-action="face" data-index="${record.index}"
+                title="Fotos com esta pessoa" aria-label="Fotos com a pessoa de ${name}">☺</button>
       </div>
     </div>
   </div>`;
@@ -593,8 +593,9 @@ function renderBottomPager() {
 
 function updatePaginationUI() {
   renderBottomPager();
+  const count = `${totalItems.toLocaleString('pt-BR')} ${totalItems === 1 ? 'item' : 'itens'}`;
   document.getElementById('gallery-page-info').textContent =
-    `Pag ${currentPage} / ${totalPages}`;
+    totalPages > 1 ? `${count} · página ${currentPage} de ${totalPages}` : count;
   document.getElementById('gallery-prev').disabled = currentPage <= 1;
   document.getElementById('gallery-next').disabled = currentPage >= totalPages;
   const pageInput = document.getElementById('gallery-page-jump');

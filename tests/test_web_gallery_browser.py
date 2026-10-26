@@ -102,7 +102,10 @@ def test_the_pager_under_the_grid_moves_between_pages(server) -> None:
 
         pager = page.locator("#gallery-pagination-bottom")
         sync_api.expect(pager).to_contain_text("Página 1 de 3")
-        sync_api.expect(page.locator("#gallery-grid .media-card, #gallery-grid > *")).to_have_count(12)
+        tiles = page.locator("#gallery-grid .media-card")
+        sync_api.expect(tiles).to_have_count(12)
+        # Sorted by date by default, under a heading per day, as in the app.
+        sync_api.expect(page.locator("#gallery-grid .grid-day").first).to_be_visible()
 
         pager.get_by_role("button", name="Próxima →").click()
         sync_api.expect(pager).to_contain_text("Página 2 de 3")
@@ -111,5 +114,9 @@ def test_the_pager_under_the_grid_moves_between_pages(server) -> None:
         pager.get_by_role("button", name="Página 3").click()
         sync_api.expect(pager).to_contain_text("Página 3 de 3")
         sync_api.expect(pager.get_by_role("button", name="Próxima →")).to_be_disabled()
-        sync_api.expect(page.locator("#gallery-grid > *")).to_have_count(ITEMS - 24)
+        sync_api.expect(tiles).to_have_count(ITEMS - 24)
+
+        # Adding photos is one click from the gallery, not hidden in Organizar.
+        page.get_by_role("button", name="+ Adicionar fotos").click()
+        sync_api.expect(page.locator("#import-section")).to_be_in_viewport()
         browser.close()
