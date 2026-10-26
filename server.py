@@ -1311,13 +1311,40 @@ def _generate_video_thumbnail(video_path: str, thumb_path: Path) -> None:
         cap.release()
 
 
-def _generate_thumbnail(source_path: str, thumb_path: Path) -> None:
-    """Generate a thumbnail so that concurrent callers never see a partial file.
+# One lock per thumbnail being built, held only while it is.
+_thumbnail_builds: dict[Path, tuple[threading.Lock, int]] = {}
+_thumbnail_builds_lock = threading.Lock()
 
-    On-demand generation means several requests can race for the same missing
-    thumbnail, and writing straight to the destination would let one of them
-    serve a truncated JPEG. Each writer builds its own temporary file and the
-    rename is atomic, so a reader sees either nothing or a complete image.
+
+def _generate_thumbnail(source_path: str, thumb_path: Path) -> None:
+    """Generate a thumbnail once, however many callers want it at the same time.
+
+    Requests for a missing thumbnail arrive together: a card loaded twice, two
+    devices, or the warm-up and the gallery. Each used to decode and resize the
+    original itself. The first one builds it now; the others wait for it and
+    serve its file.
+    """
+    with _thumbnail_builds_lock:
+        lock, waiting = _thumbnail_builds.get(thumb_path, (threading.Lock(), 0))
+        _thumbnail_builds[thumb_path] = (lock, waiting + 1)
+    try:
+        with lock:
+            if not thumb_path.exists():
+                _build_thumbnail(source_path, thumb_path)
+    finally:
+        with _thumbnail_builds_lock:
+            lock, waiting = _thumbnail_builds[thumb_path]
+            if waiting == 1:
+                del _thumbnail_builds[thumb_path]
+            else:
+                _thumbnail_builds[thumb_path] = (lock, waiting - 1)
+
+
+def _build_thumbnail(source_path: str, thumb_path: Path) -> None:
+    """Write a thumbnail so that a reader never sees a partial file.
+
+    Each writer builds its own temporary file and the rename is atomic, so a
+    reader sees either nothing or a complete image.
     """
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = thumb_path.with_name(f".{thumb_path.name}.{uuid.uuid4().hex[:8]}.tmp")
