@@ -165,6 +165,7 @@ class IrisEngine:
         weights_path: str | os.PathLike[str] = "data/best_weights.json",
         load_model: bool = True,
         device: str | None = None,
+        encoder: EmbeddingEncoder | None = None,
     ):
         self.db_path = Path(db_path or self._default_db_path())
         self.db = DatabaseManager(self.db_path)
@@ -191,7 +192,9 @@ class IrisEngine:
         
         self._clap_model = None
         self._clap_processor = None
-        self.model = self._load_model() if load_model else None
+        # A model already loaded for this checkpoint and device is reused: reading
+        # it again costs seconds of disk and, while both live, its memory twice.
+        self.model = (encoder if encoder is not None else self._load_model()) if load_model else None
 
         # Lazy cache for backward-compatible .dados property (only computed on demand)
         self._dados_cache: list[dict[str, Any]] | None = None

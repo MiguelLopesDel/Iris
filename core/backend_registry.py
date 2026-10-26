@@ -8,6 +8,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 
+from core import compute_device
 from core.backend import SearchBackend, create_backend
 from core.embedding_models import resolve_embedding_model
 from core.indexer_db import init_db
@@ -56,6 +57,9 @@ class BackendRegistry:
         # Bumped by invalidate(): a background build started before it may
         # miss what the person just did, so it is discarded.
         self._epochs: dict[int, int] = {}
+        # The embedding model each rebuild would otherwise read from disk again
+        # (a large file, often on a busy disk), per checkpoint and device.
+        self._encoders: dict[tuple[str, str], object] = {}
 
     def get_user(self, user_id: int) -> IrisUser | None:
         return get_user_by_id(self.users_db_path, user_id)
@@ -78,11 +82,27 @@ class BackendRegistry:
         # backend reads it: the gallery is often the first thing to open an
         # account after an upgrade, and the catalog it loads is cached.
         init_db(user.db_path).close()
-        return create_backend(
+        model_name = resolve_embedding_model(user.model_name)
+        if not self.load_model:
+            return create_backend(
+                db_path=str(user.db_path), media_root=str(user.media_root),
+                model_name=model_name, load_model=False,
+            )
+        device = compute_device.resolve("auto")
+        key = (model_name, device)
+        with self._lock:
+            encoder = self._encoders.get(key)
+        backend = create_backend(
             db_path=str(user.db_path), media_root=str(user.media_root),
-            model_name=resolve_embedding_model(user.model_name),
-            load_model=self.load_model,
+            model_name=model_name, device=device, load_model=True, encoder=encoder,
         )
+        loaded = getattr(getattr(backend, "engine", None), "model", None)
+        if encoder is None and loaded is not None:
+            with self._lock:
+                # A model for another device is stale (the GPU choice changed).
+                self._encoders = {k: v for k, v in self._encoders.items() if k[1] == device}
+                self._encoders[key] = loaded
+        return backend
 
     def _install(self, user_id: int, user: IrisUser, backend: SearchBackend) -> None:
         if self._on_new_backend is not None:
@@ -146,3 +166,4 @@ class BackendRegistry:
     def clear(self) -> None:
         with self._lock:
             self._backends.clear()
+            self._encoders.clear()

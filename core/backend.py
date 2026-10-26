@@ -16,6 +16,7 @@ def create_backend(
     media_root: str | None = None,
     device: str | None = None,
     load_model: bool = True,
+    encoder: Any = None,
 ) -> "SearchBackend":
     """Factory: returns the default local SearchBackend implementation.
 
@@ -23,8 +24,13 @@ def create_backend(
     To swap backends, change this one function — nothing else needs to change.
 
     Set load_model=False for tests that only need DB operations (CRUD, collections, concepts).
+    ``encoder`` reuses an embedding model already loaded (for ``model_name`` on
+    ``device``) instead of reading it from disk again.
     """
-    return LocalBackend(db_path=db_path, model_name=model_name, media_root=media_root, device=device, load_model=load_model)
+    return LocalBackend(
+        db_path=db_path, model_name=model_name, media_root=media_root, device=device,
+        load_model=load_model, encoder=encoder,
+    )
 
 
 class SearchBackend(ABC):
@@ -194,8 +200,11 @@ class SearchBackend(ABC):
     def get_face_thumbnail(self, face_id: int) -> bytes | None: pass
 
 class LocalBackend(SearchBackend):
-    def __init__(self, db_path=None, model_name=None, media_root=None, device=None, load_model=True):
-        self.engine = IrisEngine(db_path=db_path, model_name=model_name, media_root=media_root, device=device, load_model=load_model)
+    def __init__(self, db_path=None, model_name=None, media_root=None, device=None, load_model=True, encoder=None):
+        self.engine = IrisEngine(
+            db_path=db_path, model_name=model_name, media_root=media_root, device=device,
+            load_model=load_model, encoder=encoder,
+        )
 
     @property
     def has_audio_support(self) -> bool:

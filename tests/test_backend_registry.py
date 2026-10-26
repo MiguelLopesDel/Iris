@@ -6,6 +6,7 @@ from pytest import MonkeyPatch
 
 from core.backend_registry import BackendRegistry
 from core.embedding_models import DEFAULT_MODEL
+from core.indexer_db import init_db
 from core.users_db import create_user
 
 
@@ -154,3 +155,57 @@ def test_refresh_without_a_cached_backend_builds_nothing(tmp_path: Path, monkeyp
     registry.refresh(user.id)
     time.sleep(0.2)
     assert built == []
+
+
+def test_rebuilds_reuse_the_embedding_model_instead_of_reading_it_again(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    users_db = tmp_path / "users.db"
+    user = create_user(users_db, tmp_path, username="ana", password_hash="hash-ana")
+    loads: list[object] = []
+    given: list[object] = []
+
+    def fake_backend(**kwargs):
+        # What IrisEngine does: use the encoder it is handed, or load one.
+        given.append(kwargs.get("encoder"))
+        model = kwargs.get("encoder")
+        if model is None:
+            model = object()
+            loads.append(model)
+        return SimpleNamespace(engine=SimpleNamespace(model=model))
+
+    monkeypatch.setattr("core.backend_registry.create_backend", fake_backend)
+    monkeypatch.setattr("core.backend_registry.compute_device.resolve", lambda _requested: "cpu")
+    registry = BackendRegistry(users_db, load_model=True, refresh_delay=0.01)
+    first = registry.get(user.id)
+
+    registry.refresh(user.id)
+    _wait_until(lambda: registry.get(user.id) is not first)
+    registry.invalidate(user.id)
+    registry.get(user.id)
+
+    # Three backends, one model read from disk.
+    assert len(loads) == 1 and given == [None, loads[0], loads[0]]
+
+    # A new device (the GPU setting changed) loads its own.
+    registry.clear()
+    monkeypatch.setattr("core.backend_registry.compute_device.resolve", lambda _requested: "cuda")
+    registry.get(user.id)
+    assert len(loads) == 2
+
+
+def test_the_engine_uses_a_given_encoder_without_loading_one(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    from core.search_engine import IrisEngine
+
+    db = tmp_path / "iris.db"
+    init_db(db).close()
+
+    def no_load(_self):
+        raise AssertionError("the model was read from disk again")
+
+    monkeypatch.setattr(IrisEngine, "_load_model", no_load)
+    shared = object()
+    engine = IrisEngine(db_path=db, media_root=tmp_path, weights_path=tmp_path / "w.json", encoder=shared, device="cpu")
+    assert engine.model is shared
