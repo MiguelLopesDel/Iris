@@ -19,7 +19,7 @@ class DeviceNameTest {
     @Test
     fun `missing parts never give an empty name`() {
         assertEquals("Android", DeviceName.model(null, null))
-        assertEquals("Xiaomi", DeviceName.model("Xiaomi", ""))
+        assertEquals("Acme", DeviceName.model("acme", ""))
         assertEquals("Phone 2", DeviceName.model("", "Phone 2"))
     }
 }
