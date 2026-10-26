@@ -42,6 +42,7 @@ from core.indexer_db import (
     init_db,
     now_iso,
 )
+from core.media_dates import metadata_capture_timestamp
 from core.media_inventory import (
     file_sha256,
     iter_media_files,
@@ -932,7 +933,15 @@ def process_images(
                             _media_meta = extract_metadata(source_path)
                             _metadata_json = json.dumps(_media_meta, ensure_ascii=False)
                         except Exception:
+                            _media_meta = {}
                             _metadata_json = ""
+                        # The gallery dates an item by when it was taken; the
+                        # file's own mtime (kept for the import ledger) is the
+                        # copy day for a copied library.
+                        _shown_mtime = (
+                            metadata_capture_timestamp(_media_meta, str(source_path))
+                            or stat.st_mtime
+                        )
 
                         batch_metadata.append(
                             {
@@ -949,6 +958,7 @@ def process_images(
                                 "content_hash": content_hash,
                                 "file_size": stat.st_size,
                                 "file_mtime": stat.st_mtime,
+                                "shown_mtime": _shown_mtime,
                                 "precomp_embedding": _precomp,
                                 "audio_fingerprint": _audio_fp,
                                 "audio_embedding": _audio_emb,
@@ -1139,7 +1149,7 @@ def process_images(
                             item["library_id"],
                             now_iso(),
                             item["file_size"],
-                            item["file_mtime"],
+                            item["shown_mtime"],
                             item["ocr"],
                             full_description,
                             tags,

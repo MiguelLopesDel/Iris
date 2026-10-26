@@ -222,3 +222,38 @@ def test_dedup_pipeline_quarantines_duplicates(tmp_path):
     counts_after = import_review.counts_by_detection(conn)
     conn.close()
     assert counts_after == counts  # no new quarantine rows on the second pass
+
+
+@pytest.mark.skipif(
+    os.environ.get("IRIS_INTEGRATION") != "1",
+    reason="carrega modelos (CLIP/EasyOCR); rode com IRIS_INTEGRATION=1",
+)
+def test_an_indexed_photo_is_dated_by_when_it_was_taken(tmp_path, monkeypatch):
+    import time
+    from datetime import UTC, datetime
+
+    from PIL import Image
+
+    from core.indexer import IndexerConfig, process_images, resolve_device
+
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    media = tmp_path / "media"
+    media.mkdir()
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[0x9003] = "2021:06:15 10:30:00"  # DateTimeOriginal
+    Image.new("RGB", (256, 256), (40, 120, 200)).save(media / "IMG_0001.jpg", exif=exif)
+    # Copied today: the file's own time is the copy day.
+
+    db = tmp_path / "dates.db"
+    process_images(IndexerConfig(
+        media_dir=media, db_path=db,
+        model_name="sentence-transformers/clip-ViT-L-14", batch_size=2,
+        device=resolve_device("auto"), recursive=False, limit=None,
+        rebuild_faiss_only=False, caption_model="none", whisper_model="tiny",
+        sample_manifest=None, library_name="default",
+        library_root=tmp_path / "lib", copy_to_library=True,
+    ))
+
+    stored = sqlite3.connect(db).execute("SELECT file_mtime FROM memes").fetchone()[0]
+    assert stored == datetime(2021, 6, 15, 10, 30, tzinfo=UTC).timestamp()
