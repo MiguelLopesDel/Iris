@@ -6,15 +6,18 @@
    detail panel and, in the gallery, the image lightbox. */
 
 import {
+  addSpaceItem,
   assignFacePerson,
   escapeHtml,
   faceThumbUrl,
   getRecordFaces,
   getRecordMetadata,
   listPersons,
+  listSpaces,
   mediaUrl,
+  trashRecords,
 } from './api.js?v=46';
-import { toast } from './ui.js?v=5';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
 import { pickPersonModal } from './persons.js?v=9';
 
 const modal = document.getElementById('detail-modal');
@@ -147,6 +150,11 @@ async function render() {
     const res = await fetch('/api/records/' + stub.index);
     if (!res.ok) throw new Error('Registro não encontrado');
     r = await res.json();
+    // The library changed under the viewer (a photo left on another tab, say):
+    // the position now holds another photo, which must not be shown as this one.
+    if (stub.db_id && r.db_id && r.db_id !== stub.db_id) {
+      throw new Error('a biblioteca mudou; feche e abra a foto de novo');
+    }
   } catch (err) {
     if (token !== state.token) return;
     asideEl.innerHTML = `<div class="detail-loading">Erro: ${escapeHtml(err.message)}</div>`;
@@ -172,10 +180,19 @@ function section(label, contentHtml, { id = '', open = true } = {}) {
   return `<details class="detail-section"${idAttr}><summary>${label}</summary>${contentHtml}</details>`;
 }
 
+// "Sex., 9 de out. de 2026 · 15:39", as the app titles a photo.
+function formatWhen(date) {
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const day = date.toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const time = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${time}`;
+}
+
 function renderAside(r, token) {
   const sizeKb = r.file_size != null ? `${Math.round(r.file_size / 1024)} KB` : '';
   const typeLabel = r.media_type === 'video' ? 'Vídeo' : 'Imagem';
-  const metaBits = [typeLabel, sizeKb, r.db_id ? `ID ${r.db_id}` : ''].filter(Boolean).join(' · ');
+  const metaBits = [r.arquivo, typeLabel, sizeKb].filter(Boolean).join(' · ');
+  const fallbackWhen = r.file_mtime ? formatWhen(new Date(r.file_mtime * 1000)) : '';
 
   const classif = [
     r.style && `<span>Estilo <strong>${escapeHtml(r.style)}</strong></span>`,
@@ -186,22 +203,25 @@ function renderAside(r, token) {
 
   asideEl.innerHTML = `
     <header class="detail-head">
-      <span class="eyebrow">Detalhes</span>
-      <h3 class="detail-title" title="${escapeHtml(r.arquivo || '')}">${escapeHtml(r.arquivo || '(sem nome)')}</h3>
-      <p class="detail-meta">${escapeHtml(metaBits)}</p>
+      <h3 class="detail-title" id="detail-when">${escapeHtml(fallbackWhen || r.arquivo || '(sem nome)')}</h3>
+      <p class="detail-where" id="detail-where" hidden></p>
+      <p class="detail-meta" title="${escapeHtml(r.arquivo || '')}">${escapeHtml(metaBits)}</p>
     </header>
     <div class="detail-actions">
-      <button class="btn btn-subtle" data-detail-action="similar">Buscar similares</button>
+      ${hasFile(r) ? `<a class="btn btn-subtle" href="${escapeHtml(mediaUrl(r.resolved_path))}"
+           download="${escapeHtml(r.arquivo || '')}">Baixar</a>` : ''}
+      ${hasFile(r) ? '<button class="btn btn-subtle" type="button" data-detail-action="rename">Renomear</button>' : ''}
+      ${r.db_id ? '<button class="btn btn-subtle" type="button" data-detail-action="space">Adicionar a um grupo</button>' : ''}
+      <button class="btn btn-subtle" type="button" data-detail-action="similar">Fotos parecidas</button>
       ${hasFile(r) && canOpenHostFolder() ? `<button class="btn btn-subtle" data-open-folder="${escapeHtml(r.resolved_path)}">Abrir pasta</button>` : ''}
-      ${hasFile(r) ? `
-      <a class="btn btn-subtle" href="${escapeHtml(mediaUrl(r.resolved_path))}" target="_blank" rel="noopener">Abrir arquivo</a>` : ''}
+      ${r.db_id ? '<button class="btn btn-subtle btn-danger" type="button" data-detail-action="trash">Mover para a lixeira</button>' : ''}
     </div>
     ${section('Pessoas', '<div class="detail-faces" id="detail-faces">…</div>')}
+    ${section('Álbuns', '<div class="detail-chips" id="detail-cols">Carregando…</div>')}
     ${section('Texto extraído', r.texto_extraido ? `<pre class="detail-pre">${escapeHtml(r.texto_extraido)}</pre>` : '', { open: false })}
     ${section('Descrição da IA', r.descricao_ia ? `<pre class="detail-pre">${escapeHtml(r.descricao_ia)}</pre>` : '', { open: false })}
     ${r.tags ? section('Tags', `<p class="detail-text">${escapeHtml(r.tags)}</p>`) : ''}
     ${classif ? section('Classificação', `<div class="detail-classif">${classif}</div>`) : ''}
-    ${section('Álbuns', '<div class="detail-chips" id="detail-cols">Carregando…</div>')}
     ${section('Ensinados ao Iris', '<div class="detail-chips" id="detail-concs">Carregando…</div>')}
     <section class="detail-section" id="detail-metadata-section">
       <h4>Metadados</h4>
@@ -211,8 +231,110 @@ function renderAside(r, token) {
   `;
 
   wireAsideActions(r);
+  loadWhenWhere(r, token);
   loadToggles(r, token);
   loadFaces(r, token);
+}
+
+// When and where the photo was taken, from its metadata, in the heading.
+async function loadWhenWhere(r, token) {
+  let curated = {};
+  try {
+    curated = (await getRecordMetadata(r.index)).curated || {};
+  } catch (err) {
+    return; // the file date already heads the panel
+  }
+  if (token !== state.token) return;
+  const when = curated.captured_at ? formatWhen(new Date(curated.captured_at)) : '';
+  if (when) document.getElementById('detail-when').textContent = when;
+  const where = document.getElementById('detail-where');
+  const lat = Number(curated.gps?.lat);
+  const lon = Number(curated.gps?.lon);
+  if (Number.isFinite(lat) && Number.isFinite(lon) && where) {
+    const label = curated.location_label || `${lat}, ${lon}`;
+    where.innerHTML = `${escapeHtml(label)} · <a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}"
+      target="_blank" rel="noopener">Ver no mapa</a>`;
+    where.hidden = false;
+  }
+}
+
+async function renameCurrent(r) {
+  const dot = (r.arquivo || '').lastIndexOf('.');
+  const stem = dot > 0 ? r.arquivo.slice(0, dot) : (r.arquivo || '');
+  const name = await promptModal({
+    kicker: 'Renomear', title: 'Novo nome do arquivo', value: stem,
+    label: 'A extensão do arquivo é mantida.', confirmLabel: 'Renomear',
+  });
+  if (name == null || !name.trim() || name.trim() === stem) return;
+  const res = await fetch(`/api/records/${r.index}/rename`, { method: 'POST', body: new URLSearchParams({ name: name.trim() }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    toast(body.detail || 'Não foi possível renomear', 'error');
+    return;
+  }
+  toast('Renomeado', 'success');
+  window.dispatchEvent(new CustomEvent('iris:library-changed'));
+  render();
+}
+
+async function addCurrentToSpace(r) {
+  let spaces = [];
+  try {
+    spaces = (await listSpaces()).spaces || [];
+  } catch (err) {
+    toast('Erro: ' + err.message, 'error');
+    return;
+  }
+  const body = document.createElement('div');
+  body.className = 'detail-space-list';
+  if (!spaces.length) {
+    body.innerHTML = '<p>Você ainda não participa de nenhum grupo. Crie um na aba Grupos.</p>';
+  }
+  const modal = openModal({ kicker: 'Compartilhar', title: 'Adicionar a um grupo', body });
+  for (const space of spaces) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-subtle detail-space-choice';
+    button.textContent = space.name;
+    button.addEventListener('click', async () => {
+      modal.close();
+      try {
+        const result = await addSpaceItem(space.id, r.db_id);
+        toast(result.created ? `Enviada para ${space.name}` : `Já estava em ${space.name}`, 'success');
+      } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+      }
+    });
+    body.appendChild(button);
+  }
+}
+
+async function trashCurrent(r) {
+  const confirmed = await confirmModal(
+    'Ela sai da biblioteca e fica na lixeira por um tempo, de onde pode ser restaurada.',
+    { kicker: 'Lixeira', title: 'Mover para a lixeira?', confirmLabel: 'Mover para a lixeira', danger: true },
+  );
+  if (!confirmed) return;
+  try {
+    await trashRecords([r.db_id]);
+  } catch (err) {
+    toast('Erro: ' + err.message, 'error');
+    return;
+  }
+  toast('Movida para a lixeira', 'success');
+  window.dispatchEvent(new CustomEvent('iris:library-changed'));
+  // Records are addressed by their position in the catalogue, which is in id
+  // order: every one after the photo that left moves up a place.
+  const removed = r.index;
+  state.records = state.records
+    .filter((_, i) => i !== state.pos)
+    .map((record) => (record.index > removed ? { ...record, index: record.index - 1 } : record));
+  if (!state.records.length) {
+    closeDetail();
+    return;
+  }
+  state.pos = Math.min(state.pos, state.records.length - 1);
+  render();
 }
 
 function wireAsideActions(r) {
@@ -225,6 +347,11 @@ function wireAsideActions(r) {
   }
   const metaBtn = asideEl.querySelector('[data-detail-action="metadata"]');
   if (metaBtn) metaBtn.addEventListener('click', () => loadMetadata(r, metaBtn));
+  const actions = { rename: renameCurrent, space: addCurrentToSpace, trash: trashCurrent };
+  for (const [name, run] of Object.entries(actions)) {
+    const button = asideEl.querySelector(`[data-detail-action="${name}"]`);
+    if (button) button.addEventListener('click', () => run(r));
+  }
 }
 
 // ── Collections / concepts toggles ─────────────────────────────────────────

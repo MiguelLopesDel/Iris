@@ -862,6 +862,7 @@ async def authenticate_library_request(request: Request, call_next):
         "/api/auth/devices/login",
         "/api/auth/devices/refresh",
         "/api/pairing/ca.pem",
+        "/api/tls/ca.crt",
         # A device proves who it is talking to before it signs in.
         "/api/identity",
     } or path.startswith("/static/")
@@ -1026,6 +1027,9 @@ async def log_request(request: Request, call_next):
                 "status_code": response.status_code,
                 "duration_ms": duration_ms,
                 "user_id": user.id if user is not None else None,
+                # Which paired device asked (an opaque id; none for the web), to tell
+                # one client loading twice from two clients loading the same thing.
+                "device_id": getattr(request.state, "iris_device_id", None),
             },
         )
     return response

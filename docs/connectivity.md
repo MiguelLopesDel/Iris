@@ -29,7 +29,7 @@ segunda porta** (`IRIS_TLS_PORT`, 8443 por padrão):
 | `IRIS_TLS` | HTTPS para os aparelhos | Como o app confia |
 |---|---|---|
 | `off` (padrão) | nenhum; um proxy/malha na frente pode fazer TLS | conforme o proxy (tabela abaixo) |
-| `self` | certificado autoassinado feito com a [chave de identidade](#identidade-do-servidor) | pela chave que veio no QR; nada a configurar |
+| `self` | certificado da [chave de identidade](#identidade-do-servidor), emitido por uma autoridade local do próprio servidor | pela chave que veio no QR; nada a configurar |
 | `custom` | o seu certificado: `cert.pem` (cadeia completa) e `key.pem` em `data/tls/`, ou os caminhos em `IRIS_TLS_CERT` e `IRIS_TLS_KEY` | conforme a autoridade que o emitiu, mais a identidade |
 
 - Com `self` ou `custom`, **o código de pareamento leva os aparelhos para o HTTPS** sozinho:
@@ -40,6 +40,20 @@ segunda porta** (`IRIS_TLS_PORT`, 8443 por padrão):
   prazo se aproxima do fim, sempre com a mesma chave: os aparelhos pareados não precisam
   parear de novo. O app confia pela chave, então o nome no certificado não o impede de
   usar outro endereço.
+- **Computadores com `self`:** o certificado é emitido por uma **autoridade local** que o
+  servidor cria para si (`data/tls/local-ca.crt`, chave em `local-ca.key`). Em
+  **Sistema → Abrir com HTTPS sem aviso**, qualquer pessoa com conta baixa essa autoridade
+  (`/api/tls/ca.crt`), confere o código e a impressão digital e confia nela uma vez no
+  computador; daí em diante o navegador abre o HTTPS do Iris sem aviso. A autoridade só
+  pode emitir para os nomes do certificado (*name constraints*): quem copiasse a chave
+  dela não conseguiria se passar por outro site naquele computador. Por isso, quando os
+  nomes mudam, ela é refeita com outra chave e cada computador confia de novo; uma
+  renovação de rotina mantém a mesma autoridade.
+- **Proxy na frente com `self`:** o arquivo `data/tls/self-signed.crt` traz a cadeia
+  (certificado e autoridade), então um proxy pode servir o mesmo certificado com a chave
+  `data/identity_key.pem` e o app continua conferindo a identidade. O Iris troca o
+  arquivo inteiro ao reemiti-lo; um proxy que o monta como arquivo único (bind mount do
+  Docker) continua vendo o antigo até ser reiniciado.
 - **`custom`** é conferido antes de o servidor subir: arquivo ausente, certificado vencido
   ou chave que não corresponde param a subida com uma mensagem que diz qual. Renovar é
   trocar os arquivos e reiniciar o container.
