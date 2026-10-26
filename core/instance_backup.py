@@ -79,6 +79,12 @@ _EXCLUDED_SUFFIXES = (".faiss", ".vec", ".vec.tmp", ".part", "-wal", "-shm", "-j
 _EXCLUDED_DIRS = {"thumbnails", "incoming", "sync_uploads", "__pycache__"}
 
 
+# Passes looking for files that arrived during the backup before giving up:
+# each copies what the previous one found, so a sync that keeps adding files
+# faster than they are copied would otherwise never let the backup finish.
+_ARRIVAL_PASSES = 5
+
+
 class BackupError(RuntimeError):
     """The backup or restore cannot proceed safely."""
 
@@ -641,57 +647,83 @@ def _create(
         observed: dict[Path, tuple[int, int, int, int, int]] = {}
         databases: list[tuple[str, Path, Path, Path]] = []
         scanned: set[Path] = set()
+
+        def capture(name: str, root: Path, relative: Path) -> None:
+            nonlocal copied, linked
+            source = root / relative
+            scanned.add(source)
+            target = work / name / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            before = _identity(source)
+            if before is None:
+                raise BackupError(f"arquivo mudou durante o backup: {source}")
+            stat = source.stat()
+            if _is_sqlite(source):
+                # Captured after every other file, together (see below).
+                databases.append((name, relative, source, target))
+                return
+            else:
+                known = base.get((name, relative.as_posix()))
+                unchanged = (
+                    previous is not None and known is not None and known.kind == "file"
+                    and known.size == stat.st_size and known.mtime_ns == stat.st_mtime_ns
+                    and known.source_ctime_ns == stat.st_ctime_ns
+                    and known.source_inode == stat.st_ino
+                    and known.source_device == stat.st_dev
+                )
+                if unchanged and _link(previous[0] / name / relative, target):
+                    entry = known
+                    linked += 1
+                else:
+                    # Hashing first costs a read; only worth it when some copy
+                    # already in the destination has this size.
+                    reused = None
+                    if stat.st_size in known_sizes:
+                        digest = _sha256(source)
+                        existing = by_content.get((digest, stat.st_size))
+                        if existing is not None and _link(existing, target):
+                            reused = digest
+                    if reused is None:
+                        digest = _copy_hashing(source, target)
+                        by_content.setdefault((digest, stat.st_size), target)
+                        known_sizes.add(stat.st_size)
+                        copied += 1
+                    else:
+                        linked += 1
+                    entry = Entry(name, relative.as_posix(), stat.st_size,
+                                  stat.st_mtime_ns, digest, "file", stat.st_ctime_ns,
+                                  stat.st_ino, stat.st_dev)
+                state = _identity(source)
+                if state != before:
+                    raise BackupError(f"arquivo mudou durante o backup: {source}")
+                observed[source] = state
+            os.chmod(target, 0o444)
+            manifest.files.append(entry)
+
         for name, root in sorted(roots.items()):
             for relative in _walk(root):
-                source = root / relative
-                scanned.add(source)
-                target = work / name / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                before = _identity(source)
-                if before is None:
-                    raise BackupError(f"arquivo mudou durante o backup: {source}")
-                stat = source.stat()
-                if _is_sqlite(source):
-                    # Captured after every other file, together (see below).
-                    databases.append((name, relative, source, target))
-                    continue
-                else:
-                    known = base.get((name, relative.as_posix()))
-                    unchanged = (
-                        previous is not None and known is not None and known.kind == "file"
-                        and known.size == stat.st_size and known.mtime_ns == stat.st_mtime_ns
-                        and known.source_ctime_ns == stat.st_ctime_ns
-                        and known.source_inode == stat.st_ino
-                        and known.source_device == stat.st_dev
-                    )
-                    if unchanged and _link(previous[0] / name / relative, target):
-                        entry = known
-                        linked += 1
-                    else:
-                        # Hashing first costs a read; only worth it when some copy
-                        # already in the destination has this size.
-                        reused = None
-                        if stat.st_size in known_sizes:
-                            digest = _sha256(source)
-                            existing = by_content.get((digest, stat.st_size))
-                            if existing is not None and _link(existing, target):
-                                reused = digest
-                        if reused is None:
-                            digest = _copy_hashing(source, target)
-                            by_content.setdefault((digest, stat.st_size), target)
-                            known_sizes.add(stat.st_size)
-                            copied += 1
-                        else:
-                            linked += 1
-                        entry = Entry(name, relative.as_posix(), stat.st_size,
-                                      stat.st_mtime_ns, digest, "file", stat.st_ctime_ns,
-                                      stat.st_ino, stat.st_dev)
-                    state = _identity(source)
-                    if state != before:
-                        raise BackupError(f"arquivo mudou durante o backup: {source}")
-                    observed[source] = state
-                os.chmod(target, 0o444)
-                manifest.files.append(entry)
+                capture(name, root, relative)
+
+        def capture_arrivals() -> None:
+            """Copies the files that arrived since they were last looked for.
+
+            A phone syncing during the backup adds files to the media roots.
+            """
+            for _ in range(_ARRIVAL_PASSES):
+                found = [
+                    (name, root, relative)
+                    for name, root in sorted(roots.items())
+                    for relative in _walk(root)
+                    if root / relative not in scanned
+                ]
+                if not found:
+                    return
+                for item in found:
+                    capture(*item)
+            raise BackupError("arquivos continuam chegando durante o backup")
+
+        # Before the catalogues: a database that appeared is captured with the rest.
+        capture_arrivals()
 
         configured_secret = os.environ.get("IRIS_SECRET_KEY")
         if configured_secret:
@@ -709,16 +741,18 @@ def _create(
                 "data", "secret_key", secret_target.stat().st_size, 0,
                 _sha256(secret_target), "file",
             ))
+        databases_before = len(databases)
         copied += _capture_databases(databases, work, manifest)
+        # Files written while the catalogues were copied may be in them. One
+        # that arrives after this pass is not in them, so this snapshot is
+        # complete without it and the next backup takes it.
+        capture_arrivals()
+        if len(databases) != databases_before:
+            raise BackupError("um banco de dados apareceu durante o backup")
         _check_references(manifest, work)
         for source, state in observed.items():
             if _identity(source) != state:
                 raise BackupError(f"arquivo mudou durante o backup: {source}")
-        for name, root in roots.items():
-            now_present = {root / relative for relative in _walk(root)}
-            copied_sources = {path for path in scanned if path.is_relative_to(root)}
-            if now_present != copied_sources:
-                raise BackupError(f"arquivos mudaram durante o backup na raiz '{name}'")
 
         manifest.dump(work / "manifest.json")
         os.chmod(work / "manifest.json", 0o444)

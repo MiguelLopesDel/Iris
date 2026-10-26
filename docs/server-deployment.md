@@ -316,7 +316,12 @@ bancos e os originais referenciados pelos catálogos. A execução aparece como
   backup não tem como distinguir esses casos, então nunca aceita a ausência
   sozinho;
 - um original está fora das raízes configuradas;
-- bancos ou arquivos mudam durante a captura.
+- bancos ou arquivos mudam durante a captura;
+- arquivos continuam chegando depois de várias passadas.
+
+Arquivos que chegam durante o backup (um celular sincronizando, por exemplo)
+não fazem o backup falhar: os que chegam antes do fim da cópia dos bancos entram
+neste backup, e os que chegam depois ficam para o próximo.
 
 Os originais são conferidos antes de copiar qualquer arquivo, então a falha
 aparece em segundos, com a quantidade e um exemplo. Se os arquivos já estavam

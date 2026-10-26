@@ -511,6 +511,79 @@ def test_a_database_that_never_stops_changing_does_not_publish_snapshot(
     assert list(dest.glob("iris-backup-*")) == []
 
 
+def _arrive(data: Path, name: str) -> Path:
+    """A phone's upload lands in alice's library and is catalogued."""
+    photo = _image(data / "users" / "1" / "media" / name, (90, 90, 90))
+    with sqlite3.connect(data / "users" / "1" / "iris.db") as connection:
+        connection.execute(
+            "INSERT INTO memes (arquivo, caminho, embedding) VALUES (?, ?, ?)",
+            (photo.name, str(photo), b"\0" * 16),
+        )
+    return photo
+
+
+def test_a_photo_synced_while_the_media_is_copied_is_in_the_backup(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_copy = instance_backup._copy_hashing
+    arrived: list[Path] = []
+
+    def copy_while_a_phone_syncs(source: Path, target: Path) -> str:
+        result = original_copy(source, target)
+        # The "media" root is walked after "data": alice's folder is done.
+        if source.name == "legacy.jpg" and not arrived:
+            arrived.append(_arrive(instance["data"], "IMG_0001.jpg"))
+        return result
+
+    monkeypatch.setattr(instance_backup, "_copy_hashing", copy_while_a_phone_syncs)
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+
+    assert arrived
+    assert (snapshot / "data" / "users" / "1" / "media" / "IMG_0001.jpg").is_file()
+    assert instance_backup.verify(snapshot) == []
+
+
+def test_a_photo_synced_while_the_catalogues_are_copied_is_in_the_backup(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The catalogue copy already holds the row; the file must come along.
+    original = instance_backup._sqlite_copy
+    arrived: list[Path] = []
+
+    def copy_while_a_phone_syncs(source: Path, destination: Path) -> None:
+        if source.name == "iris.db" and source.parent.name == "1" and not arrived:
+            arrived.append(_arrive(instance["data"], "IMG_0002.jpg"))
+        original(source, destination)
+
+    monkeypatch.setattr(instance_backup, "_sqlite_copy", copy_while_a_phone_syncs)
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+
+    assert arrived
+    assert (snapshot / "data" / "users" / "1" / "media" / "IMG_0002.jpg").is_file()
+    assert instance_backup.verify(snapshot) == []
+
+
+def test_files_that_never_stop_arriving_do_not_publish_snapshot(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_copy = instance_backup._copy_hashing
+    count = 0
+
+    def copy_while_files_keep_arriving(source: Path, target: Path) -> str:
+        nonlocal count
+        result = original_copy(source, target)
+        count += 1
+        late = instance["data"] / "users" / "1" / "media" / f"IMG_{count:04d}.jpg"
+        late.write_bytes(f"photo {count}".encode())
+        return result
+
+    monkeypatch.setattr(instance_backup, "_copy_hashing", copy_while_files_keep_arriving)
+    dest = tmp_path / "backups"
+    with pytest.raises(BackupError, match="continuam chegando"):
+        instance_backup.create(_roots(instance), dest, now=T0)
+    assert list(dest.glob("iris-backup-*")) == []
+
+
 def test_original_change_during_copy_does_not_publish_snapshot(
     instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
