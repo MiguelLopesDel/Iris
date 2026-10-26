@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=58">
+  <link rel="stylesheet" href="/static/style.css?v=62">
 </head>
 <body>
 
@@ -121,7 +121,7 @@
       <div class="selection-actions">
         <button id="btn-enrich-selected" class="btn btn-subtle">Web</button>
         <button id="btn-collection-selected" class="btn btn-subtle">Álbum</button>
-        <button id="btn-space-selected" class="btn btn-subtle" data-requires-accounts hidden>Espaço</button>
+        <button id="btn-space-selected" class="btn btn-subtle" data-requires-accounts hidden>Grupo</button>
         <button id="btn-trash-selected" class="btn btn-danger">Lixeira</button>
       </div>
     </div>
@@ -147,7 +147,7 @@
       <button class="tab-btn active" data-primary-tab="home"><span class="tab-icon">⌂</span><span>Início</span></button>
       <button class="tab-btn" data-primary-tab="gallery"><span class="tab-icon">▦</span><span>Fotos</span></button>
       <button class="tab-btn" data-primary-tab="search"><span class="tab-icon">⌕</span><span>Buscar</span></button>
-      <button class="tab-btn" data-primary-tab="spaces" data-requires-accounts hidden><span class="tab-icon">◎</span><span>Compartilhados</span></button>
+      <button class="tab-btn" data-primary-tab="spaces" data-requires-accounts hidden><span class="tab-icon">◎</span><span>Grupos</span></button>
       <button class="tab-btn" data-primary-tab="organize"><span class="tab-icon">◇</span><span>Organizar</span></button>
     </nav>
     <button class="icon-btn settings-shortcut" type="button" data-go-tab="system" aria-label="Abrir configurações" title="Configurações">⚙</button>
@@ -179,7 +179,7 @@
       <section class="home-section">
         <div class="home-section-title"><div><h3>Organize e cuide da biblioteca</h3><p>As ferramentas avançadas aparecem somente quando você precisar.</p></div></div>
         <div class="home-task-grid">
-          <button class="home-task featured" type="button" data-go-tab="system"><i>＋</i><span><b>Adicionar fotos e vídeos</b><small>Importe uma pasta ou envie arquivos.</small></span><em>→</em></button>
+          <button class="home-task featured" type="button" data-go-tab="system" data-go-target="import-section"><i>+</i><span><b>Adicionar fotos e vídeos</b><small>Importe uma pasta ou envie arquivos.</small></span><em>→</em></button>
           <button class="home-task" type="button" data-go-tab="collections"><i>◇</i><span><b>Álbuns</b><small>Separe viagens, projetos e momentos.</small></span><em>→</em></button>
           <button class="home-task" type="button" data-go-tab="persons"><i>☺</i><span><b>Pessoas</b><small>Encontre fotos por quem aparece nelas.</small></span><em>→</em></button>
           <button class="home-task" type="button" data-go-tab="duplicates"><i>✓</i><span><b>Revisar e liberar espaço</b><small>Encontre duplicatas com segurança.</small></span><em>→</em></button>
@@ -219,16 +219,9 @@
           </label>
         </div>
       </div>
-      <div class="section-lead">
-        <div>
-          <span class="eyebrow">Visão geral</span>
-          <h3>Sua biblioteca, em foco.</h3>
-          <p>Explore, compare e organize cada arquivo indexado pelo Iris.</p>
-        </div>
-        <div class="page-status">
-          <span>Página atual</span>
-          <strong id="gallery-page-info">—</strong>
-        </div>
+      <div class="gallery-toolbar">
+        <strong id="gallery-page-info" class="gallery-toolbar-info">—</strong>
+        <button class="btn btn-primary" type="button" data-go-tab="system" data-go-target="import-section">+ Adicionar fotos</button>
       </div>
 
       <details id="gallery-controls-disclosure" class="gallery-controls-disclosure">
@@ -237,9 +230,9 @@
         <div class="control-field">
           <label for="gallery-sort">Ordenar por</label>
           <select id="gallery-sort">
+            <option value="data" selected>Data</option>
             <option value="importacao">Importação</option>
             <option value="nome">Nome</option>
-            <option value="data">Data do arquivo</option>
             <option value="tamanho">Tamanho</option>
             <option value="tipo">Tipo</option>
           </select>
@@ -280,7 +273,7 @@
         <span id="gallery-context-label"></span>
         <button id="gallery-context-clear" class="btn btn-subtle" type="button">Limpar</button>
       </div>
-      <div id="gallery-grid" class="media-grid"></div>
+      <div id="gallery-grid" class="media-grid timeline"></div>
       <div id="gallery-pagination-bottom"></div>
     </section>
 
@@ -317,23 +310,23 @@
           <div>
             <span class="eyebrow">Com outras contas</span>
           </div>
-          <button id="btn-new-space" class="btn btn-primary" type="button">+ Novo espaço</button>
+          <button id="btn-new-space" class="btn btn-primary" type="button">+ Novo grupo</button>
         </div>
-        <p class="section-hint">Um espaço é uma galeria própria, compartilhada com contas deste servidor.
+        <p class="section-hint">Um grupo é uma galeria própria, compartilhada com contas deste servidor.
           Uma foto só entra nele quando alguém a envia: nada da sua biblioteca aparece aqui sozinho, e apagar
-          a sua cópia não apaga a do espaço.</p>
+          a sua cópia não apaga a do grupo.</p>
         <div id="spaces-list" class="space-list"></div>
       </div>
 
       <div id="space-view" hidden>
         <div class="space-header">
-          <button id="space-back" class="btn btn-subtle" type="button">← Espaços</button>
+          <button id="space-back" class="btn btn-subtle" type="button">← Grupos</button>
           <div>
             <h3 id="space-name"></h3>
             <p id="space-meta" class="section-hint"></p>
           </div>
         </div>
-        <nav class="space-tabs" aria-label="Seções do espaço">
+        <nav class="space-tabs" aria-label="Seções do grupo">
           <button type="button" class="active" data-space-view="items">Fotos</button>
           <button type="button" data-space-view="albums">Álbuns</button>
           <button type="button" data-space-view="members">Membros</button>
@@ -342,7 +335,7 @@
 
         <div data-space-panel="items">
           <form id="space-search" class="space-search" role="search">
-            <input id="space-search-input" type="search" placeholder="Buscar neste espaço: praia, aniversário, nome do arquivo…" autocomplete="off">
+            <input id="space-search-input" type="search" placeholder="Buscar neste grupo: praia, aniversário, nome do arquivo…" autocomplete="off">
             <button class="btn btn-subtle" type="submit">Buscar</button>
             <button id="space-search-clear" class="btn btn-subtle" type="button" hidden>Limpar</button>
           </form>
@@ -354,7 +347,7 @@
         <div data-space-panel="albums" hidden>
           <div id="space-albums-list-view">
             <div class="space-albums-head">
-              <p class="section-hint">Álbuns organizam as fotos do espaço; apagar um álbum não apaga fotos.</p>
+              <p class="section-hint">Álbuns organizam as fotos do grupo; apagar um álbum não apaga fotos.</p>
               <button id="space-album-new" class="btn btn-primary" type="button" hidden>+ Novo álbum</button>
             </div>
             <div id="space-albums" class="space-list"></div>
@@ -383,7 +376,7 @@
             </select>
             <button class="btn btn-primary" type="submit">Convidar</button>
           </form>
-          <button id="space-leave" class="btn btn-subtle space-leave" type="button">Sair do espaço</button>
+          <button id="space-leave" class="btn btn-subtle space-leave" type="button">Sair do grupo</button>
         </div>
 
         <div data-space-panel="trash" hidden>
@@ -403,12 +396,12 @@
       </div>
       <div class="organize-grid">
         <button class="organize-card" type="button" data-go-tab="collections"><i>◇</i><span><b>Álbuns</b><small>Agrupe fotos e vídeos importantes.</small></span><em>→</em></button>
-        <button class="organize-card" type="button" data-go-tab="spaces" data-requires-accounts hidden><i>◎</i><span><b>Compartilhados</b><small>Galerias com a família ou a equipe.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="spaces" data-requires-accounts hidden><i>◎</i><span><b>Grupos</b><small>Galerias com a família ou a equipe.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="persons"><i>☺</i><span><b>Pessoas</b><small>Nomeie e encontre pessoas reconhecidas.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="trash"><i>↺</i><span><b>Lixeira</b><small>Recupere o que foi apagado há pouco.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="duplicates"><i>✓</i><span><b>Revisar duplicatas</b><small>Libere espaço sem apagar o arquivo errado.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="concepts"><i>✦</i><span><b>Ensinar o Iris</b><small>Mostre exemplos de personagens, objetos e ideias.</small></span><em>→</em></button>
-        <button class="organize-card" type="button" data-go-tab="system"><i>＋</i><span><b>Adicionar mídia</b><small>Importe e acompanhe a indexação.</small></span><em>→</em></button>
+        <button class="organize-card" type="button" data-go-tab="system" data-go-target="import-section"><i>+</i><span><b>Adicionar mídia</b><small>Importe e acompanhe a indexação.</small></span><em>→</em></button>
         <button class="organize-card" type="button" data-go-tab="system"><i>⚙</i><span><b>Configurações e backup</b><small>Desempenho, armazenamento e proteção.</small></span><em>→</em></button>
       </div>
     </section>
@@ -540,7 +533,7 @@
 
       <section id="instance-settings" class="detail-panel system-card" data-settings-section hidden>
         <span class="eyebrow">INSTALAÇÃO</span>
-        <h4>Espaços e lixeira</h4>
+        <h4>Grupos e lixeira</h4>
         <p class="system-hint">Vale para todo o servidor. Alterar estas opções não dá acesso às fotos de ninguém.
           Um valor definido aqui tem prioridade sobre o arquivo <code>.env</code> do instalador.</p>
         <p id="instance-storage-report" class="system-hint"></p>
@@ -555,11 +548,11 @@
             </select>
             <small class="instance-source" data-source-for="space_storage"></small>
           </label>
-          <label>Limite por espaço (GiB)
+          <label>Limite por grupo (GiB)
             <input type="number" min="1" step="1" inputmode="numeric" data-setting="space_quota_bytes" data-scale="1073741824">
             <small class="instance-source" data-source-for="space_quota_bytes"></small>
           </label>
-          <label>Dias na lixeira dos espaços antes de apagar
+          <label>Dias na lixeira dos grupos antes de apagar
             <input type="number" min="1" max="3650" step="1" inputmode="numeric" data-setting="space_trash_days">
             <small class="instance-source" data-source-for="space_trash_days"></small>
           </label>
@@ -568,7 +561,7 @@
             <small class="instance-source" data-source-for="library_trash_days"></small>
           </label>
         </div>
-        <p class="system-hint">O modo de cópia vale para os próximos itens; os que já estão nos espaços não mudam.</p>
+        <p class="system-hint">O modo de cópia vale para os próximos itens; os que já estão nos grupos não mudam.</p>
         <button class="btn btn-primary" type="button" data-save-settings>Salvar</button>
         <span class="system-status" data-settings-status></span>
       </section>
@@ -596,7 +589,7 @@
       <section id="backup-settings" class="detail-panel system-card" data-settings-section hidden>
         <span class="eyebrow">INSTALAÇÃO</span>
         <h4>Backup</h4>
-        <p class="system-hint">Cópia completa do servidor: contas, bibliotecas, espaços compartilhados e originais.
+        <p class="system-hint">Cópia completa do servidor: contas, bibliotecas, grupos e originais.
           Cada backup é uma pasta completa; fotos que não mudaram ocupam espaço uma vez só.</p>
         <p id="backup-destination" class="system-hint"></p>
         <p id="backup-same-disk" class="system-hint danger-text" hidden>O destino está no mesmo disco dos dados:
@@ -672,7 +665,7 @@
           <button id="system-save" class="btn btn-primary">Aplicar e recarregar</button>
         </section>
 
-        <section class="detail-panel system-card system-card-wide">
+        <section id="import-section" class="detail-panel system-card system-card-wide">
           <span class="eyebrow">Entrada de mídia</span>
           <h4>Importar e indexar</h4>
           <p id="private-library-health" class="system-status" hidden></p>
@@ -768,7 +761,7 @@
   <button class="active" data-primary-tab="home"><span>⌂</span>Início</button>
   <button data-primary-tab="gallery"><span>▦</span>Fotos</button>
   <button data-primary-tab="search"><span>⌕</span>Buscar</button>
-  <button data-primary-tab="spaces" data-requires-accounts hidden><span>◎</span>Espaços</button>
+  <button data-primary-tab="spaces" data-requires-accounts hidden><span>◎</span>Grupos</button>
   <button data-primary-tab="organize"><span>◇</span>Organizar</button>
 </nav>
 
@@ -862,7 +855,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=74"></script>
+<script type="module" src="/static/app.js?v=83"></script>
 
 </body>
 </html>

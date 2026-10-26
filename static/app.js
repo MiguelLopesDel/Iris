@@ -18,14 +18,14 @@ import {
   rejectEnrichmentSuggestion,
   trashRecords
 } from './api.js?v=46';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=41';
+import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=47';
 import { initCollections } from './collections.js?v=35';
 import { initConcepts } from './concepts.js?v=36';
 import { initDuplicates } from './duplicates.js?v=35';
-import { initSystem } from './system.js?v=48';
+import { initSystem } from './system.js?v=49';
 import { initPersons } from './persons.js?v=9';
 import { initImportReview } from './import-review.js?v=10';
-import { chooseSpaceFor, initSpaces } from './spaces.js?v=5';
+import { chooseSpaceFor, initSpaces } from './spaces.js?v=6';
 import { initTrash } from './trash.js?v=3';
 import { confirmModal, toast } from './ui.js?v=5';
 
@@ -90,6 +90,18 @@ document.addEventListener('click', async function(event) {
 
 // ── Tab routing ──────────────────────────────────────────────────────────
 
+// A shortcut to one control on a tab (the upload, say), not just the tab. The
+// tab loads its content after it shows, which moves the target down; keep it
+// in view while that settles.
+function revealWhileLoading(target) {
+  var center = function() { target.scrollIntoView({ block: 'center' }); };
+  center();
+  if (typeof ResizeObserver === 'undefined') return;
+  var observer = new ResizeObserver(center);
+  observer.observe(target.closest('.tab-pane') || document.body);
+  setTimeout(function() { observer.disconnect(); }, 1500);
+}
+
 function switchTab(name) {
   var paneName = name === 'search' ? 'gallery' : name;
   if (!document.getElementById('tab-' + paneName)) {
@@ -124,7 +136,7 @@ function switchTab(name) {
     },
     spaces: {
       kicker: 'Compartilhados',
-      title: 'Espaços',
+      title: 'Grupos',
       description: 'Galerias compartilhadas com outras contas deste servidor.'
     },
     collections: {
@@ -157,7 +169,7 @@ function switchTab(name) {
   // are hidden elsewhere and replaced by a short context block).
   var sidebarHints = {
     collections: 'Para adicionar itens em lote, selecione fotos e use a ação <strong>Álbum</strong>.',
-    spaces: 'Para enviar fotos a um espaço, selecione-as em Fotos e use a ação <strong>Espaço</strong>.',
+    spaces: 'Para enviar fotos a um grupo, selecione-as em Fotos e use a ação <strong>Grupo</strong>.',
     concepts: 'O Iris aprende com imagens de exemplo. Confirme ou rejeite sugestões para melhorar o reconhecimento.',
     persons: 'Rostos são agrupados por similaridade. Nomeie pessoas para vê-las nos cards da Galeria.',
     duplicates: 'Ajuste a similaridade e analise a biblioteca. O que você apagar vai para a Lixeira e pode ser restaurado.',
@@ -179,8 +191,10 @@ function switchTab(name) {
   document.querySelectorAll('[data-primary-tab]').forEach(function(button) {
     button.classList.toggle('active', button.dataset.primaryTab === name);
   });
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
   var pane = document.getElementById('tab-' + paneName);
+  // Leave the current pane alone: removing and re-adding "active" restarts its
+  // entrance animation, and setting the hash below calls this again.
+  document.querySelectorAll('.tab-pane').forEach(p => { if (p !== pane) p.classList.remove('active'); });
   if (pane) pane.classList.add('active');
   if (name === 'home') loadHomeRecent();
   if (name === 'gallery' || name === 'search') initGallery();
@@ -981,7 +995,10 @@ window.__showStats = async function() {
   syncExperienceControls();
   document.addEventListener('click', function(event) {
     var destination = event.target.closest('[data-go-tab]');
-    if (destination) switchTab(destination.dataset.goTab);
+    if (!destination) return;
+    switchTab(destination.dataset.goTab);
+    var target = destination.dataset.goTarget && document.getElementById(destination.dataset.goTarget);
+    if (target) revealWhileLoading(target);
   });
   document.getElementById('home-search-form').addEventListener('submit', function(event) {
     event.preventDefault();
