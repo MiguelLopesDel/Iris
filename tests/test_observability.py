@@ -12,8 +12,10 @@ def test_json_logs_include_operational_fields_without_unrelated_record_data():
     record.request_id = "abc123"
     record.path = "/api/info"
     record.status_code = 200
+    record.device_id = "d-1"
     payload = json.loads(JsonFormatter().format(record))
     assert payload["event"] == "http_request_completed"
+    assert payload["device_id"] == "d-1"
     assert payload["request_id"] == "abc123"
     assert payload["path"] == "/api/info"
     assert payload["status_code"] == 200
