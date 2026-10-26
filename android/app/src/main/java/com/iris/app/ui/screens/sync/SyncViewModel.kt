@@ -377,22 +377,22 @@ class SyncViewModel(
             try {
                 val sources = repository.mediaScanner.discoverSources()
                 if (credentialsStore.sessionIdentity.value != requestedSession) return@launch
-                    _uiState.update {
-                        it.copy(
-                            availableSources = sources,
-                            isDiscoveringSources = false,
-                        )
-                    }
+                _uiState.update {
+                    it.copy(
+                        availableSources = sources,
+                        isDiscoveringSources = false,
+                    )
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 if (credentialsStore.sessionIdentity.value != requestedSession) return@launch
-                    _uiState.update {
-                        it.copy(
-                            isDiscoveringSources = false,
-                            sourceDiscoveryError = "MEDIA_PERMISSION_REQUIRED"
-                        )
-                    }
+                _uiState.update {
+                    it.copy(
+                        isDiscoveringSources = false,
+                        sourceDiscoveryError = "MEDIA_PERMISSION_REQUIRED"
+                    )
+                }
             }
         }
     }

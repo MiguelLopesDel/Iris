@@ -36,3 +36,5 @@ jobs:
         run: ./scripts/test.sh fast
       - name: Compile app and instrumentation tests
         run: ./gradlew assembleDebug assembleLab assembleLabAndroidTest
+      - name: Lint
+        run: ./gradlew lintDebug
