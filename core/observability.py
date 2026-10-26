@@ -16,7 +16,7 @@ from typing import Any
 
 _STANDARD_FIELDS = set(logging.makeLogRecord({}).__dict__)
 _EVENT_FIELDS = (
-    "event", "request_id", "method", "path", "status_code", "duration_ms", "user_id",
+    "event", "request_id", "method", "path", "status_code", "duration_ms", "user_id", "device_id",
     "phase", "phase_ms", "bytes", "item_count", "state",
 )
 

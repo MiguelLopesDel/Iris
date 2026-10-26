@@ -432,9 +432,11 @@ def test_effective_environment_secret_is_captured(
     assert instance_backup.verify(snapshot) == []
 
 
-def test_database_change_during_media_copy_does_not_publish_snapshot(
+def test_database_change_during_media_copy_is_captured(
     instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Databases are taken after the files: a write while the photos are being
+    # copied (a phone renewing its session) is simply part of the backup.
     original_copy = instance_backup._copy_hashing
     changed = False
 
@@ -450,10 +452,62 @@ def test_database_change_during_media_copy_does_not_publish_snapshot(
         return result
 
     monkeypatch.setattr(instance_backup, "_copy_hashing", copy_while_account_changes)
-    dest = tmp_path / "backups"
-    with pytest.raises(BackupError, match="mudou durante"):
-        instance_backup.create(_roots(instance), dest, now=T0)
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
     assert changed
+    with sqlite3.connect(snapshot / "data" / "users.db") as connection:
+        name = connection.execute("SELECT display_name FROM users WHERE username = 'bob'").fetchone()[0]
+    assert name == "changed"
+    assert instance_backup.verify(snapshot) == []
+
+
+def _write_during_database_audit(instance, monkeypatch, *, times: int) -> list[int]:
+    """Write to users.db right after its capture, on the first ``times`` attempts."""
+    monkeypatch.setattr(instance_backup, "_DB_CAPTURE_RETRY_SECONDS", 0)
+    original = instance_backup._sqlite_copy
+    writes: list[int] = []
+
+    def copy_then_write(source: Path, destination: Path) -> None:
+        original(source, destination)
+        if source.name == "users.db" and destination.name != ".audit.db" and len(writes) < times:
+            writes.append(1)
+            with sqlite3.connect(source) as connection:
+                connection.execute(
+                    "UPDATE users SET display_name = ? WHERE username = 'bob'", (f"write {len(writes)}",)
+                )
+
+    monkeypatch.setattr(instance_backup, "_sqlite_copy", copy_then_write)
+    return writes
+
+
+def test_a_write_while_databases_are_captured_retries_only_the_databases(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writes = _write_during_database_audit(instance, monkeypatch, times=1)
+    copies: list[Path] = []
+    original_copy = instance_backup._copy_hashing
+
+    def counting_copy(source: Path, target: Path) -> str:
+        copies.append(source)
+        return original_copy(source, target)
+
+    monkeypatch.setattr(instance_backup, "_copy_hashing", counting_copy)
+    snapshot = instance_backup.create(_roots(instance), tmp_path / "backups", now=T0).snapshot
+
+    assert writes == [1]
+    assert len(copies) == len(set(copies))  # photos were not copied again
+    with sqlite3.connect(snapshot / "data" / "users.db") as connection:
+        name = connection.execute("SELECT display_name FROM users WHERE username = 'bob'").fetchone()[0]
+    assert name == "write 1"
+    assert instance_backup.verify(snapshot) == []
+
+
+def test_a_database_that_never_stops_changing_does_not_publish_snapshot(
+    instance: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_during_database_audit(instance, monkeypatch, times=100)
+    dest = tmp_path / "backups"
+    with pytest.raises(BackupError, match="banco mudou durante o backup"):
+        instance_backup.create(_roots(instance), dest, now=T0)
     assert list(dest.glob("iris-backup-*")) == []
 
 

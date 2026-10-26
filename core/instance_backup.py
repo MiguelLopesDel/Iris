@@ -53,6 +53,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -359,6 +360,50 @@ def _preflight_originals(
     return missing
 
 
+# A database is captured together with the others in a window of seconds,
+# then captured again to prove nothing wrote to it meanwhile. A write in
+# that window (a phone renewing its session, say) retries the databases only.
+_DB_CAPTURE_ATTEMPTS = 5
+_DB_CAPTURE_RETRY_SECONDS = 2.0
+
+
+def _capture_databases(
+    databases: list[tuple[str, Path, Path, Path]], work: Path, manifest: Manifest
+) -> int:
+    """Copy every SQLite database with the online backup API, all within one short window.
+
+    They are taken after the other files, so the copy of a catalogue never
+    misses a file it references, and they are taken together, so the
+    accounts' databases agree with each other. Returns how many were copied.
+    """
+    changed: Path | None = None
+    for attempt in range(_DB_CAPTURE_ATTEMPTS):
+        if attempt:
+            time.sleep(_DB_CAPTURE_RETRY_SECONDS)
+        entries: list[Entry] = []
+        for name, relative, source, target in databases:
+            target.unlink(missing_ok=True)
+            stat = source.stat()
+            _sqlite_copy(source, target)
+            entries.append(Entry(name, relative.as_posix(), target.stat().st_size,
+                                 stat.st_mtime_ns, _sha256(target), "sqlite"))
+        changed = None
+        audit = work / ".audit.db"
+        for (_, _, source, _), entry in zip(databases, entries, strict=True):
+            audit.unlink(missing_ok=True)
+            _sqlite_copy(source, audit)
+            if _sha256(audit) != entry.sha256:
+                changed = source
+                break
+        audit.unlink(missing_ok=True)
+        if changed is None:
+            for (_, _, _, target), entry in zip(databases, entries, strict=True):
+                os.chmod(target, 0o444)
+                manifest.files.append(entry)
+            return len(entries)
+    raise BackupError(f"banco mudou durante o backup: {changed}")
+
+
 def _check_references(manifest: Manifest, snapshot: Path, *, check_source: bool = True) -> None:
     """Refuse a snapshot whose copied catalogues cannot find their originals."""
     data_root = snapshot / "data"
@@ -594,7 +639,7 @@ def _create(
                     by_content.setdefault((item.sha256, item.size), previous[0] / item.root / item.path)
         known_sizes = {size for _, size in by_content}
         observed: dict[Path, tuple[int, int, int, int, int]] = {}
-        copied_databases: list[tuple[Path, str]] = []
+        databases: list[tuple[str, Path, Path, Path]] = []
         scanned: set[Path] = set()
         for name, root in sorted(roots.items()):
             for relative in _walk(root):
@@ -607,11 +652,9 @@ def _create(
                     raise BackupError(f"arquivo mudou durante o backup: {source}")
                 stat = source.stat()
                 if _is_sqlite(source):
-                    _sqlite_copy(source, target)
-                    entry = Entry(name, relative.as_posix(), target.stat().st_size,
-                                  stat.st_mtime_ns, _sha256(target), "sqlite")
-                    copied_databases.append((source, entry.sha256))
-                    copied += 1
+                    # Captured after every other file, together (see below).
+                    databases.append((name, relative, source, target))
+                    continue
                 else:
                     known = base.get((name, relative.as_posix()))
                     unchanged = (
@@ -666,16 +709,11 @@ def _create(
                 "data", "secret_key", secret_target.stat().st_size, 0,
                 _sha256(secret_target), "file",
             ))
+        copied += _capture_databases(databases, work, manifest)
         _check_references(manifest, work)
         for source, state in observed.items():
             if _identity(source) != state:
-                raise BackupError(f"arquivo ou banco mudou durante o backup: {source}")
-        for source, digest in copied_databases:
-            audit = work / ".audit.db"
-            _sqlite_copy(source, audit)
-            if _sha256(audit) != digest:
-                raise BackupError(f"banco mudou durante o backup: {source}")
-            audit.unlink()
+                raise BackupError(f"arquivo mudou durante o backup: {source}")
         for name, root in roots.items():
             now_present = {root / relative for relative in _walk(root)}
             copied_sources = {path for path in scanned if path.is_relative_to(root)}
