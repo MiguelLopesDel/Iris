@@ -383,6 +383,26 @@ class InterfaceSmokeTest {
     }
 
     @Test
+    fun after_signing_in_from_the_gallery_the_gallery_tab_opens_the_gallery() {
+        app.credentialsStore.clearCredentials()
+        waitForText("Fazer Login")
+        compose.onNodeWithText("Fazer Login").performClick()
+        waitForText("Conectar Dispositivo")
+
+        compose.onNodeWithText("Nome de usuário").performTextInput("ui-teste")
+        compose.onNodeWithText("Senha").performTextInput("senha-fixture-segura")
+        compose.onNodeWithText("Entrar e Sincronizar").performClick()
+        waitForText("Dispositivo Conectado")
+
+        compose.onNodeWithText("Galeria").performClick()
+        waitForDescription("foto-teste.jpg")
+        assertTrue(
+            "The Galeria tab kept showing the sync screen",
+            compose.onAllNodesWithText("Dispositivo Conectado").fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    @Test
     fun logout_hides_private_gallery_and_requires_login() {
         // The fixture is authenticated and the private photo is already on screen.
         waitForDescription("foto-teste.jpg")
