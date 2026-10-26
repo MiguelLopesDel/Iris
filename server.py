@@ -1003,6 +1003,9 @@ async def log_request(request: Request, call_next):
                 "status_code": response.status_code,
                 "duration_ms": duration_ms,
                 "user_id": user.id if user is not None else None,
+                # Which paired device asked (an opaque id; none for the web), to tell
+                # one client loading twice from two clients loading the same thing.
+                "device_id": getattr(request.state, "iris_device_id", None),
             },
         )
     return response
