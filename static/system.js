@@ -23,7 +23,7 @@ import {
 } from './api.js?v=46';
 import { confirmModal } from './ui.js?v=5';
 import { loadDevices } from './devices.js?v=2';
-import { bindPairingAuthority, loadPairingAuthority, showPairing } from './pairing.js?v=2';
+import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=4';
 import { uploadFiles } from './web_upload.js?v=1';
 
 let initialized = false;
@@ -46,6 +46,7 @@ export function initSystem() {
       browseFolder(document.getElementById('import-folder').value);
     }
     pollImportStatus();
+    loadComputerTrust();
     if (info.multiuser && info.current_user?.is_admin) {
       loadInstanceSettings();
       loadPairingAuthority();

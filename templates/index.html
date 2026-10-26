@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=62">
+  <link rel="stylesheet" href="/static/style.css?v=64">
 </head>
 <body>
 
@@ -496,6 +496,56 @@
         <button id="pairing-open" class="btn btn-primary" type="button">Conectar um celular</button>
       </section>
 
+      <section id="computer-trust" class="detail-panel system-card" hidden>
+        <span class="eyebrow">COMPUTADORES</span>
+        <h4>Abrir com HTTPS sem aviso</h4>
+        <p class="system-hint">Este servidor usa um certificado próprio, que o navegador não conhece e por isso
+          chama de "não seguro". Baixe a autoridade dele e confie nela uma vez em cada computador: ela só vale para os
+          endereços deste servidor, nunca para outros sites.</p>
+        <p id="computer-trust-status" class="system-hint"></p>
+        <p id="computer-trust-address" class="system-warning" hidden></p>
+        <a id="computer-trust-download" class="btn btn-primary" href="/api/tls/ca.crt" download>Baixar certificado</a>
+        <details class="trust-steps">
+          <summary>Windows (Chrome, Edge)</summary>
+          <ol>
+            <li>Abra o arquivo baixado e clique em <strong>Instalar certificado</strong>.</li>
+            <li>Escolha <strong>Usuário atual</strong> e depois <strong>Colocar todos os certificados no repositório
+              a seguir</strong> → <strong>Autoridades de Certificação Raiz Confiáveis</strong>.</li>
+            <li>Conclua, confirme o aviso do Windows e abra o navegador de novo.</li>
+          </ol>
+        </details>
+        <details class="trust-steps">
+          <summary>macOS (Safari, Chrome)</summary>
+          <ol>
+            <li>Abra o arquivo baixado: o Acesso às Chaves o adiciona ao chaveiro <strong>Sessão</strong>.</li>
+            <li>Dê dois cliques no certificado <strong>Iris … (autoridade local)</strong>, abra
+              <strong>Confiar</strong> e escolha <strong>Sempre Confiar</strong>.</li>
+            <li>Feche a janela, confirme com a senha do Mac e recarregue a página.</li>
+          </ol>
+        </details>
+        <details class="trust-steps">
+          <summary>Linux (Chrome, Chromium, Edge)</summary>
+          <ol>
+            <li>Abra <code>chrome://certificate-manager</code> e vá em <strong>Instalados por você</strong>
+              (em versões antigas: <code>chrome://settings/certificates</code> → <strong>Autoridades</strong>).</li>
+            <li>Em <strong>Certificados confiáveis</strong>, clique em <strong>Importar</strong> e escolha o arquivo
+              baixado; se perguntar, marque <strong>Confiar neste certificado para identificar sites</strong>.</li>
+            <li>Recarregue a página.</li>
+          </ol>
+        </details>
+        <details class="trust-steps">
+          <summary>Firefox (qualquer sistema)</summary>
+          <ol>
+            <li>Abra <strong>Configurações → Privacidade e segurança → Certificados → Ver certificados</strong>.</li>
+            <li>Na aba <strong>Autoridades</strong>, clique em <strong>Importar</strong>, escolha o arquivo e marque
+              <strong>Confiar nesta CA para identificar sites</strong>.</li>
+            <li>Recarregue a página.</li>
+          </ol>
+        </details>
+        <p class="system-hint">Se os endereços do servidor mudarem, a autoridade é refeita: baixe e confie de novo.
+          Celulares não precisam disso; o app confere o servidor pelo código de pareamento.</p>
+      </section>
+
       <section id="pairing-settings" class="detail-panel system-card" data-settings-section hidden>
         <span class="eyebrow">CELULARES</span>
         <h4>Pareamento</h4>
@@ -855,7 +905,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=83"></script>
+<script type="module" src="/static/app.js?v=85"></script>
 
 </body>
 </html>

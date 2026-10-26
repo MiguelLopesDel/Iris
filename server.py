@@ -840,6 +840,7 @@ async def authenticate_library_request(request: Request, call_next):
         "/api/auth/devices/login",
         "/api/auth/devices/refresh",
         "/api/pairing/ca.pem",
+        "/api/tls/ca.crt",
         # A device proves who it is talking to before it signs in.
         "/api/identity",
     } or path.startswith("/static/")

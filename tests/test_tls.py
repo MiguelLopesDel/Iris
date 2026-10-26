@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import ipaddress
 import ssl
 import sys
 from pathlib import Path
@@ -60,6 +61,20 @@ def test_the_certificate_names_the_pairing_hosts_extras_and_loopback() -> None:
     assert names == ["iris.example", "100.64.1.2", "home.lan", "192.168.1.20", "localhost", "127.0.0.1"]
 
 
+def _verify(chain_pem: bytes, authority_pem: bytes, host: str) -> None:
+    """Check a served chain the way a browser that trusts the authority does."""
+    from cryptography.x509 import verification
+
+    leaf, *intermediates = x509.load_pem_x509_certificates(chain_pem)
+    store = verification.Store([x509.load_pem_x509_certificate(authority_pem)])
+    try:
+        subject = x509.IPAddress(ipaddress.ip_address(host))
+    except ValueError:
+        subject = x509.DNSName(host)
+    verifier = verification.PolicyBuilder().store(store).build_server_verifier(subject)
+    verifier.verify(leaf, intermediates)
+
+
 def test_the_self_signed_certificate_carries_the_identity_key(tmp_path: Path) -> None:
     files = tls.ensure_self_signed(tmp_path, ["iris.example", "192.168.1.20"])
 
@@ -85,6 +100,88 @@ def test_the_certificate_is_reissued_only_when_names_change_or_it_nears_its_end(
     # A reissue never changes the key: devices keep their pin.
     for pem in (first, renamed, renewed):
         assert _spki(x509.load_pem_x509_certificate(pem)) == server_identity.server_identity(tmp_path).public_key_der
+
+
+def test_a_computer_that_trusts_the_local_authority_accepts_the_certificate(tmp_path: Path) -> None:
+    names = ["iris.lan", "192.168.1.20", "localhost", "127.0.0.1"]
+    files = tls.ensure_self_signed(tmp_path, names)
+    authority = tls.read_local_authority(tmp_path)
+
+    # The file is the chain a server sends: the certificate, then the authority.
+    chain = x509.load_pem_x509_certificates(files.certfile.read_bytes())
+    assert [c.subject for c in chain] == [chain[0].subject, authority.certificate.subject]
+    for host in ("iris.lan", "192.168.1.20"):
+        _verify(files.certfile.read_bytes(), authority.pem, host)
+    # A browser refuses a name the certificate does not carry.
+    with pytest.raises(Exception, match="(?i)name|match|san"):
+        _verify(files.certfile.read_bytes(), authority.pem, "other.lan")
+    # The authority is a CA (browsers import nothing else as one) that can sign only these names.
+    assert authority.certificate.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+    assert tls.constrained_names(authority.certificate) == set(names)
+    assert (tmp_path / "tls" / tls.LOCAL_CA_KEY_FILE).stat().st_mode & 0o077 == 0
+
+
+def test_the_local_authority_cannot_vouch_for_other_sites(tmp_path: Path) -> None:
+    from cryptography.x509 import verification
+
+    tls.ensure_self_signed(tmp_path, ["iris.lan"])
+    authority = tls.read_local_authority(tmp_path)
+    # Someone holding a copy of the authority's key signs a certificate for another site.
+    stranger = ec.generate_private_key(ec.SECP256R1())
+    now = dt.datetime.now(dt.UTC)
+    forged = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "bank.example")]))
+        .issuer_name(authority.certificate.subject).public_key(stranger.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(minutes=1)).not_valid_after(now + dt.timedelta(days=30))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("bank.example")]), critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(authority.private_key.public_key()), critical=False
+        )
+        .sign(authority.private_key, hashes.SHA256())
+    )
+
+    with pytest.raises(verification.VerificationError, match="name constraints"):
+        _verify(forged.public_bytes(serialization.Encoding.PEM), authority.pem, "bank.example")
+
+
+def test_the_local_authority_is_kept_until_the_names_change(tmp_path: Path) -> None:
+    tls.ensure_self_signed(tmp_path, ["iris.lan"])
+    first = tls.read_local_authority(tmp_path).sha256
+
+    late = dt.datetime.now(dt.UTC) + tls.SELF_VALIDITY - dt.timedelta(days=1)
+    renewed = tls.ensure_self_signed(tmp_path, ["iris.lan"], now=late).certfile.read_bytes()
+    # A routine renewal keeps the authority computers already trust.
+    assert tls.read_local_authority(tmp_path).sha256 == first
+    assert x509.load_pem_x509_certificates(renewed)[0].not_valid_before_utc > late - dt.timedelta(hours=1)
+
+    tls.ensure_self_signed(tmp_path, ["iris.lan", "home.lan"])
+    replaced = tls.read_local_authority(tmp_path)
+    assert replaced.sha256 != first and tls.constrained_names(replaced.certificate) == {"iris.lan", "home.lan"}
+
+
+def test_a_certificate_from_before_the_local_authority_is_reissued_under_it(tmp_path: Path) -> None:
+    identity = server_identity.server_identity(tmp_path)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Iris old")])
+    now = dt.datetime.now(dt.UTC)
+    old = (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name)
+        .public_key(identity.private_key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(days=1)).not_valid_after(now + dt.timedelta(days=3000))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("iris.lan")]), critical=False)
+        .sign(identity.private_key, hashes.SHA256())
+    )
+    (tmp_path / "tls").mkdir()
+    (tmp_path / "tls" / tls.SELF_CERT_FILE).write_bytes(old.public_bytes(serialization.Encoding.PEM))
+
+    files = tls.ensure_self_signed(tmp_path, ["iris.lan"])
+
+    _verify(files.certfile.read_bytes(), tls.read_local_authority(tmp_path).pem, "iris.lan")
+    # Same key as before: paired devices keep their pin.
+    assert _spki(x509.load_pem_x509_certificates(files.certfile.read_bytes())[0]) == identity.public_key_der
 
 
 def test_a_custom_certificate_is_checked_before_the_server_starts(tmp_path: Path) -> None:
