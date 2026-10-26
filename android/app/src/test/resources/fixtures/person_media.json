@@ -27,12 +27,12 @@
         {
           "id": 2,
           "name": "Fulano de Tal",
-          "face_id": null
+          "face_id": 2
         },
         {
           "id": 1,
           "name": "",
-          "face_id": null
+          "face_id": 1
         }
       ],
       "score": 0.0,
