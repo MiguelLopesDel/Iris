@@ -175,7 +175,7 @@ internal fun MediaDetailScreen(
     val deviceBackup = visibleDeviceBackupState(
         backupLookup,
         backupSnapshot,
-        application.credentialsStore.accountIdentity.value,
+        accountIdentity,
     )
 
     uiState?.notice?.let { notice ->

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
+import android.os.Build
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -231,7 +232,8 @@ class MediaSyncWorker(
         } catch (cancelled: CancellationException) {
             outcome = SyncRunOutcome.STOPPED
             if (isStopped) {
-                outcomeStopReason = stopReason
+                // ListenableWorker.getStopReason exists from Android 12 only.
+                outcomeStopReason = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) stopReason else null
             } else {
                 outcomeDetail = "session_changed"
             }

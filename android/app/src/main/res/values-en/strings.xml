@@ -128,4 +128,20 @@
     <string name="sync_history_foreground_service">Ran as a service with a notification</string>
     <string name="sync_history_foreground_refused">Android did not allow it to run as a service (battery restriction)</string>
     <string name="sync_notification_progress_no_rate">%1$d sent · %2$s left</string>
+
+    <string name="sync_backup_setup_title">Set up automatic backup?</string>
+    <string name="sync_backup_setup_message">Choose to send every folder or only some. That way you can leave out downloads and files you do not care about. The media goes to this account\'s private library.</string>
+    <string name="sync_backup_all_folders_action">All folders</string>
+    <string name="sync_backup_choose_folders_action">Choose folders</string>
+    <string name="sync_backup_not_now_action">Not now</string>
+    <string name="sync_backup_choose_scope_hint">Select at least one folder to start automatic backup.</string>
+    <string name="origin_device_only">Only on this device</string>
+    <string name="sync_status_scanning_and_uploading">Scanning %1$d of %2$d · uploading</string>
+    <string name="backup_counter_total">Total</string>
+    <string name="backup_counter_saved">Saved</string>
+    <string name="backup_counter_remaining">Remaining</string>
+    <string name="backup_counter_failed">%1$d failed</string>
+    <string name="cloud_connection_unavailable">No connection to the cloud. Your local media stays on the device; Iris will reconnect and sync automatically in the background.</string>
+    <string name="cloud_sync_retrying">The server is reachable, but the sync did not finish. Iris will try again in the background.</string>
+    <string name="cloud_queue_numbers_stale">The queue numbers could not be updated. The last values are kept, and Iris will try again.</string>
 </resources>

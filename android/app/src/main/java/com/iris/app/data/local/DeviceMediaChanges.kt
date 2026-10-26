@@ -2,6 +2,7 @@ package com.iris.app.data.local
 
 import android.content.ContentResolver
 import android.database.ContentObserver
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -25,7 +26,11 @@ object DeviceMediaChanges {
                 trySend(Unit)
             }
         }
-        contentResolver.registerContentObserver(MediaStore.AUTHORITY_URI, true, observer)
+        // MediaStore.AUTHORITY_URI is the same URI, but the field only exists
+        // from Android 10; reading it on 8 and 9 threw NoSuchFieldError.
+        contentResolver.registerContentObserver(
+            Uri.parse("content://${MediaStore.AUTHORITY}"), true, observer
+        )
         awaitClose { contentResolver.unregisterContentObserver(observer) }
     }.conflate()
 
