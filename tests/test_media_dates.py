@@ -1,13 +1,21 @@
-"""Device uploads are dated by when they were taken, including ones stored before the fix."""
+"""Media is dated by when it was taken, including media stored before the fixes."""
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from core.indexer_db import init_db
-from core.media_dates import DEVICE_UPLOAD_DATES_REPAIR, capture_timestamp
+from core.media_dates import (
+    DEVICE_UPLOAD_DATES_REPAIR,
+    METADATA_CAPTURE_DATES_REPAIR,
+    capture_timestamp,
+    metadata_capture_timestamp,
+)
 
 SEPT_29 = datetime(2026, 9, 29, 22, 7, 22, tzinfo=UTC).timestamp()
 UPLOADED = datetime(2026, 10, 2, 20, 2, 8, tzinfo=UTC)
@@ -193,3 +201,69 @@ def test_two_connections_opening_a_library_at_once(tmp_path: Path):
     ))
 
     assert first.execute("SELECT COUNT(*) FROM applied_repairs").fetchone()[0] == 1
+
+
+# ── Files indexed from a folder: dated by their metadata, not the file (#93) ──
+
+
+@pytest.fixture
+def sao_paulo_time(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Sao_Paulo")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_a_camera_time_is_the_local_wall_clock_and_a_video_time_is_utc(sao_paulo_time):
+    # EXIF holds no offset: 19:07 on the camera is 22:07 UTC at UTC-3.
+    assert metadata_capture_timestamp({"captured_at": "2026-09-29T19:07:22"}, "IMG_0001.jpg") == SEPT_29
+    # ffprobe's creation_time is UTC; the extractor drops its "Z".
+    assert metadata_capture_timestamp({"captured_at": "2026-09-29T22:07:22"}, "VID_0001.mp4") == SEPT_29
+    assert metadata_capture_timestamp({"captured_at": ""}, "IMG_0002.jpg") is None
+    assert metadata_capture_timestamp({}, "IMG_0003.jpg") is None
+
+
+def _forget_capture_dates_repair(conn):
+    conn.execute("DELETE FROM applied_repairs WHERE name = ?", (METADATA_CAPTURE_DATES_REPAIR,))
+
+
+def test_opening_a_library_dates_copied_files_by_when_they_were_taken(tmp_path: Path, sao_paulo_time):
+    db = tmp_path / "iris.db"
+    conn = init_db(db)
+    folder = conn.execute(
+        "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('fotos', '/fotos', 'x')"
+    ).lastrowid
+    copy_day = UPLOADED.timestamp()
+    _insert(conn, folder, "copied.jpg", copy_day, "2026-09-29T19:07:22")
+    _insert(conn, folder, "no-capture-time.jpg", copy_day, "")
+    # Within a day of its capture time: already dated by it, read with another
+    # offset (as device uploads are); not moved by a time zone.
+    near = SEPT_29 + 3 * 60 * 60
+    _insert(conn, folder, "already-dated.jpg", near, "2026-09-29T22:07:22Z")
+    _forget_capture_dates_repair(conn)
+    conn.commit()
+    conn.close()
+
+    for _ in range(2):  # idempotent
+        init_db(db).close()
+
+    dates = dict(sqlite3.connect(db).execute("SELECT arquivo, file_mtime FROM memes").fetchall())
+    assert dates["copied.jpg"] == SEPT_29
+    assert dates["no-capture-time.jpg"] == copy_day
+    assert dates["already-dated.jpg"] == near
+
+
+def test_the_capture_dates_repair_runs_once_per_database(tmp_path: Path, monkeypatch):
+    import core.media_dates as media_dates
+
+    calls = []
+    original = media_dates.repair_metadata_capture_dates
+    monkeypatch.setattr(
+        media_dates, "repair_metadata_capture_dates", lambda conn: calls.append(1) or original(conn)
+    )
+    db = tmp_path / "iris.db"
+    for _ in range(3):
+        init_db(db).close()
+
+    assert len(calls) == 1
