@@ -22,7 +22,7 @@ import {
   escapeHtml,
 } from './api.js?v=46';
 import { confirmModal } from './ui.js?v=5';
-import { loadDevices } from './devices.js?v=1';
+import { loadDevices } from './devices.js?v=2';
 import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=3';
 import { uploadFiles } from './web_upload.js?v=1';
 
