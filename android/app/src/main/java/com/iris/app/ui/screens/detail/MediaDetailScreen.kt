@@ -123,7 +123,7 @@ internal fun MediaDetailScreen(
     val apiClient = application.apiClient
     val accountIdentity by application.credentialsStore.accountIdentity.collectAsStateWithLifecycle()
     val sequence = remember(start) { ViewerSequence.around(start) }
-    val pagerState = rememberPagerState(initialPage = sequence.indexOf(start).coerceAtLeast(0)) { sequence.size }
+    val pagerState = rememberPagerState(initialPage = sequence.indexOfFirst { it.key == start.key }.coerceAtLeast(0)) { sequence.size }
 
     var chromeVisible by remember { mutableStateOf(true) }
     var zoomed by remember { mutableStateOf(false) }
@@ -367,7 +367,25 @@ private fun ServerPage(
     onRetry: () -> Unit,
 ) {
     val record = state.record
+    val context = LocalContext.current
+    val localUri = remember(item.localUri) { item.localUri?.let(Uri::parse) }
+    val localIsVideo = remember(item.localUri) { localUri?.let { isVideo(context, it) } }
     when {
+        // The phone's own copy: shown at once, also before or without the server.
+        localUri != null -> ZoomableMedia(
+            content = MediaContent(
+                key = item.key,
+                image = localUri,
+                isVideo = record?.isVideo ?: localIsVideo ?: false,
+                description = record?.cleanFilename ?: "Mídia do aparelho",
+            ),
+            isCurrent = isCurrent,
+            onTap = gestures.onTap,
+            onZoomChanged = gestures.onZoomChanged,
+            onSwipe = gestures.onSwipe,
+            onTurnPage = gestures.onTurnPage,
+            video = { LocalVideoPlayer(localUri) },
+        )
         record != null -> {
             val mediaUrl = apiClient.resolveMediaUrl(record.resolvedPath ?: record.caminho)
             val placeholder = remember(record.thumbHash) { decodeThumbHash(record.thumbHash) }

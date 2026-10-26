@@ -45,7 +45,13 @@ data class MediaRecord(
     /** The backup folder id of the device file (`volume:bucket:kind`). */
     @kotlinx.serialization.Transient val deviceSourceId: String? = null,
     /** The device folder's name, for telling the user which folder is meant. */
-    @kotlinx.serialization.Transient val deviceFolder: String? = null
+    @kotlinx.serialization.Transient val deviceFolder: String? = null,
+    /**
+     * For an Iris record whose file is also on this phone: the phone's copy
+     * (a MediaStore URI). It is drawn instead of downloading from the server,
+     * at once and offline; [deviceUri] stays null, since the item is Iris's.
+     */
+    @kotlinx.serialization.Transient val localCopyUri: String? = null
 ) {
     val isVideo: Boolean
         get() = mediaType.equals("video", ignoreCase = true)
