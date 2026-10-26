@@ -74,6 +74,26 @@ export async function showPairing() {
   });
 }
 
+/** Anyone's card: the local authority a computer trusts to open this server over HTTPS. */
+export async function loadComputerTrust() {
+  const card = document.getElementById('computer-trust');
+  if (!card) return;
+  let authority;
+  try {
+    // 404 when the server has no certificate of its own (IRIS_TLS off or custom).
+    authority = await request('/api/tls/local-ca');
+  } catch (_) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  document.getElementById('computer-trust-download').href = authority.download;
+  document.getElementById('computer-trust-status').innerHTML = `Ao abrir o arquivo, confira:
+    <strong>Iris ${escapeHtml(authority.identity_code)} (autoridade local)</strong>, SHA-256
+    <code class="pairing-fingerprint">${escapeHtml(groupedFingerprint(authority.sha256))}</code>.
+    Vale para ${authority.names.map((name) => `<code>${escapeHtml(name)}</code>`).join(', ')}.`;
+}
+
 /** Administrator card: the authority the pairing code points to. */
 export async function loadPairingAuthority() {
   const status = document.getElementById('pairing-ca-status');

@@ -4213,6 +4213,33 @@ a.btn {
   margin-top: 12px;
 }
 
+#computer-trust-status {
+  margin-top: 8px;
+}
+
+#computer-trust-download {
+  display: inline-flex;
+  width: auto;
+  margin: 4px 0 12px;
+}
+
+.trust-steps {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+}
+
+.trust-steps summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.trust-steps ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 #pairing-settings .file-button {
   display: inline-flex;
   width: auto;

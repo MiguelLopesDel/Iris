@@ -62,6 +62,47 @@ def pairing_ca(request: Request):
     return Response(pem, media_type="application/x-pem-file")
 
 
+@router.get("/api/tls/ca.crt")
+def local_authority_certificate(request: Request):
+    """The local authority a computer trusts to open this server over HTTPS without a warning.
+
+    Public, like the pairing CA: a certificate is public by nature, and a
+    browser that does not trust the server yet has no session to send.
+    """
+    authority = _local_authority(request)
+    filename = f"iris-{server_identity.server_identity(_data_dir(request)).short_code}.crt"
+    return Response(
+        authority.pem,
+        media_type="application/x-x509-ca-cert",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/api/tls/local-ca")
+def local_authority_summary(request: Request):
+    """What the Sistema tab shows next to the download, to be compared by eye."""
+    _user(request)
+    authority = _local_authority(request)
+    return {
+        "sha256": authority.sha256,
+        "names": sorted(tls.constrained_names(authority.certificate)),
+        "not_after": authority.certificate.not_valid_after_utc.isoformat(),
+        "identity_code": server_identity.server_identity(_data_dir(request)).short_code,
+        "download": "/api/tls/ca.crt",
+    }
+
+
+def _local_authority(request: Request) -> tls.LocalAuthority:
+    try:
+        own = tls.mode_from_env() == "self"
+    except tls.TlsConfigError:
+        own = False
+    authority = tls.read_local_authority(_data_dir(request)) if own else None
+    if authority is None:
+        raise HTTPException(404, "Este servidor não usa um certificado próprio")
+    return authority
+
+
 class CaIn(BaseModel):
     pem: str
 
