@@ -127,6 +127,32 @@ def test_the_viewer_renames_and_moves_a_photo_to_the_trash(server) -> None:
         browser.close()
 
 
+def test_after_the_trash_the_viewer_still_shows_and_acts_on_each_photo(server) -> None:
+    base, media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        tiles = page.locator("#gallery-grid .media-card")
+        sync_api.expect(tiles).to_have_count(24)
+        tiles.nth(2).locator("img").click()
+        aside = page.locator("#detail-aside")
+        sync_api.expect(aside.locator(".detail-meta")).to_contain_text("IMG_0027.jpg")
+
+        aside.get_by_role("button", name="Mover para a lixeira").click()
+        page.locator(".app-modal").get_by_role("button", name="Mover para a lixeira").click()
+        sync_api.expect(aside.locator(".detail-meta")).to_contain_text("IMG_0026.jpg")
+        # Photos after the one that left moved up a place in the catalogue; the
+        # viewer must still show IMG_0028 here, not its neighbour.
+        page.keyboard.press("ArrowLeft")
+        sync_api.expect(aside.locator(".detail-meta")).to_contain_text("IMG_0028.jpg")
+        aside.get_by_role("button", name="Renomear").click()
+        page.locator(".app-modal input").fill("praia")
+        page.locator(".app-modal").get_by_role("button", name="Renomear").click()
+        sync_api.expect(aside.locator(".detail-meta")).to_contain_text("praia.jpg")
+        assert (media / "praia.jpg").is_file()
+        assert (media / "IMG_0029.jpg").is_file() and not (media / "IMG_0028.jpg").exists()
+        browser.close()
+
+
 def test_the_pager_under_the_grid_moves_between_pages(server) -> None:
     base, _ = server
     with sync_api.sync_playwright() as playwright:
