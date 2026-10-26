@@ -14,6 +14,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.iris.app.R
 import com.iris.app.data.model.DeviceMediaSource
 import com.iris.app.ui.theme.IrisTheme
 import org.junit.Assert.assertEquals
@@ -24,6 +26,10 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DeviceMediaSourcePickerTest {
+
+    /** The app's own wording in the device's language, so the test runs in any locale. */
+    private fun text(id: Int): String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
     @get:Rule
     val compose = createAndroidComposeRule<PickerTestActivity>()
 
@@ -58,11 +64,11 @@ class DeviceMediaSourcePickerTest {
         compose.onNodeWithText("Camera").assertIsDisplayed()
         compose.onNodeWithText("Movies").assertIsDisplayed()
 
-        compose.onNodeWithText("Videos").performClick()
+        compose.onNodeWithText(text(R.string.sync_source_filter_videos)).performClick()
         compose.onNodeWithText("Movies").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isEmpty())
 
-        compose.onNodeWithText("Photos").performClick()
+        compose.onNodeWithText(text(R.string.sync_source_filter_photos)).performClick()
         compose.onNodeWithText("WhatsApp Images").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Movies").fetchSemanticsNodes().isEmpty())
 
@@ -70,13 +76,13 @@ class DeviceMediaSourcePickerTest {
         compose.onNodeWithText("WhatsApp Images").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isEmpty())
 
-        compose.onNodeWithContentDescription("Clear search").performClick()
-        compose.onNodeWithText("Selected").performClick()
+        compose.onNodeWithContentDescription(text(R.string.sync_source_picker_clear_search)).performClick()
+        compose.onNodeWithText(text(R.string.sync_source_filter_selected)).performClick()
         compose.onNodeWithText("WhatsApp Images").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isEmpty())
 
-        compose.onNodeWithText("Clear selection").performClick()
-        compose.onNodeWithText("No folders match this search.").assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.sync_source_picker_clear)).performClick()
+        compose.onNodeWithText(text(R.string.sync_source_picker_no_results)).assertIsDisplayed()
     }
 
     @Test
@@ -107,9 +113,9 @@ class DeviceMediaSourcePickerTest {
             }
         }
 
-        compose.onNodeWithText("Finding folders on this device…").assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.sync_source_picker_loading)).assertIsDisplayed()
         compose.runOnIdle { completeDiscovery() }
-        compose.onNodeWithText("No folders with photos or videos were found.").assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.sync_source_picker_no_sources)).assertIsDisplayed()
 
         compose.runOnIdle { failDiscovery() }
         compose.onNodeWithText("Acesso às mídias negado").assertIsDisplayed()
@@ -139,7 +145,7 @@ class DeviceMediaSourcePickerTest {
         compose.onNodeWithTag("device-media-source-camera").performClick()
         compose.runOnIdle { assertEquals(listOf("camera" to true), toggles) }
 
-        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText(text(R.string.sync_source_picker_done)).performClick()
         compose.runOnIdle { assertEquals(1, dismissals) }
     }
 }
