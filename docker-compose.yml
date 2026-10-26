@@ -15,8 +15,10 @@ services:
       # HTTPS for devices (IRIS_TLS=self or custom); nothing listens there when it is off.
       - "${IRIS_BIND:-127.0.0.1}:${IRIS_TLS_PORT:-8443}:8443"
     volumes:
-      - ./data:/app/data
-      - ./media:/app/media
+      # IRIS_DATA_DIR / IRIS_MEDIA_DIR in .env put the library elsewhere,
+      # for example on a larger disk (keep both on one filesystem).
+      - ${IRIS_DATA_DIR:-./data}:/app/data
+      - ${IRIS_MEDIA_DIR:-./media}:/app/media
       - ${IRIS_BACKUP_DIR:-./backups}:/backup
       - huggingface_cache:/home/iris/.cache/huggingface
       - whisper_cache:/home/iris/.cache/whisper

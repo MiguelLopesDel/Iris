@@ -15,14 +15,25 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def _install(tmp_path: Path, *, gpu: bool, toolkit: bool, args: tuple[str, ...] = (), folder: str = "Iris"):
+def _install(
+    tmp_path: Path, *, gpu: bool, toolkit: bool, args: tuple[str, ...] = (), folder: str = "Iris",
+    env_settings: dict[str, str] | None = None,
+):
     project = tmp_path / folder
     (project / "scripts").mkdir(parents=True, exist_ok=True)
     shutil.copy(ROOT / "scripts" / "server.sh", project / "scripts" / "server.sh")
     for name in (".env.example", "docker-compose.yml", "docker-compose.gpu.yml"):
         shutil.copy(ROOT / name, project / name)
-    (project / "data").mkdir(exist_ok=True)
-    (project / "data" / "setup_code").write_text("ABCD-EFGH\n")
+    data = project / "data"
+    if env_settings:
+        # An administrator who edited .env before installing.
+        lines = (ROOT / ".env.example").read_text().splitlines()
+        lines = [line for line in lines if line.split("=", 1)[0] not in env_settings]
+        lines += [f"{key}={value}" for key, value in env_settings.items()]
+        (project / ".env").write_text("\n".join(lines) + "\n")
+        data = Path(env_settings.get("IRIS_DATA_DIR", data))
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "setup_code").write_text("ABCD-EFGH\n")
 
     bin_dir = tmp_path / f"bin-{folder}"
     bin_dir.mkdir(exist_ok=True)
@@ -55,6 +66,23 @@ def _compose_file(project: Path) -> str | None:
         if line.startswith("COMPOSE_FILE="):
             return line.split("=", 1)[1]
     return None
+
+
+def test_the_library_can_live_on_another_disk(tmp_path: Path) -> None:
+    disk = tmp_path / "large-disk" / "iris"
+    project, result = _install(tmp_path, gpu=False, toolkit=False, env_settings={
+        "IRIS_DATA_DIR": str(disk / "data"), "IRIS_MEDIA_DIR": str(disk / "media"),
+    })
+
+    for folder in (disk / "data", disk / "media"):
+        assert folder.is_dir() and stat.S_IMODE(folder.stat().st_mode) == 0o700
+    assert not (project / "data").exists() and not (project / "media").exists()
+    # The setup code is read from where the library is.
+    assert "ABCD-EFGH" in result.stdout
+    assert "different filesystems" not in result.stderr
+    compose = (project / "docker-compose.yml").read_text()
+    assert "${IRIS_DATA_DIR:-./data}:/app/data" in compose
+    assert "${IRIS_MEDIA_DIR:-./media}:/app/media" in compose
 
 
 def test_without_a_gpu_the_cpu_image_is_used_and_setup_is_offered(tmp_path: Path) -> None:

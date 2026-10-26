@@ -76,10 +76,17 @@ prepare_env() {
             printf '\nIRIS_BACKUP_TIMEZONE=%s\n' "$zone" >> .env
         fi
     fi
-    local backups
+    local backups data media
     backups="$(env_value IRIS_BACKUP_DIR)"
-    mkdir -p data media "${backups:-backups}"
-    chmod 700 data media "${backups:-backups}"
+    data="$(data_dir)"
+    media="$(media_dir)"
+    mkdir -p "$data" "$media" "${backups:-backups}"
+    chmod 700 "$data" "$media" "${backups:-backups}"
+    # Shared spaces copy between the two with reflinks, which work only
+    # within one filesystem; across two, every copy takes space again.
+    if [ "$(stat -c %d "$data")" != "$(stat -c %d "$media")" ]; then
+        echo "Warning: $data and $media are on different filesystems; shared spaces will store full copies." >&2
+    fi
     IRIS_BACKUP_HOST_DIR="$(realpath "${backups:-backups}")"
     export IRIS_BACKUP_HOST_DIR
 }
@@ -141,7 +148,8 @@ choose_image() {
 }
 
 print_setup_instructions() {
-    local code_file="data/setup_code"
+    local code_file
+    code_file="$(data_dir)/setup_code"
     if [ ! -f "$code_file" ]; then
         echo "Setup is complete. Sign in at $(local_url)/"
         return
@@ -305,6 +313,21 @@ backup_dir() {
     realpath "${dir:-backups}"
 }
 
+# Where the library lives on the host: IRIS_DATA_DIR and IRIS_MEDIA_DIR in
+# .env, by default data/ and media/ in this folder. docker-compose.yml mounts
+# the same paths.
+data_dir() {
+    local dir
+    dir="$(env_value IRIS_DATA_DIR)"
+    printf '%s\n' "${dir:-data}"
+}
+
+media_dir() {
+    local dir
+    dir="$(env_value IRIS_MEDIA_DIR)"
+    printf '%s\n' "${dir:-media}"
+}
+
 run_backup() {
     # The same path as the scheduled backup: recorded in the history shown in
     # the interface and followed by the retention policy. Inside the
@@ -319,13 +342,16 @@ restore_snapshot() {
     [ -d "$snapshot" ] || { echo "Not a backup folder: $snapshot" >&2; exit 2; }
     require_python3
     python3 -m core.instance_backup verify "$snapshot"
-    echo "This replaces data/ and media/ with the backup. The current folders are"
-    echo "kept as data.before-restore-* and media.before-restore-*, not deleted."
+    local data media
+    data="$(data_dir)"
+    media="$(media_dir)"
+    echo "This replaces $data and $media with the backup. The current folders are"
+    echo "kept next to them as *.before-restore-*, not deleted."
     read -r -p "Type 'restore' to continue: " answer
     [ "$answer" = "restore" ] || { echo "Cancelled."; exit 1; }
     docker compose stop iris
     if ! python3 -m core.instance_backup restore "$snapshot" \
-        --target data=data --target media=media; then
+        --target data="$data" --target media="$media"; then
         echo "Restore failed; nothing was swapped. Starting the previous state." >&2
         docker compose up -d iris
         exit 1

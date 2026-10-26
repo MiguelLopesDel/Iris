@@ -38,7 +38,9 @@ cd Iris
 ```
 
 O instalador verifica Docker Compose, cria `.env` com o UID/GID do usuário atual,
-prepara `data/` e `media/` com permissão `0700`, baixa a imagem publicada
+prepara `data/` e `media/` (ou os caminhos de `IRIS_DATA_DIR` e
+`IRIS_MEDIA_DIR`, ver ["Biblioteca em outro disco"](#biblioteca-em-outro-disco))
+com permissão `0700`, baixa a imagem publicada
 (`ghcr.io/miguellopesdel/iris`) e espera o health check. Se a versão pedida em
 `IRIS_VERSION` não tiver imagem publicada, ele a constrói a partir do checkout.
 O container roda com o UID/GID do `.env`, então `data/` e `media/` continuam
@@ -71,6 +73,28 @@ limitam consultas excepcionalmente grandes (os padrões são 1.000 e 20.000). El
 protegem a CPU/RAM sem restringir a busca normal da galeria.
 
 Use `./scripts/server.sh status` e `./scripts/server.sh logs` para acompanhar o serviço.
+
+### Biblioteca em outro disco
+
+Por padrão a biblioteca fica dentro da pasta clonada: `data/` (contas,
+catálogos, fotos enviadas, espaços compartilhados) e `media/`. Para deixar o
+código num disco pequeno e as fotos num disco grande, aponte as duas no `.env`
+antes de instalar:
+
+```bash
+IRIS_DATA_DIR=/mnt/fotos/iris/data
+IRIS_MEDIA_DIR=/mnt/fotos/iris/media
+```
+
+O `docker-compose.yml` monta esses caminhos, e o `server.sh` usa os mesmos em
+`install`, `restore` e nas instruções de configuração. Mantenha as duas no
+**mesmo sistema de arquivos**: os espaços compartilhados copiam entre elas com
+reflink, que não atravessa sistemas de arquivos (o instalador avisa quando
+estão em discos diferentes). O destino dos backups (`IRIS_BACKUP_DIR`) pode e
+deve ficar em outro disco.
+
+Para mudar uma biblioteca que já existe: `docker compose stop iris`, mova as
+duas pastas, ajuste o `.env` e rode `./scripts/server.sh update`.
 
 ### Uploads do celular sem inferência de IA
 
