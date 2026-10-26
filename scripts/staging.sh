@@ -11,11 +11,21 @@
 #   ./scripts/staging.sh status
 #   ./scripts/staging.sh update [--pr N]... [--ref REF] [--dry-run]
 #   ./scripts/staging.sh rollback [--dry-run]
+#   ./scripts/staging.sh refresh-data --from BACKUP [--dry-run]
 #
 # `update` checks out REF (default origin/main) detached, merges each PR on
 # top in a throwaway commit that is never pushed, builds this project's image
 # and restarts this project's container. A merge conflict or a failed build
 # puts the checkout back where it was and leaves the running container alone.
+#
+# `refresh-data` replaces this installation's data and media with a copy of a
+# production backup (an iris-backup-* folder), so staging tests the library as
+# it is now. It reads the backup and never the running production. Copies are
+# reflinks where the filesystem has them: instant, and no extra space. Staging
+# keeps its own identity (key, instance id, certificates, session secret), so
+# it never presents itself as production; devices paired with staging pair
+# again. The previous data and media are kept as *.before-refresh-*, and the
+# backup's identity files as data.production-identity-*.
 set -euo pipefail
 
 # `update` moves the checkout, which rewrites this file while bash reads it.
@@ -200,6 +210,72 @@ deploy() {
     fi
 }
 
+# Staging's own identity, carried over every refresh: what makes it a server
+# of its own rather than a second production.
+identity_files=(identity_key.pem instance_id secret_key tls)
+
+mount_source() {
+    own_mounts | awk -F '\t' -v target="$1" '$1 == target { print $2 }'
+}
+
+refresh_data() {
+    local backup="$1" dry_run="$2"
+    local data media stamp name live fresh item
+    guard_all
+    [ -n "$backup" ] || die "refresh-data needs --from <iris-backup-* folder>."
+    [ -f "$backup/manifest.json" ] && [ -d "$backup/data" ] || die "$backup is not an Iris backup (no manifest.json and data/)."
+    backup="$(cd -- "$backup" && pwd)"
+    data="$(mount_source /app/data)"
+    media="$(mount_source /app/media)"
+    [ -d "$data" ] && [ -d "$media" ] || die "staging's data ($data) or media ($media) folder is missing."
+    for live in "$data" "$media"; do
+        case "$backup/" in "$live"/*) die "the backup is inside staging's own $live; refusing." ;; esac
+    done
+    say "checking $backup (reads every file; a large library takes a while)."
+    python3 -m core.instance_backup verify "$backup" >/dev/null || die "$backup failed verification; nothing was changed."
+    if [ "$dry_run" = 1 ]; then
+        say "dry run: checks passed; would copy $backup into $data and $media, keep staging's identity and restart only $project/iris."
+        return 0
+    fi
+
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    for name in data media; do
+        live="$data"; [ "$name" = media ] && live="$media"
+        fresh="$live.refreshing-$stamp"
+        mkdir -m 700 "$fresh"
+        if [ -d "$backup/$name" ]; then
+            # Backup files are read-only links; the copies must be writable.
+            cp -a --reflink=auto "$backup/$name/." "$fresh/" \
+                || die "copying $backup/$name failed; staging is unchanged (partial copy left in $fresh)."
+            chmod -R u+w "$fresh"
+        fi
+    done
+    # Production's identity goes aside, always: left in place, its local CA
+    # key would sign staging's certificate, which computers that trust
+    # production would then accept.
+    mkdir -m 700 "$data.production-identity-$stamp"
+    for item in "${identity_files[@]}"; do
+        if [ -e "$data.refreshing-$stamp/$item" ]; then
+            mv -- "$data.refreshing-$stamp/$item" "$data.production-identity-$stamp/$item"
+        fi
+        if [ -e "$data/$item" ]; then
+            cp -a -- "$data/$item" "$data.refreshing-$stamp/$item"
+        fi
+    done
+
+    compose stop iris
+    for live in "$data" "$media"; do
+        mv -- "$live" "$live.before-refresh-$stamp"
+        mv -- "$live.refreshing-$stamp" "$live"
+    done
+    compose up -d --no-build iris
+    if wait_for_health; then
+        say "data and media now come from $(basename "$backup"); previous ones kept as *.before-refresh-$stamp."
+    else
+        die "not healthy after 2 minutes; the previous data is in *.before-refresh-$stamp. See: docker compose -p $project logs iris"
+    fi
+}
+
 show_status() {
     guard_project
     say "project:  $project"
@@ -216,9 +292,10 @@ show_status() {
 
 command="${1:-}"
 [ -n "$command" ] && shift
-ref="origin/main"; dry_run=0; prs=()
+ref="origin/main"; dry_run=0; prs=(); backup=""
 while [ $# -gt 0 ]; do
     case "$1" in
+        --from) [ $# -ge 2 ] || die "--from needs a backup folder"; backup="$2"; shift 2 ;;
         --pr) [ $# -ge 2 ] || die "--pr needs a number"; [[ "$2" =~ ^[0-9]+$ ]] || die "--pr takes a PR number, not '$2'"; prs+=("$2"); shift 2 ;;
         --ref) [ $# -ge 2 ] || die "--ref needs a value"; ref="$2"; shift 2 ;;
         --dry-run) dry_run=1; shift ;;
@@ -235,6 +312,10 @@ case "$command" in
         [ "${#prs[@]}" -eq 0 ] || die "rollback takes no --pr"
         deploy "$(git rev-parse "$previous_ref")" "$dry_run"
         ;;
+    refresh-data)
+        [ "${#prs[@]}" -eq 0 ] || die "refresh-data takes no --pr"
+        refresh_data "$backup" "$dry_run"
+        ;;
     ""|-h|--help|help) usage ;;
-    *) die "unknown command: $command (status, update, rollback)" ;;
+    *) die "unknown command: $command (status, update, rollback, refresh-data)" ;;
 esac

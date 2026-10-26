@@ -204,6 +204,7 @@ que estou fazendo, ou é grave?**
 ./scripts/staging.sh update --ref <commit>        # um commit específico
 ./scripts/staging.sh update --pr 25 --dry-run     # só verifica e mostra o plano
 ./scripts/staging.sh rollback                     # volta para a versão anterior
+./scripts/staging.sh refresh-data --from <backup> # renova os dados a partir de um backup da produção
 ```
 
 Ele só age sobre a própria homologação. Antes de mudar qualquer coisa, recusa se:
@@ -215,12 +216,29 @@ Ele só age sobre a própria homologação. Antes de mudar qualquer coisa, recus
 - `/app/data` e `/app/media` não estão montados em pastas do servidor;
 - há arquivos versionados alterados no checkout.
 
-Ao agir, só usa `build` e `up` do serviço `iris` do próprio projeto: nunca
+Ao agir, só usa `build`, `up` e `stop` do serviço `iris` do próprio projeto: nunca
 `down`, `rm`, `prune` nem volumes, nunca apaga pastas nem descarta trabalho do
 git. A versão com PRs é um commit de merge local, nunca enviado. Um PR que não
 entra limpo ou um build que falha devolvem o checkout ao commit anterior, sem
 tocar no contêiner em execução. A versão anterior fica guardada em
 `refs/staging/previous`, para o `rollback`.
+
+**Renovar os dados.** A cópia envelhece: uma homologação sem os embeddings ou
+os rostos que a produção tem não testa busca, semelhantes nem pessoas.
+`refresh-data --from <pasta iris-backup-*>` troca os dados e a mídia da
+homologação por uma cópia de um backup da produção:
+
+- lê o backup, depois de conferi-lo (`verify`), e nunca a produção em execução;
+- copia com reflink quando o backup está no mesmo sistema de arquivos: sai na
+  hora e não ocupa espaço;
+- mantém a identidade da própria homologação (chave, `instance_id`,
+  certificados, segredo de sessão), para que ela nunca se apresente como a
+  produção; os da produção ficam à parte, em `data.production-identity-*`;
+- guarda os dados anteriores como `*.before-refresh-*`, sem apagar nada;
+- usa só `stop` e `up` do serviço `iris` do próprio projeto.
+
+Depois de renovar, o app `lab` precisa ser pareado de novo, porque os aparelhos
+pareados vêm da produção. As miniaturas e os índices são refeitos aos poucos.
 
 ## Onde entra cada teste
 
