@@ -38,7 +38,6 @@ data class SyncUiState(
     val deviceId: String = "",
     val loginUsernameInput: String = "",
     val loginPasswordInput: String = "",
-    val deviceNameInput: String = "Android Device",
     val isLoggingIn: Boolean = false,
     val loginError: String? = null,
     // Só a janela exibida. A fila inteira pode ter milhares de linhas depois
@@ -86,6 +85,8 @@ class SyncViewModel(
     private val settingsRepository: ServerSettingsRepository,
     private val credentialsStore: DeviceCredentialsStore,
     private val syncRetryPending: Flow<Boolean> = flowOf(false),
+    /** How this phone appears on the server's device list ([com.iris.app.data.local.DeviceName]). */
+    private val deviceName: () -> String = { "Android" },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -236,12 +237,11 @@ class SyncViewModel(
 
     fun onUsernameChange(u: String) = _uiState.update { it.copy(loginUsernameInput = u) }
     fun onPasswordChange(p: String) = _uiState.update { it.copy(loginPasswordInput = p) }
-    fun onDeviceNameChange(d: String) = _uiState.update { it.copy(deviceNameInput = d) }
 
     fun loginDevice() {
         val u = _uiState.value.loginUsernameInput.trim()
         val p = _uiState.value.loginPasswordInput
-        val d = _uiState.value.deviceNameInput.trim()
+        val d = deviceName()
         if (u.isBlank() || p.isBlank()) return
 
         viewModelScope.launch {
@@ -541,10 +541,11 @@ class SyncViewModel(
         private val settingsRepository: ServerSettingsRepository,
         private val credentialsStore: DeviceCredentialsStore,
         private val syncRetryPending: Flow<Boolean> = flowOf(false),
+        private val deviceName: () -> String = { "Android" },
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SyncViewModel(repository, settingsRepository, credentialsStore, syncRetryPending) as T
+            return SyncViewModel(repository, settingsRepository, credentialsStore, syncRetryPending, deviceName) as T
         }
     }
 }

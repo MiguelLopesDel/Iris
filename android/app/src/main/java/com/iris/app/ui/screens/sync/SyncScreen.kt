@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Sync
@@ -327,23 +326,6 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 label = { Text("Senha") },
                                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                                 visualTransformation = PasswordVisualTransformation(),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = IrisSurfaceBright,
-                                    unfocusedContainerColor = IrisSurfaceBright,
-                                    focusedBorderColor = IrisAccent
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            OutlinedTextField(
-                                value = uiState.deviceNameInput,
-                                onValueChange = { viewModel.onDeviceNameChange(it) },
-                                label = { Text("Nome do Aparelho") },
-                                leadingIcon = { Icon(Icons.Default.PhoneAndroid, contentDescription = null) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
