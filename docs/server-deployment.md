@@ -301,6 +301,11 @@ backup do SQLite, então o Iris continua funcionando durante o backup. Fica de
 fora só o que ele reconstrói sozinho: índices FAISS, vetores, miniaturas e
 envios pela metade.
 
+Depois de uma restauração, as miniaturas são refeitas em segundo plano, das
+fotos mais novas para as mais antigas, um minuto depois de o servidor subir e
+com prioridade baixa: a galeria fica rápida de novo sem esperar cada uma ser
+pedida. `IRIS_THUMBNAIL_WARMUP=0` no `.env` desliga isso.
+
 O Iris só publica o backup depois de conferir os arquivos, a integridade dos
 bancos e os originais referenciados pelos catálogos. A execução aparece como
 **falha** no painel, e não aciona a retenção, quando:

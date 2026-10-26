@@ -712,6 +712,25 @@ async def lifespan(app: FastAPI):
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
         )
+        if os.environ.get("IRIS_THUMBNAIL_WARMUP", "1").lower() not in {"0", "false", "no"}:
+            from core.thumbnail_warmer import Library, ThumbnailWarmer
+
+            registry = app.state.backend_registry
+
+            def warmup_libraries():
+                for account in list_users(app.state.users_db_path):
+                    yield Library(
+                        str(account.id),
+                        account.db_path.parent / "thumbnails",
+                        lambda account_id=account.id: registry.records_of(account_id),
+                    )
+
+            app.state.thumbnail_warmer = ThumbnailWarmer(
+                warmup_libraries, _thumbnail_key, _generate_thumbnail
+            )
+            app.state.thumbnail_warmer.start(
+                startup_delay=float(os.environ.get("IRIS_THUMBNAIL_WARMUP_DELAY", "60"))
+            )
         from core.sync_recovery import settle_interrupted_batches, start_pending_upload_recovery
 
         # Before the app accepts requests: a device re-sending a batch upload
@@ -751,6 +770,9 @@ async def lifespan(app: FastAPI):
         if processing_workers is not None and not processing_workers.stop(timeout=10):
             logger.warning("upload_processing_shutdown_timeout")
         app.state.backup_service.stop()
+        thumbnail_warmer = getattr(app.state, "thumbnail_warmer", None)
+        if thumbnail_warmer is not None:
+            thumbnail_warmer.stop()
         file_durability = getattr(app.state, "file_durability", None)
         if file_durability is not None and not file_durability.stop(timeout=10):
             logger.warning("file_durability_shutdown_timeout")
