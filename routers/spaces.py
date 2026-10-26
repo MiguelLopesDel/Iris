@@ -70,7 +70,7 @@ class AddItemIn(BaseModel):
 
 def _actor(request: Request):
     if not request.app.state.multiuser_enabled:
-        raise HTTPException(404, "Espaços exigem contas privadas")
+        raise HTTPException(404, "Grupos exigem contas privadas")
     user = getattr(request.state, "iris_user", None)
     if user is None:
         raise HTTPException(401, "Autenticação necessária")
@@ -101,7 +101,7 @@ def detail(request: Request, space_id: int):
     try:
         space = get_space(request.app.state.users_db_path, space_id, actor.id)
     except SpaceNotFound as exc:
-        raise HTTPException(404, "Espaço não encontrado") from exc
+        raise HTTPException(404, "Grupo não encontrado") from exc
     return {"space": asdict(space)}
 
 
@@ -111,7 +111,7 @@ def members(request: Request, space_id: int):
     try:
         found = list_members(request.app.state.users_db_path, space_id, actor.id)
     except SpaceNotFound as exc:
-        raise HTTPException(404, "Espaço não encontrado") from exc
+        raise HTTPException(404, "Grupo não encontrado") from exc
     return {
         "members": [
             {**asdict(member), "is_you": member.user_id == actor.id} for member in found
@@ -131,19 +131,19 @@ def invite(request: Request, space_id: int, payload: AddMemberIn):
             payload.role,
         )
     except SpaceNotFound as exc:
-        raise HTTPException(404, "Espaço não encontrado") from exc
+        raise HTTPException(404, "Grupo não encontrado") from exc
     except SpacePermissionDenied as exc:
         raise HTTPException(403, "Apenas gestores podem adicionar membros") from exc
     except SpaceUserNotFound as exc:
         raise HTTPException(404, "Conta não encontrada") from exc
     except SpaceMemberExists as exc:
-        raise HTTPException(409, "Conta já participa do espaço") from exc
+        raise HTTPException(409, "Conta já participa do grupo") from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"member": asdict(member)}
 
 
-_NOT_FOUND = "Espaço não encontrado"
+_NOT_FOUND = "Grupo não encontrado"
 _ITEM_NOT_FOUND = "Item não encontrado"
 
 
@@ -254,7 +254,7 @@ def add_space_item(request: Request, response: Response, space_id: int, payload:
             metadata=source.metadata,
         )
     except SpaceQuotaExceeded as exc:
-        raise HTTPException(507, "Cota do espaço excedida") from exc
+        raise HTTPException(507, "Cota do grupo excedida") from exc
     if not created:
         response.status_code = 200
     authors = _authors(request, [item])
@@ -376,12 +376,12 @@ def restore_space_item(request: Request, space_id: int, item_id: int):
     except SpaceItemPermissionDenied as exc:
         raise HTTPException(403, "Sem permissão para restaurar este item") from exc
     except SpaceItemConflict as exc:
-        raise HTTPException(409, "O mesmo conteúdo já está no espaço") from exc
+        raise HTTPException(409, "O mesmo conteúdo já está no grupo") from exc
     authors = _authors(request, [item])
     return {"item": _item_json(request, space_id, item, actor.id, role, authors)}
 
 
-_LAST_MANAGER = "O espaço precisa de pelo menos um gestor: nomeie outro antes"
+_LAST_MANAGER = "O grupo precisa de pelo menos um gestor: nomeie outro antes"
 
 
 @router.patch("/{space_id}/members/{user_id}")
@@ -396,7 +396,7 @@ def set_member_role(request: Request, space_id: int, user_id: int, payload: Chan
     except SpacePermissionDenied as exc:
         raise HTTPException(403, "Apenas gestores mudam papéis") from exc
     except SpaceMemberNotFound as exc:
-        raise HTTPException(404, "Conta não participa do espaço") from exc
+        raise HTTPException(404, "Conta não participa do grupo") from exc
     except SpaceLastManager as exc:
         raise HTTPException(409, _LAST_MANAGER) from exc
     except ValueError as exc:
@@ -415,7 +415,7 @@ def drop_member(request: Request, space_id: int, user_id: int):
     except SpacePermissionDenied as exc:
         raise HTTPException(403, "Apenas gestores removem outras contas") from exc
     except SpaceMemberNotFound as exc:
-        raise HTTPException(404, "Conta não participa do espaço") from exc
+        raise HTTPException(404, "Conta não participa do grupo") from exc
     except SpaceLastManager as exc:
         raise HTTPException(409, _LAST_MANAGER) from exc
     return Response(status_code=204)

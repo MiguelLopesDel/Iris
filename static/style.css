@@ -740,7 +740,7 @@ input[type="range"] {
 .btn-danger {
   border-color: rgba(255, 102, 125, 0.3);
   background: rgba(255, 102, 125, 0.09);
-  color: #ff9cab;
+  color: var(--danger);
 }
 
 .btn-danger:hover {
@@ -1454,8 +1454,7 @@ img[data-lightbox-src] {
   padding: 0 14px;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  background: rgba(8, 10, 14, 0.7);
-  backdrop-filter: blur(10px);
+  background: var(--surface-solid);
 }
 
 .search-input-wrap > span {
@@ -1468,7 +1467,8 @@ img[data-lightbox-src] {
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: 13px;
+  color: var(--text);
+  font-size: 16px;
   outline: 0;
 }
 
@@ -2313,7 +2313,7 @@ img[data-lightbox-src] {
 
 .btn-danger {
   border-color: rgba(255, 102, 125, 0.45);
-  color: #ff9cab;
+  color: var(--danger);
 }
 
 .btn-danger.btn-primary {
@@ -2607,7 +2607,9 @@ body.detail-open {
   overflow-y: auto;
   padding: 24px 24px 32px;
   border-left: 1px solid var(--border);
-  background: rgba(13, 16, 22, 0.98);
+  /* The panel follows the theme; the photo beside it stays on black. */
+  background: var(--surface-solid);
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -2623,10 +2625,9 @@ body.detail-open {
 }
 
 .detail-head .detail-title {
-  margin: 6px 0 4px;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 22px;
-  font-weight: 400;
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.15;
   word-break: break-word;
@@ -2647,9 +2648,30 @@ body.detail-open {
 }
 
 .detail-actions .btn {
-  font-size: 11px;
-  padding: 6px 12px;
+  font-size: 13px;
+  padding: 8px 14px;
   margin-bottom: 8px;
+}
+
+.detail-where {
+  margin: 0 0 4px;
+  color: var(--text-soft);
+  font-size: 14px;
+}
+
+.detail-where a {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.detail-space-list {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-space-choice {
+  justify-content: flex-start;
+  width: 100%;
 }
 
 .detail-section h4,
@@ -2682,7 +2704,7 @@ body.detail-open {
   overflow-y: auto;
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   font-size: 11px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -2714,7 +2736,7 @@ body.detail-open {
   padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-hover);
   color: var(--text-soft);
   font-size: 11px;
   cursor: pointer;
@@ -4217,4 +4239,216 @@ a.btn {
   display: inline-flex;
   width: auto;
   margin: 8px 8px 0 0;
+}
+
+/* Gallery pager, under the grid. */
+#gallery-pagination-bottom {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin: 24px 0 8px;
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pager-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pager-page {
+  min-width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pager-page:hover {
+  border-color: var(--accent);
+}
+
+.pager-page.is-current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.pager-gap {
+  align-self: center;
+  padding: 0 4px;
+  color: var(--text-muted);
+}
+
+.pager-step[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pager-info {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Gallery as a timeline of tiles, like a phone's gallery: dense square
+   pictures under a heading per day. Scoped to the gallery grid; other tabs
+   keep their cards. */
+.gallery-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.gallery-toolbar-info {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.media-grid.timeline {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px;
+}
+
+.timeline .grid-day {
+  grid-column: 1 / -1;
+  margin: 18px 2px 6px;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.timeline .grid-day:first-child {
+  margin-top: 4px;
+}
+
+.timeline .media-card {
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  background: var(--surface);
+}
+
+.timeline .media-card:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.timeline .media-card-img::after {
+  display: none;
+}
+
+.timeline .media-card:hover .media-card-img img {
+  transform: none;
+  filter: brightness(0.92);
+}
+
+.timeline .media-card-img img {
+  cursor: pointer;
+}
+
+.timeline .tile-missing {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--surface);
+  font-size: 28px;
+  cursor: pointer;
+}
+
+.timeline .media-checkbox {
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+}
+
+.timeline .tile-actions {
+  position: absolute;
+  z-index: 5;
+  left: 6px;
+  bottom: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--ease);
+}
+
+.timeline .tile-action {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 15px;
+  line-height: 30px;
+  cursor: pointer;
+}
+
+/* Shown on hover and keyboard focus; always shown once something is selected. */
+.timeline .media-card:hover .media-checkbox,
+.timeline .media-card:focus-within .media-checkbox,
+.timeline .media-checkbox:checked,
+.timeline .media-card:hover .tile-actions,
+.timeline .media-card:focus-within .tile-actions {
+  opacity: 1;
+}
+
+.timeline .play-overlay::before {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .media-grid.timeline {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .timeline .media-card {
+    border-radius: 0;
+  }
+
+  /* No hover on touch: the viewer has these actions. */
+  .timeline .tile-actions {
+    display: none;
+  }
+}
+
+/* Devices unused for a while, folded under one summary. */
+.device-stale {
+  list-style: none;
+}
+
+.device-stale summary {
+  padding: 10px 12px;
+  color: var(--text-soft);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.device-stale .devices-list {
+  margin: 6px 0 10px;
+  padding: 0;
+}
+
+.device-stale [data-revoke-stale] {
+  margin-left: 12px;
 }
