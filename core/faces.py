@@ -412,23 +412,35 @@ def set_face_person(conn: sqlite3.Connection, face_id: int, person_id: int | Non
 def get_media_persons(
     conn: sqlite3.Connection, meme_ids: list[int]
 ) -> dict[int, list[dict[str, Any]]]:
-    """Map ``meme_id -> [{id, name}]`` of persons present in each media (single query)."""
+    """Map ``meme_id -> [{id, name, face_id}]`` of persons present in each media (single query).
+
+    ``face_id`` is that person's most confident face in that media, so a
+    client can show who it is (``/api/faces/{face_id}/thumb``).
+    """
     if not meme_ids or not has_face_tables(conn):
         return {}
     placeholders = ",".join("?" * len(meme_ids))
     rows = conn.execute(
         f"""
-        SELECT DISTINCT f.meme_id, p.id, p.name
-        FROM faces f
-        JOIN persons p ON p.id = f.person_id
-        WHERE f.meme_id IN ({placeholders})
-        ORDER BY f.meme_id, p.name IS NULL, p.name, p.id
+        SELECT meme_id, person_id, name, face_id FROM (
+            SELECT f.meme_id, p.id AS person_id, p.name, f.id AS face_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY f.meme_id, p.id ORDER BY f.det_score DESC, f.id
+                   ) AS rank
+            FROM faces f
+            JOIN persons p ON p.id = f.person_id
+            WHERE f.meme_id IN ({placeholders})
+        )
+        WHERE rank = 1
+        ORDER BY meme_id, name IS NULL, name, person_id
         """,
         list(meme_ids),
     ).fetchall()
     out: dict[int, list[dict[str, Any]]] = {}
-    for meme_id, pid, name in rows:
-        out.setdefault(int(meme_id), []).append({"id": int(pid), "name": name or ""})
+    for meme_id, pid, name, face_id in rows:
+        out.setdefault(int(meme_id), []).append(
+            {"id": int(pid), "name": name or "", "face_id": int(face_id)}
+        )
     return out
 
 

@@ -325,6 +325,23 @@ def test_get_media_persons_bulk(conn):
     assert faces.get_media_persons(conn, []) == {}
 
 
+def test_each_person_in_a_media_comes_with_their_clearest_face_there(conn):
+    # The viewer shows who appears with /api/faces/{face_id}/thumb.
+    m1, m2 = _add_meme(conn, "a.jpg"), _add_meme(conn, "b.jpg")
+    alice = faces.create_person(conn, "Alice")
+    blurry = _add_face(conn, m1, _unit([1, 0, 0]), det_score=0.55)
+    faces.set_face_person(conn, blurry, alice)
+    clear = _add_face(conn, m1, _unit([0.95, 0.05, 0]), det_score=0.98)
+    faces.set_face_person(conn, clear, alice)
+    elsewhere = _add_face(conn, m2, _unit([0.9, 0.1, 0]), det_score=0.99)
+    faces.set_face_person(conn, elsewhere, alice)
+
+    mapping = faces.get_media_persons(conn, [m1, m2])
+
+    assert mapping[m1] == [{"id": alice, "name": "Alice", "face_id": clear}]
+    assert mapping[m2] == [{"id": alice, "name": "Alice", "face_id": elsewhere}]
+
+
 def test_get_person_media(tmp_path):
     from core.search_engine import IrisEngine
 
