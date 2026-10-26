@@ -288,7 +288,7 @@ async function addCurrentToSpace(r) {
   const body = document.createElement('div');
   body.className = 'detail-space-list';
   if (!spaces.length) {
-    body.innerHTML = '<p>Você ainda não participa de nenhum grupo. Crie um na aba Compartilhados.</p>';
+    body.innerHTML = '<p>Você ainda não participa de nenhum grupo. Crie um na aba Grupos.</p>';
   }
   const modal = openModal({ kicker: 'Compartilhar', title: 'Adicionar a um grupo', body });
   for (const space of spaces) {

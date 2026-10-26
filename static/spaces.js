@@ -72,7 +72,7 @@ async function showList() {
             <span>${ROLE_LABELS[space.role] || space.role}</span>
           </button>`).join('')
       : `<div class="empty-state"><span class="empty-state-icon">◎</span>
-           <p>Você ainda não participa de nenhum espaço.</p>
+           <p>Você ainda não participa de nenhum grupo.</p>
            <small>Crie um e convide outras contas deste servidor.</small></div>`;
   } catch (error) {
     container.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
@@ -81,13 +81,13 @@ async function showList() {
 
 async function newSpace() {
   const name = await promptModal({
-    kicker: 'Compartilhados', title: 'Novo espaço', label: 'Nome',
+    kicker: 'Compartilhados', title: 'Novo grupo', label: 'Nome',
     placeholder: 'Família, Viagem 2026, Equipe...', confirmLabel: 'Criar',
   });
   if (!name || !name.trim()) return;
   try {
     const { space } = await createSpace(name.trim());
-    toast(`Espaço ${space.name} criado. Você é o gestor.`, 'success');
+    toast(`Grupo ${space.name} criado. Você é o gestor.`, 'success');
     openSpace(space.id);
   } catch (error) {
     toast(`Erro: ${error.message}`, 'error');
@@ -110,7 +110,7 @@ async function openSpace(id) {
     document.querySelector('[data-space-view="trash"]').hidden = !CAN_ADD.has(space.role);
     $('space-invite').hidden = space.role !== 'manager';
     $('space-items-hint').textContent = CAN_ADD.has(space.role)
-      ? 'Para adicionar, selecione fotos em Fotos e use a ação Espaço.'
+      ? 'Para adicionar, selecione fotos em Fotos e use a ação Grupo.'
       : 'Como visualizador, você pode ver, baixar e salvar cópias na sua biblioteca.';
     showPanel('items');
   } catch (error) {
@@ -171,7 +171,7 @@ async function loadItems(reset) {
     grid.insertAdjacentHTML('beforeend', page.items.map((item) => itemCard(item)).join(''));
     if (reset && !page.items.length) {
       grid.innerHTML = `<div class="empty-state"><span class="empty-state-icon">◎</span>
-        <p>Este espaço ainda não tem fotos.</p></div>`;
+        <p>Este grupo ainda não tem fotos.</p></div>`;
     }
     itemsCursor = page.next_before;
     $('space-more').hidden = !itemsCursor;
@@ -196,15 +196,15 @@ async function saveItem(itemId, button) {
 
 async function removeItem(itemId) {
   const ok = await confirmModal(
-    `A foto sai do espaço para todos e fica na lixeira do espaço por ${current.trashDays} dias.`
+    `A foto sai do grupo para todos e fica na lixeira do grupo por ${current.trashDays} dias.`
     + ' As cópias nas bibliotecas pessoais não são afetadas.',
-    { kicker: current.name, title: 'Remover do espaço?', confirmLabel: 'Remover', danger: true },
+    { kicker: current.name, title: 'Remover do grupo?', confirmLabel: 'Remover', danger: true },
   );
   if (!ok) return;
   try {
     await removeSpaceItem(current.id, itemId);
     document.querySelector(`[data-space-item="${itemId}"]`)?.remove();
-    toast('Removida do espaço. Pode ser restaurada pela lixeira.', 'success');
+    toast('Removida do grupo. Pode ser restaurada pela lixeira.', 'success');
   } catch (error) {
     toast(`Erro: ${error.message}`, 'error');
   }
@@ -225,7 +225,7 @@ async function search(event) {
     grid.innerHTML = result.items.length
       ? result.items.map((item) => itemCard(item)).join('')
       : `<div class="empty-state"><span class="empty-state-icon">⌕</span>
-           <p>Nada encontrado neste espaço.</p></div>`;
+           <p>Nada encontrado neste grupo.</p></div>`;
     $('space-items-hint').textContent = result.semantic
       ? 'Resultados pelo nome, pela descrição e pelo significado da busca.'
       : 'Resultados pelo nome e pela descrição de cada foto.';
@@ -259,7 +259,7 @@ async function showAlbums() {
             <b>${escapeHtml(entry.name)}</b>
             <span>${entry.count} foto(s)</span>
           </button>`).join('')
-      : '<p class="filter-empty">Nenhum álbum neste espaço ainda.</p>';
+      : '<p class="filter-empty">Nenhum álbum neste grupo ainda.</p>';
     container.dataset.albums = JSON.stringify(albums);
   } catch (error) {
     container.innerHTML = `<p class="danger-text">Erro: ${escapeHtml(error.message)}</p>`;
@@ -322,7 +322,7 @@ async function renameAlbum() {
 }
 
 async function deleteAlbum() {
-  const ok = await confirmModal('As fotos continuam no espaço; só o álbum deixa de existir.',
+  const ok = await confirmModal('As fotos continuam no grupo; só o álbum deixa de existir.',
     { kicker: current.name, title: `Apagar o álbum ${album.name}?`, confirmLabel: 'Apagar', danger: true });
   if (!ok) return;
   try {
@@ -385,7 +385,7 @@ async function loadMembers() {
     container.innerHTML = members.map((member) => {
       const name = escapeHtml(member.display_name || member.username);
       // A manager edits everyone but themselves here; stepping down or
-      // leaving goes through "Sair do espaço" and the last-manager rule.
+      // leaving goes through "Sair do grupo" and the last-manager rule.
       const controls = manager && !member.is_you
         ? `<select data-member-role="${member.user_id}" aria-label="Papel de ${name}">
              ${Object.entries(ROLE_LABELS).map(([value, label]) =>
@@ -417,7 +417,7 @@ async function setRole(select) {
 async function removeMember(button) {
   const name = button.dataset.memberName;
   const ok = await confirmModal(
-    `${name} perde o acesso ao espaço na hora. As fotos que adicionou continuam no espaço.`,
+    `${name} perde o acesso ao grupo na hora. As fotos que adicionou continuam no grupo.`,
     { kicker: current.name, title: `Remover ${name}?`, confirmLabel: 'Remover', danger: true },
   );
   if (!ok) return;
@@ -432,9 +432,9 @@ async function removeMember(button) {
 
 async function leave() {
   const ok = await confirmModal(
-    'Você perde o acesso a este espaço. As fotos que adicionou continuam nele'
+    'Você perde o acesso a este grupo. As fotos que adicionou continuam nele'
     + ' e as cópias na sua biblioteca não mudam.',
-    { kicker: current.name, title: 'Sair do espaço?', confirmLabel: 'Sair', danger: true },
+    { kicker: current.name, title: 'Sair do grupo?', confirmLabel: 'Sair', danger: true },
   );
   if (!ok) return;
   try {
@@ -467,7 +467,7 @@ async function invite(event) {
 async function loadTrash(reset) {
   const container = $('space-trash');
   $('space-trash-hint').textContent = current.role === 'manager'
-    ? `Fotos removidas do espaço ficam aqui por ${current.trashDays} dias e depois são apagadas.`
+    ? `Fotos removidas do grupo ficam aqui por ${current.trashDays} dias e depois são apagadas.`
     : `Fotos que você adicionou e foram removidas ficam aqui por ${current.trashDays} dias.`;
   if (reset) {
     trashCursor = null;
@@ -497,7 +497,7 @@ async function restore(itemId) {
     if (!$('space-trash').querySelector('.space-row')) {
       $('space-trash').innerHTML = '<p class="filter-empty">A lixeira está vazia.</p>';
     }
-    toast('Foto de volta ao espaço.', 'success');
+    toast('Foto de volta ao grupo.', 'success');
   } catch (error) {
     toast(`Erro: ${error.message}`, 'error');
   }
@@ -516,9 +516,9 @@ export async function chooseSpaceFor(dbIds) {
   }
   if (!spaces.length) {
     openModal({
-      kicker: 'Compartilhados', title: 'Nenhum espaço disponível',
-      body: '<p>Você só pode enviar fotos a espaços em que é colaborador ou gestor. '
-        + 'Crie um em <b>Compartilhados</b> ou peça a um gestor para mudar seu papel.</p>',
+      kicker: 'Compartilhados', title: 'Nenhum grupo disponível',
+      body: '<p>Você só pode enviar fotos a grupos em que é colaborador ou gestor. '
+        + 'Crie um em <b>Grupos</b> ou peça a um gestor para mudar seu papel.</p>',
       actions: [{ label: 'Fechar', primary: true }],
     });
     return false;
@@ -526,8 +526,8 @@ export async function chooseSpaceFor(dbIds) {
   return new Promise((resolve) => {
     const modal = openModal({
       kicker: 'Compartilhados',
-      title: `Enviar ${dbIds.length} item(ns) para um espaço`,
-      body: '<p class="section-hint">Cada foto ganha uma cópia no espaço: apagar a sua não apaga a de lá.</p>'
+      title: `Enviar ${dbIds.length} item(ns) para um grupo`,
+      body: '<p class="section-hint">Cada foto ganha uma cópia no grupo: apagar a sua não apaga a de lá.</p>'
         + spaces.map((space) => `<button class="collection-choice" type="button" data-choose-space="${space.id}">
             <strong>${escapeHtml(space.name)}</strong><span>${ROLE_LABELS[space.role]}</span></button>`).join(''),
       onCancel: () => resolve(false),

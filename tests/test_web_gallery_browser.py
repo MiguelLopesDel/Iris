@@ -49,6 +49,11 @@ def server(tmp_path: Path):
             f"ana = create_user(Path('data/users.db'), Path('data'), username='ana', is_admin=True,"
             f" password_hash=hash_password({PASSWORD!r}))\n"
             "init_db(ana.db_path).close()\n"
+            "from core.users_db import create_device\n"
+            "for name in ('Celular antigo', 'Tablet antigo'):\n"
+            "    device = create_device(Path('data/users.db'), ana.id, name, 'android', name)\n"
+            "    with sqlite3.connect('data/users.db') as conn:\n"
+            "        conn.execute(\"UPDATE devices SET last_seen_at = '2020-01-01T00:00:00+00:00' WHERE id = ?\", (device.id,))\n"
             "ana.media_root.mkdir(parents=True, exist_ok=True)\n"
             "with sqlite3.connect(ana.db_path) as conn:\n"
             f"    for i in range({ITEMS}):\n"
@@ -191,4 +196,24 @@ def test_the_pager_under_the_grid_moves_between_pages(server) -> None:
         # Adding photos is one click from the gallery, not hidden in Organizar.
         page.get_by_role("button", name="+ Adicionar fotos").click()
         sync_api.expect(page.locator("#import-section")).to_be_in_viewport()
+        browser.close()
+
+
+def test_old_devices_are_folded_and_can_all_be_disconnected(server) -> None:
+    base, _ = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        page.evaluate("window.location.hash = 'system'")
+        devices = page.locator("#devices-list")
+        # This browser stays in view; the two unused for years are folded together.
+        sync_api.expect(devices).to_contain_text("este navegador")
+        stale = devices.locator(".device-stale")
+        sync_api.expect(stale.locator("summary")).to_have_text("2 aparelhos sem uso há mais de 30 dias")
+        sync_api.expect(stale.get_by_text("Celular antigo")).to_be_hidden()
+
+        stale.locator("summary").click()
+        stale.get_by_role("button", name="Desconectar todos esses").click()
+        page.locator(".app-modal").get_by_role("button", name="Desconectar todos").click()
+        sync_api.expect(stale).to_have_count(0)
+        sync_api.expect(devices).to_contain_text("este navegador")
         browser.close()
