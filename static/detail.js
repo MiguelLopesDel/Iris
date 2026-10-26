@@ -150,6 +150,11 @@ async function render() {
     const res = await fetch('/api/records/' + stub.index);
     if (!res.ok) throw new Error('Registro não encontrado');
     r = await res.json();
+    // The library changed under the viewer (a photo left on another tab, say):
+    // the position now holds another photo, which must not be shown as this one.
+    if (stub.db_id && r.db_id && r.db_id !== stub.db_id) {
+      throw new Error('a biblioteca mudou; feche e abra a foto de novo');
+    }
   } catch (err) {
     if (token !== state.token) return;
     asideEl.innerHTML = `<div class="detail-loading">Erro: ${escapeHtml(err.message)}</div>`;
@@ -243,8 +248,9 @@ async function loadWhenWhere(r, token) {
   const when = curated.captured_at ? formatWhen(new Date(curated.captured_at)) : '';
   if (when) document.getElementById('detail-when').textContent = when;
   const where = document.getElementById('detail-where');
-  if (curated.gps && where) {
-    const { lat, lon } = curated.gps;
+  const lat = Number(curated.gps?.lat);
+  const lon = Number(curated.gps?.lon);
+  if (Number.isFinite(lat) && Number.isFinite(lon) && where) {
     const label = curated.location_label || `${lat}, ${lon}`;
     where.innerHTML = `${escapeHtml(label)} · <a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}"
       target="_blank" rel="noopener">Ver no mapa</a>`;
@@ -317,7 +323,12 @@ async function trashCurrent(r) {
   }
   toast('Movida para a lixeira', 'success');
   window.dispatchEvent(new CustomEvent('iris:library-changed'));
-  state.records.splice(state.pos, 1);
+  // Records are addressed by their position in the catalogue, which is in id
+  // order: every one after the photo that left moves up a place.
+  const removed = r.index;
+  state.records = state.records
+    .filter((_, i) => i !== state.pos)
+    .map((record) => (record.index > removed ? { ...record, index: record.index - 1 } : record));
   if (!state.records.length) {
     closeDetail();
     return;

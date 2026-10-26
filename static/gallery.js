@@ -3,7 +3,7 @@
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
 import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=46';
-import { openDetail } from './detail.js?v=9';
+import { openDetail } from './detail.js?v=11';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
