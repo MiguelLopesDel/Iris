@@ -59,6 +59,18 @@ def sandbox_root(value: str | None) -> Path:
     return root
 
 
+def _demo_embedding(color: tuple[int, int, int]) -> bytes:
+    """A unit vector of the real model's width (CLIP ViT-L/14), one per demo colour.
+
+    The search screens and "similar" read these rows like real ones; a vector of
+    another width is what a malformed catalogue looks like.
+    """
+    import numpy as np
+
+    vector = np.random.default_rng(sum(color)).standard_normal(768).astype(np.float32)
+    return (vector / np.linalg.norm(vector)).tobytes()
+
+
 def seed_sandbox(root: Path) -> None:
     """Create a tiny, fully isolated two-account library if it does not exist."""
     marker = root / MARKER
@@ -98,7 +110,7 @@ def seed_sandbox(root: Path) -> None:
         with sqlite3.connect(user.db_path) as conn:
             conn.execute(
                 "INSERT INTO memes (arquivo, caminho, embedding, file_size) VALUES (?, ?, ?, ?)",
-                (image_path.name, str(image_path), b"\\0" * 16, image_path.stat().st_size),
+                (image_path.name, str(image_path), _demo_embedding(color), image_path.stat().st_size),
             )
     print(f"Sandbox created at {root}")
     print(f"  admin / {admin_password}   (administrator)")

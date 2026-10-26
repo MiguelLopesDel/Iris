@@ -330,6 +330,13 @@ class IrisEngine:
         )
         mapped_image = image_matrix is not None
         mapped_desc = desc_matrix is not None
+        # The width most vectors have; a row of another width counts as not embedded.
+        image_width = (
+            image_matrix.shape[1] if mapped_image else vector_sidecar.dominant_width(conn, "embedding")
+        )
+        desc_width = (
+            desc_matrix.shape[1] if mapped_desc else vector_sidecar.dominant_width(conn, "desc_embedding")
+        )
         has_desc: list[bool] = []
         for row in rows:
             position = len(arquivos)
@@ -344,25 +351,23 @@ class IrisEngine:
             )
             desc_blob = row["desc_embedding"]
             has_image = False
-            if embedding_blob:
-                vector = np.frombuffer(embedding_blob, dtype=np.float32)
+            vector = vector_sidecar.as_vector(embedding_blob, image_width)
+            if vector is not None:
                 if image_matrix is None:
-                    image_matrix = np.zeros((record_count, vector.shape[0]), dtype=np.float32)
-                if vector.shape[0] == image_matrix.shape[1]:
-                    if not mapped_image:
-                        image_matrix[position] = vector
-                    has_image = True
+                    image_matrix = np.zeros((record_count, image_width), dtype=np.float32)
+                if not mapped_image:
+                    image_matrix[position] = vector
+                has_image = True
             image_present.append(has_image)
 
             has_description = False
-            if desc_blob:
-                desc_vector = np.frombuffer(desc_blob, dtype=np.float32)
+            desc_vector = vector_sidecar.as_vector(desc_blob, desc_width)
+            if desc_vector is not None:
                 if desc_matrix is None:
-                    desc_matrix = np.zeros((record_count, desc_vector.shape[0]), dtype=np.float32)
-                if desc_vector.shape[0] == desc_matrix.shape[1]:
-                    if not mapped_desc:
-                        desc_matrix[position] = desc_vector
-                    has_description = True
+                    desc_matrix = np.zeros((record_count, desc_width), dtype=np.float32)
+                if not mapped_desc:
+                    desc_matrix[position] = desc_vector
+                has_description = True
             has_desc.append(has_description)
             keys = row.keys()
             arquivos.append(row["arquivo"] or "")

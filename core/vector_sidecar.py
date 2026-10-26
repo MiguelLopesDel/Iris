@@ -75,6 +75,29 @@ def _catalogue_shape(conn: sqlite3.Connection) -> tuple[int, int, int]:
     return (int(row[0] or 0), int(row[1] or 0), int(row[2] or 0))
 
 
+def dominant_width(conn: sqlite3.Connection, column: str) -> int:
+    """The vector width most rows of a column have, or 0 when none has one.
+
+    One malformed or foreign row (a different model, a truncated write) must
+    not decide the width: taken from the first row, it made every other
+    vector "the wrong size" and switched off search for the whole library.
+    """
+    row = conn.execute(
+        f"SELECT LENGTH({column}) AS size FROM memes "  # noqa: S608
+        f"WHERE {column} IS NOT NULL AND LENGTH({column}) > 0 "
+        f"AND LENGTH({column}) % {np.dtype(np.float32).itemsize} = 0 "
+        "GROUP BY size ORDER BY COUNT(*) DESC, size DESC LIMIT 1"
+    ).fetchone()
+    return int(row[0]) // np.dtype(np.float32).itemsize if row else 0
+
+
+def as_vector(blob: bytes | None, width: int) -> np.ndarray | None:
+    """A stored embedding as float32, or None when absent or not ``width`` wide."""
+    if not blob or len(blob) != width * np.dtype(np.float32).itemsize:
+        return None
+    return np.frombuffer(blob, dtype=np.float32)
+
+
 def build(conn: sqlite3.Connection, db_path: Path, column: str) -> Path | None:
     """Write every embedding of one column to its sidecar, streaming.
 
@@ -87,20 +110,19 @@ def build(conn: sqlite3.Connection, db_path: Path, column: str) -> Path | None:
     path = sidecar_path(db_path, column)
     temporary = path.with_suffix(".vec.tmp")
 
-    width = 0
+    width = dominant_width(conn, column)
     written = 0
     with temporary.open("wb") as handle:
         handle.write(b"\0" * _HEADER_DTYPE.itemsize)
         for (blob,) in conn.execute(
             f"SELECT {column} FROM memes WHERE {SELECTOR} IS NOT NULL ORDER BY id"  # noqa: S608
         ):
-            vector = np.frombuffer(blob, dtype=np.float32) if blob else None
-            if vector is not None and not width:
-                width = vector.shape[0]
-            if vector is None or vector.shape[0] != width:
-                # Absent here, or left by an older model: a zero row keeps this
-                # file the same length and order as every other sidecar, which
-                # is what lets one position mean one item across all of them.
+            vector = as_vector(blob, width)
+            if vector is None:
+                # Absent here, malformed, or left by an older model: a zero row
+                # keeps this file the same length and order as every other
+                # sidecar, which is what lets one position mean one item
+                # across all of them.
                 vector = np.zeros(width or 1, dtype=np.float32)
             handle.write(vector.tobytes())
             written += 1

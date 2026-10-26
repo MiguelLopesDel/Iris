@@ -51,7 +51,10 @@ class VectorStore:
 
     @staticmethod
     def normalize_vector(vector: np.ndarray) -> np.ndarray:
-        vector = np.asarray(vector, dtype=np.float32)
+        # A copy: faiss normalises in place, and a record's embedding is a row
+        # of the catalogue's matrix -- a read-only memory map when the library
+        # is fully embedded, where writing it killed the process.
+        vector = np.array(vector, dtype=np.float32)
         if vector.ndim == 1:
             vector = vector.reshape(1, -1)
         faiss.normalize_L2(vector)
