@@ -79,7 +79,8 @@ def _serve(tmp_path: Path, tls_mode: str):
 def browser():
     with sync_api.sync_playwright() as playwright:
         try:
-            launched = playwright.chromium.launch()
+            # iris.test reaches this machine without being in the certificate.
+            launched = playwright.chromium.launch(args=["--host-resolver-rules=MAP iris.test 127.0.0.1"])
         except Exception as exc:  # browser binaries missing
             if REQUIRED:
                 raise
@@ -90,6 +91,10 @@ def browser():
 
 def _open_system(browser, base: str, username: str):
     page = browser.new_page(viewport={"width": 1280, "height": 1400})
+    return _sign_in(page, base, username)
+
+
+def _sign_in(page, base: str, username: str):
     page.goto(base + "/login")
     page.fill("input[name=username]", username)
     page.fill("input[name=password]", PASSWORD)
@@ -119,10 +124,30 @@ def test_anyone_can_download_the_authority_and_check_it_by_eye(browser, tmp_path
         shown = card.locator(".pairing-fingerprint").inner_text().replace(":", "").lower()
         assert shown == hashlib.sha256(der).hexdigest()
 
+        # Opened by an address the certificate names: nothing to warn about.
+        sync_api.expect(card.locator("#computer-trust-address")).to_be_hidden()
+
         page.locator(".trust-steps summary", has_text="Firefox").click()
         sync_api.expect(card).to_contain_text("Confiar nesta CA para identificar sites")
         if SCREENSHOT:
             card.screenshot(path=SCREENSHOT)
+    finally:
+        process.terminate()
+        process.wait(timeout=20)
+
+
+def test_an_address_missing_from_the_certificate_is_pointed_out(browser, tmp_path: Path) -> None:
+    base, process = _serve(tmp_path, "self")
+    try:
+        other = base.replace("127.0.0.1", "iris.test")
+        page = _sign_in(browser.new_page(viewport={"width": 1280, "height": 1400}), other, "bob")
+        warning = page.locator("#computer-trust-address")
+        # Trusting the authority would not silence the browser on this address.
+        sync_api.expect(warning).to_be_visible(timeout=15_000)
+        sync_api.expect(warning).to_contain_text("iris.test")
+        sync_api.expect(warning).to_contain_text("Pareamento")
+        if SCREENSHOT:
+            page.locator("#computer-trust").screenshot(path=SCREENSHOT.replace(".png", "-address.png"))
     finally:
         process.terminate()
         process.wait(timeout=20)

@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=63">
+  <link rel="stylesheet" href="/static/style.css?v=64">
 </head>
 <body>
 
@@ -503,6 +503,7 @@
           chama de "não seguro". Baixe a autoridade dele e confie nela uma vez em cada computador: ela só vale para os
           endereços deste servidor, nunca para outros sites.</p>
         <p id="computer-trust-status" class="system-hint"></p>
+        <p id="computer-trust-address" class="system-warning" hidden></p>
         <a id="computer-trust-download" class="btn btn-primary" href="/api/tls/ca.crt" download>Baixar certificado</a>
         <details class="trust-steps">
           <summary>Windows (Chrome, Edge)</summary>
@@ -904,7 +905,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=84"></script>
+<script type="module" src="/static/app.js?v=85"></script>
 
 </body>
 </html>
