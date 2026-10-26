@@ -196,13 +196,7 @@ fun IrisNavGraph(
                                 navigationFinishes[item.route] = application.performanceMonitor.begin(
                                     item.navigationMetric()
                                 )
-                                navController.navigate(item.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
+                                navController.navigateToTab(item.route)
                             },
                             icon = {
                                 Icon(
@@ -270,7 +264,7 @@ fun IrisNavGraph(
                         navController.navigate(NavRoute.Settings.route)
                     },
                     onLoginClick = {
-                        navController.navigate(NavRoute.Sync.route)
+                        navController.navigateToTab(NavRoute.Sync.route)
                     }
                 )
             }
@@ -453,6 +447,22 @@ fun IrisNavGraph(
     }
 }
 
+/**
+ * Switches to a bottom-bar tab, keeping each tab's own back stack. Every way into
+ * a tab goes through here: a tab pushed with a plain navigate sits above the
+ * gallery, so the next switch saves it as the gallery's stack and Galeria
+ * reopens it instead of the gallery.
+ */
+private fun NavHostController.navigateToTab(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
 private fun BottomNavItem.navigationMetric(): Metric = when (route) {
     NavRoute.Gallery.route -> Metric.NavigationGallery
     NavRoute.Search.route -> Metric.NavigationSearch
@@ -484,7 +494,7 @@ private fun Viewer(start: ViewerItem, navController: NavHostController, applicat
         },
         onSearchText = { text ->
             PendingSearch.set(text)
-            navController.navigate(NavRoute.Search.route) { launchSingleTop = true }
+            navController.navigateToTab(NavRoute.Search.route)
         }
     )
 }
