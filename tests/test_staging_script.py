@@ -342,3 +342,17 @@ def test_refresh_data_needs_a_backup_folder(refreshable):
         result = run("refresh-data", *args)
         assert result.returncode != 0
         assert (live / "data" / "accounts.txt").read_text() == "staging accounts"
+
+
+def test_refresh_data_checks_it_can_write_next_to_the_data_before_reading_the_backup(refreshable):
+    _, run, calls, live, snapshot = refreshable
+    live.chmod(0o555)
+    try:
+        result = run("refresh-data", "--from", str(snapshot))
+    finally:
+        live.chmod(0o755)
+
+    assert result.returncode != 0
+    assert "cannot create folders" in result.stderr
+    assert "checking" not in result.stdout  # failed before the long verification
+    assert sorted(path.name for path in live.iterdir()) == ["data", "media"]

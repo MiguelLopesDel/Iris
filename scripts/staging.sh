@@ -230,6 +230,8 @@ refresh_data() {
     [ -d "$data" ] && [ -d "$media" ] || die "staging's data ($data) or media ($media) folder is missing."
     for live in "$data" "$media"; do
         case "$backup/" in "$live"/*) die "the backup is inside staging's own $live; refusing." ;; esac
+        # The new copy is built next to the live folder and renamed into place.
+        [ -w "$(dirname -- "$live")" ] || die "cannot create folders in $(dirname -- "$live"), where the new copy goes next to $live; give $(id -un) write access there first."
     done
     say "checking $backup (reads every file; a large library takes a while)."
     python3 -m core.instance_backup verify "$backup" >/dev/null || die "$backup failed verification; nothing was changed."
