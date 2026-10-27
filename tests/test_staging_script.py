@@ -231,3 +231,128 @@ def test_rejects_a_pr_that_is_not_a_number(staging):
     result = run("update", "--pr", "7;rm -rf /")
     assert result.returncode != 0 and "PR number" in result.stderr
     assert calls() == []
+
+
+# --- refresh-data: staging takes a copy of a production backup. -------------
+
+
+@pytest.fixture
+def refreshable(staging, tmp_path: Path):
+    """Staging with real data folders, and a verified backup of a "production"."""
+    checkout, fake, run, calls = staging
+    import shutil
+
+    from core import instance_backup
+
+    # The command verifies the backup with the checkout's own code.
+    shutil.copytree(Path(__file__).resolve().parents[1] / "core", checkout / "core")
+
+    live = tmp_path / "staging-disk"
+    for name, files in {
+        "data": {"accounts.txt": "staging accounts", "identity_key.pem": "staging key",
+                 "instance_id": "staging-id", "tls/local-ca.key": "staging ca"},
+        "media": {"old.jpg": "staging photo"},
+    }.items():
+        for relative, text in files.items():
+            (live / name / relative).parent.mkdir(parents=True, exist_ok=True)
+            (live / name / relative).write_text(text)
+    config = json.loads((fake / "config.json").read_text())
+    config["services"]["iris"]["volumes"] = [
+        {"type": "bind", "source": str(live / "data"), "target": "/app/data"},
+        {"type": "bind", "source": str(live / "media"), "target": "/app/media"},
+    ]
+    (fake / "config.json").write_text(json.dumps(config))
+
+    production = tmp_path / "production"
+    for relative, text in {
+        "data/accounts.txt": "production accounts", "data/identity_key.pem": "production key",
+        "data/instance_id": "production-id", "data/secret_key": "production secret",
+        "data/tls/local-ca.key": "production ca", "media/new.jpg": "production photo",
+    }.items():
+        (production / relative).parent.mkdir(parents=True, exist_ok=True)
+        (production / relative).write_text(text)
+    import sqlite3
+
+    with sqlite3.connect(production / "data" / "users.db") as connection:  # no accounts yet
+        connection.execute("CREATE TABLE users (id INTEGER, db_path TEXT, media_root TEXT)")
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    snapshot = instance_backup.create(
+        {"data": production / "data", "media": production / "media"}, backups
+    ).snapshot
+    return checkout, run, calls, live, snapshot
+
+
+def test_refresh_data_copies_the_backup_and_keeps_staging_itself(refreshable):
+    _, run, calls, live, snapshot = refreshable
+
+    result = run("refresh-data", "--from", str(snapshot))
+
+    assert result.returncode == 0, result.stderr
+    assert (live / "data" / "accounts.txt").read_text() == "production accounts"
+    assert (live / "media" / "new.jpg").read_text() == "production photo"
+    assert not (live / "media" / "old.jpg").exists()
+    # Its own identity, never production's.
+    assert (live / "data" / "identity_key.pem").read_text() == "staging key"
+    assert (live / "data" / "instance_id").read_text() == "staging-id"
+    assert (live / "data" / "tls" / "local-ca.key").read_text() == "staging ca"
+    assert not (live / "data" / "secret_key").exists()
+    aside = next(live.glob("data.production-identity-*"))
+    assert (aside / "secret_key").read_text() == "production secret"
+    # Copies are writable; the previous data is kept.
+    (live / "data" / "accounts.txt").write_text("written by staging")
+    assert (next(live.glob("data.before-refresh-*")) / "accounts.txt").read_text() == "staging accounts"
+    assert (next(live.glob("media.before-refresh-*")) / "old.jpg").is_file()
+    changing = [c for c in calls() if " stop " in f" {c} " or " up " in f" {c} "]
+    assert changing == [
+        "compose -p iris-staging stop iris",
+        "compose -p iris-staging up -d --no-build iris",
+    ]
+    assert_nothing_destructive(calls())
+
+
+def test_refresh_data_dry_run_changes_nothing(refreshable):
+    _, run, calls, live, snapshot = refreshable
+
+    result = run("refresh-data", "--from", str(snapshot), "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert (live / "data" / "accounts.txt").read_text() == "staging accounts"
+    assert sorted(path.name for path in live.iterdir()) == ["data", "media"]
+    assert not [c for c in calls() if " stop " in f" {c} " or " up " in f" {c} "]
+
+
+def test_refresh_data_refuses_a_damaged_backup(refreshable):
+    _, run, calls, live, snapshot = refreshable
+    damaged = snapshot / "media" / "new.jpg"
+    damaged.chmod(0o644)
+    damaged.write_text("bit rot")
+
+    result = run("refresh-data", "--from", str(snapshot))
+
+    assert result.returncode != 0
+    assert "failed verification" in result.stderr
+    assert (live / "data" / "accounts.txt").read_text() == "staging accounts"
+    assert sorted(path.name for path in live.iterdir()) == ["data", "media"]
+
+
+def test_refresh_data_needs_a_backup_folder(refreshable):
+    _, run, _, live, _ = refreshable
+    for args in ((), ("--from", str(live / "data"))):
+        result = run("refresh-data", *args)
+        assert result.returncode != 0
+        assert (live / "data" / "accounts.txt").read_text() == "staging accounts"
+
+
+def test_refresh_data_checks_it_can_write_next_to_the_data_before_reading_the_backup(refreshable):
+    _, run, calls, live, snapshot = refreshable
+    live.chmod(0o555)
+    try:
+        result = run("refresh-data", "--from", str(snapshot))
+    finally:
+        live.chmod(0o755)
+
+    assert result.returncode != 0
+    assert "cannot create folders" in result.stderr
+    assert "checking" not in result.stdout  # failed before the long verification
+    assert sorted(path.name for path in live.iterdir()) == ["data", "media"]
