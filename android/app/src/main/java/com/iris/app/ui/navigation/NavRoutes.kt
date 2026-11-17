@@ -8,14 +8,14 @@ sealed class NavRoute(val route: String) {
     object Persons : NavRoute("persons")
     object PersonMedia : NavRoute("person_media/{personId}?name={personName}") {
         fun createRoute(personId: Int, personName: String): String {
-            val encodedName = java.net.URLEncoder.encode(personName, "UTF-8")
+            val encodedName = routeArgument(personName)
             return "person_media/$personId?name=$encodedName"
         }
     }
     object Collections : NavRoute("collections")
     object CollectionMedia : NavRoute("collection_media/{collectionId}?name={collectionName}") {
         fun createRoute(collectionId: Int, collectionName: String): String {
-            val encodedName = java.net.URLEncoder.encode(collectionName, "UTF-8")
+            val encodedName = routeArgument(collectionName)
             return "collection_media/$collectionId?name=$encodedName"
         }
     }
@@ -28,10 +28,19 @@ sealed class NavRoute(val route: String) {
     object Spaces : NavRoute("spaces")
     object Space : NavRoute("space/{spaceId}?name={spaceName}") {
         fun createRoute(spaceId: Int, spaceName: String): String {
-            val encodedName = java.net.URLEncoder.encode(spaceName, "UTF-8")
+            val encodedName = routeArgument(spaceName)
             return "space/$spaceId?name=$encodedName"
         }
     }
     object Sync : NavRoute("sync")
     object Settings : NavRoute("settings")
 }
+
+/**
+ * A value for a route's query argument. Navigation decodes arguments as URI
+ * components, where "+" is a plus sign: URLEncoder's form encoding turned
+ * "Ana Maria" into "Ana+Maria" on the screen. Spaces become %20 instead, and a
+ * real "+" is escaped.
+ */
+internal fun routeArgument(value: String): String =
+    java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
