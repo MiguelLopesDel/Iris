@@ -65,6 +65,13 @@ internal class ResumableUploadTransfer(
         } catch (_: IOException) {
             readFailed = true
             null
+        } catch (_: SecurityException) {
+            // Android no longer lets the app read this item (partial media
+            // access, a revoked grant). Uncaught, it ended the whole pass, and
+            // every later pass stopped at the same item.
+            return@withContext markUnreadable(queued)
+        } catch (_: UnsupportedOperationException) {
+            return@withContext markUnreadable(queued)
         }
         val result = if (job == null) ItemResult.RETRY else transfer(job) { readFailed = true }
         when {
@@ -113,6 +120,13 @@ internal class ResumableUploadTransfer(
             uploadId = null,
             nextByteOffset = 0L,
         )
+    }
+
+    private suspend fun markUnreadable(job: LocalUploadJob): ItemResult {
+        context.dbHelper.updateJobState(
+            context.accountKey, job.id, UploadJobState.FAILED, UNREADABLE_MESSAGE,
+        )
+        return ItemResult.FAILED
     }
 
     internal suspend fun markSourceMissing(job: LocalUploadJob): ItemResult {
@@ -377,6 +391,8 @@ internal class ResumableUploadTransfer(
 
         /** The server's answer when the received bytes do not match the declared hash. */
         const val HASH_MISMATCH_STATUS = 422
+
+        const val UNREADABLE_MESSAGE = "O Android não deixa o Iris ler este arquivo. Libere o acesso às fotos e tente de novo."
 
         const val SOURCE_MISSING_MESSAGE = "O arquivo não existe mais no aparelho"
     }

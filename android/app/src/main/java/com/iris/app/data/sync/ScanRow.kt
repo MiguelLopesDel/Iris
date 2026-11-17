@@ -18,5 +18,9 @@ internal object ScanRow {
             examine()
         } catch (unreadable: IOException) {
             SyncUploadManager.ScanOutcome.DEFERRED
+        } catch (refused: SecurityException) {
+            // Android stopped letting the app read this one item (partial
+            // media access): the same as unreadable for the scan.
+            SyncUploadManager.ScanOutcome.DEFERRED
         }
 }

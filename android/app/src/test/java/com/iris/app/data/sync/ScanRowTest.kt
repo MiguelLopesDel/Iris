@@ -17,6 +17,11 @@ class ScanRowTest {
     }
 
     @Test
+    fun `an item the app may no longer read is deferred too`() = runTest {
+        assertEquals(SyncUploadManager.ScanOutcome.DEFERRED, ScanRow.readOrDefer { throw SecurityException("no grant") })
+    }
+
+    @Test
     fun `a readable row keeps its own outcome`() = runTest {
         assertEquals(
             SyncUploadManager.ScanOutcome.QUEUED_NEW,
