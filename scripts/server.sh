@@ -133,6 +133,46 @@ harden_files() {
     echo "Data, media and backups belong to $user ($uid:$gid), mode 700; .env is 600."
 }
 
+nocow_databases() {
+    # On btrfs, copy-on-write scatters a SQLite file a page at a time: a
+    # library database in use for months ended up in thousands of pieces,
+    # and reading it cold from a hard disk took minutes. Iris creates new
+    # databases without it (core/nocow.py); the attribute only takes on an
+    # empty file, so existing ones are rewritten here once, with Iris stopped.
+    # Only the databases: the photos keep copy-on-write, which gives them
+    # btrfs checksums and the reflinks shared spaces copy with.
+    local data db fresh converted=0
+    data="$(data_dir)"
+    [ "$(findmnt -no FSTYPE -T "$data" 2>/dev/null)" = btrfs ] || return 0
+    if ! command -v chattr >/dev/null 2>&1; then
+        echo "Warning: chattr not found; databases keep copy-on-write." >&2
+        return 0
+    fi
+    while IFS= read -r -d '' db; do
+        if as_root lsattr -d "$db" 2>/dev/null | cut -d' ' -f1 | grep -q C; then continue; fi
+        if as_root test -s "$db-wal"; then
+            echo "Skipped $db: its write-ahead log is not empty (is Iris still running?)." >&2
+            continue
+        fi
+        fresh="$db.nocow"
+        as_root truncate -s 0 "$fresh"
+        as_root chattr +C "$fresh"
+        as_root sh -c 'cat "$1" > "$2" && sync "$2"' _ "$db" "$fresh"
+        if ! as_root cmp -s "$db" "$fresh"; then
+            as_root rm -f "$fresh"
+            echo "Skipped $db: the copy did not match it." >&2
+            continue
+        fi
+        as_root chown --reference="$db" "$fresh"
+        as_root chmod --reference="$db" "$fresh"
+        as_root mv -f "$fresh" "$db"
+        converted=$((converted + 1))
+    done < <(as_root find "$data" -xdev -type f -name '*.db' -print0)
+    if [ "$converted" -gt 0 ]; then
+        echo "Rewrote $converted database(s) without copy-on-write (btrfs)."
+    fi
+}
+
 same_library() {
     # Is folder $1 the library at $2? Union filesystems (mergerfs) give the same
     # folder another inode, so the instance id inside it decides as well.
@@ -533,6 +573,7 @@ case "${1:-}" in
             follow_release || exit 1
         fi
         [ "$harden" = 1 ] && harden_files
+        nocow_databases
         start_server
         wait_for_health
         echo "Daily backups go to $IRIS_BACKUP_HOST_DIR at $(env_value IRIS_BACKUP_TIME)" \
@@ -600,6 +641,9 @@ case "${1:-}" in
         require_compose
         prepare_env
         harden_files
+        # Databases are rewritten only while nothing has them open.
+        docker compose stop iris
+        nocow_databases
         # The container's user changed: recreate it.
         docker compose up -d --force-recreate iris
         wait_for_health

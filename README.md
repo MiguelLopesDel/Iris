@@ -136,6 +136,13 @@ compromised one, cannot read the library unless they run as root. Whoever has
 root on the server still can: Iris needs the originals to search them, so it
 cannot hide them from the machine's owner.
 
+On btrfs, the SQLite databases are kept out of copy-on-write (`chattr +C`):
+with it, a database rewritten page by page for months ends up in thousands of
+pieces, slow to read from a hard disk. Iris creates new databases that way, and
+`harden` rewrites existing ones once, with Iris stopped for a moment. Photos
+keep copy-on-write, which gives them btrfs checksums and the reflinks shared
+spaces copy with.
+
 Servers run releases, never `main`: `install` and `update` put the checkout on
 the newest stable `vX.Y.Z` tag and run that version's image, so the scripts and
 the image always match. Set `IRIS_VERSION=0.4.0` in `.env` to stay on a release
