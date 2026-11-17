@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.repository.IrisRepository
-import kotlinx.coroutines.Job
+import com.iris.app.ui.state.LatestJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,7 +31,28 @@ data class SearchUiState(
     val isSearching: Boolean = false,
     val error: String? = null,
     val hasSearched: Boolean = false
-)
+) {
+    /**
+     * The state right after the query is edited. A search still running for
+     * the old text is cancelled, so it must stop showing as running: nothing
+     * else would end it until the next search.
+     */
+    fun withQuery(newQuery: String): SearchUiState {
+        val text = newQuery.trim()
+        return when {
+            text.isEmpty() -> copy(
+                query = newQuery, results = emptyList(), total = 0,
+                hasSearched = false, error = null, isSearching = false,
+            )
+            text.length < MIN_QUERY_LENGTH -> copy(query = newQuery, isSearching = false)
+            else -> copy(query = newQuery)
+        }
+    }
+
+    companion object {
+        const val MIN_QUERY_LENGTH = 2
+    }
+}
 
 class SearchViewModel(
     private val repository: IrisRepository
@@ -40,7 +61,8 @@ class SearchViewModel(
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
-    private var searchJob: Job? = null
+    // Text and random searches share it: whichever started last is the one shown.
+    private val searchJob = LatestJob()
 
     init {
         var previousSession = repository.credentialsStore.sessionIdentity.value
@@ -48,22 +70,20 @@ class SearchViewModel(
             repository.credentialsStore.sessionIdentity.collect { identity ->
                 if (identity == previousSession) return@collect
                 previousSession = identity
-                searchJob?.cancel()
+                searchJob.cancel()
                 _uiState.value = SearchUiState()
             }
         }
     }
 
     fun onQueryChange(newQuery: String) {
-        _uiState.update { it.copy(query = newQuery) }
-        searchJob?.cancel()
-        if (newQuery.trim().length >= 2) {
-            searchJob = viewModelScope.launch {
+        searchJob.cancel()
+        _uiState.update { it.withQuery(newQuery) }
+        if (newQuery.trim().length >= SearchUiState.MIN_QUERY_LENGTH) {
+            searchJob.launch(viewModelScope) {
                 delay(400) // Debounce typing
                 performSearch()
             }
-        } else if (newQuery.trim().isEmpty()) {
-            _uiState.update { it.copy(results = emptyList(), total = 0, hasSearched = false, error = null) }
         }
     }
 
@@ -91,7 +111,7 @@ class SearchViewModel(
 
     fun searchRandom() {
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
-        viewModelScope.launch {
+        searchJob.launch(viewModelScope) {
             _uiState.update { it.copy(isSearching = true, error = null, query = "") }
             repository.searchRandom(count = 30).onSuccess { resp ->
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
@@ -122,8 +142,7 @@ class SearchViewModel(
         if (q.isBlank()) return
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
 
-        searchJob?.cancel()
-        searchJob = viewModelScope.launch {
+        searchJob.launch(viewModelScope) {
             _uiState.update { it.copy(isSearching = true, error = null) }
 
             val result = when (_uiState.value.mode) {
