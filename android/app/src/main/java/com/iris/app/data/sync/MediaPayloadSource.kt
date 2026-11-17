@@ -92,8 +92,10 @@ internal class MediaPayloadSource(
                 FileInputStream(fileDescriptor.fileDescriptor).use { stream -> updateDigest(stream, digest) }
             }
         } else {
+            // No stream is no content, not an empty file: queued as one, it was
+            // sent as a zero-byte upload with an empty hash.
             contentResolver.openInputStream(target)?.use { stream -> updateDigest(stream, digest) }
-                ?: return "" to 0L
+                ?: throw java.io.FileNotFoundException("No content for $target")
         }
         return digest.digest().toHex() to size
     }
