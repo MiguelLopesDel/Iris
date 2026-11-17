@@ -285,8 +285,11 @@ class SyncUploadManager(
     ): Boolean = withContext(Dispatchers.IO) {
         require(accountKey.isNotBlank()) { "An account key is required to process uploads" }
         require(sessionIdentity.isNotBlank()) { "A session identity is required to process uploads" }
-        // One upload loop at a time; a concurrent worker waits its turn.
-        uploadMutex.lock()
+        // One upload loop at a time; a concurrent worker waits its turn. Held
+        // with withLock: unlocked at the end of the finally, a throw before it
+        // (a callback, the performance record) left every later pass waiting
+        // forever.
+        uploadMutex.withLock {
         _isUploading.value = true
         onQueueRunStarted(speedMeter.startRun())
         val queueStartedAtNanos = System.nanoTime()
@@ -463,13 +466,15 @@ class SyncUploadManager(
                             } finally {
                                 // This lane saw the pass end: resting lanes need not wait for it.
                                 lanes.close()
-                            }
-                            // A photo carried when the pass stopped goes back to the queue.
-                            carried?.let { job ->
-                                withContext(NonCancellable) {
-                                    dbHelper.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                                // A photo carried when the pass stopped goes back to the queue,
+                                // also when it stopped by cancellation: it stayed UPLOADING then,
+                                // counted as in flight until a later pass reclaimed it.
+                                carried?.let { job ->
+                                    withContext(NonCancellable) {
+                                        dbHelper.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                                    }
+                                    anyDeferred.set(true)
                                 }
-                                anyDeferred.set(true)
                             }
                         }
                     } else if (deferForIngestProbe) {
@@ -570,7 +575,7 @@ class SyncUploadManager(
                     confirmedItems = confirmedItems.get(),
                 )
             }
-            uploadMutex.unlock()
+        }
         }
     }
 
