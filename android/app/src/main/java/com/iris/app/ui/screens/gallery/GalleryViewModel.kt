@@ -56,7 +56,33 @@ data class GalleryUiState(
     val serverTotalPages: Int = 1,
     /** "On this day": earlier years' media from today's date, newest year first. */
     val memories: List<OnThisDayYear> = emptyList()
-)
+) {
+    /**
+     * The server did not answer the health probe. Ends a pull-to-refresh too:
+     * left set, its spinner kept turning and loadNextPage refused to run even
+     * after the server came back.
+     */
+    fun serverUnreachable(reason: String?): GalleryUiState = copy(
+        isServerChecking = false,
+        isServerOnline = false,
+        isRefreshing = false,
+        serverInfo = null,
+        error = "SERVER_OFFLINE",
+        offlineReason = reason,
+    )
+
+    /**
+     * A page request starts. A first page clears the previous error; a later
+     * one keeps it until it succeeds. The grid re-asks for the next page
+     * whenever the error changes, so clearing it here and setting it again on
+     * failure made a request loop without pause while the server was failing.
+     */
+    fun loadingPage(page: Int, isRefresh: Boolean): GalleryUiState = copy(
+        isLoading = !isRefresh,
+        isRefreshing = isRefresh,
+        error = if (page == 1) null else error,
+    )
+}
 
 class GalleryViewModel(
     private val repository: IrisRepository,
@@ -81,6 +107,9 @@ class GalleryViewModel(
     private var initialLoadJob: Job? = null
     private var memoriesJob: Job? = null
     private var firstPageLoadJob: Job? = null
+    // The page after the loaded ones. A first page (new filter, refresh)
+    // cancels it: landing afterwards, it would add the old filter's records.
+    private var nextPageLoadJob: Job? = null
     private var devicePageLoadJob: Job? = null
     private var serverRecords: List<MediaRecord> = emptyList()
     private var deviceRecords: List<MediaRecord> = emptyList()
@@ -395,15 +424,9 @@ class GalleryViewModel(
                 if (requestedAccountKey != null) {
                     settingsRepository?.markCloudUnavailable(requestedAccountKey)
                 }
+                val reason = offlineReason(healthResult.exceptionOrNull())
                 _uiState.update {
-                    it.copy(
-                        isServerChecking = false,
-                        isServerOnline = false,
-                        isDeviceLoggedIn = requestedSessionKey != null,
-                        serverInfo = null,
-                        error = "SERVER_OFFLINE",
-                        offlineReason = offlineReason(healthResult.exceptionOrNull()),
-                    )
+                    it.serverUnreachable(reason).copy(isDeviceLoggedIn = requestedSessionKey != null)
                 }
                 return@launch
             }
@@ -493,15 +516,12 @@ class GalleryViewModel(
         val finishPage = performanceMonitor.begin(
             if (page == 1) Metric.GalleryFirstPage else Metric.GalleryPage
         )
-        if (page == 1) firstPageLoadJob?.cancel()
+        if (page == 1) {
+            firstPageLoadJob?.cancel()
+            nextPageLoadJob?.cancel()
+        }
         val job = viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isLoading = !isRefresh,
-                    isRefreshing = isRefresh,
-                    error = null
-                )
-            }
+            _uiState.update { it.loadingPage(page, isRefresh) }
 
             galleryDataSource.serverPage(
                 page = page,
@@ -576,7 +596,7 @@ class GalleryViewModel(
                 }
             }
         }
-        if (page == 1) firstPageLoadJob = job
+        if (page == 1) firstPageLoadJob = job else nextPageLoadJob = job
     }
 
     /** Clears both the in-memory view and its rebuildable private-library cache. */
