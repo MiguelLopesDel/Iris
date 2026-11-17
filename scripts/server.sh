@@ -136,9 +136,10 @@ harden_files() {
 same_library() {
     # Is folder $1 the library at $2? Union filesystems (mergerfs) give the same
     # folder another inode, so the instance id inside it decides as well.
-    [ -d "$1" ] || return 1
-    [ "$(stat -c %d:%i "$1")" = "$(stat -c %d:%i "$2")" ] && return 0
-    [ -f "$2/instance_id" ] && cmp -s "$1/instance_id" "$2/instance_id"
+    # Once hardened the library is mode 700, so the comparison reads as root.
+    as_root test -d "$1" || return 1
+    [ "$(as_root stat -c %d:%i "$1")" = "$(as_root stat -c %d:%i "$2")" ] && return 0
+    as_root test -f "$2/instance_id" && as_root cmp -s "$1/instance_id" "$2/instance_id"
 }
 
 doctor() {
