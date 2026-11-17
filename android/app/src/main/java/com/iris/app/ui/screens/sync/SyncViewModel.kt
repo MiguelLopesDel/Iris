@@ -342,11 +342,13 @@ class SyncViewModel(
     }
 
     fun toggleSource(sourceId: String, enabled: Boolean, context: Context) {
-        val selected = _uiState.value.selectedSourceIds.toMutableSet()
-        if (enabled) selected += sourceId else selected -= sourceId
         val accountKey = credentialsStore.accountIdentity.value ?: return
+        // Shown at once; the store applies the toggle to its own current set.
+        _uiState.update {
+            it.copy(selectedSourceIds = if (enabled) it.selectedSourceIds + sourceId else it.selectedSourceIds - sourceId)
+        }
         viewModelScope.launch {
-            settingsRepository.updateSelectedSourceIds(accountKey, selected)
+            settingsRepository.setSourceSelected(accountKey, sourceId, enabled)
             enqueueBackgroundIfEnabled(context, accountKey)
         }
     }

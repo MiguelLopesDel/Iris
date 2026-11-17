@@ -273,8 +273,22 @@ class ServerSettingsRepository(private val context: Context) {
     }
 
     suspend fun updateSelectedSourceIds(accountKey: String, sourceIds: Set<String>) {
+        editSelectedSourceIds(accountKey) { sourceIds }
+    }
+
+    /**
+     * Adds or removes one folder, reading the stored selection in the same
+     * edit. The screen's copy trails the store: two quick toggles both built
+     * on it, and the second write dropped the first folder.
+     */
+    suspend fun setSourceSelected(accountKey: String, sourceId: String, selected: Boolean) {
+        editSelectedSourceIds(accountKey) { current -> if (selected) current + sourceId else current - sourceId }
+    }
+
+    private suspend fun editSelectedSourceIds(accountKey: String, change: (Set<String>) -> Set<String>) {
         context.dataStore.edit { preferences ->
             val keys = accountKeys(accountKey)
+            val sourceIds = change(preferences[keys.selectedSourceIds] ?: emptySet())
             preferences[keys.selectedSourceIds] = sourceIds
             if (sourceIds.isNotEmpty() && preferences[keys.backupSetupPending] == true) {
                 preferences[keys.autoBackup] = true

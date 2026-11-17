@@ -3,6 +3,7 @@ package com.iris.app
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -73,5 +74,21 @@ class AccountScopedSyncSettingsTest {
         assertFalse(allFolders.backupSetupPending)
         assertTrue(allFolders.autoBackupEnabled)
         assertEquals("all", allFolders.sourceMode)
+    }
+
+    @Test
+    fun quick_folder_toggles_keep_every_choice() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val repository = (context.applicationContext as IrisApplication).settingsRepository
+        val account = "source-toggle-${System.nanoTime()}|user:1"
+
+        // Both toggles start before either is stored, as two quick taps do.
+        listOf(
+            launch { repository.setSourceSelected(account, "camera", true) },
+            launch { repository.setSourceSelected(account, "screenshots", true) },
+        ).forEach { it.join() }
+        repository.setSourceSelected(account, "camera", false)
+
+        assertEquals(setOf("screenshots"), repository.syncSettingsForAccount(account).first().selectedSourceIds)
     }
 }
