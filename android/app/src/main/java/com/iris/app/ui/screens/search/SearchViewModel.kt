@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.ui.state.LatestJob
+import com.iris.app.ui.state.isUnreadableResponse
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -175,7 +176,7 @@ class SearchViewModel(
                 val rawMsg = ex.localizedMessage ?: ex.message ?: ""
                 val errorMsg = when {
                     rawMsg.contains("401") -> "Autenticação necessária (faça login na aba Backup)"
-                    rawMsg.contains("Unexpected token", ignoreCase = true) ->
+                    isUnreadableResponse(ex) ->
                         "Resposta inesperada do servidor (verifique a URL em Configurações)"
                     else -> rawMsg.ifBlank { "Erro na busca" }
                 }

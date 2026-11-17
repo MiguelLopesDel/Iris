@@ -18,6 +18,7 @@ import com.iris.app.data.repository.GalleryDataSource
 import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
+import com.iris.app.ui.state.isUnreadableResponse
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -575,7 +576,7 @@ class GalleryViewModel(
                 val rawMsg = ex.localizedMessage ?: ex.message ?: ""
                 val errorMsg = when {
                     rawMsg.contains("401") -> "AUTH_REQUIRED"
-                    rawMsg.contains("Unexpected token", ignoreCase = true) ->
+                    isUnreadableResponse(ex) ->
                         "Resposta inesperada do servidor (verifique a URL em Configurações)"
                     rawMsg.contains("Connection refused", ignoreCase = true) || rawMsg.contains("ConnectException", ignoreCase = true) ->
                         "SERVER_OFFLINE"
