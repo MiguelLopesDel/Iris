@@ -15,6 +15,17 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
+def _service_user_stubs(tmp_path: Path, bin_dir: Path) -> None:
+    # `install` hardens: a system user owns the library. Ownership changes are
+    # recorded, not made; everything else sudo runs as the test user.
+    _stub(bin_dir, "getent", 'echo "$2:x:2000:2000::/nonexistent:/usr/sbin/nologin"\n')
+    _stub(bin_dir, "sudo", f"""
+echo "sudo $*" >> "{tmp_path}/sudo.log"
+case "$1" in chown|useradd) exit 0 ;; esac
+exec "$@"
+""")
+
+
 def _install(
     tmp_path: Path, *, gpu: bool, toolkit: bool, args: tuple[str, ...] = (), folder: str = "Iris",
     env_settings: dict[str, str] | None = None,
@@ -44,6 +55,7 @@ if [ "$1" = info ]; then echo '{runtimes}'; fi
 exit 0
 """)
     _stub(bin_dir, "curl", "exit 0\n")
+    _service_user_stubs(tmp_path, bin_dir)
     if gpu:
         _stub(bin_dir, "nvidia-smi", 'echo "GPU 0: NVIDIA GeForce RTX 4050 Laptop GPU (UUID: GPU-x)"\n')
     else:
@@ -136,6 +148,7 @@ if [ "$1 $2" = "compose pull" ] && [ "$IRIS_VERSION" = "{unpublished}" ]; then e
 exit 0
 """)
     _stub(bin_dir, "curl", "exit 0\n")
+    _service_user_stubs(tmp_path, bin_dir)
     _stub(bin_dir, "nvidia-smi", "exit 9\n")
     return bin_dir
 
@@ -286,6 +299,7 @@ def _listening_project(tmp_path: Path, addresses: tuple[str, ...] = ()) -> tuple
     (project / "data").mkdir()
     bin_dir = _docker_stub(tmp_path)
     _stub(bin_dir, "curl", f'echo "$@" >> "{tmp_path}/curl.log"\nexit 0\n')
+    _service_user_stubs(tmp_path, bin_dir)
     interfaces = "\n".join(f"2: eth{i}    inet {a}/24 brd 0.0.0.0 scope global eth{i}" for i, a in enumerate(addresses))
     _stub(bin_dir, "ip", f"cat <<'EOF2'\n1: lo    inet 127.0.0.1/8 scope host lo\n{interfaces}\nEOF2\n")
     env = _env(tmp_path, bin_dir)
@@ -333,3 +347,70 @@ def test_listen_warns_when_the_cookie_setting_blocks_browser_sign_in(tmp_path: P
         "IRIS_SESSION_HTTPS_ONLY=auto", "IRIS_SESSION_HTTPS_ONLY=true"))
     result = _server(project, env, "listen", "192.168.1.20")
     assert "cannot sign in over plain HTTP" in result.stderr
+
+
+def _sudo(tmp_path: Path) -> list[str]:
+    log = tmp_path / "sudo.log"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def test_install_hands_the_library_to_a_system_user(tmp_path: Path) -> None:
+    project, result = _install(tmp_path, gpu=False, toolkit=False)
+
+    env = (project / ".env").read_text()
+    assert "IRIS_UID=2000" in env and "IRIS_GID=2000" in env
+    assert stat.S_IMODE((project / ".env").stat().st_mode) == 0o600
+    chowned = [line.rsplit(" ", 1)[1] for line in _sudo(tmp_path) if line.startswith("sudo chown -R 2000:2000 ")]
+    assert sorted(Path(path).name for path in chowned) == ["backups", "data", "media"]
+    assert "belong to iris (2000:2000)" in result.stdout
+
+
+def test_staging_gets_its_own_system_user(tmp_path: Path) -> None:
+    _, result = _install(tmp_path, gpu=False, toolkit=False,
+                         env_settings={"COMPOSE_PROJECT_NAME": "iris-staging"})
+
+    assert "belong to iris-staging" in result.stdout
+
+
+def test_install_can_leave_ownership_alone(tmp_path: Path) -> None:
+    project, _ = _install(tmp_path, gpu=False, toolkit=False, args=("--no-harden",))
+
+    assert not [line for line in _sudo(tmp_path) if "chown" in line]
+    assert "IRIS_UID=2000" not in (project / ".env").read_text()
+
+
+def test_doctor_names_containers_that_can_reach_the_library(tmp_path: Path) -> None:
+    project, _ = _install(tmp_path, gpu=False, toolkit=False)
+    (project / "data" / "instance_id").write_text("abc\n")
+    # Another view of the same folder, as a union filesystem would show it.
+    union = tmp_path / "union" / "Iris" / "data"
+    union.mkdir(parents=True)
+    (union / "instance_id").write_text("abc\n")
+    project_name = next(line.split("=", 1)[1] for line in (project / ".env").read_text().splitlines()
+                        if line.startswith("COMPOSE_PROJECT_NAME="))
+    mounts = {
+        "torrent": f"/torrent||1000|{tmp_path / 'union'}",
+        "dashboard": f"/dashboard|||{project.parent}",
+        "proxy": f"/proxy|||{project / 'data' / 'identity_key.pem'}",
+        "media": f"/media|||{tmp_path / 'elsewhere'}",
+        f"{project_name}-iris-1": f"/{project_name}-iris-1|2000:2000||{project / 'data'}",
+    }
+    script = "\n".join(f'    {name}) echo "{line}" ;;' for name, line in mounts.items())
+    _stub(tmp_path / "bin-Iris", "docker", f"""
+case "$1" in
+  ps) printf '%s\\n' {" ".join(mounts)} ;;
+  inspect) case "$2" in
+{script}
+  esac ;;
+esac
+exit 0
+""")
+    env = {"PATH": f"{tmp_path / 'bin-Iris'}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    result = subprocess.run(["bash", "scripts/server.sh", "doctor"], cwd=project, env=env,
+                            capture_output=True, text=True, timeout=60)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"torrent sees the library at {union} and runs as uid 1000 (PUID)" in result.stdout
+    assert "dashboard sees the library" in result.stdout
+    assert "proxy mounts" in result.stdout and "inside the library" in result.stdout
+    assert "media " not in result.stdout and f"{project_name}" not in result.stdout

@@ -53,8 +53,135 @@ export IRIS_VERSION
 
 require_compose() {
     command -v docker >/dev/null 2>&1 || { echo "Docker is required." >&2; exit 1; }
+    if [ "$(id -u)" != 0 ] && ! command docker info >/dev/null 2>&1; then
+        # Not in the docker group (which is root in all but name): go through sudo.
+        # shellcheck disable=SC2033
+        docker() { sudo docker "$@"; }
+    fi
     docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required." >&2; exit 1; }
     command -v curl >/dev/null 2>&1 || { echo "curl is required for health checks." >&2; exit 1; }
+}
+
+as_root() {
+    if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+# The folders are the service user's once `harden` ran, not the administrator's:
+# host-side commands that read them go through sudo then.
+as_data_owner() {
+    if [ -O "$(data_dir)" ] || [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+service_user() {
+    # Production and staging each get their own user, so neither can read the other.
+    local configured
+    configured="$(env_value IRIS_SERVICE_USER)"
+    if [ -n "$configured" ]; then
+        printf '%s\n' "$configured"
+    else
+        case "$(env_value COMPOSE_PROJECT_NAME)" in
+            *staging*) printf 'iris-staging\n' ;;
+            *) printf 'iris\n' ;;
+        esac
+    fi
+}
+
+set_env() {
+    if grep -q "^$1=" .env; then
+        sed -i "s#^$1=.*#$1=$2#" .env
+    else
+        printf '\n%s=%s\n' "$1" "$2" >> .env
+    fi
+}
+
+harden_files() {
+    # Three owners, so a compromised neighbour (another container, another
+    # account) cannot read the library:
+    #   - the checkout (scripts, compose files): the administrator, read-only to Iris;
+    #   - .env (secrets): the administrator, mode 600;
+    #   - data, media, backups: a system user with no shell or login, mode 700,
+    #     which is what the container runs as.
+    # Root owns nothing: a root-owned checkout makes every update need sudo.
+    local user admin uid gid entry dir
+    user="$(service_user)"
+    admin="${SUDO_USER:-$(id -un)}"
+    if ! getent passwd "$user" >/dev/null; then
+        as_root useradd --system --user-group --no-create-home --home-dir /nonexistent \
+            --shell /usr/sbin/nologin "$user"
+        echo "Created system user $user (no shell, no login)."
+    fi
+    entry="$(getent passwd "$user")"
+    uid="$(printf '%s' "$entry" | cut -d: -f3)"
+    gid="$(printf '%s' "$entry" | cut -d: -f4)"
+    if [ "$admin" != root ] && [ "$(stat -c %U .)" != "$admin" ]; then
+        # Everything in the checkout except the library folders kept inside it.
+        as_root find . -xdev \( -path ./data -o -path ./media -o -path ./backups \) -prune \
+            -o -exec chown -h "$admin:" {} +
+        echo "The checkout now belongs to $admin."
+    fi
+    set_env IRIS_UID "$uid"
+    set_env IRIS_GID "$gid"
+    [ "$admin" != root ] && as_root chown "$admin:" .env
+    as_root chmod 600 .env
+    for dir in "$(data_dir)" "$(media_dir)" "$(backup_dir)"; do
+        as_root chown -R "$uid:$gid" "$dir"
+        as_root chmod 700 "$dir"
+    done
+    echo "Data, media and backups belong to $user ($uid:$gid), mode 700; .env is 600."
+}
+
+same_library() {
+    # Is folder $1 the library at $2? Union filesystems (mergerfs) give the same
+    # folder another inode, so the instance id inside it decides as well.
+    [ -d "$1" ] || return 1
+    [ "$(stat -c %d:%i "$1")" = "$(stat -c %d:%i "$2")" ] && return 0
+    [ -f "$2/instance_id" ] && cmp -s "$1/instance_id" "$2/instance_id"
+}
+
+doctor() {
+    # Who else on this host can read the library: containers of other
+    # projects that mount it, a folder containing it, or a file inside it.
+    local project uid real name user puid source rel tail found=0
+    project="$(env_value COMPOSE_PROJECT_NAME)"
+    uid="$(env_value IRIS_UID)"
+    real="$(realpath "$(data_dir)")"
+    [ "$uid" = "$(id -u "${SUDO_USER:-$(id -un)}")" ] && \
+        echo "Warning: Iris runs as your own user ($uid); run: $0 harden" >&2
+    [ "$(stat -c %U .)" = root ] && echo "Warning: the checkout belongs to root; run: $0 harden" >&2
+    # A non-blank separator: tabs are whitespace to read, so an empty field would vanish.
+    while IFS='|' read -r name user puid source; do
+        [ -n "$source" ] || continue
+        user="${user:-root}"
+        # linuxserver.io images start as root and drop to PUID.
+        [ -n "$puid" ] && user="uid $puid (PUID)"
+        case "$source/" in
+            "$real"/*)
+                found=1
+                echo "$name mounts $source, inside the library, and runs as $user"
+                continue ;;
+        esac
+        # The library's path seen from this mount: /a/b/data -> data, b/data, a/b/data.
+        rel="" tail="$real"
+        while [ "$tail" != / ] && [ -n "$tail" ]; do
+            rel="/$(basename "$tail")$rel"
+            tail="$(dirname "$tail")"
+            if same_library "$source$rel" "$real"; then
+                found=1
+                echo "$name sees the library at $source$rel and runs as $user"
+                break
+            fi
+        done
+    done < <(docker ps --format '{{.Names}}' | while read -r name; do
+        docker inspect "$name" --format \
+            '{{range .Mounts}}{{$.Name}}|{{$.Config.User}}|{{range $.Config.Env}}{{$kv := split . "="}}{{if eq (index $kv 0) "PUID"}}{{index $kv 1}}{{end}}{{end}}|{{.Source}}{{"\n"}}{{end}}' \
+            | sed 's#^/##'
+    done | grep -v "^$project-" || true)
+    if [ "$found" = 0 ]; then
+        echo "No container of another project mounts the library."
+    else
+        echo "Root, or the same user as Iris, reads it; another user is stopped by mode 700." \
+            "Mount only the folders a service needs."
+    fi
 }
 
 prepare_env() {
@@ -80,8 +207,12 @@ prepare_env() {
     backups="$(env_value IRIS_BACKUP_DIR)"
     data="$(data_dir)"
     media="$(media_dir)"
-    mkdir -p "$data" "$media" "${backups:-backups}"
-    chmod 700 "$data" "$media" "${backups:-backups}"
+    local dir
+    for dir in "$data" "$media" "${backups:-backups}"; do
+        [ -e "$dir" ] || mkdir -p "$dir"
+        # After `harden` the service user owns them; leave its mode alone.
+        if [ -O "$dir" ]; then chmod 700 "$dir"; fi
+    done
     # Shared spaces copy between the two with reflinks, which work only
     # within one filesystem; across two, every copy takes space again.
     if [ "$(stat -c %d "$data")" != "$(stat -c %d "$media")" ]; then
@@ -150,13 +281,13 @@ choose_image() {
 print_setup_instructions() {
     local code_file
     code_file="$(data_dir)/setup_code"
-    if [ ! -f "$code_file" ]; then
+    if ! as_data_owner test -f "$code_file"; then
         echo "Setup is complete. Sign in at $(local_url)/"
         return
     fi
     echo
     echo "Finish setup in the browser: $(local_url)/setup"
-    echo "Installation code: $(head -n 1 "$code_file")"
+    echo "Installation code: $(as_data_owner head -n 1 "$code_file")"
     echo "(Show it again with: ./scripts/server.sh setup-code)"
 }
 
@@ -341,21 +472,23 @@ restore_snapshot() {
     local snapshot="$1"
     [ -d "$snapshot" ] || { echo "Not a backup folder: $snapshot" >&2; exit 2; }
     require_python3
-    python3 -m core.instance_backup verify "$snapshot"
-    local data media
+    as_data_owner python3 -m core.instance_backup verify "$snapshot"
+    local data media owner
     data="$(data_dir)"
     media="$(media_dir)"
     echo "This replaces $data and $media with the backup. The current folders are"
     echo "kept next to them as *.before-restore-*, not deleted."
     read -r -p "Type 'restore' to continue: " answer
     [ "$answer" = "restore" ] || { echo "Cancelled."; exit 1; }
+    owner="$(stat -c %u:%g "$data")"
     docker compose stop iris
-    if ! python3 -m core.instance_backup restore "$snapshot" \
+    if ! as_data_owner python3 -m core.instance_backup restore "$snapshot" \
         --target data="$data" --target media="$media"; then
         echo "Restore failed; nothing was swapped. Starting the previous state." >&2
         docker compose up -d iris
         exit 1
     fi
+    [ -O "$data" ] || as_root chown -R "$owner" "$data" "$media"
     # Restore swaps the host data/media directories atomically. Recreate the
     # stopped service so Docker binds the newly restored directory inodes.
     docker compose up -d --force-recreate iris
@@ -380,16 +513,22 @@ wait_for_health() {
 case "${1:-}" in
     install)
         require_compose
-        case "${2:-}" in
-            ""|--gpu|--cpu) ;;
-            *) echo "Usage: $0 install [--gpu|--cpu]" >&2; exit 2 ;;
-        esac
+        shift
+        image_choice="" harden=1
+        for arg in "$@"; do
+            case "$arg" in
+                --gpu|--cpu) image_choice="$arg" ;;
+                --no-harden) harden=0 ;;
+                *) echo "Usage: $0 install [--gpu|--cpu] [--no-harden]" >&2; exit 2 ;;
+            esac
+        done
         prepare_env
-        choose_image "${2:-}"
+        choose_image "$image_choice"
         if [ -d .git ] && [ -n "$(release_tag)" ]; then
             git diff --quiet || { echo "Commit or stash local changes before installing." >&2; exit 1; }
             follow_release || exit 1
         fi
+        [ "$harden" = 1 ] && harden_files
         start_server
         wait_for_health
         echo "Daily backups go to $IRIS_BACKUP_HOST_DIR at $(env_value IRIS_BACKUP_TIME)" \
@@ -453,14 +592,26 @@ case "${1:-}" in
         shift
         run_backup "$@"
         ;;
+    harden)
+        require_compose
+        prepare_env
+        harden_files
+        # The container's user changed: recreate it.
+        docker compose up -d --force-recreate iris
+        wait_for_health
+        ;;
+    doctor)
+        require_compose
+        doctor
+        ;;
     backups)
         require_python3
-        python3 -m core.instance_backup list "$(backup_dir)"
+        as_data_owner python3 -m core.instance_backup list "$(backup_dir)"
         ;;
     verify-backup)
         require_python3
         [ "$#" -eq 2 ] || { echo "Usage: $0 verify-backup <backup folder>" >&2; exit 2; }
-        python3 -m core.instance_backup verify "$2"
+        as_data_owner python3 -m core.instance_backup verify "$2"
         ;;
     restore)
         require_compose
@@ -483,7 +634,7 @@ case "${1:-}" in
         set_port "$2"
         ;;
     *)
-        echo "Usage: $0 {install [--gpu|--cpu]|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin] [--accept-missing]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>|listen <address>}" >&2
+        echo "Usage: $0 {install [--gpu|--cpu] [--no-harden]|harden|doctor|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin] [--accept-missing]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>|listen <address>}" >&2
         exit 2
         ;;
 esac

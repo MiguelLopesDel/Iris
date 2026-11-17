@@ -218,9 +218,18 @@ mount_source() {
     own_mounts | awk -F '\t' -v target="$1" '$1 == target { print $2 }'
 }
 
+# Once `server.sh harden` ran, data and backups belong to the service users
+# (iris for production, iris-staging here), not to whoever runs this script.
+# Then the file work goes through sudo and the copies are handed to
+# staging's own user at the end.
+priv=()
+as_owner() {
+    if [ "${#priv[@]}" -eq 0 ]; then "$@"; else "${priv[@]}" "$@"; fi
+}
+
 refresh_data() {
     local backup="$1" dry_run="$2"
-    local data media stamp name live fresh item
+    local data media stamp name live fresh item owner
     guard_all
     [ -n "$backup" ] || die "refresh-data needs --from <iris-backup-* folder>."
     [ -f "$backup/manifest.json" ] && [ -d "$backup/data" ] || die "$backup is not an Iris backup (no manifest.json and data/)."
@@ -228,13 +237,18 @@ refresh_data() {
     data="$(mount_source /app/data)"
     media="$(mount_source /app/media)"
     [ -d "$data" ] && [ -d "$media" ] || die "staging's data ($data) or media ($media) folder is missing."
+    if [ ! -O "$data" ] || [ ! -r "$backup/data" ] || [ ! -x "$backup/data" ]; then
+        # shellcheck disable=SC2206
+        priv=(${IRIS_STAGING_SUDO:-sudo -n})
+    fi
+    owner="$(stat -c %u:%g -- "$data")"
     for live in "$data" "$media"; do
         case "$backup/" in "$live"/*) die "the backup is inside staging's own $live; refusing." ;; esac
         # The new copy is built next to the live folder and renamed into place.
-        [ -w "$(dirname -- "$live")" ] || die "cannot create folders in $(dirname -- "$live"), where the new copy goes next to $live; give $(id -un) write access there first."
+        as_owner test -w "$(dirname -- "$live")" || die "cannot create folders in $(dirname -- "$live"), where the new copy goes next to $live; give $(id -un) write access there first."
     done
     say "checking $backup (reads every file; a large library takes a while)."
-    python3 -m core.instance_backup verify "$backup" >/dev/null || die "$backup failed verification; nothing was changed."
+    as_owner python3 -m core.instance_backup verify "$backup" >/dev/null || die "$backup failed verification; nothing was changed."
     if [ "$dry_run" = 1 ]; then
         say "dry run: checks passed; would copy $backup into $data and $media, keep staging's identity and restart only $project/iris."
         return 0
@@ -244,31 +258,38 @@ refresh_data() {
     for name in data media; do
         live="$data"; [ "$name" = media ] && live="$media"
         fresh="$live.refreshing-$stamp"
-        mkdir -m 700 "$fresh"
-        if [ -d "$backup/$name" ]; then
+        as_owner mkdir -m 700 "$fresh"
+        if as_owner test -d "$backup/$name"; then
             # Backup files are read-only links; the copies must be writable.
-            cp -a --reflink=auto "$backup/$name/." "$fresh/" \
+            as_owner cp -a --reflink=auto "$backup/$name/." "$fresh/" \
                 || die "copying $backup/$name failed; staging is unchanged (partial copy left in $fresh)."
-            chmod -R u+w "$fresh"
+            as_owner chmod -R u+w "$fresh"
         fi
     done
     # Production's identity goes aside, always: left in place, its local CA
     # key would sign staging's certificate, which computers that trust
     # production would then accept.
-    mkdir -m 700 "$data.production-identity-$stamp"
+    as_owner mkdir -m 700 "$data.production-identity-$stamp"
     for item in "${identity_files[@]}"; do
-        if [ -e "$data.refreshing-$stamp/$item" ]; then
-            mv -- "$data.refreshing-$stamp/$item" "$data.production-identity-$stamp/$item"
+        if as_owner test -e "$data.refreshing-$stamp/$item"; then
+            as_owner mv -- "$data.refreshing-$stamp/$item" "$data.production-identity-$stamp/$item"
         fi
-        if [ -e "$data/$item" ]; then
-            cp -a -- "$data/$item" "$data.refreshing-$stamp/$item"
+        if as_owner test -e "$data/$item"; then
+            as_owner cp -a -- "$data/$item" "$data.refreshing-$stamp/$item"
         fi
     done
+    if [ "${#priv[@]}" -gt 0 ]; then
+        # The copies carry production's owner; staging's container runs as its own user.
+        for live in "$data" "$media"; do
+            as_owner chown -R "$owner" "$live.refreshing-$stamp"
+        done
+        as_owner chown -R "$owner" "$data.production-identity-$stamp"
+    fi
 
     compose stop iris
     for live in "$data" "$media"; do
-        mv -- "$live" "$live.before-refresh-$stamp"
-        mv -- "$live.refreshing-$stamp" "$live"
+        as_owner mv -- "$live" "$live.before-refresh-$stamp"
+        as_owner mv -- "$live.refreshing-$stamp" "$live"
     done
     compose up -d --no-build iris
     if wait_for_health; then

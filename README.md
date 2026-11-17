@@ -119,6 +119,8 @@ Do not map the port to `0.0.0.0` without TLS and rate limiting.
 ### 4. Day to day
 
 ```bash
+./scripts/server.sh harden          # library owned by a system user, not by you or root
+./scripts/server.sh doctor          # which other containers can see the library
 ./scripts/server.sh status          # health and container state
 ./scripts/server.sh setup-code      # the installation code, while setup is pending
 ./scripts/server.sh logs            # follow the logs
@@ -126,6 +128,13 @@ Do not map the port to `0.0.0.0` without TLS and rate limiting.
 ./scripts/server.sh backup          # back up now (a daily backup is automatic)
 ./scripts/server.sh update          # back up, then move to the newest release
 ```
+
+`install` already does what `harden` does: data, media and backups belong to a
+system user `iris` (no shell, no login, mode 700) that the container runs as;
+the checkout and `.env` (mode 600) stay yours. Other services on the host, or a
+compromised one, cannot read the library unless they run as root. Whoever has
+root on the server still can: Iris needs the originals to search them, so it
+cannot hide them from the machine's owner.
 
 Servers run releases, never `main`: `install` and `update` put the checkout on
 the newest stable `vX.Y.Z` tag and run that version's image, so the scripts and
@@ -135,6 +144,12 @@ run only when pinned that way. Backups go to `IRIS_BACKUP_DIR`
 (`./backups` by default) every day at 03:00 — point it at another disk.
 
 ---
+
+## Develop and ship
+
+`./iris` runs the whole cycle from your machine — sandbox, PR, staging,
+release and production — see `./iris help` and
+[docs/process.md](docs/process.md#o-ciclo-em-comandos).
 
 ## Run from source (development)
 
