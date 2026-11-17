@@ -1,5 +1,6 @@
 package com.iris.app.ui.screens.search
 
+import com.iris.app.ui.text.countOf
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -266,7 +267,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 if (uiState.results.isNotEmpty()) {
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
-                        text = "${uiState.total} resultados",
+                        text = countOf(uiState.total, "resultado", "resultados"),
                         fontSize = 12.sp,
                         color = IrisTextSoft,
                         modifier = Modifier.align(Alignment.CenterVertically)

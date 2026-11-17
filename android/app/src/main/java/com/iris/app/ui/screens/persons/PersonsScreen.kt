@@ -1,5 +1,6 @@
 package com.iris.app.ui.screens.persons
 
+import com.iris.app.ui.text.countOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -207,7 +208,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = "${person.mediaCount} mídias",
+                                        text = countOf(person.mediaCount, "mídia", "mídias"),
                                         fontSize = 11.sp,
                                         color = IrisTextSoft
                                     )
@@ -242,7 +243,7 @@ fun PersonMediaScreen(
                         )
                         if (uiState.total > 0) {
                             Text(
-                                text = "${uiState.total} mídias",
+                                text = countOf(uiState.total, "mídia", "mídias"),
                                 fontSize = 12.sp,
                                 color = IrisTextSoft
                             )
