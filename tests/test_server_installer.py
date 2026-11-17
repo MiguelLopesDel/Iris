@@ -409,6 +409,7 @@ esac
 exit 0
 """)
     env = {"PATH": f"{tmp_path / 'bin-Iris'}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    (tmp_path / "sudo.log").unlink(missing_ok=True)
     result = subprocess.run(["bash", "scripts/server.sh", "doctor"], cwd=project, env=env,
                             capture_output=True, text=True, timeout=60)
 
@@ -417,3 +418,5 @@ exit 0
     assert "dashboard sees the library" in result.stdout
     assert "proxy mounts" in result.stdout and "inside the library" in result.stdout
     assert "media " not in result.stdout and f"{project_name}" not in result.stdout
+    # The hardened library is unreadable to the administrator: the comparison goes through sudo.
+    assert any(line.startswith("sudo cmp -s") for line in _sudo(tmp_path))
