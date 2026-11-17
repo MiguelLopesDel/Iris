@@ -102,6 +102,15 @@ class ServerSettingsRepository(private val context: Context) {
         preferences[PreferencesKeys.TEXT_BONUS] ?: 1.0f
     }
 
+    /** The search settings the search screen starts from and sends with every search. */
+    val searchPreferences: Flow<SearchPreferences> = context.dataStore.data.map { preferences ->
+        SearchPreferences(
+            balance = preferences[PreferencesKeys.SEARCH_BALANCE] ?: SearchPreferences.DEFAULT.balance,
+            threshold = preferences[PreferencesKeys.SEARCH_THRESHOLD] ?: SearchPreferences.DEFAULT.threshold,
+            textBonus = preferences[PreferencesKeys.TEXT_BONUS] ?: SearchPreferences.DEFAULT.textBonus,
+        )
+    }
+
     fun syncSettingsForAccount(accountKey: String?): Flow<AccountSyncSettings> {
         if (accountKey.isNullOrBlank()) return flowOf(AccountSyncSettings())
         val keys = accountKeys(accountKey)
@@ -357,5 +366,16 @@ class ServerSettingsRepository(private val context: Context) {
 
     companion object {
         val DEFAULT_SERVER_URL: String = BuildConfig.IRIS_DEFAULT_SERVER_URL
+    }
+}
+
+/** Search settings kept between sessions; [DEFAULT] matches the server's defaults. */
+data class SearchPreferences(
+    val balance: Float = 0.5f,
+    val threshold: Float = 0.15f,
+    val textBonus: Float = 1.0f,
+) {
+    companion object {
+        val DEFAULT = SearchPreferences()
     }
 }
