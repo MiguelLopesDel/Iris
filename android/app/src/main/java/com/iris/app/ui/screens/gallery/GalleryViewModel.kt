@@ -379,8 +379,8 @@ class GalleryViewModel(
                     deviceMediaPermissionGranted = true,
                     deviceTotalRecords = devicePage.total,
                     deviceTotalPages = devicePages,
-                    devicePage = maxOf(current.devicePage, page),
-                    page = maxOf(current.page, page),
+                    devicePage = DevicePaging.devicePageAfter(current.devicePage, page),
+                    page = DevicePaging.pageAfter(current.page, page, hasServerRecords = serverRecords.isNotEmpty()),
                     totalPages = maxOf(current.serverTotalPages, devicePages),
                     totalRecords = totalRecordEstimate()
                 )
