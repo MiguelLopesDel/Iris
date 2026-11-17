@@ -3,6 +3,15 @@
 #
 #   ./iris dev [args]            local sandbox with hot reload (scripts/dev.py)
 #   ./iris check                 lint and the standard test suite
+#
+#   Work locally, test on the phone, open PRs later:
+#   ./iris try                   put THIS working copy (committed or not, any branch)
+#                                on staging over ssh; GitHub is not involved
+#   ./iris save "type(scope): summary" [--body TEXT]
+#                                commit the current changes as one logical change on a
+#                                local branch (made from the message when on main)
+#   ./iris ship                  later: push that branch and open its PR
+#
 #   ./iris ship "type(scope): summary" [--body TEXT] [--no-check]
 #                                commit everything, push a branch, open a PR that
 #                                merges itself once CI is green; back on main
@@ -120,6 +129,57 @@ ship() {
     say "back on main; the next change can start now"
 }
 
+save() {
+    local message="" body="" branch
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --body) body="${2:?--body needs text}"; shift 2 ;;
+            -*) die "unknown option: $1" ;;
+            *) [ -z "$message" ] || die "give the message once, in quotes"; message="$1"; shift ;;
+        esac
+    done
+    [ -n "$message" ] || die "usage: ./iris save \"fix(scope): summary\""
+    branch="$(branch_for "$message")"
+    clean_tree && die "nothing to save: no changes"
+    if [ "$(git branch --show-current)" = main ]; then
+        git switch --quiet -c "$branch"
+        say "branch $branch (later: ./iris ship)"
+    fi
+    git add -A
+    if [ -n "$body" ]; then git commit --quiet -m "$message" -m "$body"; else git commit --quiet -m "$message"; fi
+    say "saved: $(git log -1 --format='%h %s')"
+}
+
+snapshot() {
+    # A commit of the working copy as it is now, untracked files included and
+    # ignored ones left out, without touching the branch, the index or the stash.
+    local index tree
+    index="$(mktemp)"
+    rm -f "$index"
+    GIT_INDEX_FILE="$index" git add -A
+    tree="$(GIT_INDEX_FILE="$index" git write-tree)"
+    rm -f "$index"
+    if clean_tree; then
+        git rev-parse HEAD
+    else
+        git -c user.name="Iris try" -c user.email="try@localhost" \
+            commit-tree "$tree" -p HEAD -m "try: $(git branch --show-current) + uncommitted changes"
+    fi
+}
+
+try_on_staging() {
+    [ "$#" -eq 0 ] || die "try takes no arguments"
+    [ -n "${IRIS_SERVER:-}" ] || die "set IRIS_SERVER (an ssh host) in .iris.local"
+    local commit dir
+    commit="$(snapshot)"
+    dir="$(install_dir staging)"
+    say "sending $(git branch --show-current) @ $(git rev-parse --short "$commit") to staging"
+    # Straight to the staging checkout over ssh, under a ref of its own; the
+    # pre-push hook guards what goes public and this never leaves the server.
+    git push --quiet --no-verify --force "$IRIS_SERVER:$dir" "$commit:refs/staging/try"
+    remote staging "./scripts/staging.sh update --ref refs/staging/try"
+}
+
 sync() {
     clean_tree || die "commit or stash your changes first"
     git switch --quiet main
@@ -184,6 +244,8 @@ case "${1:-help}" in
         exec ./scripts/run_tests.sh
         ;;
     ship) shift; ship "$@" ;;
+    save) shift; save "$@" ;;
+    try) shift; try_on_staging "$@" ;;
     sync) sync ;;
     release) shift; release "$@" ;;
     staging) shift; remote staging "./scripts/staging.sh update$(quote_args "$@")" ;;

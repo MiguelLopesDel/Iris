@@ -19,6 +19,8 @@ pastas de `.iris.local` (ignorado pelo git, ver `./iris help`).
 | conferir lint e testes antes de enviar | `./iris check` |
 | enviar uma mudança | `./iris ship "fix(ui): summary"` — branch, commit, PR com merge automático quando a CI passa, e volta para a `main` |
 | atualizar a `main` e apagar branches já mescladas | `./iris sync` |
+| testar o que está na minha máquina, sem commit nem GitHub | `./iris try` |
+| guardar uma mudança pronta como commit local | `./iris save "fix(ui): summary"` |
 | testar a `main` (e PRs abertos) no servidor | `./iris staging [--pr N]` |
 | lançar uma versão | `./iris release X.Y.Z` duas vezes: a primeira abre o PR do bump e das notas; a segunda, depois do merge, cria a tag |
 | atualizar a produção | `./iris deploy` (faz backup antes) |
@@ -26,6 +28,25 @@ pastas de `.iris.local` (ignorado pelo git, ver `./iris help`).
 
 Um PR por assunto continua valendo, mas não é preciso esperar um terminar para
 começar o próximo: o `ship` deixa o merge com a CI e devolve você à `main`.
+
+### Trabalhar no local e abrir o PR depois
+
+Para fazer várias coisas seguidas, testar no celular e só então ir ao GitHub:
+
+1. Altere o código e mande a cópia de trabalho para a homologação, com ou sem
+   commit: `./iris try`. Ela vai por ssh direto ao checkout da homologação,
+   sem passar pelo GitHub, e não mexe na sua branch nem no índice. Teste no
+   app `lab`, ajuste e repita.
+2. Quando uma mudança estiver boa, guarde-a como um commit:
+   `./iris save "fix(ui): summary"`. Na `main`, ele cria a branch a partir da
+   mensagem; nas seguintes, empilha na mesma branch. O `try` continua mandando
+   tudo junto.
+3. No fim, `./iris ship` envia a branch e abre o PR com os commits guardados.
+   Para PRs separados, use uma branch por assunto (`git switch main` antes do
+   `save` do assunto novo).
+
+A homologação fica com a cópia enviada até o próximo `try` ou `staging`;
+`./scripts/staging.sh rollback`, no servidor, volta para a anterior.
 
 ## Ambientes
 
