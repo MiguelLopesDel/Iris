@@ -244,9 +244,14 @@ class SyncUploadManager(
         if (instanceId.isNullOrBlank()) return 0
         val state = dbHelper.scanState(accountKey)
         if (state.serverInstanceId == instanceId) return 0
-        val requeued = dbHelper.requeueForNewServer(accountKey)
-        dbHelper.saveScanState(accountKey, state.copy(serverInstanceId = instanceId))
-        return requeued
+        // Not under a running pass: the periodic and the one-time worker are
+        // separate, and requeuing reset rows that pass was still sending, which
+        // its next offset write then put back as UPLOADING with a dropped id.
+        return uploadMutex.withLock {
+            val requeued = dbHelper.requeueForNewServer(accountKey)
+            dbHelper.saveScanState(accountKey, dbHelper.scanState(accountKey).copy(serverInstanceId = instanceId))
+            requeued
+        }
     }
 
     private suspend fun hash(uri: Uri): MediaPayloadSource.Content {
