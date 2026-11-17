@@ -175,9 +175,10 @@ internal class ResumableUploadTransfer(
 
             val uri = Uri.parse(job.localUri)
             var conflicts = 0
+            val progress = ChunkProgress()
             while (offset < job.byteSize) {
                 context.ensureSession()
-                val bytesToRead = min(job.byteSize - offset, chunkSize.toLong())
+                val bytesToRead = min(job.byteSize - offset, ChunkProgress.usableChunkSize(chunkSize).toLong())
                 // The same version the declared hash was computed from.
                 val body = context.mediaPayloadSource.createChunkRequestBody(uri, offset, bytesToRead, job.hashedOriginal)
                 val finishRequest = observer.beginPayloadRequest()
@@ -190,6 +191,12 @@ internal class ResumableUploadTransfer(
                 when {
                     response.isSuccessful -> {
                         val nextOffset = response.body()?.offset ?: (offset + bytesToRead)
+                        if (!progress.accept(offset, nextOffset)) {
+                            // Accepted but never moving on: sending the same
+                            // chunk again forever kept the pass from ending.
+                            db.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                            return@withContext ItemResult.RETRY
+                        }
                         val acknowledged = (nextOffset - offset).coerceIn(0L, bytesToRead)
                         offset = nextOffset
                         conflicts = 0
