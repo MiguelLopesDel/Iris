@@ -363,6 +363,9 @@ def test_install_hands_the_library_to_a_system_user(tmp_path: Path) -> None:
     chowned = [line.rsplit(" ", 1)[1] for line in _sudo(tmp_path) if line.startswith("sudo chown -R 2000:2000 ")]
     assert sorted(Path(path).name for path in chowned) == ["backups", "data", "media"]
     assert "belong to iris (2000:2000)" in result.stdout
+    # The model caches written by the previous user follow.
+    assert any("--user 0:0 --entrypoint chown iris -R 2000:2000 /home/iris/.cache/huggingface" in line
+               for line in _docker(tmp_path))
 
 
 def test_staging_gets_its_own_system_user(tmp_path: Path) -> None:

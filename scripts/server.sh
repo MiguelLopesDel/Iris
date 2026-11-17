@@ -127,6 +127,9 @@ harden_files() {
         as_root chown -R "$uid:$gid" "$dir"
         as_root chmod 700 "$dir"
     done
+    # The model caches are named volumes, filled so far by the previous user.
+    docker compose run --rm --no-deps --user 0:0 --entrypoint chown iris -R "$uid:$gid" \
+        /home/iris/.cache/huggingface /home/iris/.cache/whisper /home/iris/.insightface /home/iris/.EasyOCR
     echo "Data, media and backups belong to $user ($uid:$gid), mode 700; .env is 600."
 }
 
