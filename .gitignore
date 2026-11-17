@@ -150,6 +150,8 @@ tmp_test_images/
 # Sidecars de embedding: derivados do catálogo, reconstruídos quando divergem.
 *.vec
 .iris-dev/
+# ./iris server settings (host, folders): personal, never versioned.
+.iris.local
 .iris-load/
 .iris-perf/
 /.tools/

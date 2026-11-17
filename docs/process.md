@@ -7,6 +7,26 @@ tag), que barreira cada uma precisa passar e onde entra cada teste.
 > Itens marcados **(a construir)** descrevem o processo-alvo e ainda não têm
 > ferramenta pronta. Até existirem, siga o restante e faça esses passos à mão.
 
+## O ciclo em comandos
+
+Tudo abaixo é o que este documento descreve, já automatizado. Rode na sua
+máquina, na raiz do checkout; os comandos de servidor leem o host ssh e as
+pastas de `.iris.local` (ignorado pelo git, ver `./iris help`).
+
+| Quero… | Comando |
+|---|---|
+| desenvolver com dados sintéticos | `./iris dev` |
+| conferir lint e testes antes de enviar | `./iris check` |
+| enviar uma mudança | `./iris ship "fix(ui): summary"` — branch, commit, PR com merge automático quando a CI passa, e volta para a `main` |
+| atualizar a `main` e apagar branches já mescladas | `./iris sync` |
+| testar a `main` (e PRs abertos) no servidor | `./iris staging [--pr N]` |
+| lançar uma versão | `./iris release X.Y.Z` duas vezes: a primeira abre o PR do bump e das notas; a segunda, depois do merge, cria a tag |
+| atualizar a produção | `./iris deploy` (faz backup antes) |
+| ver se está tudo de pé | `./iris status` |
+
+Um PR por assunto continua valendo, mas não é preciso esperar um terminar para
+começar o próximo: o `ship` deixa o merge com a CI e devolve você à `main`.
+
 ## Ambientes
 
 Três ambientes, cada um com um dono e um tipo de dado. Nenhum deles se mistura com
@@ -125,7 +145,7 @@ cujo `version` em `pyproject.toml` é `X.Y.Z`. Para isso, um PR
 
 ### Produção
 
-- Servidor: `./scripts/server.sh update`. Ele faz backup, coloca o checkout na tag
+- Servidor: `./iris deploy` (roda `./scripts/server.sh update` lá). Ele faz backup, coloca o checkout na tag
   do release e sobe a imagem dessa mesma versão.
 - Celular: o APK do release, instalado por cima do anterior (mesma chave de
   assinatura, então login e dados ficam).
