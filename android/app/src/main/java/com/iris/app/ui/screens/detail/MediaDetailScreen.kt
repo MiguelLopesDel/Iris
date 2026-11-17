@@ -156,6 +156,10 @@ internal fun MediaDetailScreen(
     // The current item, when it is only on the phone.
     val deviceUri = (current as? ViewerItem.Device)?.uri
     val deviceDetails by produceState<DeviceMediaDetails?>(initialValue = null, deviceUri) {
+        // produceState keeps the previous value when its key changes: without
+        // this, swiping to another phone photo showed (and shared with) the
+        // previous one's name and type until the new read finished.
+        value = null
         value = deviceUri?.let { uri ->
             withContext(Dispatchers.IO) { DeviceMediaDetails.read(context.contentResolver, Uri.parse(uri)) }
         }
