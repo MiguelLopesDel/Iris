@@ -28,6 +28,11 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
     private val _uiState = MutableStateFlow(SpacesUiState())
     val uiState: StateFlow<SpacesUiState> = _uiState.asStateFlow()
 
+    // The latest list request wins: an older one landing after a group was
+    // created replaced the list without it. Declared before init, which calls
+    // load(): a property initialised after it would still be null there.
+    private val listJob = LatestJob()
+
     init {
         val initialSession = repository.credentialsStore.sessionIdentity.value
         if (initialSession != null) load()
@@ -47,7 +52,7 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
 
     fun load() {
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
-        viewModelScope.launch {
+        listJob.launch(viewModelScope) {
             _uiState.update { it.copy(isLoading = true, error = null) }
             repository.getSpaces()
                 .onSuccess { spaces ->
@@ -71,7 +76,9 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
             repository.createSpace(name)
                 .onSuccess { space ->
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
-                    _uiState.update { it.copy(spaces = listOf(space) + it.spaces) }
+                    _uiState.update { it.copy(spaces = listOf(space) + it.spaces.filter { s -> s.id != space.id }) }
+                    // Replaces a list request started before the group existed.
+                    load()
                     onCreated(space)
                 }
                 .onFailure { e ->
