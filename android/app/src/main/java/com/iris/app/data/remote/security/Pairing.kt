@@ -166,7 +166,11 @@ class PairingConnector(
                 outcomes += AddressOutcome.Skipped(address, "HTTP sem criptografia não foi permitido")
                 continue
             }
-            val current = security.securityFor(origin).copy(identityKeySha256 = code.keySha256)
+            // A code without a key (from an older server, or one stripped of
+            // it) keeps the identity already pinned: it replaced it with
+            // nothing, and the app then trusted any key at that address.
+            val stored = security.securityFor(origin)
+            val current = stored.copy(identityKeySha256 = code.keySha256 ?: stored.identityKeySha256)
             val candidate = when {
                 https && authority != null ->
                     current.copy(trustMode = TrustMode.PINNED, pinnedCertificates = listOf(authority))
