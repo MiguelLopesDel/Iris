@@ -237,6 +237,20 @@ def list_users(path: Path) -> list[IrisUser]:
     return [_from_row(row) for row in rows]
 
 
+def recently_active_user_ids(path: Path, limit: int) -> list[int]:
+    """Accounts with a live device or browser session, most recently seen first."""
+    if not path.exists() or limit <= 0:
+        return []
+    _ensure_schema(path)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM devices WHERE revoked_at IS NULL "
+            "GROUP BY user_id ORDER BY MAX(last_seen_at) DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [int(row["user_id"]) for row in rows]
+
+
 # Read connections for the authentication hot path: one per thread and per
 # database file, kept open. Opening and configuring a connection cost far more
 # than the indexed read itself, on every authenticated request.

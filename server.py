@@ -113,6 +113,7 @@ from core.users_db import (
     has_users,
     list_users,
     read_user,
+    recently_active_user_ids,
     resolve_device_session,
 )
 from core.web_enrichment import (
@@ -731,6 +732,18 @@ async def lifespan(app: FastAPI):
             app.state.thumbnail_warmer.start(
                 startup_delay=float(os.environ.get("IRIS_THUMBNAIL_WARMUP_DELAY", "60"))
             )
+        if os.environ.get("IRIS_BACKEND_PRELOAD", "1").lower() not in {"0", "false", "no"}:
+            # The first request after a restart would otherwise load the whole
+            # catalog and the search model while the person waits (a minute on
+            # a large library on a cold disk).
+            registry = app.state.backend_registry
+            threading.Thread(
+                target=lambda: registry.preload(
+                    recently_active_user_ids(app.state.users_db_path, registry.cache_size)
+                ),
+                name="iris-backend-preload",
+                daemon=True,
+            ).start()
         from core.sync_recovery import settle_interrupted_batches, start_pending_upload_recovery
 
         # Before the app accepts requests: a device re-sending a batch upload
