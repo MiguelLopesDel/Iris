@@ -256,3 +256,33 @@ def test_a_heart_in_the_viewer_puts_the_photo_under_favourites(server) -> None:
         sync_api.expect(tiles).to_have_count(1)
         sync_api.expect(tiles.first).to_have_attribute("title", "IMG_0029.jpg")
         browser.close()
+
+
+def test_the_home_page_shows_this_day_in_earlier_years(server) -> None:
+    """The seeded photos were taken on 14 November 2023 (UTC)."""
+    import datetime as dt
+
+    base, _media = server
+    with sync_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch()
+        except Exception as exc:  # browser binaries missing
+            if REQUIRED:
+                raise
+            pytest.skip(f"Chromium unavailable: {exc}")
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        taken = dt.datetime.fromtimestamp(1.7e9 + 29)
+        page.clock.set_fixed_time(taken.replace(year=taken.year + 2, hour=12))
+        page.goto(base + "/login")
+        page.fill("input[name=username]", "ana")
+        page.fill("input[name=password]", PASSWORD)
+        page.click("button[type=submit]")
+        page.wait_for_url(base + "/")
+        page.evaluate("window.location.hash = 'home'")
+
+        section = page.locator("#home-memories-section")
+        sync_api.expect(section).to_be_visible()
+        sync_api.expect(section.locator(".home-memory-year")).to_have_text(f"Há 2 anos · {taken.year}")
+        section.locator(".home-recent-card").first.click()
+        sync_api.expect(page.locator("#detail-aside .detail-meta")).to_contain_text("IMG_00")
+        browser.close()

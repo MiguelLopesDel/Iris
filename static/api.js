@@ -205,6 +205,11 @@ export async function fetchFavorites(page = 1, perPage = 60) {
   return apiGet('/api/favorites', { page, per_page: perPage });
 }
 
+/** Earlier years' media from this date; `date` is the viewer's own day (YYYY-MM-DD). */
+export async function fetchOnThisDay(date, perYear = 12) {
+  return apiGet('/api/records/on-this-day', { date, per_year: perYear });
+}
+
 export async function fetchRecords(page = 1, perPage = 24, sortBy = 'importacao', sortAsc = 0, mediaType = 'all', collectionIds = '', conceptIds = '') {
   return apiGet('/api/records', {
     page, per_page: perPage, sort_by: sortBy, sort_asc: sortAsc,
