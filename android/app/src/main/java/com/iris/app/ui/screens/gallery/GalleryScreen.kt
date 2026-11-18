@@ -48,8 +48,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -92,7 +90,6 @@ import com.iris.app.data.model.CloudConnectionState
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.CloudSyncNotice
 import com.iris.app.ui.components.MediaCard
-import com.iris.app.ui.components.ServerStatusBadge
 import com.iris.app.ui.theme.IrisOnAccent
 import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisBackground
@@ -280,34 +277,16 @@ fun GalleryScreen(
             }
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Iris",
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        ServerStatusBadge(
-                            serverInfo = uiState.serverInfo,
-                            isConnecting = uiState.isServerChecking,
-                            isServerOnline = uiState.isServerOnline,
-                            totalRecords = if (uiState.totalRecords > 0) uiState.totalRecords else uiState.records.size,
-                            isDeviceLoggedIn = uiState.isDeviceLoggedIn,
-                            onClick = onBackupClick
-                        )
-                    }
-                },
-                actions = {
-                    // Pull to refresh already reloads; the one action left is the
-                    // answer to "is everything backed up?".
-                    BackupStatusButton(
+                    // The backup's state in words, with the library's size: what a
+                    // person wants to know when opening the app.
+                    BackupStatusPill(
                         state = backupState(
                             signedIn = uiState.isDeviceLoggedIn,
                             serverOnline = uiState.isServerOnline,
                             connectionState = uiState.cloudSyncStatus.connectionState,
                             syncError = uiState.cloudSyncStatus.syncError,
                         ),
+                        totalItems = if (uiState.totalRecords > 0) uiState.totalRecords else uiState.records.size,
                         onClick = onBackupClick,
                     )
                 },
@@ -323,42 +302,6 @@ fun GalleryScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Media type filter chips
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = uiState.mediaType == "all",
-                    onClick = { viewModel.setMediaType("all") },
-                    label = { Text("Todas") },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccent,
-                        selectedLabelColor = IrisOnAccent
-                    )
-                )
-                FilterChip(
-                    selected = uiState.mediaType == "image",
-                    onClick = { viewModel.setMediaType("image") },
-                    label = { Text("Imagens") },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccent,
-                        selectedLabelColor = IrisOnAccent
-                    )
-                )
-                FilterChip(
-                    selected = uiState.mediaType == "video",
-                    onClick = { viewModel.setMediaType("video") },
-                    label = { Text("Vídeos") },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = IrisAccent,
-                        selectedLabelColor = IrisOnAccent
-                    )
-                )
-            }
-
             if (!uiState.deviceMediaPermissionGranted) {
                 TextButton(onClick = { mediaPermissionLauncher.launch(requestedMediaPermissions) }) {
                     Text("Mostrar fotos deste aparelho")

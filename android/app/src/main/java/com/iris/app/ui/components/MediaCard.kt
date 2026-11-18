@@ -2,6 +2,7 @@ package com.iris.app.ui.components
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -162,12 +163,15 @@ fun MediaCard(
                 }
             }
 
-            OriginBadge(
-                origin = origin,
-                modifier = Modifier
-                    .padding(6.dp)
-                    .align(Alignment.TopEnd)
-            )
+            // While selecting, the corner holds the selection mark instead.
+            if (selected == null) {
+                OriginBadge(
+                    origin = origin,
+                    modifier = Modifier
+                        .padding(6.dp)
+                        .align(Alignment.TopEnd)
+                )
+            }
         }
     }
 }
@@ -199,10 +203,15 @@ private fun OriginBadge(origin: MediaOrigin, modifier: Modifier = Modifier) {
     // Dimmed: the ordinary synced state, and a choice the user made.
     val quiet = origin == MediaOrigin.ON_DEVICE || origin == MediaOrigin.NOT_IN_BACKUP
 
+    // A tap says what the icon means: few people know these symbols.
+    val context = LocalContext.current
     Box(
         modifier = modifier
             .size(24.dp)
-            .background(Color.Black.copy(alpha = if (quiet) 0.35f else 0.6f), CircleShape),
+            .background(Color.Black.copy(alpha = if (quiet) 0.35f else 0.6f), CircleShape)
+            .clickable(onClickLabel = description) {
+                android.widget.Toast.makeText(context, description, android.widget.Toast.LENGTH_SHORT).show()
+            },
         contentAlignment = Alignment.Center
     ) {
         Icon(
