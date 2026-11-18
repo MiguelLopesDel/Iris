@@ -487,6 +487,22 @@ class GalleryViewModel(
         }
     }
 
+    /** Sends the chosen items to a shared group, one by one; [onDone] gets a summary to show. */
+    fun addToSpace(spaceId: Int, spaceName: String, dbIds: List<Int>, onDone: (String) -> Unit) {
+        if (dbIds.isEmpty()) return
+        viewModelScope.launch {
+            var created = 0
+            var already = 0
+            var failed = 0
+            for (dbId in dbIds) {
+                repository.addToSpace(spaceId, dbId)
+                    .onSuccess { if (it.created) created++ else already++ }
+                    .onFailure { failed++ }
+            }
+            onDone(GallerySelection.addedSummary(spaceName, created, already, failed))
+        }
+    }
+
     /** Moves the chosen items to the server's trash; [onDone] gets a message to show. */
     fun moveToTrash(dbIds: List<Int>, onDone: (String) -> Unit) {
         if (dbIds.isEmpty()) return

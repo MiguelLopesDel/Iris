@@ -32,6 +32,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import com.iris.app.ui.screens.spaces.SpacePickerDialog
+import androidx.compose.material.icons.filled.Add
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Delete
@@ -204,6 +206,7 @@ fun GalleryScreen(
     // items take part: one only on this phone has nothing to trash or fetch.
     var selected by remember { mutableStateOf(emptySet<Int>()) }
     var confirmingTrash by remember { mutableStateOf(false) }
+    var pickingSpace by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val apiClient = (context.applicationContext as com.iris.app.IrisApplication).apiClient
     val toast: (String) -> Unit = { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
@@ -212,6 +215,18 @@ fun GalleryScreen(
         uiState.records.filter { it.index in selected && it.deviceUri == null && it.dbId != null }
     }
     BackHandler(enabled = selected.isNotEmpty()) { selected = emptySet() }
+
+    if (pickingSpace) {
+        SpacePickerDialog(
+            repository = (context.applicationContext as com.iris.app.IrisApplication).irisRepository,
+            onDismiss = { pickingSpace = false },
+            onPick = { space ->
+                pickingSpace = false
+                viewModel.addToSpace(space.id, space.name, selectedRecords.mapNotNull { it.dbId }, toast)
+                selected = emptySet()
+            },
+        )
+    }
 
     if (confirmingTrash) {
         AlertDialog(
@@ -251,6 +266,9 @@ fun GalleryScreen(
                             })
                         }) {
                             Icon(Icons.Outlined.Share, contentDescription = "Compartilhar")
+                        }
+                        IconButton(onClick = { pickingSpace = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Adicionar a um grupo")
                         }
                         IconButton(onClick = { confirmingTrash = true }) {
                             Icon(Icons.Outlined.Delete, contentDescription = "Mover para a lixeira")
