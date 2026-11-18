@@ -38,8 +38,17 @@ def test_the_image_decides_when_there_is_no_text():
         dtype=np.float32,
     )
     present = np.array([True, True, True, True])
+    some_text = {i: "texto qualquer lido na imagem" for i in range(4)}
 
-    assert classify(matrix, present, _prompts(), {}) == {0: "identidade", 1: "outros"}
+    assert classify(matrix, present, _prompts(), some_text) == {0: "identidade", 1: "outros"}
+
+
+def test_a_picture_without_text_is_not_a_document():
+    """A portrait or an icon can look formal; a document always has text."""
+    matrix = np.array([[0.9, 0.1, 0.0], [0.9, 0.1, 0.0]], dtype=np.float32)
+    texts = {1: "NOME FILIACAO DATA DE NASCIMENTO"}
+
+    assert classify(matrix, np.array([True, True]), _prompts(), texts) == {1: "identidade"}
 
 
 def test_text_wins_over_the_image_and_reaches_items_without_one():
@@ -67,5 +76,6 @@ def test_prompts_are_built_for_every_kind_and_contrast():
 def test_rows_need_not_be_normalised():
     matrix = np.array([[9.0, 1.0, 0.0]], dtype=np.float32)
 
-    assert classify(matrix, np.array([True]), _prompts(), {}) == {0: "identidade"}
+    texts = {0: "texto qualquer lido na imagem"}
+    assert classify(matrix, np.array([True]), _prompts(), texts) == {0: "identidade"}
 

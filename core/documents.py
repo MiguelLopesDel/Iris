@@ -131,13 +131,22 @@ CONTRAST_PROMPTS: tuple[str, ...] = (
     "a landscape photo",
     "a cartoon or anime drawing",
     "a photo of a pet",
+    "a portrait photo of a person",
+    "an emoji or an icon",
+    "a logo on a plain background",
 )
 
 # The lowest similarity a document prompt must reach at all, so that a picture
 # unlike everything (a black frame) is not called a document by elimination.
 MIN_SCORE = 0.17
-# How much more a document prompt must score than the best contrast.
-MARGIN = 0.01
+# How much more a document prompt must score than the best contrast. Measured
+# on a real library: at 0.01 portraits and icons slipped in; at 0.02, with
+# readable text required as well, the picks were camera shots of paper and
+# screenshots of apps.
+MARGIN = 0.02
+# A document has text on it. Requiring some OCR text keeps out what merely
+# looks formal -- a portrait, an emoji, a logo -- which the image alone let in.
+MIN_TEXT = 20
 
 _BY_KEY = {kind.key: kind for kind in KINDS}
 _COMPILED = [(kind.key, [re.compile(p) for p in kind.patterns]) for kind in KINDS]
@@ -202,7 +211,8 @@ def classify(
 
     ``texts`` holds each position's OCR text. Its cues are specific enough to
     settle a kind on their own, whatever the picture looks like -- a Pix
-    receipt is a screenshot to the eye. For the rest, the image decides: a
+    receipt is a screenshot to the eye. For the rest that carry some text, the
+    image decides: a
     embedding row (where ``present``; any scale) that looks more like a
     document than like any contrast is one, of the kind of its closest prompt.
     """
@@ -225,6 +235,11 @@ def classify(
     mask = (best_doc >= MIN_SCORE) & (best_doc - best_contrast >= MARGIN)
     if present is not None:
         mask &= present
+    readable = np.zeros(len(mask), dtype=bool)
+    for position, text in texts.items():
+        if 0 <= position < len(readable) and len(text.strip()) >= MIN_TEXT:
+            readable[position] = True
+    mask &= readable
     closest = doc_scores.argmax(axis=1)
     for position in np.flatnonzero(mask).tolist():
         result.setdefault(position, str(owners[closest[position]]))
