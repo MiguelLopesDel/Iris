@@ -310,11 +310,10 @@ class IrisEngine:
         # vectors in a list first would have kept a second copy of every
         # embedding alive until the stacking finished, and a peak is not undone
         # by freeing it: the allocator keeps the arena.
-        record_count = int(conn.execute("SELECT COUNT(*) FROM memes").fetchone()[0])
-        embedded_count = self._embedding_count(conn)
-        described_count = int(
-            conn.execute("SELECT COUNT(*) FROM memes WHERE desc_embedding IS NOT NULL").fetchone()[0]
-        )
+        profile = vector_sidecar.catalogue_profile(conn)
+        record_count = profile.records
+        embedded_count = profile.embedded
+        described_count = profile.described
         # A sidecar only maps the dense case. When some media has not been
         # embedded yet, build aligned zero-filled matrices for the vector-bearing
         # rows while keeping every media row in the gallery catalog.
@@ -331,12 +330,8 @@ class IrisEngine:
         mapped_image = image_matrix is not None
         mapped_desc = desc_matrix is not None
         # The width most vectors have; a row of another width counts as not embedded.
-        image_width = (
-            image_matrix.shape[1] if mapped_image else vector_sidecar.dominant_width(conn, "embedding")
-        )
-        desc_width = (
-            desc_matrix.shape[1] if mapped_desc else vector_sidecar.dominant_width(conn, "desc_embedding")
-        )
+        image_width = image_matrix.shape[1] if mapped_image else profile.image_width
+        desc_width = desc_matrix.shape[1] if mapped_desc else profile.desc_width
         has_desc: list[bool] = []
         for row in rows:
             position = len(arquivos)
@@ -441,16 +436,6 @@ class IrisEngine:
         if expected is not None and mapped.shape[0] != expected:
             return None
         return mapped
-
-    @staticmethod
-    def _embedding_count(conn) -> int:
-        try:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM memes WHERE embedding IS NOT NULL"
-            ).fetchone()
-            return int(row[0]) if row else 0
-        except Exception:
-            return 0
 
     def invalidate_table_cache(self) -> None:
         self.db.invalidate_table_cache()
