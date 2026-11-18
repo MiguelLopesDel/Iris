@@ -67,6 +67,10 @@ class FileDurabilityService:
         if not request.files and not request.directories:
             request.future.set_result(None)
             return request.future
+        # Running from here on: cancel() is refused, so a caller that gives up
+        # (asyncio cancels the wrapped Future from its own thread) can never
+        # race the coordinator's set_result.
+        request.future.set_running_or_notify_cancel()
         with self._state_lock:
             if self._stopping:
                 raise RuntimeError("file durability service is stopping")
@@ -113,7 +117,14 @@ class FileDurabilityService:
                     break
                 group.append(following)
                 files += len(following.files)
-            self._sync_group(group)
+            try:
+                self._sync_group(group)
+            except BaseException as exc:
+                # The coordinator outlives any one group: if it died, every
+                # later request would wait forever.
+                for request in group:
+                    if not request.future.done():
+                        request.future.set_exception(exc)
             if stop_after:
                 return
 

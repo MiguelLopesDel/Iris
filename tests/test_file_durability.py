@@ -133,3 +133,57 @@ def test_a_missing_file_fails_only_the_request_that_owns_it(tmp_path: Path, monk
         hold.set()
         service.stop()
     assert grouped[1] == ["good0.bin", "good1.bin", "removed.bin"]
+
+
+def test_a_queued_request_cannot_be_cancelled_under_the_coordinator(tmp_path: Path, monkeypatch):
+    """asyncio cancels the Future from another thread when an upload is dropped.
+
+    A cancel landing between the coordinator's done() check and set_result
+    raised InvalidStateError there and killed the thread, so every later
+    upload waited forever. A queued request is marked running, so cancel()
+    is refused and only the awaiting side gives up.
+    """
+    hold, syncing = threading.Event(), threading.Event()
+
+    def blocked(path):
+        syncing.set()
+        hold.wait(timeout=5)
+
+    monkeypatch.setattr(durability_module, "_fsync_file", blocked)
+    monkeypatch.setattr(durability_module, "fsync_directory", lambda path: None)
+    service = FileDurabilityService(IngestPolicy(durability_window_s=0))
+    first, second = _files(tmp_path, 2)
+    try:
+        dropped = service.flush([first])
+        assert syncing.wait(timeout=5)
+        assert dropped.cancel() is False
+        hold.set()
+        dropped.result(timeout=5)
+        service.flush([second]).result(timeout=5)
+    finally:
+        hold.set()
+        service.stop()
+
+
+def test_an_unexpected_error_fails_its_group_and_the_service_keeps_going(
+    tmp_path: Path, monkeypatch
+):
+    original = FileDurabilityService._sync_group
+    calls = []
+
+    def flaky(self, group):
+        calls.append(group)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        original(self, group)
+
+    monkeypatch.setattr(durability_module, "_fsync_file", lambda path: None)
+    monkeypatch.setattr(FileDurabilityService, "_sync_group", flaky)
+    service = FileDurabilityService(IngestPolicy(durability_window_s=0))
+    first, second = _files(tmp_path, 2)
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            service.flush([first]).result(timeout=5)
+        service.flush([second]).result(timeout=5)
+    finally:
+        service.stop()
