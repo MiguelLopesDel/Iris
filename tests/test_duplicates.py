@@ -169,3 +169,56 @@ class BestPairMergeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _make_db(path: Path, rows: list[tuple[str, str, list[float]]]) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE memes (id INTEGER PRIMARY KEY AUTOINCREMENT, arquivo TEXT UNIQUE,"
+        " caminho TEXT, texto_extraido TEXT, descricao_ia TEXT, tags TEXT,"
+        " content_hash TEXT, embedding BLOB, desc_embedding BLOB)"
+    )
+    for name, content_hash, vector in rows:
+        blob = np.array(vector, dtype=np.float32).tobytes()
+        conn.execute(
+            "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia, tags,"
+            " content_hash, embedding, desc_embedding) VALUES (?, ?, '', '', '', ?, ?, ?)",
+            (name, name, content_hash, blob, blob),
+        )
+    conn.commit()
+    conn.close()
+
+
+class IdentityOnlyMergeTests(unittest.TestCase):
+    """Groups formed by identity are not joined afterwards by resemblance."""
+
+    def _groups(self, rows):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "memes.db"
+            _make_db(db_path, rows)
+            engine = IrisEngine(db_path=db_path, load_model=False)
+            groups = find_duplicate_groups(engine, require_existing_files=False)
+            return sorted(sorted(item.arquivo for item in group.items) for group in groups)
+
+    def test_unrelated_audio_groups_stay_apart(self) -> None:
+        """Every audio-only group used to be merged into one, whatever it held."""
+        groups = self._groups([
+            ("song1.mp3", "hash-1", [1.0, 0.0, 0.0]),
+            ("song1-copy.mp3", "hash-1", [1.0, 0.0, 0.0]),
+            ("song2.mp3", "hash-2", [0.0, 1.0, 0.0]),
+            ("song2-copy.mp3", "hash-2", [0.0, 1.0, 0.0]),
+        ])
+
+        self.assertEqual(
+            groups, [["song1-copy.mp3", "song1.mp3"], ["song2-copy.mp3", "song2.mp3"]]
+        )
+
+    def test_similar_looking_groups_are_not_joined_by_default(self) -> None:
+        groups = self._groups([
+            ("a.jpg", "hash-a", [1.0, 0.0, 0.0]),
+            ("a-copy.jpg", "hash-a", [1.0, 0.0, 0.0]),
+            ("b.jpg", "hash-b", [0.999, 0.02, 0.0]),
+            ("b-copy.jpg", "hash-b", [0.999, 0.02, 0.0]),
+        ])
+
+        self.assertEqual(groups, [["a-copy.jpg", "a.jpg"], ["b-copy.jpg", "b.jpg"]])

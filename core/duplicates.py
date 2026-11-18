@@ -200,7 +200,7 @@ def find_duplicate_groups(
                 continue
             left, right = sorted((row_local, nb_local))
             pair_scores[(left, right)] = max(score, pair_scores.get((left, right), -1.0))
-            if include_embedding_similarity:
+            if include_embedding_similarity and mt_row != "audio":
                 dsu.union(left, right)
 
     grouped: dict[int, list[int]] = defaultdict(list)
@@ -284,8 +284,15 @@ def find_duplicate_groups(
     #     twin in another cluster can fall outside that window and the clusters never get
     #     linked — even though, by the tool's own threshold, they are duplicates.
     # matrix is the full normalized engine matrix; item.index values are engine indices.
+    # Both criteria join groups by resemblance, so they only run when embedding
+    # similarity was asked for; otherwise two identity groups that merely look
+    # alike were fused, undoing the identity-only default above.
     prev_count = -1
-    while len(duplicate_groups) != prev_count and len(duplicate_groups) > 1:
+    while (
+        include_embedding_similarity
+        and len(duplicate_groups) != prev_count
+        and len(duplicate_groups) > 1
+    ):
         prev_count = len(duplicate_groups)
         duplicate_groups = _merge_by_centroid(duplicate_groups, matrix, threshold)
         duplicate_groups = _merge_by_best_pair(duplicate_groups, matrix, threshold)
@@ -348,22 +355,18 @@ def _merge_by_centroid(
     centroid_thresh = threshold * 0.97
     a_scores, a_neighbors = ai.search(centroids, k)
 
+    audio_only = [_all_audio_group(g) for g in groups]
     dsu = DisjointSet(n)
     for i, row in enumerate(a_neighbors):
         for j, nb in enumerate(row.tolist()):
             if nb < 0 or nb == i:
                 continue
+            # CLIP embeddings of audio files come from a placeholder or a
+            # garbage frame, so they say nothing about whether two sounds match.
+            if audio_only[i] or audio_only[nb]:
+                continue
             if float(a_scores[i][j]) >= centroid_thresh:
                 dsu.union(i, nb)
-
-    # Audio-only groups: unconditionally merge them all together.
-    # CLIP image embeddings are unreliable for audio files (based on a placeholder image
-    # or garbage frames from cv2 opening OGG OPUS files). All audio-only groups should
-    # be treated as potentially duplicate regardless of their centroid similarity.
-    audio_gis = [i for i, g in enumerate(groups) if _all_audio_group(g)]
-    if len(audio_gis) > 1:
-        for ai in audio_gis[1:]:
-            dsu.union(audio_gis[0], ai)
 
     return _apply_unions(groups, dsu, matrix)
 
@@ -471,7 +474,7 @@ def _merge_by_best_pair(
             if item_group[q] == gp:
                 continue
             # Never bridge different media types (image ≠ video ≠ audio).
-            if item_type[q] != item_type[p]:
+            if item_type[q] != item_type[p] or item_type[p] == "audio":
                 continue
             dsu.union(gp, item_group[q])
 
