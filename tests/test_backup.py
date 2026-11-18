@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import tarfile
+from pathlib import Path
 
 import numpy as np
 
@@ -100,7 +101,12 @@ def test_restore_mirror_removes_orphans(tmp_path):
     (data / "other_image.faiss").write_text("x")
     (data / "cat_image.faiss").write_text("keep")  # belongs to restored db → kept
 
-    res = backup.restore_snapshot(dest / info["id"], db_path=db, mode="mirror")
+    def trash(paths):
+        for path in paths:
+            Path(path).unlink()
+        return list(paths), []
+
+    res = backup.restore_snapshot(dest / info["id"], db_path=db, mode="mirror", trash=trash)
     assert "other.db" in res["removed"]
     assert not (data / "other.db").exists()
     assert (data / "cat_image.faiss").exists()  # not removed (same stem)
@@ -156,3 +162,60 @@ def test_export_media_streams_tar(tmp_path):
     with tarfile.open(out) as tar:
         names = set(tar.getnames())
     assert names == {"a.png", "sub/b.png"}
+
+
+def test_restore_keeps_the_replaced_catalog(tmp_path):
+    """Without auto-backup the previous catalog used to be overwritten for good."""
+    data = tmp_path / "data"
+    dest = tmp_path / "ext"
+    data.mkdir()
+    db = data / "cat.db"
+    _make_db(db, [("a.png", "a.png", "h1", 10)])
+    info = backup.catalog_snapshot(db, dest)
+    _make_db(data / "newer.db", [("a.png", "a.png", "h1", 10), ("b.png", "b.png", "h2", 20)])
+    (data / "newer.db").replace(db)
+
+    res = backup.restore_snapshot(dest / info["id"], db_path=db)
+
+    kept = Path(res["previous_db"])
+    assert kept.parent == data
+    assert sqlite3.connect(kept).execute("SELECT COUNT(*) FROM memes").fetchone()[0] == 2
+    assert sqlite3.connect(db).execute("SELECT COUNT(*) FROM memes").fetchone()[0] == 1
+
+
+def test_restore_mirror_trashes_instead_of_deleting(tmp_path):
+    data = tmp_path / "data"
+    dest = tmp_path / "ext"
+    data.mkdir()
+    db = data / "cat.db"
+    _make_db(db, [("a.png", "a.png", "h1", 10)])
+    info = backup.catalog_snapshot(db, dest)
+    (data / "other.db").write_text("x")
+    trashed = []
+
+    def trash(paths):
+        trashed.extend(paths)
+        for path in paths:
+            Path(path).unlink()
+        return list(paths), []
+
+    backup.restore_snapshot(dest / info["id"], db_path=db, mode="mirror", trash=trash)
+
+    assert [Path(p).name for p in trashed] == ["other.db"]
+
+
+def test_a_failed_index_rebuild_does_not_hide_the_restore(tmp_path):
+    data = tmp_path / "data"
+    dest = tmp_path / "ext"
+    data.mkdir()
+    db = data / "cat.db"
+    _make_db(db, [("a.png", "a.png", "h1", 10)])
+    info = backup.catalog_snapshot(db, dest)
+
+    def broken(path, model):
+        raise RuntimeError("no model")
+
+    res = backup.restore_snapshot(dest / info["id"], db_path=db, rebuild_faiss=broken)
+
+    assert res["faiss_rebuilt"] is False
+    assert "no model" in res["faiss_error"]
