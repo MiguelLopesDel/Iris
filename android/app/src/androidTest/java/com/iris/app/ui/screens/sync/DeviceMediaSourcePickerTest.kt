@@ -40,7 +40,7 @@ class DeviceMediaSourcePickerTest {
     )
 
     @Test
-    fun mediaFiltersSearchAndSelectedFilterUseVisibleSemantics() {
+    fun foldersAreGroupedByPlaceAndTheRestIsFoldedAway() {
         compose.setContent {
             var selectedIds by remember { mutableStateOf(setOf("whatsapp")) }
             IrisTheme {
@@ -61,28 +61,20 @@ class DeviceMediaSourcePickerTest {
             }
         }
 
-        compose.onNodeWithText("Camera").assertIsDisplayed()
-        compose.onNodeWithText("Movies").assertIsDisplayed()
-
-        compose.onNodeWithText(text(R.string.sync_source_filter_videos)).performClick()
-        compose.onNodeWithText("Movies").assertIsDisplayed()
-        assertTrue(compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isEmpty())
-
-        compose.onNodeWithText(text(R.string.sync_source_filter_photos)).performClick()
-        compose.onNodeWithText("WhatsApp Images").assertIsDisplayed()
+        // Familiar places by their own names; the rest folded away.
+        compose.onNodeWithText("Câmera").assertIsDisplayed()
+        compose.onNodeWithText("WhatsApp").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Movies").fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithText("Outras pastas (1)").performClick()
+        compose.onNodeWithText("Movies").assertIsDisplayed()
 
-        compose.onNode(hasSetTextAction()).performTextInput("whatsapp")
-        compose.onNodeWithText("WhatsApp Images").assertIsDisplayed()
-        assertTrue(compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isEmpty())
+        compose.onNode(hasSetTextAction()).performTextInput("whats")
+        compose.onNodeWithText("WhatsApp").assertIsDisplayed()
+        assertTrue(compose.onAllNodesWithText("Câmera").fetchSemanticsNodes().isEmpty())
 
         compose.onNodeWithContentDescription(text(R.string.sync_source_picker_clear_search)).performClick()
-        compose.onNodeWithText(text(R.string.sync_source_filter_selected)).performClick()
-        compose.onNodeWithText("WhatsApp Images").assertIsDisplayed()
-        assertTrue(compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isEmpty())
-
         compose.onNodeWithText(text(R.string.sync_source_picker_clear)).performClick()
-        compose.onNodeWithText(text(R.string.sync_source_picker_no_results)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.sync_folders_chosen_none)).assertIsDisplayed()
     }
 
     @Test
@@ -142,7 +134,7 @@ class DeviceMediaSourcePickerTest {
             }
         }
 
-        compose.onNodeWithTag("device-media-source-camera").performClick()
+        compose.onNodeWithTag("backup-folder-app:CAMERA").performClick()
         compose.runOnIdle { assertEquals(listOf("camera" to true), toggles) }
 
         compose.onNodeWithText(text(R.string.sync_source_picker_done)).performClick()

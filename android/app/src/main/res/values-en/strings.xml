@@ -43,7 +43,7 @@
     <string name="sync_source_picker_close">Close folder picker</string>
     <string name="sync_source_picker_counts">%1$d selected · %2$d folders · %3$d shown</string>
     <string name="sync_source_picker_clear">Clear selection</string>
-    <string name="sync_source_picker_search_hint">Search by folder name or path</string>
+    <string name="sync_source_picker_search_hint">Search folders</string>
     <string name="sync_source_picker_clear_search">Clear search</string>
     <string name="sync_source_filter_all">All</string>
     <string name="sync_source_filter_photos">Photos</string>
@@ -146,4 +146,12 @@
     <string name="tailscale_vpn_off">Tailscale seems to be off. Open it and turn the connection on so Iris can sync again.</string>
     <string name="cloud_sync_retrying">The server is reachable, but the sync did not finish. Iris will try again in the background.</string>
     <string name="cloud_queue_numbers_stale">The queue numbers could not be updated. The last values are kept, and Iris will try again.</string>
+    <string name="sync_folders_main">Main</string>
+    <string name="sync_folder_some_selected">some folders</string>
+    <plurals name="sync_folders_others"><item quantity="one">Other folder (%d)</item><item quantity="other">Other folders (%d)</item></plurals>
+    <plurals name="sync_folders_chosen"><item quantity="one">%d folder backed up</item><item quantity="other">%d folders backed up</item></plurals>
+    <plurals name="sync_folder_photos"><item quantity="one">%d photo</item><item quantity="other">%d photos</item></plurals>
+    <plurals name="sync_folder_videos"><item quantity="one">%d video</item><item quantity="other">%d videos</item></plurals>
+    <plurals name="sync_folder_subfolders"><item quantity="one">%d folder</item><item quantity="other">%d folders</item></plurals>
+    <string name="sync_folders_chosen_none">No folder backed up</string>
 </resources>

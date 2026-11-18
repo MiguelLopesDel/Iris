@@ -131,7 +131,9 @@ data class DeviceMediaSource(
     val relativePath: String,
     val volume: String,
     val mediaKind: String,
-    val itemCount: Int
+    val itemCount: Int,
+    /** The folder's newest item, as a content URI, to show it the way a gallery does. */
+    val coverUri: String? = null
 )
 
 data class MediaScanPolicy(
