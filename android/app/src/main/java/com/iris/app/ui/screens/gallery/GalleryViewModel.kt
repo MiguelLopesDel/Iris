@@ -487,6 +487,20 @@ class GalleryViewModel(
         }
     }
 
+    /** Moves the chosen items to the server's trash; [onDone] gets a message to show. */
+    fun moveToTrash(dbIds: List<Int>, onDone: (String) -> Unit) {
+        if (dbIds.isEmpty()) return
+        viewModelScope.launch {
+            repository.moveToTrash(dbIds)
+                .onSuccess { moved ->
+                    // The collector in init reloads the grid.
+                    LibraryChanges.changed()
+                    onDone(if (moved == 1) "1 item movido para a lixeira" else "$moved itens movidos para a lixeira")
+                }
+                .onFailure { onDone("Não foi possível mover para a lixeira") }
+        }
+    }
+
     fun refresh() {
         // Uploads progress while the grid is open, so the badges are only
         // truthful if they are re-read whenever the user asks for fresh data.

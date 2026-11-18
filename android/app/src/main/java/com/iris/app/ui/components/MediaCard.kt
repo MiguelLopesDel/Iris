@@ -2,7 +2,7 @@ package com.iris.app.ui.components
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.CloudDone
@@ -47,13 +49,18 @@ import com.iris.app.data.model.MediaRecord
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MediaCard(
     record: MediaRecord,
     performanceMonitor: PerformanceMonitor? = null,
     origin: MediaOrigin = MediaOrigin.IRIS_ONLY,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Starts selecting several items; null where a screen has no selection. */
+    onLongClick: (() -> Unit)? = null,
+    /** While selecting: whether this item is chosen. Null when not selecting. */
+    selected: Boolean? = null,
 ) {
     val context = LocalContext.current
     val apiClient = (context.applicationContext as IrisApplication).apiClient
@@ -82,7 +89,7 @@ fun MediaCard(
             .aspectRatio(1f)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // AsyncImage resolves the request to the actual card dimensions.
@@ -118,6 +125,22 @@ fun MediaCard(
                 } else {
                     PreviewPlaceholder(isVideo = record.isVideo)
                 }
+            }
+
+            if (selected != null) {
+                if (selected) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
+                }
+                Icon(
+                    imageVector = if (selected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
+                    contentDescription = if (selected) "Selecionada" else "Não selecionada",
+                    tint = if (selected) MaterialTheme.colorScheme.primary else Color.White,
+                    modifier = Modifier
+                        .padding(6.dp)
+                        .align(Alignment.TopEnd)
+                        .size(24.dp)
+                        .background(if (selected) Color.White else Color.Black.copy(alpha = 0.3f), CircleShape)
+                )
             }
 
             // Video badge
