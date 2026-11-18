@@ -142,6 +142,8 @@
     <string name="backup_counter_remaining">Remaining</string>
     <string name="backup_counter_failed">%1$d failed</string>
     <string name="cloud_connection_unavailable">No connection to the cloud. Your local media stays on the device; Iris will reconnect and sync automatically in the background.</string>
+    <string name="tailscale_open">Open Tailscale</string>
+    <string name="tailscale_vpn_off">Tailscale seems to be off. Open it and turn the connection on so Iris can sync again.</string>
     <string name="cloud_sync_retrying">The server is reachable, but the sync did not finish. Iris will try again in the background.</string>
     <string name="cloud_queue_numbers_stale">The queue numbers could not be updated. The last values are kept, and Iris will try again.</string>
 </resources>

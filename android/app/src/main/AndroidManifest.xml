@@ -24,6 +24,11 @@
          exempts the app from battery optimization; the sync screen asks. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Lets the offline notice find Tailscale and offer to open it. -->
+    <queries>
+        <package android:name="com.tailscale.ipn" />
+    </queries>
+
     <application
         android:name=".IrisApplication"
         android:allowBackup="false"

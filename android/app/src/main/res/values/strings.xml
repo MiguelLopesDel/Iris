@@ -83,6 +83,8 @@
     <string name="sync_action_retry_now">Tentar agora</string>
     <string name="queue_state_failed">Com falha</string>
     <string name="cloud_connection_unavailable">Sem conexão com a nuvem. Suas mídias locais continuam no aparelho; o Iris tentará reconectar e sincronizar automaticamente em segundo plano.</string>
+    <string name="tailscale_open">Abrir Tailscale</string>
+    <string name="tailscale_vpn_off">O Tailscale parece desligado. Abra-o e ative a conexão para o Iris voltar a sincronizar.</string>
     <string name="cloud_sync_retrying">Servidor acessível, mas a sincronização não terminou. O Iris tentará novamente em segundo plano.</string>
     <string name="cloud_queue_numbers_stale">Não foi possível atualizar os números da fila. Mantive os últimos valores e vou tentar novamente.</string>
     <!-- Sync speed and history -->
