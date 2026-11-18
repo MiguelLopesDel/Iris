@@ -236,3 +236,23 @@ def test_an_open_gallery_follows_library_changes_without_a_reload(server) -> Non
         # Same document: the change arrived without navigating.
         assert page.evaluate("window.__irisNoReload") is True
         browser.close()
+
+
+def test_a_heart_in_the_viewer_puts_the_photo_under_favourites(server) -> None:
+    base, _media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        tiles = page.locator("#gallery-grid .media-card")
+        sync_api.expect(tiles).to_have_count(24)
+        tiles.first.locator("img").click()
+
+        heart = page.locator("#detail-aside [data-detail-action=favorite]")
+        sync_api.expect(heart).to_have_attribute("aria-pressed", "false")
+        heart.click()
+        sync_api.expect(heart).to_have_attribute("aria-pressed", "true")
+        page.keyboard.press("Escape")
+
+        page.select_option("#filtro-media-type", "favorites")
+        sync_api.expect(tiles).to_have_count(1)
+        sync_api.expect(tiles.first).to_have_attribute("title", "IMG_0029.jpg")
+        browser.close()

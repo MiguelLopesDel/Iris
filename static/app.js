@@ -18,8 +18,8 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=47';
-import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=48';
+} from './api.js?v=48';
+import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=49';
 import { initCollections } from './collections.js?v=35';
 import { initConcepts } from './concepts.js?v=36';
 import { initDuplicates } from './duplicates.js?v=35';
