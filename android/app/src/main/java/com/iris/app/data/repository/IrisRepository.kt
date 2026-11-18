@@ -245,6 +245,14 @@ class IrisRepository(
     suspend fun getFavoritesPage(page: Int = 1, perPage: Int = 60): Result<RecordsResponse> =
         runCatchingCancellable { apiClient.apiService.getFavorites(page, perPage) }
 
+    suspend fun getTrash(before: Int? = null): Result<com.iris.app.data.model.TrashPage> =
+        runCatchingCancellable { apiClient.apiService.getTrash(before) }
+
+    /** Puts trashed items back in the library; returns the ids that came back. */
+    suspend fun restoreTrash(ids: List<Int>): Result<List<Int>> = runCatchingCancellable {
+        apiClient.apiService.restoreTrash(com.iris.app.data.model.RestoreTrashRequest(ids)).restored
+    }
+
     /** Moves items to the server's trash (restorable from the web for a while); returns how many moved. */
     suspend fun moveToTrash(dbIds: List<Int>): Result<Int> = runCatchingCancellable {
         val moved = apiClient.apiService.moveToTrash(dbIds.joinToString(",")).moved

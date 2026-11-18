@@ -102,6 +102,34 @@ data class OnThisDayResponse(
     @SerialName("years") val years: List<OnThisDayYear> = emptyList()
 )
 
+/** An item in the server's trash: out of the library, restorable until [purgeAfter]. */
+@Serializable
+data class TrashedItem(
+    @SerialName("id") val id: Int,
+    @SerialName("name") val name: String = "",
+    @SerialName("size_bytes") val sizeBytes: Long = 0,
+    @SerialName("trashed_at") val trashedAt: String = "",
+    @SerialName("purge_after") val purgeAfter: String = "",
+    @SerialName("thumbnail_url") val thumbnailUrl: String? = null
+)
+
+@Serializable
+data class TrashPage(
+    @SerialName("items") val items: List<TrashedItem> = emptyList(),
+    @SerialName("next_before") val nextBefore: Int? = null,
+    @SerialName("trash_days") val trashDays: Int = 30
+)
+
+@Serializable
+data class RestoreTrashRequest(@SerialName("ids") val ids: List<Int>)
+
+@Serializable
+data class RestoreTrashResponse(
+    @SerialName("restored") val restored: List<Int> = emptyList(),
+    @SerialName("conflicts") val conflicts: List<Int> = emptyList(),
+    @SerialName("missing") val missing: List<Int> = emptyList()
+)
+
 @Serializable
 data class TrashResponse(
     @SerialName("moved") val moved: Int = 0,

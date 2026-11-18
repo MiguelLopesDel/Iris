@@ -23,6 +23,9 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lightbulb
@@ -76,7 +79,9 @@ fun CollectionsScreen(
     onCollectionClick: (Int, String) -> Unit,
     onPeopleClick: () -> Unit,
     onGroupsClick: () -> Unit = {},
-    onFavoritesClick: () -> Unit = {}
+    onFavoritesClick: () -> Unit = {},
+    onTrashClick: () -> Unit = {},
+    onDeviceFoldersClick: () -> Unit = {}
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -125,11 +130,6 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 )
                 Tab(
                     selected = false,
-                    onClick = onFavoritesClick,
-                    text = { Text("Favoritos", fontWeight = FontWeight.SemiBold) }
-                )
-                Tab(
-                    selected = false,
                     onClick = onPeopleClick,
                     text = { Text("Pessoas", fontWeight = FontWeight.SemiBold) }
                 )
@@ -138,6 +138,18 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     onClick = onGroupsClick,
                     text = { Text("Compartilhados", fontWeight = FontWeight.SemiBold) }
                 )
+            }
+
+            // Pinned places, as a gallery app keeps them: always one tap away.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AlbumShortcut(Icons.Outlined.StarBorder, "Favoritos", onFavoritesClick, Modifier.weight(1f))
+                AlbumShortcut(Icons.Outlined.PhoneAndroid, "No celular", onDeviceFoldersClick, Modifier.weight(1f))
+                AlbumShortcut(Icons.Outlined.Delete, "Lixeira", onTrashClick, Modifier.weight(1f))
             }
 
             PullToRefreshBox(
@@ -420,6 +432,33 @@ fun CollectionMediaScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AlbumShortcut(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = IrisSurface),
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(icon, contentDescription = null, tint = IrisAccent)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

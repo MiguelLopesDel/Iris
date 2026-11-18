@@ -338,6 +338,8 @@ fun IrisNavGraph(
                     },
                     onPeopleClick = { navController.navigate(NavRoute.Persons.route) },
                     onGroupsClick = { navController.navigate(NavRoute.Spaces.route) },
+                    onTrashClick = { navController.navigate(NavRoute.Trash.route) },
+                    onDeviceFoldersClick = { navController.navigate(NavRoute.DeviceFolders.route) },
                     onFavoritesClick = {
                         navController.navigate(
                             NavRoute.CollectionMedia.createRoute(FAVORITES_COLLECTION_ID, "Favoritos")
@@ -430,6 +432,34 @@ fun IrisNavGraph(
                 SyncScreen(
                     viewModel = viewModel,
                     onConfigureServer = { navController.navigate(NavRoute.Settings.route) },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(NavRoute.DeviceFolders.route) {
+                val viewModel: SyncViewModel = viewModel(
+                    factory = SyncViewModel.Factory(
+                        application.irisRepository,
+                        application.settingsRepository,
+                        application.credentialsStore,
+                        MediaSyncWorker.retryPending(application),
+                        deviceName = { DeviceName.of(application) },
+                    )
+                )
+                SyncScreen(
+                    viewModel = viewModel,
+                    onConfigureServer = { navController.navigate(NavRoute.Settings.route) },
+                    onBack = { navController.popBackStack() },
+                    openFoldersOnStart = true
+                )
+            }
+
+            composable(NavRoute.Trash.route) {
+                val viewModel: com.iris.app.ui.screens.trash.TrashViewModel = viewModel(
+                    factory = com.iris.app.ui.screens.trash.TrashViewModel.Factory(application.irisRepository)
+                )
+                com.iris.app.ui.screens.trash.TrashScreen(
+                    viewModel = viewModel,
                     onBack = { navController.popBackStack() }
                 )
             }
