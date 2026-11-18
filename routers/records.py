@@ -14,7 +14,15 @@ from typing import Any
 from fastapi import APIRouter, Form, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
-from core.api_models import OkOut, RecordDetailOut, RecordMetadataOut, RecordsPageOut, TimelineOut
+from core import documents
+from core.api_models import (
+    DocumentKindsOut,
+    OkOut,
+    RecordDetailOut,
+    RecordMetadataOut,
+    RecordsPageOut,
+    TimelineOut,
+)
 from core.media_metadata import (
     extract_full_metadata,
     extract_metadata,
@@ -140,6 +148,128 @@ async def get_records_timeline(
 
         buckets = await run_in_threadpool(build_buckets)
         return {"total": sum(bucket["count"] for bucket in buckets), "buckets": buckets}
+
+
+# ── Documents ────────────────────────────────────────────────────────────────
+
+_PROMPTS: dict[str, documents.PromptMatrix] = {}
+
+
+def _document_kinds(backend) -> dict[int, str]:
+    """Catalogue position → document kind, computed once per loaded catalogue.
+
+    Kept on the backend object: a rebuilt catalogue is a new object, so the
+    result never outlives the records it describes.
+    """
+    cached = getattr(backend, "_iris_document_kinds", None)
+    if cached is not None:
+        return cached
+    engine = getattr(backend, "engine", None)
+    if engine is None:
+        return {}
+    records = backend.get_all_records()
+    columns = getattr(records, "columns", None)
+    positions = (
+        {int(db_id): i for i, db_id in enumerate(columns.db_id)} if columns is not None
+        else {int(r.db_id): i for i, r in enumerate(records) if r.db_id}
+    )
+    conn = engine.db.get_connection()
+    texts = {
+        positions[int(db_id)]: text
+        for db_id, text in conn.execute(
+            "SELECT id, texto_extraido FROM memes WHERE COALESCE(texto_extraido, '') != ''"
+        )
+        if int(db_id) in positions
+    }
+    prompts = None
+    model = getattr(engine, "model", None)
+    if model is not None:
+        key = str(getattr(engine, "model_name", "") or id(model))
+        prompts = _PROMPTS.get(key)
+        if prompts is None:
+            prompts = documents.build_prompts(lambda text: engine.encode_text(text, translate=False)[0])
+            _PROMPTS[key] = prompts
+    present = getattr(columns, "image_present", None) if columns is not None else None
+    kinds = documents.classify(engine.image_matrix, present, prompts, texts)
+    try:
+        backend._iris_document_kinds = kinds
+    except AttributeError:
+        pass
+    return kinds
+
+
+def _documents_newest_first(operations, backend, kind: str | None) -> list[int]:
+    kinds = _document_kinds(backend)
+    return [
+        index
+        for index in operations.sorted_records(backend, "data", 0)
+        if index in kinds and (kind is None or kinds[index] == kind)
+    ]
+
+
+@router.get("/api/documents", response_model=DocumentKindsOut)
+async def get_document_kinds(request: Request):
+    """How many photos of each kind of document there are, with a cover each."""
+    operations = _operations(request)
+    backend = operations.get_backend()
+    with trace("api.documents"):
+
+        def build() -> dict[str, Any]:
+            ordered = _documents_newest_first(operations, backend, None)
+            kinds = _document_kinds(backend)
+            counts: dict[str, int] = {}
+            covers: dict[str, int] = {}
+            for index in ordered:
+                kind = kinds[index]
+                counts[kind] = counts.get(kind, 0) + 1
+                covers.setdefault(kind, index)
+            listed = []
+            for key, title in documents.kind_titles():
+                if not counts.get(key):
+                    continue
+                record = backend.get_record(covers[key])
+                listed.append({
+                    "key": key,
+                    "title": title,
+                    "count": counts[key],
+                    "cover": operations.record_to_json(record) if record else None,
+                })
+            return {"total": len(ordered), "kinds": listed}
+
+        return await run_in_threadpool(build)
+
+
+@router.get("/api/documents/{kind}", response_model=RecordsPageOut)
+async def get_documents_of_kind(
+    request: Request,
+    kind: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(60, ge=12, le=500),
+):
+    if kind not in dict(documents.kind_titles()):
+        raise HTTPException(404, "Tipo de documento desconhecido")
+    operations = _operations(request)
+    backend = operations.get_backend()
+    with trace("api.documents.kind"):
+
+        def build() -> dict[str, Any]:
+            ordered = _documents_newest_first(operations, backend, kind)
+            total = len(ordered)
+            total_pages = max(1, (total + per_page - 1) // per_page)
+            current = min(page, total_pages)
+            start = (current - 1) * per_page
+            shown = [backend.get_record(i) for i in ordered[start : start + per_page]]
+            return {
+                "page": current,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": total_pages,
+                "records": operations.attach_persons(
+                    [operations.record_to_json(r) for r in shown if r]
+                ),
+            }
+
+        return await run_in_threadpool(build)
 
 
 @router.get("/api/records/{idx}", response_model=RecordDetailOut)

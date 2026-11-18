@@ -121,6 +121,35 @@ def test_timeline_respects_the_media_type_filter(client):
     assert videos["total"] == 1
 
 
+# ── Documentos ───────────────────────────────────────────────────────────────
+
+
+def test_documents_are_grouped_by_kind_from_their_text(client, tmp_path):
+    db_path = tmp_path / "catalog.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "UPDATE memes SET texto_extraido = 'REPUBLICA FEDERATIVA DO BRASIL CARTEIRA DE IDENTIDADE'"
+        " WHERE arquivo = 'foto-a.png'"
+    )
+    conn.execute(
+        "UPDATE memes SET texto_extraido = 'Comprovante de pagamento Pix' WHERE arquivo = 'foto-c.png'"
+    )
+    conn.commit()
+    conn.close()
+
+    body = client.get("/api/documents").json()
+
+    assert body["total"] == 2
+    assert [(k["key"], k["count"]) for k in body["kinds"]] == [("identidade", 1), ("comprovantes", 1)]
+    assert body["kinds"][0]["cover"]["arquivo"] == "foto-a.png"
+    pagina = client.get("/api/documents/comprovantes").json()
+    assert [r["arquivo"] for r in pagina["records"]] == ["foto-c.png"]
+
+
+def test_an_unknown_document_kind_is_not_found(client):
+    assert client.get("/api/documents/receitas-de-bolo").status_code == 404
+
+
 # ── Rename ───────────────────────────────────────────────────────────────────
 
 
