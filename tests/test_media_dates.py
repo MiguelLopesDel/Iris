@@ -13,6 +13,7 @@ from core.indexer_db import init_db
 from core.media_dates import (
     DEVICE_UPLOAD_DATES_REPAIR,
     METADATA_CAPTURE_DATES_REPAIR,
+    NAIVE_CAPTURE_LOCAL_REPAIR,
     capture_timestamp,
     metadata_capture_timestamp,
 )
@@ -267,3 +268,56 @@ def test_the_capture_dates_repair_runs_once_per_database(tmp_path: Path, monkeyp
         init_db(db).close()
 
     assert len(calls) == 1
+
+
+# ── Camera times stored as UTC while the container had no time zone ─────────
+
+
+def _forget_naive_repair(conn):
+    conn.execute("DELETE FROM applied_repairs WHERE name = ?", (NAIVE_CAPTURE_LOCAL_REPAIR,))
+
+
+def test_camera_times_read_as_utc_are_re_read_in_local_time(tmp_path: Path, sao_paulo_time):
+    db = tmp_path / "iris.db"
+    conn = init_db(db)
+    folder = conn.execute(
+        "INSERT INTO media_libraries (name, root_path, created_at) VALUES ('fotos', '/fotos', 'x')"
+    ).lastrowid
+    # 19:07 on the camera, stored as 19:07 UTC: three hours early at UTC-3.
+    as_utc = datetime(2026, 9, 29, 19, 7, 22, tzinfo=UTC).timestamp()
+    _insert(conn, folder, "camera.jpg", as_utc, "2026-09-29T19:07:22")
+    # A video's naive creation time is UTC already.
+    _insert(conn, folder, "clip.mp4", as_utc, "2026-09-29T19:07:22")
+    # An offset says which instant it is; nothing to re-read.
+    _insert(conn, folder, "phone.jpg", as_utc, "2026-09-29T19:07:22Z")
+    # Dated by something else (its file): not this mistake, left alone.
+    _insert(conn, folder, "copied.jpg", as_utc + 600, "2026-09-29T19:07:22")
+    _forget_naive_repair(conn)
+    conn.commit()
+    conn.close()
+
+    for _ in range(2):  # idempotent
+        init_db(db).close()
+
+    dates = dict(sqlite3.connect(db).execute("SELECT arquivo, file_mtime FROM memes").fetchall())
+    assert dates["camera.jpg"] == SEPT_29
+    assert dates["clip.mp4"] == as_utc
+    assert dates["phone.jpg"] == as_utc
+    assert dates["copied.jpg"] == as_utc + 600
+
+
+def test_in_utc_the_repair_waits_for_a_time_zone(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    try:
+        db = tmp_path / "iris.db"
+        init_db(db).close()
+        applied = sqlite3.connect(db).execute(
+            "SELECT 1 FROM applied_repairs WHERE name = ?", (NAIVE_CAPTURE_LOCAL_REPAIR,)
+        ).fetchone()
+        # Not recorded: the first start with the host's zone still runs it.
+        assert applied is None
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+

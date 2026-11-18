@@ -457,7 +457,19 @@ follow_release() {
     echo "Release: $target"
 }
 
+ensure_timezone() {
+    # The container keeps the host's clock zone; a TZ already in .env (set by
+    # hand, or on an earlier run) is left alone.
+    [ -f .env ] || return 0
+    grep -q '^TZ=' .env && return 0
+    local zone
+    zone="$(host_timezone)"
+    printf '\nTZ=%s\n' "$zone" >> .env
+    echo "Time zone: $zone"
+}
+
 start_server() {
+    ensure_timezone
     # Run the published image; build it from this checkout only when that
     # version was never published (no git and no release, or before the first one).
     if ! docker compose pull --quiet iris; then
