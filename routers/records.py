@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Form, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
-from core import documents
+from core import documents, favorites
 from core.api_models import (
     DocumentKindsOut,
     LibraryVersionOut,
@@ -318,6 +318,60 @@ async def get_record_detail(request: Request, idx: int):
         except Exception:
             result["concepts"] = []
         return result
+
+
+def _library_database(backend):
+    engine = getattr(backend, "engine", None)
+    db_path = getattr(engine, "db_path", None)
+    if not db_path:
+        raise HTTPException(503, "Biblioteca indisponível")
+    return engine.db.get_connection(), db_path
+
+
+@router.post("/api/records/{idx}/favorite", response_model=OkOut)
+async def set_record_favorite(request: Request, idx: int, favorite: bool = Form(...)):
+    """Mark or unmark an item with a heart; the catalogue itself is untouched."""
+    backend = _operations(request).get_backend()
+    record = backend.get_record(idx)
+    if record is None or not record.db_id:
+        raise HTTPException(404, "Record not found")
+    conn, db_path = _library_database(backend)
+    await run_in_threadpool(favorites.set_favorite, conn, db_path, int(record.db_id), favorite)
+    return {"ok": True, "favorite": favorite}
+
+
+@router.get("/api/favorites", response_model=RecordsPageOut)
+async def get_favorites(
+    request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(60, ge=12, le=500),
+):
+    """The favourites, newest photo first, paged like the gallery."""
+    operations = _operations(request)
+    backend = operations.get_backend()
+    conn, db_path = _library_database(backend)
+    with trace("api.favorites"):
+        hearts = favorites.favorite_ids(conn, db_path)
+        record_indices = [
+            index
+            for index in operations.sorted_records(backend, "data", 0)
+            if (record := backend.get_record(index)) is not None and record.db_id in hearts
+        ]
+        total = len(record_indices)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        start = (page - 1) * per_page
+        shown = [backend.get_record(index) for index in record_indices[start : start + per_page]]
+        records = await run_in_threadpool(
+            lambda: operations.attach_persons([operations.record_to_json(r) for r in shown if r])
+        )
+        return {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "total_pages": total_pages,
+            "records": records,
+        }
 
 
 @router.get("/api/records/{idx}/metadata", response_model=RecordMetadataOut)

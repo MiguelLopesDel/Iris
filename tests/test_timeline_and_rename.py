@@ -182,6 +182,31 @@ def test_library_version_is_stable_while_nothing_changes(client):
     assert client.get("/api/records/version").json() == client.get("/api/records/version").json()
 
 
+# ── Favoritos ────────────────────────────────────────────────────────────────
+
+
+def test_a_heart_marks_an_item_and_the_favourites_list_shows_it(client):
+    pagina = client.get("/api/records?page=1&per_page=100&sort_by=data").json()
+    assert not any(r["favorite"] for r in pagina["records"])
+    alvo = pagina["records"][1]
+
+    resposta = client.post(f"/api/records/{alvo['index']}/favorite", data={"favorite": "true"})
+    assert resposta.json() == {"ok": True, "favorite": True}
+
+    assert client.get(f"/api/records/{alvo['index']}").json()["favorite"] is True
+    favoritos = client.get("/api/favorites").json()
+    assert favoritos["total"] == 1
+    assert [r["arquivo"] for r in favoritos["records"]] == [alvo["arquivo"]]
+
+    client.post(f"/api/records/{alvo['index']}/favorite", data={"favorite": "false"})
+    assert client.get("/api/favorites").json()["total"] == 0
+    assert client.get(f"/api/records/{alvo['index']}").json()["favorite"] is False
+
+
+def test_a_heart_on_a_missing_item_is_not_found(client):
+    assert client.post("/api/records/999/favorite", data={"favorite": "true"}).status_code == 404
+
+
 # ── Rename ───────────────────────────────────────────────────────────────────
 
 
