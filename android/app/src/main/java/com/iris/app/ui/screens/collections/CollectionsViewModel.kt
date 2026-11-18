@@ -25,6 +25,9 @@ data class CollectionsUiState(
     val error: String? = null
 )
 
+/** Not an album on the server: the hearted photos, shown as one. */
+const val FAVORITES_COLLECTION_ID = -1
+
 data class CollectionMediaUiState(
     val collectionId: Int,
     val collectionName: String,
@@ -170,7 +173,12 @@ class CollectionMediaViewModel(
                     error = null
                 )
             }
-            repository.getCollectionMembersPage(collectionId, page).onSuccess { response ->
+            val request = if (collectionId == FAVORITES_COLLECTION_ID) {
+                repository.getFavoritesPage(page)
+            } else {
+                repository.getCollectionMembersPage(collectionId, page)
+            }
+            request.onSuccess { response ->
                 finishMembers()
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                 _uiState.update {

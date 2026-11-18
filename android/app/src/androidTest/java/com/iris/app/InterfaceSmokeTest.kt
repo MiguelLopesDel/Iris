@@ -312,8 +312,11 @@ class InterfaceSmokeTest {
         waitForDescription("foto-teste.jpg")
         compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
         waitForRequestPath("/api/records/0")
-        waitForText("Salvar no celular")
-        compose.onNodeWithText("Informações").performClick()
+        waitForText("Compartilhar")
+        waitForText("Lixeira")
+        // Information opens from the menu (and from the title).
+        compose.onNodeWithContentDescription("Mais opções").performClick()
+        compose.onNodeWithText("Sobre").performClick()
         waitForText("Detalhes")
         scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
 

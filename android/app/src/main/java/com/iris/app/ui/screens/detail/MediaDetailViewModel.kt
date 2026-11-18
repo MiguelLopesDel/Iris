@@ -95,6 +95,23 @@ class MediaDetailViewModel(
         }
     }
 
+    /** Hearts or un-hearts the item at once, and takes it back if the server refuses. */
+    fun toggleFavorite() {
+        val record = _uiState.value.record ?: return
+        val wanted = !record.favorite
+        _uiState.update { it.copy(record = it.record?.copy(favorite = wanted)) }
+        viewModelScope.launch {
+            repository.setFavorite(record.index, wanted).onFailure {
+                _uiState.update {
+                    it.copy(
+                        record = it.record?.copy(favorite = !wanted),
+                        notice = "Não foi possível atualizar os favoritos"
+                    )
+                }
+            }
+        }
+    }
+
     /** Moves this item to the server's trash; [onMoved] runs once it is gone. */
     fun moveToTrash(onMoved: () -> Unit) {
         val dbId = _uiState.value.record?.dbId ?: return
