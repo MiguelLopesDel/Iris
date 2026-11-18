@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.sync.DeviceFolders
 import com.iris.app.data.model.MediaRecord
+import com.iris.app.data.model.OnThisDayYear
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.data.model.CloudConnectionState
 import com.iris.app.data.model.CloudSyncStatus
@@ -52,7 +53,9 @@ data class GalleryUiState(
     val deviceTotalRecords: Int = 0,
     val deviceTotalPages: Int = 1,
     val devicePage: Int = 0,
-    val serverTotalPages: Int = 1
+    val serverTotalPages: Int = 1,
+    /** "On this day": earlier years' media from today's date, newest year first. */
+    val memories: List<OnThisDayYear> = emptyList()
 )
 
 class GalleryViewModel(
@@ -76,6 +79,7 @@ class GalleryViewModel(
     private val recordMerger = GalleryRecordMerger()
     private var firstContentFinish: (() -> Unit)? = null
     private var initialLoadJob: Job? = null
+    private var memoriesJob: Job? = null
     private var firstPageLoadJob: Job? = null
     private var devicePageLoadJob: Job? = null
     private var serverRecords: List<MediaRecord> = emptyList()
@@ -435,7 +439,20 @@ class GalleryViewModel(
                 }
             }
 
+            loadMemories(requestedSessionKey)
             loadPage(page = 1, isRefresh = false)
+        }
+    }
+
+    private fun loadMemories(sessionKey: String) {
+        memoriesJob?.cancel()
+        memoriesJob = viewModelScope.launch {
+            // Decoration: a failure keeps what was shown and never reaches the error state.
+            repository.getOnThisDay(java.time.LocalDate.now()).onSuccess { response ->
+                if (currentSessionKey() == sessionKey) {
+                    _uiState.update { it.copy(memories = response.years.filter { year -> year.records.isNotEmpty() }) }
+                }
+            }
         }
     }
 
@@ -579,9 +596,11 @@ class GalleryViewModel(
     private fun clearPrivateRecords() {
         serverRecords = emptyList()
         serverTotalRecords = 0
+        memoriesJob?.cancel()
         _uiState.update {
             it.copy(
                 records = deviceRecords,
+                memories = emptyList(),
                 origins = MediaOriginIndex.EMPTY,
                 isLoading = false,
                 isRefreshing = false,

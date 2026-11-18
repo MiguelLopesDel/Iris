@@ -255,6 +255,11 @@ fun IrisNavGraph(
                         ViewerSequence.setRecords(viewModel.uiState.value.records)
                         navController.navigate(NavRoute.Detail.createRoute(index))
                     },
+                    onMemoryClick = { records, index ->
+                        // Swiping stays within that year's day, not the whole gallery.
+                        ViewerSequence.setRecords(records)
+                        navController.navigate(NavRoute.Detail.createRoute(index))
+                    },
                     onDeviceMediaClick = { uri ->
                         // The phone's own items page along with Iris's, in the grid's order.
                         ViewerSequence.setRecords(viewModel.uiState.value.records)

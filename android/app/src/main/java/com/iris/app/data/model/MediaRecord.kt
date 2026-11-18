@@ -84,6 +84,22 @@ data class RecordsResponse(
     @SerialName("records") val records: List<MediaRecord> = emptyList()
 )
 
+/** Media taken on this month and day in one earlier year. */
+@Serializable
+data class OnThisDayYear(
+    @SerialName("year") val year: Int,
+    @SerialName("years_ago") val yearsAgo: Int,
+    /** How many there are that day; [records] holds at most the requested number. */
+    @SerialName("total") val total: Int = 0,
+    @SerialName("records") val records: List<MediaRecord> = emptyList()
+)
+
+@Serializable
+data class OnThisDayResponse(
+    @SerialName("date") val date: String = "",
+    @SerialName("years") val years: List<OnThisDayYear> = emptyList()
+)
+
 @Serializable
 data class SearchResponse(
     @SerialName("query") val query: String = "",

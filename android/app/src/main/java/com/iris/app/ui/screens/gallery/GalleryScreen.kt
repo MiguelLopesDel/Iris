@@ -103,7 +103,8 @@ fun GalleryScreen(
     onMediaClick: (Int) -> Unit,
     onDeviceMediaClick: (String) -> Unit = {},
     onSettingsClick: () -> Unit,
-    onLoginClick: () -> Unit = {}
+    onLoginClick: () -> Unit = {},
+    onMemoryClick: (records: List<com.iris.app.data.model.MediaRecord>, index: Int) -> Unit = { _, index -> onMediaClick(index) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
@@ -375,6 +376,15 @@ fun GalleryScreen(
                                         onColumnCountChange = { columnCount = it }
                                     )
                             ) {
+                                if (uiState.memories.isNotEmpty() && uiState.mediaType == "all") {
+                                    item(
+                                        key = "on-this-day",
+                                        contentType = "on-this-day",
+                                        span = { GridItemSpan(maxLineSpan) }
+                                    ) {
+                                        OnThisDaySection(uiState.memories, onMemoryClick)
+                                    }
+                                }
                                 sections.forEach { section ->
                                     item(
                                         key = "header-${section.label}",

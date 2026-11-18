@@ -229,6 +229,10 @@ class IrisRepository(
         apiClient.apiService.getRecordDetail(idx)
     }
 
+    /** Earlier years' media from [date], the phone's own day (the server's may differ). */
+    suspend fun getOnThisDay(date: java.time.LocalDate): Result<com.iris.app.data.model.OnThisDayResponse> =
+        runCatchingCancellable { apiClient.apiService.getOnThisDay(date.toString()) }
+
     suspend fun getTimeline(mediaType: String = "all"): Result<com.iris.app.data.model.TimelineResponse> =
         runCatchingCancellable { apiClient.apiService.getTimeline(mediaType) }
 
