@@ -73,7 +73,8 @@ import com.iris.app.ui.theme.IrisViolet
 fun CollectionsScreen(
     viewModel: CollectionsViewModel,
     onCollectionClick: (Int, String) -> Unit,
-    onPeopleClick: () -> Unit
+    onPeopleClick: () -> Unit,
+    onGroupsClick: () -> Unit = {}
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -122,6 +123,11 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     selected = false,
                     onClick = onPeopleClick,
                     text = { Text("Pessoas", fontWeight = FontWeight.SemiBold) }
+                )
+                Tab(
+                    selected = false,
+                    onClick = onGroupsClick,
+                    text = { Text("Compartilhados", fontWeight = FontWeight.SemiBold) }
                 )
             }
 

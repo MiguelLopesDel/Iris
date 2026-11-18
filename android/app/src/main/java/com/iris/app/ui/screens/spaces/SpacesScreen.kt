@@ -100,6 +100,7 @@ private val ROLE_LABELS = mapOf("manager" to "Gestor", "contributor" to "Colabor
 fun SpacesScreen(
     viewModel: SpacesViewModel,
     onSpaceClick: (Int, String) -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var creating by remember { mutableStateOf(false) }
@@ -114,8 +115,15 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Column {
-                        Text("Grupos", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("Compartilhados", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text("Galerias compartilhadas com outras contas", fontSize = 12.sp, color = IrisTextSoft)
+                    }
+                },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        }
                     }
                 },
                 actions = {

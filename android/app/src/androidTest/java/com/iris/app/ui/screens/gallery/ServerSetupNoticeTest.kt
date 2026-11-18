@@ -73,7 +73,7 @@ class ServerSetupNoticeTest {
     fun the_notice_follows_the_server_when_its_first_account_is_created() {
         val viewModel = GalleryViewModel(app.irisRepository, app.performanceMonitor, app.galleryDataSource, app.settingsRepository)
         compose.setContent {
-            IrisTheme { GalleryScreen(viewModel = viewModel, onMediaClick = {}, onSettingsClick = {}) }
+            IrisTheme { GalleryScreen(viewModel = viewModel, onMediaClick = {}, onBackupClick = {}) }
         }
 
         compose.waitUntil(10_000) {

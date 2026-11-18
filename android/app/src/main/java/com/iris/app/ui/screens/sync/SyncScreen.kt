@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
@@ -29,7 +31,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Lock
@@ -108,7 +109,8 @@ private enum class MediaPermissionFollowUp {
 @Composable
 fun SyncScreen(
     viewModel: SyncViewModel,
-    onConfigureServer: () -> Unit
+    onConfigureServer: () -> Unit,
+    onBack: (() -> Unit)? = null
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -214,14 +216,21 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Text(
-                        text = "Sincronização & Backup",
+                        text = "Backup",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
                 },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        }
+                    }
+                },
                 actions = {
                     IconButton(onClick = onConfigureServer) {
-                        Icon(imageVector = Icons.Default.Dns, contentDescription = "Configurar servidor")
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Configurações")
                     }
                     IconButton(onClick = { viewModel.loadQueue() }) {
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar fila")

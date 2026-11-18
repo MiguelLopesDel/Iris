@@ -102,7 +102,7 @@ fun GalleryScreen(
     viewModel: GalleryViewModel,
     onMediaClick: (Int) -> Unit,
     onDeviceMediaClick: (String) -> Unit = {},
-    onSettingsClick: () -> Unit,
+    onBackupClick: () -> Unit,
     onLoginClick: () -> Unit = {},
     onMemoryClick: (records: List<com.iris.app.data.model.MediaRecord>, index: Int) -> Unit = { _, index -> onMediaClick(index) }
 ) {
@@ -210,23 +210,22 @@ fun GalleryScreen(
                             isServerOnline = uiState.isServerOnline,
                             totalRecords = if (uiState.totalRecords > 0) uiState.totalRecords else uiState.records.size,
                             isDeviceLoggedIn = uiState.isDeviceLoggedIn,
-                            onClick = onSettingsClick
+                            onClick = onBackupClick
                         )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Atualizar"
-                        )
-                    }
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Configurações"
-                        )
-                    }
+                    // Pull to refresh already reloads; the one action left is the
+                    // answer to "is everything backed up?".
+                    BackupStatusButton(
+                        state = backupState(
+                            signedIn = uiState.isDeviceLoggedIn,
+                            serverOnline = uiState.isServerOnline,
+                            connectionState = uiState.cloudSyncStatus.connectionState,
+                            syncError = uiState.cloudSyncStatus.syncError,
+                        ),
+                        onClick = onBackupClick,
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = IrisBackground
