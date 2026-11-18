@@ -12,6 +12,7 @@ from core import compute_device
 from core.backend import SearchBackend, create_backend
 from core.embedding_models import resolve_embedding_model
 from core.indexer_db import init_db
+from core.polite import make_current_thread_polite
 from core.users_db import IrisUser, get_user_by_id
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,8 @@ class BackendRegistry:
         ).start()
 
     def _refresh_loop(self, user_id: int) -> None:
+        # The current catalogue is served meanwhile: the rebuild can yield.
+        make_current_thread_polite()
         try:
             while True:
                 time.sleep(self.refresh_delay)

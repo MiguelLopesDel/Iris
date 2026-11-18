@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.polite import PressureGate, make_current_thread_polite
 from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_processor import process_upload
 from core.users_db import IrisUser
@@ -42,7 +43,10 @@ class UploadProcessingWorkers:
         *,
         max_pending: int = 64,
         write_registry: SQLiteWriteCoordinatorRegistry | None = None,
+        gate: PressureGate | None = None,
     ) -> None:
+        # Waits before each job while the machine is busy; None never waits.
+        self._gate = gate
         if max_pending < 1:
             raise ValueError("max_pending must be positive")
         self._jobs: queue.Queue[_ProcessingJob | object] = queue.Queue(maxsize=max_pending)
@@ -114,11 +118,15 @@ class UploadProcessingWorkers:
         return not self._thread.is_alive()
 
     def _run(self) -> None:
+        # Processing an upload can wait; a person searching cannot.
+        make_current_thread_polite()
         while True:
             job = self._jobs.get()
             if job is _STOP:
                 return
             assert isinstance(job, _ProcessingJob)
+            if self._gate is not None:
+                self._gate.wait_until_calm(self._stopping)
             try:
                 process_options = dict(
                     db_path=job.db_path,

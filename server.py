@@ -102,6 +102,7 @@ from core.indexer_db import init_db
 from core.ingest_policy import IngestPolicy
 from core.observability import configure_logging, request_path
 from core.perf import dump, trace
+from core.polite import PressureGate
 from core.record_catalog import RecordCatalog
 from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MODEL, VIDEO_EXTENSIONS
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
@@ -699,7 +700,9 @@ async def lifespan(app: FastAPI):
             }
         )
         app.state.sqlite_write_registry = write_registry
-        processing_workers = UploadProcessingWorkers(write_registry=write_registry)
+        processing_workers = UploadProcessingWorkers(
+            write_registry=write_registry, gate=PressureGate()
+        )
         app.state.upload_processing_workers = processing_workers
         file_durability = FileDurabilityService(ingest_policy)
         app.state.file_durability = file_durability
@@ -726,7 +729,7 @@ async def lifespan(app: FastAPI):
                     )
 
             app.state.thumbnail_warmer = ThumbnailWarmer(
-                warmup_libraries, _thumbnail_key, _generate_thumbnail
+                warmup_libraries, _thumbnail_key, _generate_thumbnail, gate=PressureGate()
             )
             app.state.thumbnail_warmer.start(
                 startup_delay=float(os.environ.get("IRIS_THUMBNAIL_WARMUP_DELAY", "60"))
