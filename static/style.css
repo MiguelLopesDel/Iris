@@ -2449,6 +2449,15 @@ img[data-lightbox-src] {
   display: none;
 }
 
+.gallery-new-media {
+  display: block;
+  margin: 0 auto 12px;
+}
+
+.gallery-new-media[hidden] {
+  display: none;
+}
+
 .gallery-context-icon {
   color: var(--accent);
 }

@@ -203,6 +203,11 @@ export async function fetchRecords(page = 1, perPage = 24, sortBy = 'importacao'
   });
 }
 
+/** A token that changes when media is added or removed; cheap enough to poll. */
+export async function fetchLibraryVersion() {
+  return apiGet('/api/records/version');
+}
+
 // ── Search ────────────────────────────────────────────────────────────────
 
 export async function searchText(q, options = {}) {

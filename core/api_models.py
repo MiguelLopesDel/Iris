@@ -161,6 +161,13 @@ class DocumentKindsOut(_Out):
     kinds: list[DocumentKindOut] = []
 
 
+class LibraryVersionOut(_Out):
+    """Muda sempre que entra ou sai uma mídia; a galeria compara e só então recarrega."""
+
+    version: str
+    total: int
+
+
 class RecordsPageOut(_Out):
     page: int
     per_page: int

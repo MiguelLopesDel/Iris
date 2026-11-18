@@ -150,6 +150,38 @@ def test_an_unknown_document_kind_is_not_found(client):
     assert client.get("/api/documents/receitas-de-bolo").status_code == 404
 
 
+# ── Versão da biblioteca ─────────────────────────────────────────────────────
+
+
+def test_library_version_changes_when_media_arrives(client, tmp_path):
+    import server
+    from core.backend import create_backend
+
+    antes = client.get("/api/records/version").json()
+    assert antes["total"] == 4
+
+    db_path = tmp_path / "catalog.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO memes (arquivo, caminho, relative_path, texto_extraido, descricao_ia, tags,"
+        " file_mtime) VALUES ('nova.png', 'nova.png', 'nova.png', '', '', '', 1781000500.0)"
+    )
+    conn.commit()
+    conn.close()
+    server._backend = create_backend(
+        db_path=str(db_path), media_root=str(tmp_path / "media"), load_model=False
+    )
+    server._invalidate_view_caches()
+
+    depois = client.get("/api/records/version").json()
+    assert depois["total"] == 5
+    assert depois["version"] != antes["version"]
+
+
+def test_library_version_is_stable_while_nothing_changes(client):
+    assert client.get("/api/records/version").json() == client.get("/api/records/version").json()
+
+
 # ── Rename ───────────────────────────────────────────────────────────────────
 
 

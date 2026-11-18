@@ -217,3 +217,22 @@ def test_old_devices_are_folded_and_can_all_be_disconnected(server) -> None:
         sync_api.expect(stale).to_have_count(0)
         sync_api.expect(devices).to_contain_text("este navegador")
         browser.close()
+
+
+def test_an_open_gallery_follows_library_changes_without_a_reload(server) -> None:
+    """Media a phone syncs (or another tab removes) shows up in the open page."""
+    base, _media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        first = page.locator("#gallery-grid .media-card").first
+        sync_api.expect(first).to_have_attribute("title", "IMG_0029.jpg")
+        page.evaluate("window.__irisNoReload = true")
+
+        # Outside the page, with the same session: as another tab would.
+        response = page.request.post(base + "/api/trash", multipart={"db_ids": "30"})
+        assert response.status == 200
+
+        sync_api.expect(first).to_have_attribute("title", "IMG_0028.jpg", timeout=20_000)
+        # Same document: the change arrived without navigating.
+        assert page.evaluate("window.__irisNoReload") is True
+        browser.close()

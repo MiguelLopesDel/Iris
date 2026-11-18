@@ -16,7 +16,7 @@ import {
   listSpaces,
   mediaUrl,
   trashRecords,
-} from './api.js?v=46';
+} from './api.js?v=47';
 import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
 import { pickPersonModal } from './persons.js?v=9';
 
