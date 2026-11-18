@@ -17,6 +17,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
+import com.iris.app.ui.theme.IrisDanger
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -130,6 +132,7 @@ internal fun MediaDetailScreen(
     var showDetails by remember { mutableStateOf(false) }
     var detailPanelRevision by remember { mutableStateOf(0) }
     var renaming by remember { mutableStateOf(false) }
+    var confirmingTrash by remember { mutableStateOf(false) }
     var pickingSpace by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -239,10 +242,8 @@ internal fun MediaDetailScreen(
                     listOf(
                         ViewerAction(Icons.Outlined.Share, "Compartilhar") { share(mediaUrl, record.cleanFilename) },
                         ViewerAction(Icons.Default.Add, "Adicionar a") { pickingSpace = true },
-                        ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
-                            download(mediaUrl, record.cleanFilename)
-                        },
                         ViewerAction(Icons.Outlined.Info, "Informações") { openDetails() },
+                        ViewerAction(Icons.Outlined.Delete, "Lixeira") { confirmingTrash = true },
                     )
                 )
                 deviceUri != null -> Column {
@@ -335,6 +336,33 @@ internal fun MediaDetailScreen(
                             }
                     }
                 }
+            }
+        )
+    }
+
+    if (confirmingTrash && record != null && uiState != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmingTrash = false },
+            containerColor = IrisBackground,
+            title = { Text("Mover para a lixeira?", color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Text(
+                    "A foto sai da sua biblioteca no Iris e fica na lixeira, de onde pode ser " +
+                        "restaurada pelo site. A cópia no celular não é apagada.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingTrash = false
+                        viewModel?.moveToTrash(onMoved = onBack)
+                    },
+                    enabled = !uiState.isTrashing
+                ) { Text("Mover para a lixeira", color = IrisDanger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingTrash = false }) { Text("Cancelar") }
             }
         )
     }

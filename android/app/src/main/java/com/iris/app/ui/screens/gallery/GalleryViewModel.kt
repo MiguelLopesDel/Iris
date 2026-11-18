@@ -3,6 +3,7 @@ package com.iris.app.ui.screens.gallery
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.data.LibraryChanges
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.sync.DeviceFolders
 import com.iris.app.data.model.MediaRecord
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -131,6 +133,11 @@ class GalleryViewModel(
         refreshDeviceMedia()
         refreshOrigins()
         checkServerAndLoad()
+        viewModelScope.launch {
+            // The app changed the library itself (a photo moved to the trash
+            // from the viewer): reload, so the grid does not keep showing it.
+            LibraryChanges.version.drop(1).collect { checkServerAndLoad() }
+        }
         viewModelScope.launch {
             repository.credentialsStore.serverReplaced.collect { replaced ->
                 _uiState.update { it.copy(serverReplaced = replaced) }

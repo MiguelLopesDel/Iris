@@ -7,6 +7,7 @@ import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.RecordMetadataResponse
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.data.LibraryChanges
 import com.iris.app.ui.state.LatestJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +27,7 @@ data class MediaDetailUiState(
     val isLoadingSimilars: Boolean = false,
     val error: String? = null,
     val isRenaming: Boolean = false,
+    val isTrashing: Boolean = false,
     /** Whether the device copy was looked for (when the panel first opened). */
     val deviceChecked: Boolean = false,
     /** The copy on this device, when this device sent the item and still holds it. */
@@ -90,6 +92,26 @@ class MediaDetailViewModel(
                     it.copy(isLoading = false, error = userMessage)
                 }
             }
+        }
+    }
+
+    /** Moves this item to the server's trash; [onMoved] runs once it is gone. */
+    fun moveToTrash(onMoved: () -> Unit) {
+        val dbId = _uiState.value.record?.dbId ?: return
+        val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTrashing = true, notice = null) }
+            repository.moveToTrash(listOf(dbId))
+                .onSuccess {
+                    if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
+                    LibraryChanges.changed()
+                    _uiState.update { it.copy(isTrashing = false, notice = "Movida para a lixeira") }
+                    onMoved()
+                }
+                .onFailure {
+                    if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
+                    _uiState.update { it.copy(isTrashing = false, notice = "Não foi possível mover para a lixeira") }
+                }
         }
     }
 
