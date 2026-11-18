@@ -170,6 +170,21 @@ class LibraryVersionOut(_Out):
     total: int
 
 
+class OnThisDayYearOut(_Out):
+    """As mídias de um ano anterior tiradas neste mesmo dia."""
+
+    year: int
+    years_ago: int
+    # Quantas há naquele dia; ``records`` traz no máximo ``per_year`` delas.
+    total: int
+    records: list[RecordOut] = []
+
+
+class OnThisDayOut(_Out):
+    date: str
+    years: list[OnThisDayYearOut] = []
+
+
 class RecordsPageOut(_Out):
     page: int
     per_page: int

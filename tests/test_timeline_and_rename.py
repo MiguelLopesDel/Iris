@@ -207,6 +207,32 @@ def test_a_heart_on_a_missing_item_is_not_found(client):
     assert client.post("/api/records/999/favorite", data={"favorite": "true"}).status_code == 404
 
 
+# ── Neste dia ────────────────────────────────────────────────────────────────
+
+
+def test_on_this_day_returns_the_same_date_in_earlier_years(client):
+    import datetime as dt
+
+    dia = dt.datetime.fromtimestamp(1_778_000_000.0).date()
+    um_ano_depois = dia.replace(year=dia.year + 1).isoformat()
+
+    body = client.get(f"/api/records/on-this-day?date={um_ano_depois}").json()
+
+    assert body["date"] == um_ano_depois
+    assert [(y["year"], y["years_ago"], y["total"]) for y in body["years"]] == [(dia.year, 1, 1)]
+    assert [r["arquivo"] for r in body["years"][0]["records"]] == ["foto-c.png"]
+
+
+def test_on_this_day_is_empty_on_a_day_without_memories(client):
+    body = client.get("/api/records/on-this-day?date=2030-01-01").json()
+
+    assert body == {"date": "2030-01-01", "years": []}
+
+
+def test_on_this_day_rejects_a_malformed_date(client):
+    assert client.get("/api/records/on-this-day?date=18/11/2026").status_code == 400
+
+
 # ── Rename ───────────────────────────────────────────────────────────────────
 
 
