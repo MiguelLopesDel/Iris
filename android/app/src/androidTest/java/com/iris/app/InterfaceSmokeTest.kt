@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -28,6 +29,9 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.swipeDown
+import com.iris.app.ui.screens.gallery.BACKUP_STATUS_TAG
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.click
@@ -141,7 +145,7 @@ class InterfaceSmokeTest {
             runShellCommand(instrumentation, "pm grant ${app.packageName} ${android.Manifest.permission.WRITE_EXTERNAL_STORAGE}")
         }
         // Let the gallery load what exists now, with media access in place.
-        compose.onNodeWithContentDescription("Atualizar").performClick()
+        pullToRefresh()
         compose.waitForIdle()
         // A finished background sync also reloads the gallery; keep it out so
         // only the MediaStore observer can make the new photo appear.
@@ -193,7 +197,7 @@ class InterfaceSmokeTest {
             devicePage.records.any { it.arquivo == "local-only-fixture.jpg" }
         )
 
-        compose.onNodeWithContentDescription("Atualizar").performClick()
+        pullToRefresh()
 
         // A fresh Iris server can have no uploaded items. The phone's gallery
         // still needs to render its local media instead of an empty server list.
@@ -275,8 +279,8 @@ class InterfaceSmokeTest {
         scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         waitForText("Viagem de Teste")
 
-        // Shared space list, shared album/content, and member sheet.
-        compose.onNodeWithText("Grupos").performClick()
+        // Shared space list (a tab of Álbuns), shared album/content, and member sheet.
+        compose.onNodeWithText("Compartilhados").performClick()
         waitForText("Família de Teste")
         compose.onNodeWithText("Família de Teste").performClick()
         waitForText("Praia de Teste · 1")
@@ -286,15 +290,13 @@ class InterfaceSmokeTest {
         scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         waitForText("Família de Teste")
 
-        // Device sync and server settings.
-        compose.onNodeWithText("Sincronizar").performClick()
-        waitForText("Sincronização & Backup")
+        // Device sync and server settings: backup opens from the gallery's
+        // status icon, settings from the backup screen.
+        scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithText("Fotos").performClick()
+        compose.onNodeWithTag(BACKUP_STATUS_TAG).performClick()
+        waitForText("Backup")
         waitForText("ui-teste")
-        compose.onNodeWithContentDescription("Configurar servidor").performClick()
-        waitForText("Configurações do Servidor")
-        compose.onNodeWithContentDescription("Voltar").performClick()
-        waitForText("Sincronização & Backup")
-        compose.onNodeWithText("Galeria").performClick()
         compose.onNodeWithContentDescription("Configurações").performClick()
         waitForText("Configurações do Servidor")
         // Below the appearance choices, which open the screen.
@@ -302,6 +304,8 @@ class InterfaceSmokeTest {
             compose.onAllNodesWithText("Servidor Iris Conectado").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Servidor Iris Conectado").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Voltar").performClick()
+        waitForText("ui-teste")
         compose.onNodeWithContentDescription("Voltar").performClick()
 
         // Open a media record: the viewer opens with its actions showing.
@@ -328,7 +332,7 @@ class InterfaceSmokeTest {
             serverOrigin = IrisApiClient.getOrigin(url)
         )
 
-        compose.onNodeWithText("Sincronizar").performClick()
+        compose.onNodeWithTag(BACKUP_STATUS_TAG).performClick()
         waitForText("Quer configurar o backup automático?")
         compose.onNodeWithText("Agora não").performClick()
         compose.waitUntil(5_000) {
@@ -355,7 +359,7 @@ class InterfaceSmokeTest {
         scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         waitForText("Nenhum álbum")
 
-        compose.onNodeWithText("Grupos").performClick()
+        compose.onNodeWithText("Compartilhados").performClick()
         waitForText("Nenhum grupo ainda")
 
         assertTrue("No unexpected API paths: ${unhandledPaths.joinToString()}", unhandledPaths.isEmpty())
@@ -364,7 +368,7 @@ class InterfaceSmokeTest {
     @Test
     fun device_login_form_sends_credentials_and_establishes_session() {
         app.credentialsStore.clearCredentials()
-        compose.onNodeWithText("Sincronizar").performClick()
+        compose.onNodeWithTag(BACKUP_STATUS_TAG).performClick()
         waitForText("Conectar Dispositivo")
 
         compose.onNodeWithText("Nome de usuário").performTextInput("ui-teste")
@@ -398,7 +402,9 @@ class InterfaceSmokeTest {
         compose.onNodeWithText("Entrar e Sincronizar").performClick()
         waitForText("Dispositivo Conectado")
 
-        compose.onNodeWithText("Galeria").performClick()
+        // Sign-in opens from the gallery as its own screen, without the tab
+        // bar; going back must land on the gallery, not on the sync screen.
+        scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         waitForDescription("foto-teste.jpg")
         assertTrue(
             "The Galeria tab kept showing the sync screen",
@@ -441,19 +447,19 @@ class InterfaceSmokeTest {
     fun logout_while_media_viewer_is_open_returns_to_login_gate() {
         compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
         waitForRequestPath("/api/records/0")
-        waitForText("Salvar no celular")
+        waitForText("Compartilhar")
 
         app.credentialsStore.clearCredentials()
 
         waitForText("Login Necessário")
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("Salvar no celular").fetchSemanticsNodes().isEmpty() &&
+            compose.onAllNodesWithText("Compartilhar").fetchSemanticsNodes().isEmpty() &&
                 compose.onAllNodesWithContentDescription("foto-teste.jpg").fetchSemanticsNodes().isEmpty() &&
                 runBlocking { app.mediaCatalog.cachedCount() == 0 }
         }
         assertTrue(
             "The authenticated media viewer remained visible after logout",
-            compose.onAllNodesWithText("Salvar no celular").fetchSemanticsNodes().isEmpty()
+            compose.onAllNodesWithText("Compartilhar").fetchSemanticsNodes().isEmpty()
         )
     }
 
@@ -521,7 +527,8 @@ class InterfaceSmokeTest {
         compose.waitUntil(timeoutMillis) {
             compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText(text, substring = true).assertIsDisplayed()
+        // A screen may show the same word twice (a title and a status line).
+        compose.onAllNodesWithText(text, substring = true).onFirst().assertIsDisplayed()
     }
 
     private fun waitForDescription(description: String, timeoutMillis: Long = 15_000) {
@@ -719,5 +726,11 @@ class InterfaceSmokeTest {
             }, null, null)
         }
         return uri
+    }
+
+    /** The gallery reloads by pulling it down; it has no refresh button. */
+    private fun pullToRefresh() {
+        compose.onNode(hasScrollAction()).performTouchInput { swipeDown() }
+        compose.waitForIdle()
     }
 }

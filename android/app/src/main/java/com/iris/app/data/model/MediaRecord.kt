@@ -101,6 +101,12 @@ data class OnThisDayResponse(
 )
 
 @Serializable
+data class TrashResponse(
+    @SerialName("moved") val moved: Int = 0,
+    @SerialName("failed") val failed: Int = 0
+)
+
+@Serializable
 data class SearchResponse(
     @SerialName("query") val query: String = "",
     @SerialName("total") val total: Int = 0,

@@ -237,6 +237,13 @@ class IrisRepository(
     suspend fun getTimeline(mediaType: String = "all"): Result<com.iris.app.data.model.TimelineResponse> =
         runCatchingCancellable { apiClient.apiService.getTimeline(mediaType) }
 
+    /** Moves items to the server's trash (restorable from the web for a while); returns how many moved. */
+    suspend fun moveToTrash(dbIds: List<Int>): Result<Int> = runCatchingCancellable {
+        val moved = apiClient.apiService.moveToTrash(dbIds.joinToString(",")).moved
+        check(moved > 0) { "Nothing was moved to the trash" }
+        moved
+    }
+
     suspend fun renameRecord(idx: Int, name: String): Result<Unit> = runCatchingCancellable {
         apiClient.apiService.renameRecord(idx, name)
         Unit

@@ -63,4 +63,11 @@ class SharedMediaFileTest {
         assertEquals("video/mp4", SharedMediaFile.mimeType(null, "VID_0001.mp4"))
         assertEquals("application/octet-stream", SharedMediaFile.mimeType(null, "file"))
     }
+
+    @Test
+    fun `a share of several files gets one type that fits them all`() {
+        assertEquals("image/jpeg", SharedMediaFile.commonMimeType(listOf("image/jpeg", "image/jpeg")))
+        assertEquals("image/*", SharedMediaFile.commonMimeType(listOf("image/jpeg", "image/png")))
+        assertEquals("*/*", SharedMediaFile.commonMimeType(listOf("image/jpeg", "video/mp4")))
+    }
 }

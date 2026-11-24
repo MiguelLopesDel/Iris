@@ -136,18 +136,15 @@ fun IrisNavGraph(
         }
     }
 
+    // Three places, as people expect of a photo app: the photos, the albums
+    // (shared groups and people live there too) and search. Backup is a status
+    // in the gallery's top bar rather than a destination of its own.
     val bottomNavItems = listOf(
         BottomNavItem(
             route = NavRoute.Gallery.route,
-            label = "Galeria",
+            label = "Fotos",
             selectedIcon = Icons.Filled.PhotoLibrary,
             unselectedIcon = Icons.Outlined.PhotoLibrary
-        ),
-        BottomNavItem(
-            route = NavRoute.Search.route,
-            label = "Busca",
-            selectedIcon = Icons.Filled.Search,
-            unselectedIcon = Icons.Outlined.Search
         ),
         BottomNavItem(
             route = NavRoute.Collections.route,
@@ -156,16 +153,10 @@ fun IrisNavGraph(
             unselectedIcon = Icons.Outlined.Folder
         ),
         BottomNavItem(
-            route = NavRoute.Spaces.route,
-            label = "Grupos",
-            selectedIcon = Icons.Filled.Group,
-            unselectedIcon = Icons.Outlined.Group
-        ),
-        BottomNavItem(
-            route = NavRoute.Sync.route,
-            label = "Sincronizar",
-            selectedIcon = Icons.Filled.CloudUpload,
-            unselectedIcon = Icons.Outlined.CloudUpload
+            route = NavRoute.Search.route,
+            label = "Busca",
+            selectedIcon = Icons.Filled.Search,
+            unselectedIcon = Icons.Outlined.Search
         )
     )
 
@@ -265,11 +256,11 @@ fun IrisNavGraph(
                         ViewerSequence.setRecords(viewModel.uiState.value.records)
                         navController.navigate(NavRoute.LocalMediaDetail.createRoute(uri))
                     },
-                    onSettingsClick = {
-                        navController.navigate(NavRoute.Settings.route)
+                    onBackupClick = {
+                        navController.navigate(NavRoute.Sync.route) { launchSingleTop = true }
                     },
                     onLoginClick = {
-                        navController.navigateToTab(NavRoute.Sync.route)
+                        navController.navigate(NavRoute.Sync.route) { launchSingleTop = true }
                     }
                 )
             }
@@ -344,7 +335,8 @@ fun IrisNavGraph(
                     onCollectionClick = { colId, colName ->
                         navController.navigate(NavRoute.CollectionMedia.createRoute(colId, colName))
                     },
-                    onPeopleClick = { navController.navigate(NavRoute.Persons.route) }
+                    onPeopleClick = { navController.navigate(NavRoute.Persons.route) },
+                    onGroupsClick = { navController.navigate(NavRoute.Spaces.route) }
                 )
             }
 
@@ -395,7 +387,8 @@ fun IrisNavGraph(
                     viewModel = viewModel,
                     onSpaceClick = { spaceId, spaceName ->
                         navController.navigate(NavRoute.Space.createRoute(spaceId, spaceName))
-                    }
+                    },
+                    onBack = { navController.popBackStack() }
                 )
             }
 
@@ -430,7 +423,8 @@ fun IrisNavGraph(
                 )
                 SyncScreen(
                     viewModel = viewModel,
-                    onConfigureServer = { navController.navigate(NavRoute.Settings.route) }
+                    onConfigureServer = { navController.navigate(NavRoute.Settings.route) },
+                    onBack = { navController.popBackStack() }
                 )
             }
 
@@ -472,8 +466,6 @@ private fun BottomNavItem.navigationMetric(): Metric = when (route) {
     NavRoute.Gallery.route -> Metric.NavigationGallery
     NavRoute.Search.route -> Metric.NavigationSearch
     NavRoute.Collections.route -> Metric.NavigationAlbums
-    NavRoute.Sync.route -> Metric.NavigationSync
-    NavRoute.Spaces.route -> Metric.NavigationSpaces
     else -> Metric.NavigationGallery
 }
 

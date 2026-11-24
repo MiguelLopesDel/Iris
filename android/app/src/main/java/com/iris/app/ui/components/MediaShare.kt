@@ -27,3 +27,20 @@ fun rememberMediaShare(onNotice: (String) -> Unit): (String, String) -> Unit {
         }
     }
 }
+
+/** Shares several library items in one go; each pair is (media URL, file name). */
+@Composable
+fun rememberMediaShareAll(onNotice: (String) -> Unit): (List<Pair<String, String>>) -> Unit {
+    val context = LocalContext.current
+    val apiClient = (context.applicationContext as IrisApplication).apiClient
+    val scope = rememberCoroutineScope()
+    return { items ->
+        onNotice("Preparando para compartilhar…")
+        scope.launch {
+            when (val result = MediaSharer(context, apiClient).prepareAll(items)) {
+                is MediaSharer.Result.Ready -> context.startActivity(result.intent)
+                is MediaSharer.Result.Failed -> onNotice("Não foi possível compartilhar: ${result.reason}")
+            }
+        }
+    }
+}

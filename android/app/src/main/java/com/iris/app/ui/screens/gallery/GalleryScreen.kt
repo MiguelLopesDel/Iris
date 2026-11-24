@@ -32,6 +32,14 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.platform.LocalContext
+import com.iris.app.ui.components.rememberMediaShareAll
+import com.iris.app.ui.theme.IrisDanger
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -102,7 +110,7 @@ fun GalleryScreen(
     viewModel: GalleryViewModel,
     onMediaClick: (Int) -> Unit,
     onDeviceMediaClick: (String) -> Unit = {},
-    onSettingsClick: () -> Unit,
+    onBackupClick: () -> Unit,
     onLoginClick: () -> Unit = {},
     onMemoryClick: (records: List<com.iris.app.data.model.MediaRecord>, index: Int) -> Unit = { _, index -> onMediaClick(index) }
 ) {
@@ -192,8 +200,66 @@ fun GalleryScreen(
         }
     }
 
+    // Several items chosen by a long press; their gallery indexes. Only Iris
+    // items take part: one only on this phone has nothing to trash or fetch.
+    var selected by remember { mutableStateOf(emptySet<Int>()) }
+    var confirmingTrash by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val apiClient = (context.applicationContext as com.iris.app.IrisApplication).apiClient
+    val toast: (String) -> Unit = { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
+    val shareAll = rememberMediaShareAll(toast)
+    val selectedRecords = remember(selected, uiState.records) {
+        uiState.records.filter { it.index in selected && it.deviceUri == null && it.dbId != null }
+    }
+    BackHandler(enabled = selected.isNotEmpty()) { selected = emptySet() }
+
+    if (confirmingTrash) {
+        AlertDialog(
+            onDismissRequest = { confirmingTrash = false },
+            title = { Text(if (selectedRecords.size == 1) "Mover 1 item para a lixeira?" else "Mover ${selectedRecords.size} itens para a lixeira?") },
+            text = {
+                Text(
+                    "Saem da sua biblioteca no Iris e ficam na lixeira, de onde podem ser " +
+                        "restaurados pelo site. As cópias no celular não são apagadas."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingTrash = false
+                    viewModel.moveToTrash(selectedRecords.mapNotNull { it.dbId }, toast)
+                    selected = emptySet()
+                }) { Text("Mover para a lixeira", color = IrisDanger) }
+            },
+            dismissButton = { TextButton(onClick = { confirmingTrash = false }) { Text("Cancelar") } },
+        )
+    }
+
     Scaffold(
         topBar = {
+            if (selected.isNotEmpty()) {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { selected = emptySet() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancelar seleção")
+                        }
+                    },
+                    title = { Text(if (selected.size == 1) "1 selecionada" else "${selected.size} selecionadas") },
+                    actions = {
+                        IconButton(onClick = {
+                            shareAll(selectedRecords.map {
+                                apiClient.resolveMediaUrl(it.resolvedPath ?: it.caminho) to it.cleanFilename
+                            })
+                        }) {
+                            Icon(Icons.Outlined.Share, contentDescription = "Compartilhar")
+                        }
+                        IconButton(onClick = { confirmingTrash = true }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Mover para a lixeira")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
+                )
+                return@Scaffold
+            }
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -210,23 +276,22 @@ fun GalleryScreen(
                             isServerOnline = uiState.isServerOnline,
                             totalRecords = if (uiState.totalRecords > 0) uiState.totalRecords else uiState.records.size,
                             isDeviceLoggedIn = uiState.isDeviceLoggedIn,
-                            onClick = onSettingsClick
+                            onClick = onBackupClick
                         )
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Atualizar"
-                        )
-                    }
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Configurações"
-                        )
-                    }
+                    // Pull to refresh already reloads; the one action left is the
+                    // answer to "is everything backed up?".
+                    BackupStatusButton(
+                        state = backupState(
+                            signedIn = uiState.isDeviceLoggedIn,
+                            serverOnline = uiState.isServerOnline,
+                            connectionState = uiState.cloudSyncStatus.connectionState,
+                            syncError = uiState.cloudSyncStatus.syncError,
+                        ),
+                        onClick = onBackupClick,
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = IrisBackground
@@ -398,15 +463,25 @@ fun GalleryScreen(
                                         key = { record -> record.index },
                                         contentType = { "media" }
                                     ) { record ->
+                                        val selectable = record.deviceUri == null && record.dbId != null
                                         MediaCard(
                                             record = record,
                                             performanceMonitor = viewModel.performanceMonitor,
                                             origin = uiState.origins.originOf(record, uiState.backupPolicy),
                                             onClick = {
                                                 val localUri = record.deviceUri
-                                                if (localUri != null) onDeviceMediaClick(localUri)
-                                                else onMediaClick(record.index)
+                                                when {
+                                                    selected.isNotEmpty() -> if (selectable) {
+                                                        selected = GallerySelection.toggled(selected, record.index)
+                                                    }
+                                                    localUri != null -> onDeviceMediaClick(localUri)
+                                                    else -> onMediaClick(record.index)
+                                                }
                                             },
+                                            onLongClick = if (selectable) {
+                                                { selected = GallerySelection.toggled(selected, record.index) }
+                                            } else null,
+                                            selected = if (selected.isNotEmpty() && selectable) record.index in selected else null,
                                             // Animates position/size when the pinch
                                             // gesture changes columnCount instead of
                                             // the grid reflowing in a single abrupt

@@ -169,6 +169,12 @@ interface IrisApiService {
         @Field("name") name: String
     ): Map<String, String>
 
+    @FormUrlEncoded
+    @POST("api/trash")
+    suspend fun moveToTrash(
+        @Field("db_ids") dbIds: String
+    ): com.iris.app.data.model.TrashResponse
+
     @GET("api/records/{idx}/metadata")
     suspend fun getRecordMetadata(
         @Path("idx") idx: Int
