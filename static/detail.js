@@ -17,7 +17,7 @@ import {
   mediaUrl,
   trashRecords,
   setFavorite,
-} from './api.js?v=48';
+} from './api.js?v=49';
 import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
 import { pickPersonModal } from './persons.js?v=9';
 

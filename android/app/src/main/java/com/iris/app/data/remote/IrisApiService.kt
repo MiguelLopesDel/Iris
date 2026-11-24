@@ -146,6 +146,12 @@ interface IrisApiService {
         @Query("concept_ids") conceptIds: String = ""
     ): RecordsResponse
 
+    @GET("api/records/on-this-day")
+    suspend fun getOnThisDay(
+        @Query("date") date: String,
+        @Query("per_year") perYear: Int = 12
+    ): com.iris.app.data.model.OnThisDayResponse
+
     @GET("api/records/{idx}")
     suspend fun getRecordDetail(
         @Path("idx") idx: Int

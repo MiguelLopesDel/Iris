@@ -2445,6 +2445,16 @@ img[data-lightbox-src] {
   color: var(--text-soft);
 }
 
+.home-memory-year {
+  margin: 12px 0 6px;
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.home-memory-year:first-child {
+  margin-top: 0;
+}
+
 .gallery-context[hidden] {
   display: none;
 }

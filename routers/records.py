@@ -19,6 +19,7 @@ from core.api_models import (
     DocumentKindsOut,
     LibraryVersionOut,
     OkOut,
+    OnThisDayOut,
     RecordDetailOut,
     RecordMetadataOut,
     RecordsPageOut,
@@ -30,6 +31,7 @@ from core.media_metadata import (
     merge_file_metadata,
     needs_file_metadata,
 )
+from core.memories import on_this_day
 from core.perf import trace
 
 router = APIRouter(tags=["records"])
@@ -289,6 +291,51 @@ def get_records_version(request: Request):
     else:
         highest = max((int(getattr(r, "db_id", 0) or 0) for r in records), default=0)
     return {"version": f"{total}:{highest}", "total": total}
+
+
+@router.get("/api/records/on-this-day", response_model=OnThisDayOut)
+async def get_records_on_this_day(
+    request: Request,
+    date: str = Query("", description="YYYY-MM-DD; o dia local de quem pede. Padrão: hoje no servidor."),
+    per_year: int = Query(30, ge=1, le=200),
+):
+    """Media taken on this month and day in earlier years, newest year first."""
+    if date:
+        try:
+            today = dt.date.fromisoformat(date)
+        except ValueError as exc:
+            raise HTTPException(400, "Data inválida; use AAAA-MM-DD") from exc
+    else:
+        today = dt.date.today()
+    operations = _operations(request)
+    backend = operations.get_backend()
+    with trace("api.records.on_this_day"):
+
+        def build() -> list[dict[str, Any]]:
+            dated = (
+                (index, record.file_mtime)
+                for index in operations.sorted_records(backend, "data", 0)
+                if (record := backend.get_record(index)) is not None
+            )
+            years = []
+            for year, indices in on_this_day(dated, today):
+                shown = [
+                    record
+                    for index in indices[:per_year]
+                    if (record := backend.get_record(index)) is not None
+                ]
+                years.append({
+                    "year": year,
+                    "years_ago": today.year - year,
+                    "total": len(indices),
+                    "records": operations.attach_persons(
+                        [operations.record_to_json(record) for record in shown]
+                    ),
+                })
+            return years
+
+        years = await run_in_threadpool(build)
+        return {"date": today.isoformat(), "years": years}
 
 
 @router.get("/api/records/{idx}", response_model=RecordDetailOut)

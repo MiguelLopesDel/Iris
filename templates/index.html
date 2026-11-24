@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=65">
+  <link rel="stylesheet" href="/static/style.css?v=66">
 </head>
 <body>
 
@@ -170,6 +170,12 @@
         <button class="btn btn-primary" type="submit">Buscar</button>
         <button id="home-image-search" class="btn btn-subtle" type="button" data-requires-image>Usar imagem</button>
       </form>
+      <section class="home-section" id="home-memories-section" hidden>
+        <div class="home-section-title">
+          <div><span class="eyebrow">LEMBRANÇAS</span><h3>Neste dia</h3></div>
+        </div>
+        <div id="home-memories"></div>
+      </section>
       <section class="home-section">
         <div class="home-section-title">
           <div><span class="eyebrow">FOTOS</span><h3>Adicionadas recentemente</h3></div>
@@ -907,7 +913,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=87"></script>
+<script type="module" src="/static/app.js?v=88"></script>
 
 </body>
 </html>

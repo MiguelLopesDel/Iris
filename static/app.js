@@ -9,6 +9,7 @@ import {
   escapeHtml,
   fetchInfo,
   fetchLibraryVersion,
+  fetchOnThisDay,
   fetchRecords,
   getEnrichmentJob,
   listEnrichmentSuggestions,
@@ -18,8 +19,9 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=48';
+} from './api.js?v=49';
 import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=49';
+import { openDetail } from './detail.js?v=12';
 import { initCollections } from './collections.js?v=35';
 import { initConcepts } from './concepts.js?v=36';
 import { initDuplicates } from './duplicates.js?v=35';
@@ -197,7 +199,7 @@ function switchTab(name) {
   // entrance animation, and setting the hash below calls this again.
   document.querySelectorAll('.tab-pane').forEach(p => { if (p !== pane) p.classList.remove('active'); });
   if (pane) pane.classList.add('active');
-  if (name === 'home') loadHomeRecent();
+  if (name === 'home') { loadHomeRecent(); loadHomeMemories(); }
   if (name === 'gallery' || name === 'search') initGallery();
   if (name === 'collections') initCollections();
   if (name === 'spaces') initSpaces();
@@ -261,6 +263,47 @@ async function loadHomeRecent() {
   } catch (error) {
     container.innerHTML = '<p class="filter-empty">Não foi possível carregar os itens recentes.</p>';
   }
+}
+
+// ── On this day ─────────────────────────────────────────────────────────
+// One row per earlier year with photos taken on today's date; a photo opens
+// the viewer over that year's photos. Nothing on this date hides the section.
+var memoriesLoadedFor = null;
+
+function localDateString(now) {
+  var pad = function(n) { return String(n).padStart(2, '0'); };
+  return now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+}
+
+async function loadHomeMemories() {
+  var today = localDateString(new Date());
+  if (memoriesLoadedFor === today) return;
+  var section = document.getElementById('home-memories-section');
+  var container = document.getElementById('home-memories');
+  if (!section || !container) return;
+  var data;
+  try { data = await fetchOnThisDay(today); } catch (_) { return; }
+  var years = (data.years || []).filter(function(year) { return (year.records || []).length; });
+  memoriesLoadedFor = today;
+  section.hidden = years.length === 0;
+  container.innerHTML = years.map(function(year, y) {
+    var label = year.years_ago === 1 ? 'Há 1 ano' : 'Há ' + year.years_ago + ' anos';
+    var cards = year.records.map(function(record, i) {
+      var thumb = record.thumbnail_url
+        ? '<img src="' + escapeHtml(record.thumbnail_url) + '" alt="" loading="lazy">'
+        : '<div class="home-recent-placeholder">Imagem</div>';
+      return '<button class="home-recent-card" type="button" data-memory-year="' + y + '" data-memory-pos="' + i + '"'
+        + ' aria-label="' + escapeHtml(record.arquivo || 'Foto') + '">' + thumb + '</button>';
+    }).join('');
+    return '<p class="home-memory-year">' + escapeHtml(label + ' · ' + year.year) + '</p>'
+      + '<div class="home-recent-grid">' + cards + '</div>';
+  }).join('');
+  container.querySelectorAll('[data-memory-year]').forEach(function(card) {
+    card.addEventListener('click', function() {
+      var year = years[Number(card.dataset.memoryYear)];
+      openDetail(year.records, Number(card.dataset.memoryPos));
+    });
+  });
 }
 
 function openSearch(query) {

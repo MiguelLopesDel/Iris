@@ -20,7 +20,7 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=48';
+} from './api.js?v=49';
 import { confirmModal } from './ui.js?v=5';
 import { loadDevices } from './devices.js?v=2';
 import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=4';
