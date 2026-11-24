@@ -234,3 +234,61 @@ def test_the_engine_uses_a_given_encoder_without_loading_one(tmp_path: Path, mon
     shared = object()
     engine = IrisEngine(db_path=db, media_root=tmp_path, weights_path=tmp_path / "w.json", encoder=shared, device="cpu")
     assert engine.model is shared
+
+
+def test_preload_builds_the_most_recently_active_library_before_its_first_request(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    import sqlite3
+
+    from core.users_db import create_device, recently_active_user_ids, revoke_device
+
+    users_db = tmp_path / "users.db"
+    idle = create_user(users_db, tmp_path, username="ana", password_hash="hash-ana")
+    active = create_user(users_db, tmp_path, username="bia", password_hash="hash-bia")
+    gone = create_user(users_db, tmp_path, username="cai", password_hash="hash-cai")
+    create_device(users_db, idle.id, "phone", "android", "h1")
+    create_device(users_db, active.id, "browser", "web", "h2")
+    revoked = create_device(users_db, gone.id, "phone", "android", "h3")
+    revoke_device(users_db, gone.id, revoked.id)
+    with sqlite3.connect(users_db) as conn:
+        conn.execute("UPDATE devices SET last_seen_at = '2026-01-01T00:00:00' WHERE user_id = ?", (idle.id,))
+        conn.execute("UPDATE devices SET last_seen_at = '2026-02-01T00:00:00' WHERE user_id = ?", (active.id,))
+        conn.execute("UPDATE devices SET last_seen_at = '2026-03-01T00:00:00' WHERE user_id = ?", (gone.id,))
+
+    assert recently_active_user_ids(users_db, 5) == [active.id, idle.id]
+
+    built: list[str] = []
+
+    def fake_backend(*, db_path, **_kwargs):
+        built.append(db_path)
+        return object()
+
+    monkeypatch.setattr("core.backend_registry.create_backend", fake_backend)
+    registry = BackendRegistry(users_db, cache_size=1, load_model=False)
+    registry.preload(recently_active_user_ids(users_db, registry.cache_size))
+
+    assert built == [str(active.db_path)]
+    preloaded = registry.get(active.id)
+    assert built == [str(active.db_path)]  # the request found it ready
+    registry.preload([active.id])
+    assert registry.get(active.id) is preloaded and len(built) == 1
+
+
+def test_a_failed_preload_leaves_the_library_to_its_first_request(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    users_db = tmp_path / "users.db"
+    user = create_user(users_db, tmp_path, username="ana", password_hash="hash-ana")
+    calls = {"n": 0}
+
+    def flaky_backend(**_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("disk not ready")
+        return object()
+
+    monkeypatch.setattr("core.backend_registry.create_backend", flaky_backend)
+    registry = BackendRegistry(users_db, load_model=False)
+    registry.preload([user.id])
+    assert registry.get(user.id) is not None and calls["n"] == 2

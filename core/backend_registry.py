@@ -157,6 +157,29 @@ class BackendRegistry:
             if again:
                 self.refresh(user_id)
 
+    def preload(self, user_ids) -> None:
+        """Build these accounts' backends ahead of their first request.
+
+        Built outside the lock, like a refresh: a request arriving meanwhile
+        builds its own instead of waiting, and the preloaded one is dropped.
+        """
+        for user_id in list(user_ids)[: self.cache_size]:
+            with self._lock:
+                if user_id in self._backends:
+                    continue
+                epoch = self._epochs.get(user_id, 0)
+            user = self.get_user(user_id)
+            if user is None:
+                continue
+            try:
+                backend = self._build(user)
+            except Exception:
+                logger.exception("preloading the library failed; it is built on first use")
+                continue
+            with self._lock:
+                if self._epochs.get(user_id, 0) == epoch and user_id not in self._backends:
+                    self._install(user_id, user, backend)
+
     def records_of(self, user_id: int):
         """The account's records for background work, without disturbing the cache.
 

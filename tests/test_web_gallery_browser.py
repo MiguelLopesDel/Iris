@@ -36,7 +36,7 @@ def _free_port() -> int:
 def server(tmp_path: Path):
     env = dict(
         os.environ, PYTHONPATH=str(ROOT), IRIS_SERVER_MODE="private",
-        IRIS_SESSION_HTTPS_ONLY="false", IRIS_LOAD_MODEL="0", IRIS_THUMBNAIL_WARMUP="0",
+        IRIS_SESSION_HTTPS_ONLY="false", IRIS_LOAD_MODEL="0", IRIS_THUMBNAIL_WARMUP="0", IRIS_BACKEND_PRELOAD="0",
     )
     subprocess.run(
         [sys.executable, "-c", (
