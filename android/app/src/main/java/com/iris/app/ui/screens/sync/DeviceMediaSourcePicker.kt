@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,9 +75,11 @@ internal fun DeviceMediaSourcePicker(
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    var activeFilter by remember { mutableStateOf(DeviceMediaSourceFilter.ALL) }
-    val visibleSources = remember(sources, query, activeFilter, selectedIds) {
-        filterDeviceMediaSources(sources, query, activeFilter, selectedIds)
+    val sections = remember(sources, query) { BackupFolders.sections(sources, query) }
+    var expandedGroups by remember { mutableStateOf(emptySet<String>()) }
+    var othersExpanded by remember { mutableStateOf(false) }
+    val chosenFolders = remember(sources, selectedIds) {
+        BackupFolders.folders(sources).count { folder -> folder.sourceIds.any { it in selectedIds } }
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -156,12 +159,9 @@ internal fun DeviceMediaSourcePicker(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = stringResource(
-                        R.string.sync_source_picker_counts,
-                        selectedIds.size,
-                        sources.size,
-                        visibleSources.size
-                    ),
+                    // Portuguese plural rules read 0 as "one", which would say "0 pasta".
+                    text = if (chosenFolders == 0) stringResource(R.string.sync_folders_chosen_none)
+                    else pluralStringResource(R.plurals.sync_folders_chosen, chosenFolders, chosenFolders),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -189,30 +189,6 @@ internal fun DeviceMediaSourcePicker(
                 }
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SourceFilterChip(
-                    label = stringResource(R.string.sync_source_filter_all),
-                    selected = activeFilter == DeviceMediaSourceFilter.ALL
-                ) { activeFilter = DeviceMediaSourceFilter.ALL }
-                SourceFilterChip(
-                    label = stringResource(R.string.sync_source_filter_photos),
-                    selected = activeFilter == DeviceMediaSourceFilter.PHOTOS
-                ) { activeFilter = DeviceMediaSourceFilter.PHOTOS }
-                SourceFilterChip(
-                    label = stringResource(R.string.sync_source_filter_videos),
-                    selected = activeFilter == DeviceMediaSourceFilter.VIDEOS
-                ) { activeFilter = DeviceMediaSourceFilter.VIDEOS }
-                SourceFilterChip(
-                    label = stringResource(R.string.sync_source_filter_selected),
-                    selected = activeFilter == DeviceMediaSourceFilter.SELECTED
-                ) { activeFilter = DeviceMediaSourceFilter.SELECTED }
-            }
-
             HorizontalDivider(color = IrisSurfaceBright)
 
             when {
@@ -222,7 +198,7 @@ internal fun DeviceMediaSourcePicker(
                     modifier = Modifier.padding(vertical = 20.dp),
                     color = IrisDanger
                 )
-                visibleSources.isEmpty() -> Text(
+                sections.main.isEmpty() && sections.others.isEmpty() -> Text(
                     text = stringResource(
                         if (sources.isEmpty()) R.string.sync_source_picker_no_sources
                         else R.string.sync_source_picker_no_results
@@ -234,15 +210,19 @@ internal fun DeviceMediaSourcePicker(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(visibleSources, key = { it.id }) { source ->
-                        DeviceMediaSourceRow(
-                            source = source,
-                            checked = source.id in selectedIds,
-                            onCheckedChange = { checked -> onToggleSource(source.id, checked) }
-                        )
-                    }
+                    backupFolderSections(
+                        sections = sections,
+                        selectedIds = selectedIds,
+                        expandedGroups = expandedGroups,
+                        // While searching, what matched is shown, wherever it sits.
+                        othersExpanded = othersExpanded || query.isNotBlank(),
+                        onToggleGroupExpanded = { key ->
+                            expandedGroups = if (key in expandedGroups) expandedGroups - key else expandedGroups + key
+                        },
+                        onToggleOthers = { othersExpanded = !othersExpanded },
+                        onSetSources = { ids, on -> ids.forEach { onToggleSource(it, on) } },
+                    )
                 }
             }
 
@@ -262,63 +242,6 @@ internal fun DeviceMediaSourcePicker(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.sync_source_picker_done), fontWeight = FontWeight.Bold)
             }
-        }
-    }
-}
-
-@Composable
-private fun SourceFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label) }
-    )
-}
-
-@Composable
-private fun DeviceMediaSourceRow(
-    source: DeviceMediaSource,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    val mediaLabel = stringResource(
-        if (source.mediaKind == "video") R.string.sync_videos_lowercase
-        else R.string.sync_photos_lowercase
-    )
-    val itemSummary = stringResource(R.string.sync_source_summary, source.itemCount, mediaLabel)
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("device-media-source-${source.id}")
-            .toggleable(value = checked, role = Role.Checkbox, onValueChange = onCheckedChange),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = source.name,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(text = itemSummary, fontSize = 12.sp, color = IrisTextSoft)
-                if (source.relativePath.isNotBlank()) {
-                    Text(
-                        text = source.relativePath,
-                        fontSize = 12.sp,
-                        color = IrisTextSoft,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Checkbox(checked = checked, onCheckedChange = null)
         }
     }
 }

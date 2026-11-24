@@ -49,7 +49,7 @@
     <string name="sync_source_picker_close">Fechar seletor de pastas</string>
     <string name="sync_source_picker_counts">%1$d selecionadas · %2$d pastas · %3$d exibidas</string>
     <string name="sync_source_picker_clear">Limpar seleção</string>
-    <string name="sync_source_picker_search_hint">Buscar por nome ou caminho</string>
+    <string name="sync_source_picker_search_hint">Buscar pasta</string>
     <string name="sync_source_picker_clear_search">Limpar busca</string>
     <string name="sync_source_filter_all">Todas</string>
     <string name="sync_source_filter_photos">Fotos</string>
@@ -144,4 +144,12 @@
     <string name="sync_history_foreground_service">Rodou como serviço com notificação</string>
     <string name="sync_history_foreground_refused">O Android não permitiu rodar como serviço (restrição de bateria)</string>
     <string name="sync_notification_progress_no_rate">%1$d enviados · faltam %2$s</string>
+    <string name="sync_folders_main">Principais</string>
+    <string name="sync_folder_some_selected">algumas pastas</string>
+    <plurals name="sync_folders_others"><item quantity="one">Outra pasta (%d)</item><item quantity="other">Outras pastas (%d)</item></plurals>
+    <plurals name="sync_folders_chosen"><item quantity="one">%d pasta no backup</item><item quantity="other">%d pastas no backup</item></plurals>
+    <plurals name="sync_folder_photos"><item quantity="one">%d foto</item><item quantity="other">%d fotos</item></plurals>
+    <plurals name="sync_folder_videos"><item quantity="one">%d vídeo</item><item quantity="other">%d vídeos</item></plurals>
+    <plurals name="sync_folder_subfolders"><item quantity="one">%d pasta</item><item quantity="other">%d pastas</item></plurals>
+    <string name="sync_folders_chosen_none">Nenhuma pasta no backup</string>
 </resources>

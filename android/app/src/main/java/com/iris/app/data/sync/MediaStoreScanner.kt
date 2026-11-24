@@ -187,7 +187,12 @@ class MediaStoreScanner(
         mediaKind: String,
         target: MutableMap<String, DeviceMediaSource>
     ) {
-        contentResolver.query(collectionUri, projection(), "${MediaStore.MediaColumns.SIZE} > 0", null, null)?.use { cursor ->
+        // Newest first, so the first item met in a folder is its cover.
+        contentResolver.query(
+            collectionUri, projection(), "${MediaStore.MediaColumns.SIZE} > 0", null,
+            "${MediaStore.MediaColumns.DATE_ADDED} DESC"
+        )?.use { cursor ->
+            val idColumn = cursor.getColumnIndex(MediaStore.MediaColumns._ID)
             val bucketIdColumn = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
             val bucketNameColumn = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             val relativePathColumn = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
@@ -203,7 +208,10 @@ class MediaStoreScanner(
                     relativePath = cursor.stringOrEmpty(relativePathColumn, ""),
                     volume = volume,
                     mediaKind = mediaKind,
-                    itemCount = (previous?.itemCount ?: 0) + 1
+                    itemCount = (previous?.itemCount ?: 0) + 1,
+                    coverUri = previous?.coverUri ?: if (idColumn >= 0) {
+                        android.content.ContentUris.withAppendedId(collectionUri, cursor.getLong(idColumn)).toString()
+                    } else null
                 )
             }
         }

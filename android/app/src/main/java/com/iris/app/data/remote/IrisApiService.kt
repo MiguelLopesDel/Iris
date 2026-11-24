@@ -182,6 +182,17 @@ interface IrisApiService {
         @Query("per_page") perPage: Int = 60
     ): RecordsResponse
 
+    @GET("api/trash/items")
+    suspend fun getTrash(
+        @Query("before") before: Int? = null,
+        @Query("limit") limit: Int = 60
+    ): com.iris.app.data.model.TrashPage
+
+    @POST("api/trash/restore")
+    suspend fun restoreTrash(
+        @Body request: com.iris.app.data.model.RestoreTrashRequest
+    ): com.iris.app.data.model.RestoreTrashResponse
+
     @FormUrlEncoded
     @POST("api/trash")
     suspend fun moveToTrash(

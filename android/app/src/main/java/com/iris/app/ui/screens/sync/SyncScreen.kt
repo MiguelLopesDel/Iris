@@ -61,6 +61,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -110,7 +111,9 @@ private enum class MediaPermissionFollowUp {
 fun SyncScreen(
     viewModel: SyncViewModel,
     onConfigureServer: () -> Unit,
-    onBack: (() -> Unit)? = null
+    onBack: (() -> Unit)? = null,
+    /** Opened from Álbuns → Pastas do celular: the folder chooser shows at once. */
+    openFoldersOnStart: Boolean = false
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -173,6 +176,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val openDeviceSourcePicker: () -> Unit = {
         showDeviceSourcePicker = true
         requestMediaPermission(MediaPermissionFollowUp.DiscoverFolders)
+    }
+    LaunchedEffect(openFoldersOnStart) {
+        if (openFoldersOnStart) openDeviceSourcePicker()
     }
 
     if (uiState.isLoggedIn && uiState.backupSetupPromptReady &&

@@ -34,4 +34,12 @@ class BackupStatusTest {
         // Still checking is not a problem worth showing.
         assertEquals(BackupState.OK, state(online = null, connection = CloudConnectionState.CHECKING))
     }
+
+    @Test
+    fun `the label says the state in words with the library's size`() {
+        assertEquals("Backup em dia · 1.234 itens", backupLabel(BackupState.OK, 1234))
+        assertEquals("Sem conexão · 1 item", backupLabel(BackupState.OFFLINE, 1))
+        assertEquals("Backup em dia", backupLabel(BackupState.OK, 0))
+        assertEquals("Entrar", backupLabel(BackupState.SIGNED_OUT, 500))
+    }
 }
