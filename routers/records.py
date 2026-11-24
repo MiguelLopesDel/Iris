@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from core import documents
 from core.api_models import (
     DocumentKindsOut,
+    LibraryVersionOut,
     OkOut,
     RecordDetailOut,
     RecordMetadataOut,
@@ -270,6 +271,24 @@ async def get_documents_of_kind(
             }
 
         return await run_in_threadpool(build)
+@router.get("/api/records/version", response_model=LibraryVersionOut)
+def get_records_version(request: Request):
+    """A cheap token that changes when media is added or removed.
+
+    An open gallery asks this every few seconds to notice a phone's uploads
+    without reloading pages. It reads the catalogue already in memory: no
+    query, no thumbnails. Added media raises the highest id; removed media
+    lowers the count, so either changes the token.
+    """
+    backend = _operations(request).get_backend()
+    records = backend.get_all_records()
+    total = len(records)
+    columns = getattr(records, "columns", None)
+    if columns is not None:
+        highest = int(columns.db_id.max()) if total else 0
+    else:
+        highest = max((int(getattr(r, "db_id", 0) or 0) for r in records), default=0)
+    return {"version": f"{total}:{highest}", "total": total}
 
 
 @router.get("/api/records/{idx}", response_model=RecordDetailOut)

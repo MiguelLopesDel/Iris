@@ -2,7 +2,7 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=46';
+import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=47';
 import { openDetail } from './detail.js?v=11';
 
 // ── Module state ──────────────────────────────────────────────────────────
@@ -49,6 +49,10 @@ export function initGallery() {
       event.preventDefault();
       applyPerPage();
     }
+  };
+  document.getElementById('gallery-new-media').onclick = () => {
+    document.getElementById('gallery-new-media').hidden = true;
+    goToPage(1);
   };
   document.getElementById('gallery-prev').onclick = () => goToPage(currentPage - 1);
   document.getElementById('gallery-next').onclick = () => goToPage(currentPage + 1);
@@ -156,6 +160,34 @@ function invalidateCache() {
   currentPage = 1;
   resetGallerySearchState();
   loadPage(1);
+}
+
+// ── Live updates ─────────────────────────────────────────────────────────
+
+/* Called by app.js when the library changed (a phone synced, say). Cached
+   pages are stale either way. On the first page the grid is redrawn in place,
+   without skeletons; deeper in, a notice offers to go back to the newest. */
+export function onLibraryChanged() {
+  pageCache.clear();
+  const visible = document.getElementById('tab-gallery')?.classList.contains('active');
+  if (!visible || searchActive) return;  // the next visit fetches fresh pages
+  if (currentPage === 1) refreshPageQuietly(1);
+  else document.getElementById('gallery-new-media')?.removeAttribute('hidden');
+}
+
+async function refreshPageQuietly(page) {
+  try {
+    const { mediaType, collections, concepts } = getFilterParams();
+    const data = await fetchRecords(page, perPage, sortBy, sortAsc, mediaType, collections, concepts);
+    if (searchActive || currentPage !== page) return;  // the person moved on meanwhile
+    pageCache.set(data.page, data);
+    totalPages = data.total_pages;
+    totalItems = data.total;
+    updatePaginationUI();
+    renderGrid(data.records);
+  } catch {
+    // A failed refresh leaves the current grid; the next change tries again.
+  }
 }
 
 // ── Page loading + caching ───────────────────────────────────────────────

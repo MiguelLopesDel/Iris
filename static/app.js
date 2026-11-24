@@ -8,6 +8,7 @@ import {
   createEnrichmentJob,
   escapeHtml,
   fetchInfo,
+  fetchLibraryVersion,
   fetchRecords,
   getEnrichmentJob,
   listEnrichmentSuggestions,
@@ -17,8 +18,8 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=46';
-import { initGallery, invalidateCache, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=47';
+} from './api.js?v=47';
+import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=48';
 import { initCollections } from './collections.js?v=35';
 import { initConcepts } from './concepts.js?v=36';
 import { initDuplicates } from './duplicates.js?v=35';
@@ -216,6 +217,31 @@ function switchTab(name) {
 }
 
 var homeLoaded = false;
+
+// ── Live library updates ────────────────────────────────────────────────
+// A phone's uploads appear in an open page without a reload: while the page
+// is visible, ask the server every few seconds whether the library changed
+// (a token, no records), and right away when the tab comes back into view.
+var LIBRARY_POLL_MS = 8000;
+var libraryVersion = null;
+
+async function checkLibraryVersion() {
+  if (document.visibilityState !== 'visible') return;
+  var data;
+  try { data = await fetchLibraryVersion(); } catch (_) { return; }
+  if (libraryVersion === null || data.version === libraryVersion) {
+    libraryVersion = data.version;
+    return;
+  }
+  libraryVersion = data.version;
+  homeLoaded = false;
+  if (document.body.dataset.view === 'home') loadHomeRecent();
+  onLibraryChanged();
+}
+
+setInterval(checkLibraryVersion, LIBRARY_POLL_MS);
+document.addEventListener('visibilitychange', checkLibraryVersion);
+checkLibraryVersion();
 
 async function loadHomeRecent() {
   if (homeLoaded) return;
