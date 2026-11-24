@@ -148,6 +148,19 @@ class TimelineOut(_Out):
     buckets: list[TimelineBucketOut] = []
 
 
+class DocumentKindOut(_Out):
+    key: str
+    title: str
+    count: int
+    # A capa: a mais recente desse tipo.
+    cover: RecordOut | None = None
+
+
+class DocumentKindsOut(_Out):
+    total: int
+    kinds: list[DocumentKindOut] = []
+
+
 class RecordsPageOut(_Out):
     page: int
     per_page: int
