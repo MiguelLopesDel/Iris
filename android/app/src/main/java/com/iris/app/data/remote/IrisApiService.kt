@@ -170,6 +170,19 @@ interface IrisApiService {
     ): Map<String, String>
 
     @FormUrlEncoded
+    @POST("api/records/{idx}/favorite")
+    suspend fun setFavorite(
+        @Path("idx") idx: Int,
+        @Field("favorite") favorite: Boolean
+    ): Map<String, Boolean>
+
+    @GET("api/favorites")
+    suspend fun getFavorites(
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 60
+    ): RecordsResponse
+
+    @FormUrlEncoded
     @POST("api/trash")
     suspend fun moveToTrash(
         @Field("db_ids") dbIds: String

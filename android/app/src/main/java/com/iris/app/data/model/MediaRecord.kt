@@ -33,6 +33,8 @@ data class MediaRecord(
     @SerialName("thumbnail_url") val thumbnailUrl: String? = null,
     // Inline preview painted while the thumbnail request is still in flight.
     @SerialName("thumb_hash") val thumbHash: String? = null,
+    /** Marked with a heart; the server keeps it per library. */
+    @SerialName("favorite") val favorite: Boolean = false,
     @SerialName("persons") val persons: List<MediaPersonRef> = emptyList(),
     @SerialName("score") val score: Float? = null,
     @SerialName("collections") val collections: List<IrisCollection> = emptyList(),

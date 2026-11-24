@@ -49,6 +49,7 @@ import com.iris.app.ui.screens.collections.CollectionMediaScreen
 import com.iris.app.ui.screens.collections.CollectionMediaViewModel
 import com.iris.app.ui.screens.collections.CollectionsScreen
 import com.iris.app.ui.screens.collections.CollectionsViewModel
+import com.iris.app.ui.screens.collections.FAVORITES_COLLECTION_ID
 import com.iris.app.ui.screens.detail.MediaDetailScreen
 import com.iris.app.ui.screens.detail.MediaDetailViewModel
 import com.iris.app.ui.screens.detail.ViewerItem
@@ -336,7 +337,12 @@ fun IrisNavGraph(
                         navController.navigate(NavRoute.CollectionMedia.createRoute(colId, colName))
                     },
                     onPeopleClick = { navController.navigate(NavRoute.Persons.route) },
-                    onGroupsClick = { navController.navigate(NavRoute.Spaces.route) }
+                    onGroupsClick = { navController.navigate(NavRoute.Spaces.route) },
+                    onFavoritesClick = {
+                        navController.navigate(
+                            NavRoute.CollectionMedia.createRoute(FAVORITES_COLLECTION_ID, "Favoritos")
+                        )
+                    }
                 )
             }
 

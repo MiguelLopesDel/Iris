@@ -237,6 +237,14 @@ class IrisRepository(
     suspend fun getTimeline(mediaType: String = "all"): Result<com.iris.app.data.model.TimelineResponse> =
         runCatchingCancellable { apiClient.apiService.getTimeline(mediaType) }
 
+    suspend fun setFavorite(idx: Int, favorite: Boolean): Result<Unit> = runCatchingCancellable {
+        apiClient.apiService.setFavorite(idx, favorite)
+        Unit
+    }
+
+    suspend fun getFavoritesPage(page: Int = 1, perPage: Int = 60): Result<RecordsResponse> =
+        runCatchingCancellable { apiClient.apiService.getFavorites(page, perPage) }
+
     /** Moves items to the server's trash (restorable from the web for a while); returns how many moved. */
     suspend fun moveToTrash(dbIds: List<Int>): Result<Int> = runCatchingCancellable {
         val moved = apiClient.apiService.moveToTrash(dbIds.joinToString(",")).moved

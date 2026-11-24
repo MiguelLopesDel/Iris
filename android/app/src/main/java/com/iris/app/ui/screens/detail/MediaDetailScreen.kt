@@ -17,6 +17,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.filled.Favorite
 import com.iris.app.ui.theme.IrisDanger
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Share
@@ -241,8 +243,12 @@ internal fun MediaDetailScreen(
                 record != null && mediaUrl != null -> ViewerActionBar(
                     listOf(
                         ViewerAction(Icons.Outlined.Share, "Compartilhar") { share(mediaUrl, record.cleanFilename) },
+                        if (record.favorite) {
+                            ViewerAction(Icons.Filled.Favorite, "Favorita") { viewModel?.toggleFavorite() }
+                        } else {
+                            ViewerAction(Icons.Outlined.FavoriteBorder, "Favoritar") { viewModel?.toggleFavorite() }
+                        },
                         ViewerAction(Icons.Default.Add, "Adicionar a") { pickingSpace = true },
-                        ViewerAction(Icons.Outlined.Info, "Informações") { openDetails() },
                         ViewerAction(Icons.Outlined.Delete, "Lixeira") { confirmingTrash = true },
                     )
                 )

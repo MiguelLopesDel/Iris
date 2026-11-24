@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -74,7 +75,8 @@ fun CollectionsScreen(
     viewModel: CollectionsViewModel,
     onCollectionClick: (Int, String) -> Unit,
     onPeopleClick: () -> Unit,
-    onGroupsClick: () -> Unit = {}
+    onGroupsClick: () -> Unit = {},
+    onFavoritesClick: () -> Unit = {}
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -103,8 +105,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            TabRow(
+            // Scrollable: four labels do not fit a narrow phone side by side.
+            ScrollableTabRow(
                 selectedTabIndex = uiState.selectedTab,
+                edgePadding = 0.dp,
                 containerColor = IrisBackground,
                 contentColor = IrisAccent,
                 indicator = { tabPositions ->
@@ -118,6 +122,11 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     selected = uiState.selectedTab == 0,
                     onClick = { viewModel.setTab(0) },
                     text = { Text("Álbuns (${uiState.collections.size})", fontWeight = FontWeight.SemiBold) }
+                )
+                Tab(
+                    selected = false,
+                    onClick = onFavoritesClick,
+                    text = { Text("Favoritos", fontWeight = FontWeight.SemiBold) }
                 )
                 Tab(
                     selected = false,
