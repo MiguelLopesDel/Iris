@@ -339,6 +339,7 @@ fun IrisNavGraph(
                     onPeopleClick = { navController.navigate(NavRoute.Persons.route) },
                     onGroupsClick = { navController.navigate(NavRoute.Spaces.route) },
                     onTrashClick = { navController.navigate(NavRoute.Trash.route) },
+                    onDocumentsClick = { navController.navigate(NavRoute.Documents.route) },
                     onDeviceFoldersClick = { navController.navigate(NavRoute.DeviceFolders.route) },
                     onFavoritesClick = {
                         navController.navigate(
@@ -451,6 +452,44 @@ fun IrisNavGraph(
                     onConfigureServer = { navController.navigate(NavRoute.Settings.route) },
                     onBack = { navController.popBackStack() },
                     openFoldersOnStart = true
+                )
+            }
+
+            composable(NavRoute.Documents.route) {
+                com.iris.app.ui.screens.documents.DocumentsScreen(
+                    repository = application.irisRepository,
+                    onBack = { navController.popBackStack() },
+                    onKindClick = { kind, title ->
+                        navController.navigate(NavRoute.DocumentKind.createRoute(kind, title))
+                    }
+                )
+            }
+
+            composable(
+                route = NavRoute.DocumentKind.route,
+                arguments = listOf(
+                    navArgument("kind") { type = NavType.StringType },
+                    navArgument("name") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                )
+            ) { backStackEntry ->
+                val kind = backStackEntry.arguments?.getString("kind") ?: ""
+                val name = backStackEntry.arguments?.getString("name") ?: ""
+                val viewModel: CollectionMediaViewModel = viewModel(
+                    key = "doc_$kind",
+                    factory = CollectionMediaViewModel.Factory(
+                        0, name, application.irisRepository, application.performanceMonitor, documentKind = kind
+                    )
+                )
+                CollectionMediaScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() },
+                    onMediaClick = { index ->
+                        ViewerSequence.setRecords(viewModel.uiState.value.members)
+                        navController.navigate(NavRoute.Detail.createRoute(index))
+                    }
                 )
             }
 

@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.StarBorder
@@ -81,6 +82,7 @@ fun CollectionsScreen(
     onGroupsClick: () -> Unit = {},
     onFavoritesClick: () -> Unit = {},
     onTrashClick: () -> Unit = {},
+    onDocumentsClick: () -> Unit = {},
     onDeviceFoldersClick: () -> Unit = {}
 ) {
 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -148,6 +150,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 AlbumShortcut(Icons.Outlined.StarBorder, "Favoritos", onFavoritesClick, Modifier.weight(1f))
+                AlbumShortcut(Icons.Outlined.Description, "Documentos", onDocumentsClick, Modifier.weight(1f))
                 AlbumShortcut(Icons.Outlined.PhoneAndroid, "No celular", onDeviceFoldersClick, Modifier.weight(1f))
                 AlbumShortcut(Icons.Outlined.Delete, "Lixeira", onTrashClick, Modifier.weight(1f))
             }

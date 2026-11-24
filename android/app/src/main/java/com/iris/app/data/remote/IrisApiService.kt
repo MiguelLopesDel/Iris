@@ -182,6 +182,16 @@ interface IrisApiService {
         @Query("per_page") perPage: Int = 60
     ): RecordsResponse
 
+    @GET("api/documents")
+    suspend fun getDocumentKinds(): com.iris.app.data.model.DocumentKinds
+
+    @GET("api/documents/{kind}")
+    suspend fun getDocuments(
+        @Path("kind") kind: String,
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 60
+    ): RecordsResponse
+
     @GET("api/trash/items")
     suspend fun getTrash(
         @Query("before") before: Int? = null,

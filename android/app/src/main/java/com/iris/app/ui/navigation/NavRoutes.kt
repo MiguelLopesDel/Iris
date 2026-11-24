@@ -35,6 +35,11 @@ sealed class NavRoute(val route: String) {
     object Sync : NavRoute("sync")
     object Settings : NavRoute("settings")
     object Trash : NavRoute("trash")
+    object Documents : NavRoute("documents")
+    object DocumentKind : NavRoute("documents/{kind}?name={name}") {
+        fun createRoute(kind: String, name: String): String =
+            "documents/${routeArgument(kind)}?name=${routeArgument(name)}"
+    }
     /** The backup screen opened straight on the phone's folders. */
     object DeviceFolders : NavRoute("device_folders")
 }

@@ -130,6 +130,21 @@ data class RestoreTrashResponse(
     @SerialName("missing") val missing: List<Int> = emptyList()
 )
 
+/** One kind of document the server found among the photos, with the newest as its cover. */
+@Serializable
+data class DocumentKind(
+    @SerialName("key") val key: String,
+    @SerialName("title") val title: String,
+    @SerialName("count") val count: Int = 0,
+    @SerialName("cover") val cover: MediaRecord? = null
+)
+
+@Serializable
+data class DocumentKinds(
+    @SerialName("total") val total: Int = 0,
+    @SerialName("kinds") val kinds: List<DocumentKind> = emptyList()
+)
+
 @Serializable
 data class TrashResponse(
     @SerialName("moved") val moved: Int = 0,

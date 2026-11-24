@@ -245,6 +245,12 @@ class IrisRepository(
     suspend fun getFavoritesPage(page: Int = 1, perPage: Int = 60): Result<RecordsResponse> =
         runCatchingCancellable { apiClient.apiService.getFavorites(page, perPage) }
 
+    suspend fun getDocumentKinds(): Result<com.iris.app.data.model.DocumentKinds> =
+        runCatchingCancellable { apiClient.apiService.getDocumentKinds() }
+
+    suspend fun getDocumentsPage(kind: String, page: Int = 1): Result<RecordsResponse> =
+        runCatchingCancellable { apiClient.apiService.getDocuments(kind, page) }
+
     suspend fun getTrash(before: Int? = null): Result<com.iris.app.data.model.TrashPage> =
         runCatchingCancellable { apiClient.apiService.getTrash(before) }
 

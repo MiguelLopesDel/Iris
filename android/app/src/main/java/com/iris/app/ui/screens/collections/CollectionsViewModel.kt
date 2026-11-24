@@ -117,7 +117,9 @@ class CollectionMediaViewModel(
     private val collectionId: Int,
     private val collectionName: String,
     private val repository: IrisRepository,
-    val performanceMonitor: PerformanceMonitor
+    val performanceMonitor: PerformanceMonitor,
+    /** Shows one kind of document instead of an album. */
+    private val documentKind: String? = null
 ) : ViewModel() {
     // One page request at a time: reloading cancels a next page still on its
     // way, which would otherwise be appended to the fresh first page.
@@ -173,7 +175,9 @@ class CollectionMediaViewModel(
                     error = null
                 )
             }
-            val request = if (collectionId == FAVORITES_COLLECTION_ID) {
+            val request = if (documentKind != null) {
+                repository.getDocumentsPage(documentKind, page)
+            } else if (collectionId == FAVORITES_COLLECTION_ID) {
                 repository.getFavoritesPage(page)
             } else {
                 repository.getCollectionMembersPage(collectionId, page)
@@ -222,12 +226,13 @@ class CollectionMediaViewModel(
         private val collectionId: Int,
         private val collectionName: String,
         private val repository: IrisRepository,
-        private val performanceMonitor: PerformanceMonitor
+        private val performanceMonitor: PerformanceMonitor,
+        private val documentKind: String? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return CollectionMediaViewModel(
-                collectionId, collectionName, repository, performanceMonitor
+                collectionId, collectionName, repository, performanceMonitor, documentKind
             ) as T
         }
     }
