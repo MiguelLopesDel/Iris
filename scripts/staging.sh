@@ -69,7 +69,26 @@ docker_cmd() {
 }
 
 project=""
-compose() { docker_cmd compose -p "$project" "$@"; }
+host_timezone() {
+    # The IANA name (America/Sao_Paulo), however this host records it.
+    local zone=""
+    if command -v timedatectl >/dev/null 2>&1; then
+        zone="$(timedatectl show -p Timezone --value 2>/dev/null || true)"
+    fi
+    if [ -z "$zone" ] && [ -L /etc/localtime ]; then
+        zone="$(readlink /etc/localtime | sed -n 's#.*/zoneinfo/##p')"
+    fi
+    printf '%s' "$zone"
+}
+
+# The container runs in the host's time zone, as production does; a TZ in
+# this checkout's .env wins.
+compose() {
+    local zone
+    zone="$(env_value TZ)"
+    [ -n "$zone" ] || zone="$(host_timezone)"
+    TZ="${zone:-UTC}" docker_cmd compose -p "$project" "$@"
+}
 
 # --- Guards: nothing changes before every one of these passes. -------------
 

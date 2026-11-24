@@ -7,7 +7,11 @@ from pathlib import Path
 from core.concepts import create_concept_tables
 from core.faces import create_face_tables
 from core.import_review import ensure_tables as ensure_import_review_tables
-from core.media_dates import repair_device_upload_dates_once, repair_metadata_capture_dates_once
+from core.media_dates import (
+    repair_device_upload_dates_once,
+    repair_metadata_capture_dates_once,
+    repair_naive_capture_local_time_once,
+)
 from core.nocow import create_database_file
 from core.web_enrichment import create_web_enrichment_tables
 
@@ -39,6 +43,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     heal_library_roots(conn, db_path.parent / "library")
     repair_device_upload_dates_once(conn)
     repair_metadata_capture_dates_once(conn)
+    repair_naive_capture_local_time_once(conn)
     conn.commit()
     return conn
 

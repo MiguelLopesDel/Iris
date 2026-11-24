@@ -64,6 +64,57 @@ def repair_metadata_capture_dates_once(conn: sqlite3.Connection) -> int:
     return _run_once(conn, METADATA_CAPTURE_DATES_REPAIR, repair_metadata_capture_dates)
 
 
+NAIVE_CAPTURE_LOCAL_REPAIR = "naive_capture_local_time_v1"
+
+
+def repair_naive_capture_local_time_once(conn: sqlite3.Connection) -> int:
+    """Runs :func:`repair_naive_capture_local_time` once the server has a time zone.
+
+    In UTC there is nothing to repair, and the repair is not recorded either:
+    it must still run on the first start after the host's zone reaches the
+    container.
+    """
+    if _local_offset_seconds() == 0:
+        return 0
+    return _run_once(conn, NAIVE_CAPTURE_LOCAL_REPAIR, repair_naive_capture_local_time)
+
+
+def _local_offset_seconds() -> float:
+    offset = datetime.now().astimezone().utcoffset()
+    return offset.total_seconds() if offset else 0.0
+
+
+def repair_naive_capture_local_time(conn: sqlite3.Connection) -> int:
+    """Re-reads in local time the photos whose camera time was taken as UTC.
+
+    A camera writes its wall clock without an offset. While the container ran
+    in UTC that clock was stored as UTC, off by the host's offset. Only a row
+    whose date is exactly that UTC reading changes: one dated by its file, or
+    already read in local time, is left as it is. Videos keep UTC, which is
+    what their creation time is. Returns rows changed.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, caminho, file_mtime, json_extract(metadata_json, '$.captured_at') FROM memes
+        WHERE json_valid(metadata_json)
+          AND COALESCE(json_extract(metadata_json, '$.captured_at'), '') != ''
+          AND file_mtime IS NOT NULL
+        """
+    ).fetchall()
+    updates = []
+    for media_id, path, file_mtime, captured_at in rows:
+        if Path(path or "").suffix.lower() in VIDEO_EXTS:
+            continue
+        as_utc = capture_timestamp(captured_at)
+        as_local = capture_timestamp(captured_at, naive_is_local=True)
+        if as_utc is None or as_local is None or as_utc == as_local:
+            continue  # carries an offset, or nothing to fix
+        if abs(file_mtime - as_utc) < 1:
+            updates.append((as_local, media_id))
+    conn.executemany("UPDATE memes SET file_mtime = ? WHERE id = ?", updates)
+    return len(updates)
+
+
 def _run_once(conn: sqlite3.Connection, name: str, repair) -> int:
     conn.execute(
         f"CREATE TABLE IF NOT EXISTS {_APPLIED_TABLE} (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"

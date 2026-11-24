@@ -484,3 +484,29 @@ def test_other_filesystems_keep_their_databases_as_they_are(tmp_path: Path) -> N
 
     assert not (tmp_path / "chattr.log").exists()
 
+
+def test_update_gives_the_container_the_host_time_zone(tmp_path: Path) -> None:
+    """In UTC a camera's time, which has no offset, was read three hours off."""
+    bin_dir = _docker_stub(tmp_path)
+    _stub(bin_dir, "timedatectl", "echo America/Sao_Paulo\n")
+    env = _env(tmp_path, bin_dir)
+    project = _released_clone(tmp_path, env)
+    (project / ".env").write_text("IRIS_PORT=8501\n")
+
+    _server(project, env, "update")
+    _server(project, env, "update")
+
+    lines = (project / ".env").read_text().splitlines()
+    assert [line for line in lines if line.startswith("TZ=")] == ["TZ=America/Sao_Paulo"]
+
+
+def test_a_time_zone_set_by_hand_is_kept(tmp_path: Path) -> None:
+    bin_dir = _docker_stub(tmp_path)
+    _stub(bin_dir, "timedatectl", "echo America/Sao_Paulo\n")
+    env = _env(tmp_path, bin_dir)
+    project = _released_clone(tmp_path, env)
+    (project / ".env").write_text("TZ=Europe/Lisbon\n")
+
+    _server(project, env, "update")
+
+    assert _env_value(project, "TZ") == "Europe/Lisbon"
