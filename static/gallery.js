@@ -2,8 +2,8 @@
    Fast paginated media browser with client-side pre-fetching.
    Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
 
-import { debounce, escapeHtml, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=47';
-import { openDetail } from './detail.js?v=11';
+import { debounce, escapeHtml, fetchFavorites, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=48';
+import { openDetail } from './detail.js?v=12';
 
 // ── Module state ──────────────────────────────────────────────────────────
 let currentPage = 1;
@@ -177,8 +177,7 @@ export function onLibraryChanged() {
 
 async function refreshPageQuietly(page) {
   try {
-    const { mediaType, collections, concepts } = getFilterParams();
-    const data = await fetchRecords(page, perPage, sortBy, sortAsc, mediaType, collections, concepts);
+    const data = await fetchGalleryPage(page);
     if (searchActive || currentPage !== page) return;  // the person moved on meanwhile
     pageCache.set(data.page, data);
     totalPages = data.total_pages;
@@ -212,8 +211,7 @@ async function loadPage(page) {
   grid.innerHTML = renderSkeletons(perPage);
 
   try {
-    const { mediaType, collections, concepts } = getFilterParams();
-    const data = await fetchRecords(page, perPage, sortBy, sortAsc, mediaType, collections, concepts);
+    const data = await fetchGalleryPage(page);
     pageCache.set(data.page, data);
     currentPage = data.page;
     totalPages = data.total_pages;
@@ -226,11 +224,18 @@ async function loadPage(page) {
   }
 }
 
-function prefetchAdjacent(page) {
+// One page of what the gallery shows: the library, or only the favourites
+// (an option of the format filter, as it narrows the same grid).
+function fetchGalleryPage(page) {
   const { mediaType, collections, concepts } = getFilterParams();
+  if (mediaType === 'favorites') return fetchFavorites(page, perPage);
+  return fetchRecords(page, perPage, sortBy, sortAsc, mediaType, collections, concepts);
+}
+
+function prefetchAdjacent(page) {
   for (const p of [page - 1, page + 1]) {
     if (p >= 1 && p <= totalPages && !pageCache.has(p)) {
-      fetchRecords(p, perPage, sortBy, sortAsc, mediaType, collections, concepts)
+      fetchGalleryPage(p)
         .then(d => { pageCache.set(d.page, d); })
         .catch(() => {}); // silent
     }

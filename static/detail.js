@@ -16,7 +16,8 @@ import {
   listSpaces,
   mediaUrl,
   trashRecords,
-} from './api.js?v=47';
+  setFavorite,
+} from './api.js?v=48';
 import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
 import { pickPersonModal } from './persons.js?v=9';
 
@@ -208,6 +209,8 @@ function renderAside(r, token) {
       <p class="detail-meta" title="${escapeHtml(r.arquivo || '')}">${escapeHtml(metaBits)}</p>
     </header>
     <div class="detail-actions">
+      ${r.db_id ? `<button class="btn btn-subtle detail-favorite" type="button" data-detail-action="favorite"
+           aria-pressed="${r.favorite ? 'true' : 'false'}">${r.favorite ? '♥ Favorita' : '♡ Favoritar'}</button>` : ''}
       ${hasFile(r) ? `<a class="btn btn-subtle" href="${escapeHtml(mediaUrl(r.resolved_path))}"
            download="${escapeHtml(r.arquivo || '')}">Baixar</a>` : ''}
       ${hasFile(r) ? '<button class="btn btn-subtle" type="button" data-detail-action="rename">Renomear</button>' : ''}
@@ -255,6 +258,27 @@ async function loadWhenWhere(r, token) {
     where.innerHTML = `${escapeHtml(label)} · <a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}"
       target="_blank" rel="noopener">Ver no mapa</a>`;
     where.hidden = false;
+  }
+}
+
+// The heart changes at once and goes back if the server refuses. The record
+// object is the gallery's own, so reopening the photo shows the same state.
+async function toggleFavorite(r) {
+  const button = asideEl.querySelector('[data-detail-action="favorite"]');
+  const paint = (on) => {
+    if (!button) return;
+    button.textContent = on ? '♥ Favorita' : '♡ Favoritar';
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+  };
+  const wanted = !r.favorite;
+  r.favorite = wanted;
+  paint(wanted);
+  try {
+    await setFavorite(r.index, wanted);
+  } catch (err) {
+    r.favorite = !wanted;
+    paint(!wanted);
+    toast('Não foi possível atualizar os favoritos');
   }
 }
 
@@ -347,7 +371,7 @@ function wireAsideActions(r) {
   }
   const metaBtn = asideEl.querySelector('[data-detail-action="metadata"]');
   if (metaBtn) metaBtn.addEventListener('click', () => loadMetadata(r, metaBtn));
-  const actions = { rename: renameCurrent, space: addCurrentToSpace, trash: trashCurrent };
+  const actions = { favorite: toggleFavorite, rename: renameCurrent, space: addCurrentToSpace, trash: trashCurrent };
   for (const [name, run] of Object.entries(actions)) {
     const button = asideEl.querySelector(`[data-detail-action="${name}"]`);
     if (button) button.addEventListener('click', () => run(r));

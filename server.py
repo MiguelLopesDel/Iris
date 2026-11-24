@@ -46,6 +46,7 @@ from core import (
     app_config,
     compute_device,
     equivalence_graph,
+    favorites,
     first_setup,
     import_review,
     instance_lock,
@@ -1148,7 +1149,20 @@ def _record_to_json(r: IndexRecord) -> dict[str, Any]:
         # Inline placeholder so a client can paint the cell before the
         # thumbnail request finishes. See core/thumb_hash.py.
         "thumb_hash": r.thumb_hash,
+        "favorite": bool(r.db_id) and r.db_id in _favorite_ids(),
     }
+
+
+def _favorite_ids() -> frozenset[int]:
+    """The active library's favourites; empty where the backend has no database."""
+    engine = getattr(_get_backend(), "engine", None)
+    db_path = getattr(engine, "db_path", None)
+    if not db_path:
+        return frozenset()
+    try:
+        return favorites.favorite_ids(engine.db.get_connection(), db_path)
+    except Exception:
+        return frozenset()
 
 
 def _result_to_json(r: SearchResult) -> dict[str, Any]:

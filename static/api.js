@@ -196,6 +196,15 @@ export async function resetInstanceSetting(key) {
 
 // ── Records ───────────────────────────────────────────────────────────────
 
+/** Marks or unmarks an item with a heart. */
+export async function setFavorite(idx, favorite) {
+  return apiPost(`/api/records/${idx}/favorite`, { favorite: favorite ? 'true' : 'false' });
+}
+
+export async function fetchFavorites(page = 1, perPage = 60) {
+  return apiGet('/api/favorites', { page, per_page: perPage });
+}
+
 export async function fetchRecords(page = 1, perPage = 24, sortBy = 'importacao', sortAsc = 0, mediaType = 'all', collectionIds = '', conceptIds = '') {
   return apiGet('/api/records', {
     page, per_page: perPage, sort_by: sortBy, sort_asc: sortAsc,

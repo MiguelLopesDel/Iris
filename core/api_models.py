@@ -69,6 +69,8 @@ class RecordOut(_Out):
     media_type: str = "image"
     thumbnail_url: str = ""
     thumb_hash: str = ""
+    # Marcada com coração por quem é dona da biblioteca.
+    favorite: bool = False
     persons: list[MediaPersonRefOut] = []
 
 
