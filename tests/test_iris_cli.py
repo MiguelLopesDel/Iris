@@ -109,3 +109,44 @@ def test_server_commands_run_inside_the_right_installation(repo) -> None:
     calls = (tmp / "ssh.log").read_text().splitlines()
     assert calls[0] == "ssh -t box cd /srv/iris/staging && ./scripts/staging.sh update --pr 12"
     assert calls[1] == "ssh -t box cd /srv/iris/prod && ./scripts/server.sh update"
+
+
+def test_save_commits_each_change_on_a_local_branch_without_pushing(repo) -> None:
+    work, run, git, tmp = repo
+    (work / "a.txt").write_text("a\n")
+    run("save", "fix(ui): Keep the menu open")
+    (work / "b.txt").write_text("b\n")
+    run("save", "feat(search): filter by year")
+
+    assert git("branch", "--show-current") == "fix/keep-the-menu-open"
+    assert git("log", "--format=%s", "origin/main..HEAD").splitlines() == [
+        "feat(search): filter by year", "fix(ui): Keep the menu open",
+    ]
+    assert "fix/keep-the-menu-open" not in git("ls-remote", "origin")
+    assert not (tmp / "gh.log").exists()
+
+
+def test_try_sends_the_working_copy_to_staging_without_touching_the_branch(repo) -> None:
+    work, run, git, tmp = repo
+    staging = tmp / "staging"
+    subprocess.run(["git", "clone", "-q", str(tmp / "origin.git"), str(staging)], check=True)
+    # git reaches the server through ssh; this one answers git locally and logs the rest.
+    _stub(tmp / "bin", "ssh", f"""for arg; do
+    case "$arg" in git-receive-pack*) exec git-receive-pack "{staging}" ;; esac
+done
+echo "ssh $*" >> "{tmp}/ssh.log"
+""")
+    (work / "pyproject.toml").write_text('[project]\nname = "iris"\nversion = "0.8.1"\n')
+    (work / "new.txt").write_text("untracked\n")
+    head = git("rev-parse", "HEAD")
+
+    run("try")
+
+    sent = subprocess.run(["git", "-C", str(staging), "show", "refs/staging/try:new.txt"],
+                          check=True, capture_output=True, text=True).stdout
+    assert sent == "untracked\n"
+    assert git("rev-parse", "HEAD") == head
+    assert git("diff", "--cached", "--name-only") == ""  # the index was not touched
+    assert git("status", "--porcelain").splitlines() == ["M pyproject.toml", "?? new.txt"]
+    calls = (tmp / "ssh.log").read_text().splitlines()
+    assert calls[-1] == "ssh -t box cd /srv/iris/staging && ./scripts/staging.sh update --ref refs/staging/try"
