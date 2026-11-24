@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -401,7 +402,9 @@ class InterfaceSmokeTest {
         compose.onNodeWithText("Entrar e Sincronizar").performClick()
         waitForText("Dispositivo Conectado")
 
-        compose.onNodeWithText("Galeria").performClick()
+        // Sign-in opens from the gallery as its own screen, without the tab
+        // bar; going back must land on the gallery, not on the sync screen.
+        scenario?.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         waitForDescription("foto-teste.jpg")
         assertTrue(
             "The Galeria tab kept showing the sync screen",
@@ -444,19 +447,19 @@ class InterfaceSmokeTest {
     fun logout_while_media_viewer_is_open_returns_to_login_gate() {
         compose.onNodeWithContentDescription("foto-teste.jpg").performTouchInput { click() }
         waitForRequestPath("/api/records/0")
-        waitForText("Salvar no celular")
+        waitForText("Compartilhar")
 
         app.credentialsStore.clearCredentials()
 
         waitForText("Login Necessário")
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("Salvar no celular").fetchSemanticsNodes().isEmpty() &&
+            compose.onAllNodesWithText("Compartilhar").fetchSemanticsNodes().isEmpty() &&
                 compose.onAllNodesWithContentDescription("foto-teste.jpg").fetchSemanticsNodes().isEmpty() &&
                 runBlocking { app.mediaCatalog.cachedCount() == 0 }
         }
         assertTrue(
             "The authenticated media viewer remained visible after logout",
-            compose.onAllNodesWithText("Salvar no celular").fetchSemanticsNodes().isEmpty()
+            compose.onAllNodesWithText("Compartilhar").fetchSemanticsNodes().isEmpty()
         )
     }
 
@@ -524,7 +527,8 @@ class InterfaceSmokeTest {
         compose.waitUntil(timeoutMillis) {
             compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText(text, substring = true).assertIsDisplayed()
+        // A screen may show the same word twice (a title and a status line).
+        compose.onAllNodesWithText(text, substring = true).onFirst().assertIsDisplayed()
     }
 
     private fun waitForDescription(description: String, timeoutMillis: Long = 15_000) {
