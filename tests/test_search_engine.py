@@ -425,3 +425,61 @@ class VectorSidecarTests(unittest.TestCase):
 
         self.assertEqual(len(engine.records), 6)
         self.assertEqual(float(engine.records[0].embedding[0]), 1)
+
+
+class FilteredSearchTests(unittest.TestCase):
+    """A filter narrows the whole catalogue, not just the nearest neighbours."""
+
+    def _engine(self):
+        import faiss
+        import numpy as np
+
+        from core.search_engine import IrisEngine
+
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "memes.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE memes (id INTEGER PRIMARY KEY, arquivo TEXT, caminho TEXT,"
+            " texto_extraido TEXT, descricao_ia TEXT, embedding BLOB, desc_embedding BLOB)"
+        )
+        near = np.ones(8, dtype=np.float32)
+        far = -near
+        rows = [(f"img{i}.jpg", near) for i in range(5)] + [("clip.mp4", far)]
+        for name, vector in rows:
+            conn.execute(
+                "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia, embedding)"
+                " VALUES (?, ?, '', '', ?)",
+                (name, name, vector.tobytes()),
+            )
+        conn.commit()
+        conn.close()
+        engine = IrisEngine(db_path=db_path, load_model=False)
+        index = faiss.IndexFlatIP(engine.image_matrix.shape[1])
+        index.add(engine.image_matrix)
+        engine.image_index = index
+        return engine
+
+    def test_media_type_filter_reaches_items_outside_the_candidate_pool(self) -> None:
+        import numpy as np
+
+        engine = self._engine()
+        query = np.ones((1, 8), dtype=np.float32)
+        options = SearchOptions(candidate_pool=2, media_type="video", threshold=-10.0)
+
+        results = engine.search_by_embedding(query, options)
+
+        self.assertEqual([r.arquivo for r in results], ["clip.mp4"])
+
+    def test_exclusions_do_not_shrink_the_result_list(self) -> None:
+        import numpy as np
+
+        engine = self._engine()
+        query = np.ones((1, 8), dtype=np.float32)
+        excluded = {engine._record_db_id(0), engine._record_db_id(1)}
+        options = SearchOptions(candidate_pool=2, excluded_db_ids=frozenset(excluded), threshold=-10.0)
+
+        results = engine.search_by_embedding(query, options)
+
+        self.assertTrue(results)
+        self.assertFalse({0, 1} & {r.index for r in results})

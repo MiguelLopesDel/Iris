@@ -992,7 +992,19 @@ class IrisEngine:
 
         query_embedding = self._normalize_vector(query_embedding)
         self._validate_dimension(query_embedding)
-        candidate_indices = self._candidate_indices(query_embedding, options.candidate_pool)
+        # A restricting filter is applied to the whole catalogue: taking the
+        # nearest neighbours first and filtering them afterwards dropped every
+        # match that fell outside the pool, often leaving nothing at all.
+        restricted = bool(
+            options.collection_ids or options.concept_ids or options.media_type != "all"
+        )
+        if restricted:
+            candidate_indices = list(range(len(self.records)))
+        else:
+            # Exclusions remove items from the pool, so ask for that many more.
+            candidate_indices = self._candidate_indices(
+                query_embedding, options.candidate_pool + len(options.excluded_db_ids)
+            )
         if not candidate_indices:
             return []
 

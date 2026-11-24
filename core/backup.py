@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from core.file_digest import FileDigest
+from core.file_ops import move_to_trash
 
 SNAPSHOT_SUFFIX = ".tar.gz"
 _ALLOWED_RESTORE_MEMBERS = {"catalog.db", "best_weights.json", "manifest.json", "media_manifest.json"}
@@ -242,12 +243,15 @@ def restore_snapshot(
     mode: str = "overlay",
     rebuild_faiss: Callable[[Path, str], None] | None = None,
     model_name: str = "",
+    trash: Callable[[list[str]], tuple[list[str], list[tuple[str, str]]]] | None = None,
 ) -> dict:
     """Restore a catalog snapshot over ``db_path`` and rebuild FAISS.
 
     Extracts the embedded ``catalog.db`` into a temp on the *same* filesystem as
-    ``db_path``, verifies ``integrity_check``, then atomically swaps it in. Caller
-    is responsible for taking a pre-restore snapshot first (reversibility).
+    ``db_path``, verifies ``integrity_check``, then swaps it in. The catalog it
+    replaces is kept beside it as ``<name>.before-restore-<stamp>``, so a restore
+    is reversible even when no pre-restore snapshot was taken. Files removed by
+    ``mirror`` go to the trash.
     """
     snapshot_path = Path(snapshot_path)
     db_path = Path(db_path)
@@ -264,6 +268,20 @@ def restore_snapshot(
         if not _integrity_ok(restored_db):
             raise ValueError("Snapshot corrompido: integrity_check falhou")
 
+        previous_db: Path | None = None
+        if db_path.exists():
+            # A consistent copy of the live catalog, WAL included, through the
+            # online backup API rather than a file copy.
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            previous_db = db_path.with_name(f"{db_path.name}.before-restore-{stamp}")
+            src = sqlite3.connect(str(db_path))
+            dst = sqlite3.connect(str(previous_db))
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+                src.close()
+
         os.replace(restored_db, db_path)  # same fs (data_dir) → atomic
         # Drop stale WAL/SHM of the previous DB so nothing is mixed in.
         for sfx in ("-wal", "-shm"):
@@ -273,18 +291,32 @@ def restore_snapshot(
         if restored_weights.exists() and weights_path:
             shutil.copy2(restored_weights, weights_path)
 
-    result: dict = {"db_path": str(db_path), "mode": mode}
+    result: dict = {
+        "db_path": str(db_path),
+        "mode": mode,
+        "previous_db": str(previous_db) if previous_db else None,
+    }
     if mode == "mirror":
-        result["removed"] = _mirror_cleanup(data_dir, db_path)
+        result["removed"] = _mirror_cleanup(data_dir, db_path, trash or move_to_trash)
     if rebuild_faiss is not None:
-        rebuild_faiss(db_path, model_name)
-        result["faiss_rebuilt"] = True
+        # The catalog is already restored; an index that fails to build is
+        # regenerable and must not make the restore look like it failed.
+        try:
+            rebuild_faiss(db_path, model_name)
+            result["faiss_rebuilt"] = True
+        except Exception as exc:
+            result["faiss_rebuilt"] = False
+            result["faiss_error"] = str(exc)
     return result
 
 
-def _mirror_cleanup(data_dir: Path, keep_db: Path) -> list[str]:
-    """Remove other DBs / FAISS / manifests so the dir mirrors the restored snapshot."""
-    removed: list[str] = []
+def _mirror_cleanup(
+    data_dir: Path,
+    keep_db: Path,
+    trash: Callable[[list[str]], tuple[list[str], list[tuple[str, str]]]],
+) -> list[str]:
+    """Trash other DBs / FAISS / manifests so the dir mirrors the restored snapshot."""
+    doomed: list[str] = []
     keep_db = keep_db.resolve()
     keep_stem = keep_db.stem
     candidates = (
@@ -295,12 +327,9 @@ def _mirror_cleanup(data_dir: Path, keep_db: Path) -> list[str]:
     for path in candidates:
         if path.resolve() == keep_db or path.name.startswith(keep_stem):
             continue  # the restored DB and its (to-be-rebuilt) indices stay
-        try:
-            path.unlink()
-            removed.append(path.name)
-        except OSError:
-            pass
-    return removed
+        doomed.append(str(path))
+    moved, _failed = trash(doomed) if doomed else ([], [])
+    return [Path(path).name for path in moved]
 
 
 # ── Media: reconcile (relink by hash) + deliberate export ───────────────────────
