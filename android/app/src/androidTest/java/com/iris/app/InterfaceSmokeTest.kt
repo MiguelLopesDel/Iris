@@ -603,6 +603,7 @@ class InterfaceSmokeTest {
                 } else {
                     recordsResponse
                 }
+                path == "/api/records/on-this-day" -> """{"date":"2026-09-23","years":[]}"""
                 path == "/api/records/timeline" -> """{"total":2,"buckets":[{"month":"2026-09","count":2,"offset":0}]}"""
                 path == "/api/records/0" -> photoRecord
                 path == "/api/records/1" -> videoRecord

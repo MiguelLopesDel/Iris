@@ -283,7 +283,8 @@ class MediaStoreScanner(
                 val sourceName = cursor.stringOrEmpty(bucketNameColumn, "Unknown source")
                 val relativePath = cursor.stringOrEmpty(relativePathColumn, "")
                 rows.send {
-                val outcome = uploadManager.reconcileMedia(
+                val outcome = ScanRow.readOrDefer {
+                uploadManager.reconcileMedia(
                     accountKey = accountKey,
                     uri = itemUri,
                     filename = name,
@@ -305,6 +306,7 @@ class MediaStoreScanner(
                     ),
                     isSessionCurrent = isSessionCurrent,
                 )
+                }
                 if (outcome == SyncUploadManager.ScanOutcome.DEFERRED) deferred.incrementAndGet()
                 if (outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW ||
                     outcome == SyncUploadManager.ScanOutcome.QUEUED_NEW_VERSION

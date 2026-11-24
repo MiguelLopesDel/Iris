@@ -2,6 +2,7 @@ package com.iris.app.data.repository
 
 import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.local.UploadDatabaseHelper
+import com.iris.app.data.model.ownMembership
 import com.iris.app.data.model.DeviceLoginResponse
 import com.iris.app.data.model.IrisCollection
 import com.iris.app.data.model.IrisConcept
@@ -373,7 +374,9 @@ class IrisRepository(
 
     /** Leave a space: remove your own membership. */
     suspend fun leaveSpace(spaceId: Int): Result<Unit> = serverCall {
-        val me = apiClient.apiService.getSpaceMembers(spaceId).members.first { it.isYou }
+        // Already removed (by an admin, or from another device): the goal is
+        // reached. first {} threw an English "no element" message instead.
+        val me = ownMembership(apiClient.apiService.getSpaceMembers(spaceId).members) ?: return@serverCall
         val response = apiClient.apiService.removeSpaceMember(spaceId, me.userId)
         if (!response.isSuccessful) throw HttpException(response)
     }

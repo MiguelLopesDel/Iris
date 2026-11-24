@@ -284,7 +284,7 @@ fun IrisNavGraph(
 
             composable(NavRoute.Search.route) {
                 val viewModel: SearchViewModel = viewModel(
-                    factory = SearchViewModel.Factory(application.irisRepository)
+                    factory = SearchViewModel.Factory(application.irisRepository, application.settingsRepository)
                 )
                 // Text handed over from a photo ("Buscar no Iris") runs as the query.
                 LaunchedEffect(Unit) { PendingSearch.take()?.let(viewModel::onQueryChange) }

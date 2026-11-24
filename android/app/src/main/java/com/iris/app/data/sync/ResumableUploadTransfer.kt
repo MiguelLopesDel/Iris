@@ -65,6 +65,13 @@ internal class ResumableUploadTransfer(
         } catch (_: IOException) {
             readFailed = true
             null
+        } catch (_: SecurityException) {
+            // Android no longer lets the app read this item (partial media
+            // access, a revoked grant). Uncaught, it ended the whole pass, and
+            // every later pass stopped at the same item.
+            return@withContext markUnreadable(queued)
+        } catch (_: UnsupportedOperationException) {
+            return@withContext markUnreadable(queued)
         }
         val result = if (job == null) ItemResult.RETRY else transfer(job) { readFailed = true }
         when {
@@ -113,6 +120,13 @@ internal class ResumableUploadTransfer(
             uploadId = null,
             nextByteOffset = 0L,
         )
+    }
+
+    private suspend fun markUnreadable(job: LocalUploadJob): ItemResult {
+        context.dbHelper.updateJobState(
+            context.accountKey, job.id, UploadJobState.FAILED, UNREADABLE_MESSAGE,
+        )
+        return ItemResult.FAILED
     }
 
     internal suspend fun markSourceMissing(job: LocalUploadJob): ItemResult {
@@ -175,9 +189,10 @@ internal class ResumableUploadTransfer(
 
             val uri = Uri.parse(job.localUri)
             var conflicts = 0
+            val progress = ChunkProgress()
             while (offset < job.byteSize) {
                 context.ensureSession()
-                val bytesToRead = min(job.byteSize - offset, chunkSize.toLong())
+                val bytesToRead = min(job.byteSize - offset, ChunkProgress.usableChunkSize(chunkSize).toLong())
                 // The same version the declared hash was computed from.
                 val body = context.mediaPayloadSource.createChunkRequestBody(uri, offset, bytesToRead, job.hashedOriginal)
                 val finishRequest = observer.beginPayloadRequest()
@@ -190,6 +205,12 @@ internal class ResumableUploadTransfer(
                 when {
                     response.isSuccessful -> {
                         val nextOffset = response.body()?.offset ?: (offset + bytesToRead)
+                        if (!progress.accept(offset, nextOffset)) {
+                            // Accepted but never moving on: sending the same
+                            // chunk again forever kept the pass from ending.
+                            db.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+                            return@withContext ItemResult.RETRY
+                        }
                         val acknowledged = (nextOffset - offset).coerceIn(0L, bytesToRead)
                         offset = nextOffset
                         conflicts = 0
@@ -294,17 +315,18 @@ internal class ResumableUploadTransfer(
                 withContext(NonCancellable) { db.updateJobState(accountKey, job.id, UploadJobState.QUEUED) }
                 throw CancellationException("Device session changed during media sync")
             }
-            if (failure.code() == 404 && remoteUploadStarted) {
-                db.resetUploadProgress(accountKey, job.id)
-                ItemResult.RETRY
-            } else if (failure.code() == 401 || failure.code() == 409 || isTransientHttpStatus(failure.code())) {
-                db.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
-                ItemResult.RETRY
-            } else {
-                db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
-                    failure.localizedMessage ?: "Erro HTTP ${failure.code()} durante envio")
-                ItemResult.FAILED
+            settleHttpFailure(accountKey, job, failure.code(), remoteUploadStarted,
+                failure.localizedMessage ?: "Erro HTTP ${failure.code()} durante envio")
+        } catch (failure: UploadInitBatchItemException) {
+            // The server's answer for this item within a batched reservation:
+            // the same status rules as a whole request. As an unknown error it
+            // failed a large video for good on a passing 429 or 503.
+            if (!context.isSessionCurrent()) {
+                withContext(NonCancellable) { db.updateJobState(accountKey, job.id, UploadJobState.QUEUED) }
+                throw CancellationException("Device session changed during media sync")
             }
+            settleHttpFailure(accountKey, job, failure.statusCode, remoteUploadStarted,
+                failure.message ?: "Erro HTTP ${failure.statusCode} durante envio")
         } catch (failure: Exception) {
             if (!context.isSessionCurrent()) {
                 withContext(NonCancellable) { db.updateJobState(accountKey, job.id, UploadJobState.QUEUED) }
@@ -312,6 +334,27 @@ internal class ResumableUploadTransfer(
             }
             db.updateJobState(accountKey, job.id, UploadJobState.FAILED,
                 failure.localizedMessage ?: "Erro desconhecido durante envio")
+            ItemResult.FAILED
+        }
+    }
+
+    private suspend fun settleHttpFailure(
+        accountKey: String,
+        job: LocalUploadJob,
+        code: Int,
+        remoteUploadStarted: Boolean,
+        message: String,
+    ): ItemResult = when (httpFailureAction(code, remoteUploadStarted)) {
+        HttpFailureAction.RESERVE_AGAIN -> {
+            context.dbHelper.resetUploadProgress(accountKey, job.id)
+            ItemResult.RETRY
+        }
+        HttpFailureAction.SEND_AGAIN -> {
+            context.dbHelper.updateJobState(accountKey, job.id, UploadJobState.QUEUED)
+            ItemResult.RETRY
+        }
+        HttpFailureAction.FAIL -> {
+            context.dbHelper.updateJobState(accountKey, job.id, UploadJobState.FAILED, message)
             ItemResult.FAILED
         }
     }
@@ -338,9 +381,21 @@ internal class ResumableUploadTransfer(
          */
         fun isTransientHttpStatus(code: Int): Boolean = code == 408 || code == 429 || code >= 500
 
+        /** What a refused request means for one resumable upload. */
+        internal fun httpFailureAction(code: Int, remoteUploadStarted: Boolean): HttpFailureAction = when {
+            // The server forgot an upload it had started: reserve it again.
+            code == 404 && remoteUploadStarted -> HttpFailureAction.RESERVE_AGAIN
+            code == 401 || code == 409 || isTransientHttpStatus(code) -> HttpFailureAction.SEND_AGAIN
+            else -> HttpFailureAction.FAIL
+        }
+
         /** The server's answer when the received bytes do not match the declared hash. */
         const val HASH_MISMATCH_STATUS = 422
+
+        const val UNREADABLE_MESSAGE = "O Android não deixa o Iris ler este arquivo. Libere o acesso às fotos e tente de novo."
 
         const val SOURCE_MISSING_MESSAGE = "O arquivo não existe mais no aparelho"
     }
 }
+
+internal enum class HttpFailureAction { RESERVE_AGAIN, SEND_AGAIN, FAIL }

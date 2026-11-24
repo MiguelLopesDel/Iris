@@ -99,6 +99,19 @@ class PairingTest {
     }
 
     @Test
+    fun `a code without a key keeps the identity already pinned`() {
+        val server = server(id)
+        val origin = ServerOrigin.of(server.url("/"))
+        val pinnedKey = "ab".repeat(32)
+        store.put(origin, ServerSecurity(identityKeySha256 = pinnedKey))
+
+        val result = PairingConnector(security).connect(code(address(server)), allowCleartext = false)
+
+        assertEquals(address(server), result.address)
+        assertEquals(pinnedKey, store.get(origin).identityKeySha256)
+    }
+
+    @Test
     fun `an authority that does not match the code changes nothing`() {
         val impostor = HeldCertificate.Builder().commonName("Impostor").certificateAuthority(1).build()
         val server = server(id, caPem = impostor.certificatePem())

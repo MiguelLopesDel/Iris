@@ -9,6 +9,7 @@ import com.iris.app.data.model.SpaceItemsResponse
 import com.iris.app.data.model.SpaceMember
 import com.iris.app.data.model.SpaceSummary
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.ui.state.LatestJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,11 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SpacesUiState())
     val uiState: StateFlow<SpacesUiState> = _uiState.asStateFlow()
+
+    // The latest list request wins: an older one landing after a group was
+    // created replaced the list without it. Declared before init, which calls
+    // load(): a property initialised after it would still be null there.
+    private val listJob = LatestJob()
 
     init {
         val initialSession = repository.credentialsStore.sessionIdentity.value
@@ -46,7 +52,7 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
 
     fun load() {
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
-        viewModelScope.launch {
+        listJob.launch(viewModelScope) {
             _uiState.update { it.copy(isLoading = true, error = null) }
             repository.getSpaces()
                 .onSuccess { spaces ->
@@ -70,7 +76,9 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
             repository.createSpace(name)
                 .onSuccess { space ->
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
-                    _uiState.update { it.copy(spaces = listOf(space) + it.spaces) }
+                    _uiState.update { it.copy(spaces = listOf(space) + it.spaces.filter { s -> s.id != space.id }) }
+                    // Replaces a list request started before the group existed.
+                    load()
                     onCreated(space)
                 }
                 .onFailure { e ->
@@ -109,7 +117,16 @@ data class SpaceUiState(
     val notice: String? = null,
     /** Set once this account no longer belongs to the space: leave the screen. */
     val left: Boolean = false,
-)
+) {
+    /**
+     * The search, album or library the screen is set to could not be loaded.
+     * What it showed before belongs to another filter: keeping it under the
+     * new one's name looked like a result, and hid the error.
+     */
+    fun failedToLoad(message: String): SpaceUiState = copy(
+        items = emptyList(), nextBefore = null, isLoading = false, isLoadingMore = false, error = message,
+    )
+}
 
 class SpaceViewModel(
     spaceId: Int,
@@ -121,6 +138,10 @@ class SpaceViewModel(
     val uiState: StateFlow<SpaceUiState> = _uiState.asStateFlow()
     private val spaceId get() = _uiState.value.spaceId
 
+    // Loading what the screen is set to, and the pages after it: a new search
+    // or album cancels both, so a late page of the previous one is never added.
+    private val contentJob = LatestJob()
+
     init {
         val initialSession = repository.credentialsStore.sessionIdentity.value
         if (initialSession != null) refresh()
@@ -131,6 +152,7 @@ class SpaceViewModel(
                 previousSession = identity
                 if (identity == null) clearPrivateState()
                 else {
+                    contentJob.cancel()
                     _uiState.value = SpaceUiState(spaceId = spaceId)
                     refresh()
                 }
@@ -158,18 +180,18 @@ class SpaceViewModel(
                 }
             }
             if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@launch
-            loadContent()
+            contentJob.launch(viewModelScope) { loadContent() }
         }
     }
 
     fun search(query: String) {
         _uiState.update { it.copy(query = query.trim(), albumId = null) }
-        viewModelScope.launch { loadContent() }
+        contentJob.launch(viewModelScope) { loadContent() }
     }
 
     fun showAlbum(albumId: Int?) {
         _uiState.update { it.copy(albumId = albumId, query = "") }
-        viewModelScope.launch { loadContent() }
+        contentJob.launch(viewModelScope) { loadContent() }
     }
 
     /** Whatever the screen is set to: a search, one album, or every photo. */
@@ -178,7 +200,7 @@ class SpaceViewModel(
             clearPrivateState()
             return
         }
-        _uiState.update { it.copy(isLoading = true, error = null) }
+        _uiState.update { it.copy(isLoading = true, isLoadingMore = false, error = null) }
         val state = _uiState.value
         val page: Result<SpaceItemsResponse> = when {
             state.query.isNotEmpty() -> repository.searchSpace(spaceId, state.query)
@@ -191,9 +213,7 @@ class SpaceViewModel(
             _uiState.update { it.copy(items = result.items, nextBefore = result.nextBefore, isLoading = false) }
         }.onFailure { e ->
             if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
-            _uiState.update {
-                it.copy(isLoading = false, error = e.localizedMessage ?: "Erro ao carregar o grupo")
-            }
+            _uiState.update { it.failedToLoad(e.localizedMessage ?: "Erro ao carregar o grupo") }
         }
     }
 
@@ -202,7 +222,7 @@ class SpaceViewModel(
         val before = current.nextBefore ?: return
         if (current.isLoading || current.isLoadingMore || current.query.isNotEmpty()) return
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
-        viewModelScope.launch {
+        contentJob.launch(viewModelScope) {
             _uiState.update { it.copy(isLoadingMore = true) }
             val next = current.albumId?.let { repository.getSpaceAlbumItems(spaceId, it, before) }
                 ?: repository.getSpaceItems(spaceId, before)
@@ -285,6 +305,7 @@ class SpaceViewModel(
     }
 
     private fun clearPrivateState() {
+        contentJob.cancel()
         _uiState.value = SpaceUiState(spaceId = spaceId, name = "", error = "AUTH_REQUIRED")
     }
 

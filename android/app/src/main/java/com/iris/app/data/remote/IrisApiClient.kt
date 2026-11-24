@@ -274,7 +274,8 @@ class IrisApiClient(
                 .build()
 
             try {
-                val refreshResponse = bareOkHttpClient.newCall(refreshRequest).execute()
+                // Closed on every path: a refused refresh left its connection leaked.
+                bareOkHttpClient.newCall(refreshRequest).execute().use { refreshResponse ->
                 if (refreshResponse.isSuccessful) {
                     val body = refreshResponse.body?.string() ?: ""
                     val parsed = json.decodeFromString<com.iris.app.data.model.DeviceRefreshResponse>(
@@ -304,6 +305,7 @@ class IrisApiClient(
                     lastRefreshFailedAt = System.currentTimeMillis()
                 }
                 null
+                }
             } catch (_: Exception) {
                 lastRefreshFailedAt = System.currentTimeMillis()
                 null

@@ -1,5 +1,6 @@
 package com.iris.app.ui.screens.collections
 
+import com.iris.app.ui.text.countOf
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -187,7 +188,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                                     fontWeight = FontWeight.SemiBold
                                                 )
                                                 Text(
-                                                    text = "${col.count} itens",
+                                                    text = countOf(col.count, "item", "itens"),
                                                     fontSize = 13.sp,
                                                     color = IrisTextSoft
                                                 )
@@ -245,7 +246,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                                     )
                                                 }
                                                 Text(
-                                                    text = "${concept.matchCount} mídias",
+                                                    text = countOf(concept.matchCount, "mídia", "mídias"),
                                                     fontSize = 12.sp,
                                                     color = IrisAccent,
                                                     fontWeight = FontWeight.SemiBold
@@ -315,7 +316,7 @@ fun CollectionMediaScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${uiState.totalRecords} mídias",
+                            text = countOf(uiState.totalRecords, "mídia", "mídias"),
                             fontSize = 12.sp,
                             color = IrisTextSoft
                         )
@@ -351,7 +352,7 @@ fun CollectionMediaScreen(
                 }
             }
 
-            uiState.error != null -> {
+            uiState.showsErrorScreen -> {
                 EmptyState(
                     title = "Erro ao carregar coleção",
                     message = uiState.error ?: "",

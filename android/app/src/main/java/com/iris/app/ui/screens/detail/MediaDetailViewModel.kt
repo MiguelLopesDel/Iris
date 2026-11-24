@@ -7,6 +7,7 @@ import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.RecordMetadataResponse
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.ui.state.LatestJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +44,10 @@ class MediaDetailViewModel(
     private val _uiState = MutableStateFlow(MediaDetailUiState(recordIndex = recordIndex))
     val uiState: StateFlow<MediaDetailUiState> = _uiState.asStateFlow()
 
+    // Declared before init, which calls loadDetail(): a property initialised
+    // after it would still be null there.
+    private val detailJob = LatestJob()
+
     init {
         val initialSession = repository.credentialsStore.sessionIdentity.value
         if (initialSession != null) loadDetail()
@@ -65,7 +70,9 @@ class MediaDetailViewModel(
             clearPrivateState()
             return
         }
-        viewModelScope.launch {
+        // The latest load wins: the one started on opening could land after
+        // the one a rename started and bring the old name back.
+        detailJob.launch(viewModelScope) {
             _uiState.update { it.copy(isLoading = true, error = null) }
             repository.getRecordDetail(recordIndex).onSuccess { rec ->
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess

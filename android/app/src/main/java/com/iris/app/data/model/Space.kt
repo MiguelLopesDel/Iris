@@ -87,6 +87,9 @@ data class SpaceMember(
     @SerialName("is_you") val isYou: Boolean = false,
 )
 
+/** This account's membership among [members], or null when it no longer belongs to the space. */
+fun ownMembership(members: List<SpaceMember>): SpaceMember? = members.firstOrNull { it.isYou }
+
 @Serializable
 data class SpaceMembersResponse(
     @SerialName("members") val members: List<SpaceMember> = emptyList(),

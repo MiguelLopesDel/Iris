@@ -9,6 +9,7 @@ import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
+import com.iris.app.ui.state.LatestJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,7 +35,13 @@ data class CollectionMediaUiState(
     val totalPages: Int = 1,
     val totalRecords: Int = 0,
     val error: String? = null
-)
+) {
+    /**
+     * Only with nothing to show: a later page that fails must not hide the
+     * pages already on screen behind an error that, retried, starts over.
+     */
+    val showsErrorScreen: Boolean get() = error != null && members.isEmpty()
+}
 
 class CollectionsViewModel(
     private val repository: IrisRepository
@@ -109,6 +116,9 @@ class CollectionMediaViewModel(
     private val repository: IrisRepository,
     val performanceMonitor: PerformanceMonitor
 ) : ViewModel() {
+    // One page request at a time: reloading cancels a next page still on its
+    // way, which would otherwise be appended to the fresh first page.
+    private val pageJob = LatestJob()
 
     private val _uiState = MutableStateFlow(
         CollectionMediaUiState(collectionId = collectionId, collectionName = collectionName)
@@ -152,7 +162,7 @@ class CollectionMediaViewModel(
         if (page == 1 && _uiState.value.members.isEmpty()) {
             firstContentFinish = performanceMonitor.begin(Metric.CollectionFirstContent)
         }
-        viewModelScope.launch {
+        pageJob.launch(viewModelScope) {
             _uiState.update {
                 it.copy(
                     isLoading = page == 1,

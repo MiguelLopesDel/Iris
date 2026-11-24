@@ -5,11 +5,16 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.repository.IrisRepository
-import kotlinx.coroutines.Job
+import com.iris.app.data.repository.SearchPreferences
+import com.iris.app.data.repository.ServerSettingsRepository
+import com.iris.app.ui.state.LatestJob
+import com.iris.app.ui.state.isUnreadableResponse
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -23,6 +28,7 @@ data class SearchUiState(
     val mode: SearchMode = SearchMode.SEMANTIC,
     val mediaType: String = "all",
     val balance: Float = 0.5f,
+    val threshold: Float = 0.15f,
     val textBonus: Float = 1.0f,
     val lexicalWeight: Float = 0.25f,
     val showFilters: Boolean = false,
@@ -31,39 +37,77 @@ data class SearchUiState(
     val isSearching: Boolean = false,
     val error: String? = null,
     val hasSearched: Boolean = false
-)
+) {
+    /**
+     * The state right after the query is edited. A search still running for
+     * the old text is cancelled, so it must stop showing as running: nothing
+     * else would end it until the next search.
+     */
+    fun withQuery(newQuery: String): SearchUiState {
+        val text = newQuery.trim()
+        return when {
+            text.isEmpty() -> copy(
+                query = newQuery, results = emptyList(), total = 0,
+                hasSearched = false, error = null, isSearching = false,
+            )
+            text.length < MIN_QUERY_LENGTH -> copy(query = newQuery, isSearching = false)
+            else -> copy(query = newQuery)
+        }
+    }
+
+    /** The saved search settings, which the search sends from then on. */
+    fun withPreferences(preferences: SearchPreferences): SearchUiState = copy(
+        balance = preferences.balance,
+        threshold = preferences.threshold,
+        textBonus = preferences.textBonus,
+    )
+
+    companion object {
+        const val MIN_QUERY_LENGTH = 2
+    }
+}
 
 class SearchViewModel(
-    private val repository: IrisRepository
+    private val repository: IrisRepository,
+    // The saved settings, and where a balance the user picks is kept. They
+    // were stored but never read: each visit started from the defaults.
+    searchPreferences: Flow<SearchPreferences> = flowOf(SearchPreferences.DEFAULT),
+    private val saveBalance: suspend (Float) -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
-    private var searchJob: Job? = null
+    // Text and random searches share it: whichever started last is the one shown.
+    private val searchJob = LatestJob()
+    private var preferences = SearchPreferences.DEFAULT
 
     init {
+        viewModelScope.launch {
+            searchPreferences.collect { saved ->
+                preferences = saved
+                _uiState.update { it.withPreferences(saved) }
+            }
+        }
         var previousSession = repository.credentialsStore.sessionIdentity.value
         viewModelScope.launch {
             repository.credentialsStore.sessionIdentity.collect { identity ->
                 if (identity == previousSession) return@collect
                 previousSession = identity
-                searchJob?.cancel()
-                _uiState.value = SearchUiState()
+                searchJob.cancel()
+                _uiState.value = SearchUiState().withPreferences(preferences)
             }
         }
     }
 
     fun onQueryChange(newQuery: String) {
-        _uiState.update { it.copy(query = newQuery) }
-        searchJob?.cancel()
-        if (newQuery.trim().length >= 2) {
-            searchJob = viewModelScope.launch {
+        searchJob.cancel()
+        _uiState.update { it.withQuery(newQuery) }
+        if (newQuery.trim().length >= SearchUiState.MIN_QUERY_LENGTH) {
+            searchJob.launch(viewModelScope) {
                 delay(400) // Debounce typing
                 performSearch()
             }
-        } else if (newQuery.trim().isEmpty()) {
-            _uiState.update { it.copy(results = emptyList(), total = 0, hasSearched = false, error = null) }
         }
     }
 
@@ -83,6 +127,7 @@ class SearchViewModel(
 
     fun setBalance(balance: Float) {
         _uiState.update { it.copy(balance = balance) }
+        viewModelScope.launch { saveBalance(balance) }
     }
 
     fun toggleFilters() {
@@ -91,7 +136,7 @@ class SearchViewModel(
 
     fun searchRandom() {
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
-        viewModelScope.launch {
+        searchJob.launch(viewModelScope) {
             _uiState.update { it.copy(isSearching = true, error = null, query = "") }
             repository.searchRandom(count = 30).onSuccess { resp ->
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
@@ -122,13 +167,13 @@ class SearchViewModel(
         if (q.isBlank()) return
         val requestedSession = repository.credentialsStore.sessionIdentity.value ?: return
 
-        searchJob?.cancel()
-        searchJob = viewModelScope.launch {
+        searchJob.launch(viewModelScope) {
             _uiState.update { it.copy(isSearching = true, error = null) }
 
             val result = when (_uiState.value.mode) {
                 SearchMode.SEMANTIC -> repository.searchText(
                     query = q,
+                    threshold = _uiState.value.threshold,
                     balance = _uiState.value.balance,
                     textBonus = _uiState.value.textBonus,
                     lexicalWeight = _uiState.value.lexicalWeight,
@@ -156,7 +201,7 @@ class SearchViewModel(
                 val rawMsg = ex.localizedMessage ?: ex.message ?: ""
                 val errorMsg = when {
                     rawMsg.contains("401") -> "Autenticação necessária (faça login na aba Backup)"
-                    rawMsg.contains("Unexpected token", ignoreCase = true) ->
+                    isUnreadableResponse(ex) ->
                         "Resposta inesperada do servidor (verifique a URL em Configurações)"
                     else -> rawMsg.ifBlank { "Erro na busca" }
                 }
@@ -171,10 +216,13 @@ class SearchViewModel(
         }
     }
 
-    class Factory(private val repository: IrisRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: IrisRepository,
+        private val settings: ServerSettingsRepository,
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SearchViewModel(repository) as T
+            return SearchViewModel(repository, settings.searchPreferences, settings::updateSearchBalance) as T
         }
     }
 }

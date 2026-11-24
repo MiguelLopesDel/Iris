@@ -1,5 +1,6 @@
 package com.iris.app.ui.screens.settings
 
+import com.iris.app.ui.state.LatestJob
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
@@ -69,6 +70,7 @@ class SettingsViewModel(
     private val irisRepository: IrisRepository,
     private val pairingRequests: MutableStateFlow<String?> = MutableStateFlow(null),
 ) : ViewModel() {
+    private val connectionTest = LatestJob()
 
     /** The app's theme; the activity applies it as soon as it changes. */
     val themeMode = settingsRepository.themeMode.map(ThemeMode::fromKey)
@@ -139,7 +141,9 @@ class SettingsViewModel(
             return
         }
 
-        viewModelScope.launch {
+        // A probe of the address the user just saved replaces any still
+        // waiting on the old one: its late timeout must not overwrite "online".
+        connectionTest.launch(viewModelScope) {
             val isLoggedIn = irisRepository.credentialsStore.hasValidCredentials()
             val username = irisRepository.credentialsStore.getUsername()
             val deviceId = irisRepository.credentialsStore.getDeviceId() ?: ""
