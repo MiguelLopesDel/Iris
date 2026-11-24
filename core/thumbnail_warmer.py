@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from core.polite import PressureGate, make_current_thread_polite
 
 logger = logging.getLogger("iris.thumbnails")
 
@@ -60,7 +61,9 @@ class ThumbnailWarmer:
         generate: Callable[[str, Path], None],
         *,
         pause: float = 0.05,
+        gate: PressureGate | None = None,
     ):
+        self._gate = gate
         self._libraries = libraries
         self._key = key
         self._generate = generate
@@ -86,6 +89,8 @@ class ThumbnailWarmer:
             for source, target in pending:
                 if self._stop.wait(self._pause):
                     break
+                if self._gate is not None:
+                    self._gate.wait_until_calm(self._stop)
                 if target.exists():  # a request built it meanwhile
                     continue
                 try:
@@ -105,11 +110,9 @@ class ThumbnailWarmer:
 
     def start(self, startup_delay: float = 60.0) -> None:
         def run() -> None:
-            try:
-                # Below the request threads: a gallery page outranks the warm-up.
-                os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)
-            except (AttributeError, OSError):
-                pass
+            # Below the request threads and everything else on the machine,
+            # disk included: a gallery page, or someone's film, outranks it.
+            make_current_thread_polite()
             if self._stop.wait(startup_delay):
                 return
             try:

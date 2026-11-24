@@ -10,6 +10,13 @@ services:
         IRIS_PROFILE: cpu
         IRIS_COMMIT: ${IRIS_COMMIT:-}
     user: "${IRIS_UID:-1000}:${IRIS_GID:-1000}"
+    # The machine is shared. A low CPU weight (1024 is the default) lets Iris
+    # use every idle core yet yield as soon as anything else wants the CPU; a
+    # fixed cap would waste an idle machine. The memory ceiling keeps a leak or
+    # a large model from taking the host down with it. Iris itself also runs
+    # its background work at the lowest priority (core/polite.py).
+    cpu_shares: ${IRIS_CPU_SHARES:-256}
+    mem_limit: ${IRIS_MEMORY_LIMIT:-6g}
     ports:
       - "${IRIS_BIND:-127.0.0.1}:${IRIS_PORT:-8501}:8501"
       # HTTPS for devices (IRIS_TLS=self or custom); nothing listens there when it is off.

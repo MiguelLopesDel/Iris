@@ -158,3 +158,35 @@ def test_shutdown_discards_only_volatile_queued_work_and_allows_requeue(
     assert durable_processed.wait(timeout=2)
     assert replacement.stop(timeout=2)
     assert processed.count("durable-pending") == 1
+
+
+def test_each_job_waits_for_a_calm_machine_first(tmp_path, monkeypatch):
+    """Processing an upload is background work: it asks the gate before each job."""
+    import threading
+
+    import core.upload_processing_workers as module
+    from core.upload_processing_workers import UploadProcessingWorkers
+
+    order: list[str] = []
+    done = threading.Event()
+
+    class Gate:
+        def wait_until_calm(self, stopping=None) -> float:
+            order.append("gate")
+            return 0.0
+
+    def fake_process(**kwargs):
+        order.append("process")
+        done.set()
+
+    monkeypatch.setattr(module, "process_upload", fake_process)
+    workers = UploadProcessingWorkers(gate=Gate())
+    try:
+        workers._jobs.put(module._ProcessingJob(
+            db_path=tmp_path / "iris.db", media_root=tmp_path, model_name="m", user_id=1,
+            upload_id="u1", file_path=tmp_path / "a.jpg", use_ai=False, on_finished=lambda _: None,
+        ))
+        assert done.wait(5)
+    finally:
+        workers.stop()
+    assert order == ["gate", "process"]

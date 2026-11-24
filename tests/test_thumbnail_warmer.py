@@ -81,3 +81,24 @@ def test_stopping_ends_the_run(tmp_path: Path) -> None:
     )
 
     assert warmer.run_once() == 1
+
+
+def test_each_thumbnail_waits_for_a_calm_machine(tmp_path: Path) -> None:
+    """The warm-up is background work: before each item it asks whether the
+    machine is busy, so it never piles onto someone else's disk or CPU."""
+
+    class Gate:
+        calls = 0
+
+        def wait_until_calm(self, stopping=None) -> float:
+            Gate.calls += 1
+            return 0.0
+
+    records = [Record("/library/a.jpg", 1.0), Record("/library/b.jpg", 2.0)]
+    made: list[str] = []
+    warmer = ThumbnailWarmer(
+        lambda: [Library("ana", tmp_path / "t", lambda: records)], _key, _generate(made), pause=0, gate=Gate()
+    )
+
+    assert warmer.run_once() == 2
+    assert Gate.calls == 2
