@@ -420,3 +420,67 @@ exit 0
     assert "media " not in result.stdout and f"{project_name}" not in result.stdout
     # The hardened library is unreadable to the administrator: the comparison goes through sudo.
     assert any(line.startswith("sudo cmp -s") for line in _sudo(tmp_path))
+
+
+def _btrfs_stubs(tmp_path: Path, bin_dir: Path, *, marked: tuple[str, ...] = ()) -> None:
+    """findmnt says btrfs; lsattr reports C on ``marked`` files; chattr is recorded."""
+    _stub(bin_dir, "findmnt", "echo btrfs\n")
+    pattern = "|".join(f"*/{name}" for name in marked) or "__none__"
+    _stub(bin_dir, "lsattr", f'''
+case "$2" in {pattern}) echo "---------------C------ $2" ;; *) echo "---------------------- $2" ;; esac
+''')
+    _stub(bin_dir, "chattr", f'echo "chattr $*" >> "{tmp_path}/chattr.log"\n')
+
+
+def test_harden_rewrites_existing_databases_without_copy_on_write_on_btrfs(tmp_path: Path) -> None:
+    project, _ = _install(tmp_path, gpu=False, toolkit=False)
+    library = project / "data" / "users" / "1"
+    library.mkdir(parents=True)
+    (library / "iris.db").write_bytes(b"SQLite format 3\0" + b"x" * 4096)
+    (project / "data" / "users.db").write_bytes(b"SQLite format 3\0accounts")
+    photo = library / "media" / "IMG_0001.jpg"
+    photo.parent.mkdir()
+    photo.write_bytes(b"jpeg")
+    bin_dir = tmp_path / "bin-Iris"
+    _btrfs_stubs(tmp_path, bin_dir, marked=("users.db",))
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+
+    result = _server(project, env, "harden")
+
+    chattr = (tmp_path / "chattr.log").read_text().splitlines()
+    # Only the library database still had copy-on-write; the photo is not touched.
+    assert chattr == ["chattr +C ./data/users/1/iris.db.nocow"]
+    assert (library / "iris.db").read_bytes() == b"SQLite format 3\0" + b"x" * 4096
+    assert not (library / "iris.db.nocow").exists()
+    assert "Rewrote 1 database(s)" in result.stdout
+    # Iris was stopped before and started again after.
+    commands = _docker(tmp_path)
+    stop = next(i for i, line in enumerate(commands) if line.startswith("docker compose stop iris"))
+    start = max(i for i, line in enumerate(commands) if "up -d --force-recreate iris" in line)
+    assert stop < start
+
+
+def test_a_database_still_in_use_is_left_for_later(tmp_path: Path) -> None:
+    project, _ = _install(tmp_path, gpu=False, toolkit=False)
+    (project / "data" / "users.db").write_bytes(b"SQLite format 3\0")
+    (project / "data" / "users.db-wal").write_bytes(b"pending pages")
+    bin_dir = tmp_path / "bin-Iris"
+    _btrfs_stubs(tmp_path, bin_dir)
+
+    result = _server(project, {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}, "harden")
+
+    assert not (tmp_path / "chattr.log").exists()
+    assert "write-ahead log is not empty" in result.stderr
+
+
+def test_other_filesystems_keep_their_databases_as_they_are(tmp_path: Path) -> None:
+    project, _ = _install(tmp_path, gpu=False, toolkit=False)
+    (project / "data" / "users.db").write_bytes(b"SQLite format 3\0")
+    bin_dir = tmp_path / "bin-Iris"
+    _btrfs_stubs(tmp_path, bin_dir)
+    _stub(bin_dir, "findmnt", "echo ext4\n")
+
+    _server(project, {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}, "harden")
+
+    assert not (tmp_path / "chattr.log").exists()
+

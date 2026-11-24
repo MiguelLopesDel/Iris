@@ -8,11 +8,14 @@ from core.concepts import create_concept_tables
 from core.faces import create_face_tables
 from core.import_review import ensure_tables as ensure_import_review_tables
 from core.media_dates import repair_device_upload_dates_once, repair_metadata_capture_dates_once
+from core.nocow import create_database_file
 from core.web_enrichment import create_web_enrichment_tables
 
 
 def init_db(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Before SQLite writes to it: the attribute only takes on an empty file.
+    create_database_file(db_path)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")

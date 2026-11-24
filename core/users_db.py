@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.embedding_models import DEFAULT_MODEL, resolve_embedding_model
+from core.nocow import create_database_file
 
 _USERNAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,62}$")
 
@@ -50,6 +51,7 @@ def now_iso() -> str:
 
 def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
+    create_database_file(path)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
