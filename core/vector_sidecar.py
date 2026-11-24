@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ctypes
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -89,6 +90,52 @@ def dominant_width(conn: sqlite3.Connection, column: str) -> int:
         "GROUP BY size ORDER BY COUNT(*) DESC, size DESC LIMIT 1"
     ).fetchone()
     return int(row[0]) // np.dtype(np.float32).itemsize if row else 0
+
+
+@dataclass(frozen=True)
+class CatalogueProfile:
+    records: int
+    embedded: int
+    described: int
+    image_width: int
+    desc_width: int
+
+
+def catalogue_profile(conn: sqlite3.Connection) -> CatalogueProfile:
+    """Counts and dominant widths of both embedding columns, in one pass.
+
+    Each of these used to be its own query, and each one is a scan of the
+    whole table: on a spinning disk with a cold cache the counts and widths
+    took three times as long as reading the catalogue itself. LENGTH() of a
+    blob is answered from the record header, so the pass reads no vector.
+    """
+    itemsize = np.dtype(np.float32).itemsize
+    records = embedded = described = 0
+    image_sizes: dict[int, int] = {}
+    desc_sizes: dict[int, int] = {}
+    for image_size, desc_size, count in conn.execute(
+        "SELECT LENGTH(embedding), LENGTH(desc_embedding), COUNT(*) FROM memes GROUP BY 1, 2"
+    ):
+        records += count
+        if image_size is not None:
+            embedded += count
+            image_sizes[image_size] = image_sizes.get(image_size, 0) + count
+        if desc_size is not None:
+            described += count
+            desc_sizes[desc_size] = desc_sizes.get(desc_size, 0) + count
+    return CatalogueProfile(
+        records=records,
+        embedded=embedded,
+        described=described,
+        image_width=_dominant(image_sizes, itemsize),
+        desc_width=_dominant(desc_sizes, itemsize),
+    )
+
+
+def _dominant(sizes: dict[int, int], itemsize: int) -> int:
+    """Same rule as dominant_width: most rows, ties to the larger size."""
+    valid = [(count, size) for size, count in sizes.items() if size > 0 and size % itemsize == 0]
+    return max(valid)[1] // itemsize if valid else 0
 
 
 def as_vector(blob: bytes | None, width: int) -> np.ndarray | None:
