@@ -1,22 +1,23 @@
 /* ── Iris Gallery module ────────────────────────────────────────────────────
-   Fast paginated media browser with client-side pre-fetching.
-   Arrow ← → switches pages instantly — content is pre-loaded in hidden divs. */
+   The library as one continuous timeline: batches load as the page scrolls,
+   and days flow side by side so a day with one photo does not take a row. */
 
 import { debounce, escapeHtml, fetchFavorites, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=49';
-import { openDetail } from './detail.js?v=12';
+import { openDetail } from './detail.js?v=13';
 
 // ── Module state ──────────────────────────────────────────────────────────
-let currentPage = 1;
+// One batch per request; the server pages, the page scrolls.
+const BATCH_SIZE = 120;
+let loadedPages = 0;
 let totalPages = 1;
 let totalItems = 0;
-let perPage = 24;
 let sortBy = 'data';
 let sortAsc = 0;
 let searchActive = false;
-
-/* Page cache: Map<number, { records, total, total_pages, missing_count }>
-   Pre-fetched pages are stored here so arrow clicks hit memory, not network. */
-const pageCache = new Map();
+let loadingMore = false;
+// Bumped whenever what the grid shows is replaced, so a late batch of the
+// previous listing is dropped instead of appended to the new one.
+let browseToken = 0;
 
 /* Selection state is managed by app.js — gallery just renders checkboxes. */
 (window.__irisSelection = window.__irisSelection || new Map());
@@ -33,37 +34,17 @@ function getFilterParams() {
 // ── Initialization ────────────────────────────────────────────────────────
 
 export function initGallery() {
-  perPage = readPerPage();
   sortBy = document.getElementById('gallery-sort').value;
   sortAsc = document.getElementById('gallery-sort-asc').checked ? 1 : 0;
 
   document.getElementById('gallery-sort').onchange = () => { sortBy = document.getElementById('gallery-sort').value; invalidateCache(); };
   document.getElementById('gallery-sort-asc').onchange = () => { sortAsc = document.getElementById('gallery-sort-asc').checked ? 1 : 0; invalidateCache(); };
-  document.getElementById('gallery-per-page').onchange = () => {
-    syncCustomPerPage();
-    applyPerPage();
-  };
-  document.getElementById('gallery-per-page-custom').onchange = applyPerPage;
-  document.getElementById('gallery-per-page-custom').onkeydown = (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      applyPerPage();
-    }
-  };
   document.getElementById('gallery-new-media').onclick = () => {
     document.getElementById('gallery-new-media').hidden = true;
-    goToPage(1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    loadFirst();
   };
-  document.getElementById('gallery-prev').onclick = () => goToPage(currentPage - 1);
-  document.getElementById('gallery-next').onclick = () => goToPage(currentPage + 1);
-  document.getElementById('gallery-page-go').onclick = jumpToTypedPage;
-  document.getElementById('gallery-page-jump').onkeydown = (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      jumpToTypedPage();
-    }
-  };
-  syncCustomPerPage();
+  observeSentinel();
   const searchInput = document.getElementById('gallery-search');
   const imageInput = document.getElementById('gallery-image-search');
   const clearButton = document.getElementById('gallery-clear-search');
@@ -129,129 +110,120 @@ export function initGallery() {
     });
   }
 
-  if (!searchActive) loadPage(currentPage);
-}
-
-function syncCustomPerPage() {
-  const select = document.getElementById('gallery-per-page');
-  const customInput = document.getElementById('gallery-per-page-custom');
-  const custom = select.value === 'custom';
-  customInput.hidden = !custom;
-  if (custom) customInput.focus();
-}
-
-function readPerPage() {
-  const select = document.getElementById('gallery-per-page');
-  const customInput = document.getElementById('gallery-per-page-custom');
-  const rawValue = select.value === 'custom' ? customInput.value : select.value;
-  return Math.min(500, Math.max(12, parseInt(rawValue, 10) || 24));
-}
-
-function applyPerPage() {
-  perPage = readPerPage();
-  if (document.getElementById('gallery-per-page').value === 'custom') {
-    document.getElementById('gallery-per-page-custom').value = perPage;
-  }
-  invalidateCache();
+  if (!searchActive && !loadedPages) loadFirst();
 }
 
 function invalidateCache() {
-  pageCache.clear();
-  currentPage = 1;
   resetGallerySearchState();
-  loadPage(1);
+  loadFirst();
 }
 
 // ── Live updates ─────────────────────────────────────────────────────────
 
-/* Called by app.js when the library changed (a phone synced, say). Cached
-   pages are stale either way. On the first page the grid is redrawn in place,
-   without skeletons; deeper in, a notice offers to go back to the newest. */
+/* Called by app.js when the library changed (a phone synced, say). Near the
+   top the newest batch is redrawn in place, without skeletons; further down,
+   a notice offers to go back up, so the grid does not shift under the reader. */
 export function onLibraryChanged() {
-  pageCache.clear();
   const visible = document.getElementById('tab-gallery')?.classList.contains('active');
-  if (!visible || searchActive) return;  // the next visit fetches fresh pages
-  if (currentPage === 1) refreshPageQuietly(1);
+  if (!visible || searchActive) {
+    loadedPages = 0;  // the next visit starts fresh
+    return;
+  }
+  if (window.scrollY < 400) loadFirst({ quiet: true });
   else document.getElementById('gallery-new-media')?.removeAttribute('hidden');
 }
 
-async function refreshPageQuietly(page) {
-  try {
-    const data = await fetchGalleryPage(page);
-    if (searchActive || currentPage !== page) return;  // the person moved on meanwhile
-    pageCache.set(data.page, data);
-    totalPages = data.total_pages;
-    totalItems = data.total;
-    updatePaginationUI();
-    renderGrid(data.records);
-  } catch {
-    // A failed refresh leaves the current grid; the next change tries again.
-  }
-}
+// ── Loading ──────────────────────────────────────────────────────────────
 
-// ── Page loading + caching ───────────────────────────────────────────────
-
-async function loadPage(page) {
-  if (page < 1) return;
-
-  // Check cache
-  if (pageCache.has(page)) {
-    const cached = pageCache.get(page);
-    currentPage = page;
-    totalPages = cached.total_pages;
-    totalItems = cached.total;
-    updatePaginationUI();
-    renderGrid(cached.records);
-    prefetchAdjacent(page);
-    return;
-  }
-
-  // Fetch from API
-  const grid = document.getElementById('gallery-grid');
-  grid.innerHTML = renderSkeletons(perPage);
-
-  try {
-    const data = await fetchGalleryPage(page);
-    pageCache.set(data.page, data);
-    currentPage = data.page;
-    totalPages = data.total_pages;
-    totalItems = data.total;
-    updatePaginationUI();
-    renderGrid(data.records);
-    prefetchAdjacent(data.page);
-  } catch (err) {
-    grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(err.message)}</p>`;
-  }
-}
-
-// One page of what the gallery shows: the library, or only the favourites
+// One batch of what the gallery shows: the library, or only the favourites
 // (an option of the format filter, as it narrows the same grid).
 function fetchGalleryPage(page) {
   const { mediaType, collections, concepts } = getFilterParams();
-  if (mediaType === 'favorites') return fetchFavorites(page, perPage);
-  return fetchRecords(page, perPage, sortBy, sortAsc, mediaType, collections, concepts);
+  if (mediaType === 'favorites') return fetchFavorites(page, BATCH_SIZE);
+  return fetchRecords(page, BATCH_SIZE, sortBy, sortAsc, mediaType, collections, concepts);
 }
 
-function prefetchAdjacent(page) {
-  for (const p of [page - 1, page + 1]) {
-    if (p >= 1 && p <= totalPages && !pageCache.has(p)) {
-      fetchGalleryPage(p)
-        .then(d => { pageCache.set(d.page, d); })
-        .catch(() => {}); // silent
-    }
+async function loadFirst({ quiet = false } = {}) {
+  const token = ++browseToken;
+  const grid = document.getElementById('gallery-grid');
+  if (!quiet) grid.innerHTML = renderSkeletons(36);
+  try {
+    const data = await fetchGalleryPage(1);
+    if (token !== browseToken || searchActive) return;
+    loadedPages = data.page;
+    totalPages = data.total_pages;
+    totalItems = data.total;
+    renderGrid(data.records);
+    updateBrowseInfo();
+  } catch (err) {
+    if (token !== browseToken) return;
+    if (!quiet) grid.innerHTML = `<p style="color:var(--accent);padding:20px;">Erro: ${escapeHtml(err.message)}</p>`;
   }
+  loadMoreIfSentinelVisible();
 }
 
-function goToPage(page) {
-  if (page < 1 || page > totalPages) return;
-  loadPage(page);
+async function loadMore() {
+  if (searchActive || loadingMore || !loadedPages || loadedPages >= totalPages) return;
+  loadingMore = true;
+  const token = browseToken;
+  updateBrowseInfo();
+  try {
+    const data = await fetchGalleryPage(loadedPages + 1);
+    if (token !== browseToken || searchActive) return;
+    loadedPages = data.page;
+    totalPages = data.total_pages;
+    totalItems = data.total;
+    appendRecords(data.records);
+  } catch {
+    // The sentinel offers a retry; scrolling there again also retries.
+    if (token === browseToken) setSentinel('error');
+    return;
+  } finally {
+    loadingMore = false;
+  }
+  updateBrowseInfo();
+  loadMoreIfSentinelVisible();
 }
 
-function jumpToTypedPage() {
-  const input = document.getElementById('gallery-page-jump');
-  const page = Math.min(totalPages, Math.max(1, parseInt(input.value, 10) || 1));
-  input.value = page;
-  goToPage(page);
+let sentinelObserver = null;
+
+function observeSentinel() {
+  const sentinel = document.getElementById('gallery-sentinel');
+  if (!sentinel || sentinelObserver) return;
+  sentinelObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) loadMore();
+  }, { rootMargin: '1500px 0px' });
+  sentinelObserver.observe(sentinel);
+  sentinel.addEventListener('click', (event) => {
+    if (event.target.closest('[data-retry]')) loadMore();
+  });
+}
+
+// A short first batch on a tall screen leaves the sentinel in view, and an
+// observer only fires on a change: keep loading until the screen is full.
+function loadMoreIfSentinelVisible() {
+  const sentinel = document.getElementById('gallery-sentinel');
+  if (!sentinel || searchActive) return;
+  const rect = sentinel.getBoundingClientRect();
+  if (rect.top < window.innerHeight + 1500) loadMore();
+}
+
+function setSentinel(state) {
+  const sentinel = document.getElementById('gallery-sentinel');
+  if (!sentinel) return;
+  if (state === 'loading') sentinel.innerHTML = '<span class="gallery-sentinel-text">Carregando mais…</span>';
+  else if (state === 'error') sentinel.innerHTML = '<button type="button" class="btn btn-subtle" data-retry>Não foi possível carregar mais · tentar de novo</button>';
+  else if (state === 'end') sentinel.innerHTML = totalItems > BATCH_SIZE ? '<span class="gallery-sentinel-text">Você chegou ao começo da biblioteca.</span>' : '';
+  else sentinel.innerHTML = '';
+}
+
+function updateBrowseInfo() {
+  document.getElementById('gallery-page-info').textContent =
+    `${totalItems.toLocaleString('pt-BR')} ${totalItems === 1 ? 'item' : 'itens'}`;
+  if (searchActive) setSentinel('');
+  else if (loadingMore) setSentinel('loading');
+  else if (loadedPages >= totalPages) setSentinel(sortBy === 'data' && !sortAsc ? 'end' : '');
+  else setSentinel('');
 }
 
 // ── Render ────────────────────────────────────────────────────────────────
@@ -265,25 +237,61 @@ function getCurrentRecords() {
 
 function renderGrid(records) {
   const grid = document.getElementById('gallery-grid');
-  currentRecords = records || [];
-  if (!records.length) {
+  currentRecords = (records || []).slice();
+  const byDay = groupsByDay();
+  grid.classList.toggle('by-day', byDay);
+  if (!currentRecords.length) {
     grid.innerHTML = '<div class="empty-state"><span class="empty-state-icon">⌕</span><p>Nenhum item encontrado.</p><small>Ajuste os termos da busca ou limpe os filtros da barra lateral.</small></div>';
     return;
   }
-  // By date, the grid reads like the phone's gallery: a heading per day.
-  const byDay = !searchActive && sortBy === 'data';
-  let lastDay = null;
-  grid.innerHTML = records.map((record) => {
-    let heading = '';
-    if (byDay) {
-      const day = dayLabel(record.file_mtime);
-      if (day !== lastDay) {
-        heading = `<h3 class="grid-day">${escapeHtml(day)}</h3>`;
-        lastDay = day;
+  grid.innerHTML = byDay ? renderDayGroups(currentRecords) : currentRecords.map(renderCard).join('');
+  observeLazyImages(grid);
+}
+
+// By date, the grid reads like a photo app's timeline: a heading per day, and
+// days flow side by side, so a day with one photo does not take a whole row.
+function groupsByDay() {
+  return !searchActive && sortBy === 'data';
+}
+
+function renderDayGroups(records) {
+  const groups = [];
+  for (const record of records) {
+    const day = dayLabel(record.file_mtime);
+    const last = groups[groups.length - 1];
+    if (last && last.day === day) last.records.push(record);
+    else groups.push({ day, records: [record] });
+  }
+  return groups.map(({ day, records: items }) => `
+    <section class="day-group" data-day="${escapeHtml(day)}">
+      <h3 class="grid-day">${escapeHtml(day)}</h3>
+      <div class="day-tiles">${items.map(renderCard).join('')}</div>
+    </section>`).join('');
+}
+
+// The next batch: the same day continues in its group; items already shown
+// (the library moved between two batches) are not shown twice.
+function appendRecords(records) {
+  const grid = document.getElementById('gallery-grid');
+  const shown = new Set(currentRecords.map((r) => r.index));
+  const fresh = (records || []).filter((r) => !shown.has(r.index));
+  if (!fresh.length) return;
+  currentRecords.push(...fresh);
+  if (!groupsByDay()) {
+    grid.insertAdjacentHTML('beforeend', fresh.map(renderCard).join(''));
+  } else {
+    let rest = fresh;
+    const lastGroup = grid.lastElementChild;
+    if (lastGroup?.classList.contains('day-group')) {
+      const sameDay = [];
+      while (rest.length && dayLabel(rest[0].file_mtime) === lastGroup.dataset.day) {
+        sameDay.push(rest[0]);
+        rest = rest.slice(1);
       }
+      lastGroup.querySelector('.day-tiles').insertAdjacentHTML('beforeend', sameDay.map(renderCard).join(''));
     }
-    return heading + renderCard(record);
-  }).join('');
+    grid.insertAdjacentHTML('beforeend', renderDayGroups(rest));
+  }
   observeLazyImages(grid);
 }
 
@@ -505,6 +513,7 @@ export async function runGalleryRandom(n = 50) {
 
 function renderGroupedGrid(groups) {
   const grid = document.getElementById('gallery-grid');
+  grid.classList.remove('by-day');
   currentRecords = groups.flat();
   if (!groups.length) {
     grid.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Nenhum grupo encontrado.</p>';
@@ -521,16 +530,13 @@ function renderGroupedGrid(groups) {
 
 function clearGallerySearch() {
   resetGallerySearchState();
-  loadPage(1);
+  loadFirst();
 }
 
 // Controls that only make sense while browsing the paginated library. A search
 // result is a flat top-k list, so during a search these are disabled — otherwise
 // a stray click (next page / per-page / sort) silently wipes out the results.
-const BROWSE_CONTROL_IDS = [
-  'gallery-prev', 'gallery-next', 'gallery-page-go', 'gallery-page-jump',
-  'gallery-per-page', 'gallery-per-page-custom', 'gallery-sort', 'gallery-sort-asc',
-];
+const BROWSE_CONTROL_IDS = ['gallery-sort', 'gallery-sort-asc'];
 
 function setBrowseControlsDisabled(disabled) {
   for (const id of BROWSE_CONTROL_IDS) {
@@ -541,7 +547,8 @@ function setBrowseControlsDisabled(disabled) {
 
 function enterSearchMode() {
   searchActive = true;
-  renderBottomPager();
+  browseToken++;  // a batch still in flight belongs to the listing, not the results
+  setSentinel('');
   document.getElementById('gallery-clear-search').hidden = false;
   setBrowseControlsDisabled(true);
 }
@@ -578,68 +585,6 @@ function renderSkeletons(n) {
   return html;
 }
 
-// Page numbers to offer: the first, the last, and a window around the
-// current one; gaps become an ellipsis. 1 … 4 5 [6] 7 8 … 20
-export function pageWindow(current, total, radius = 2) {
-  const pages = new Set([1, total]);
-  for (let p = current - radius; p <= current + radius; p++) {
-    if (p >= 1 && p <= total) pages.add(p);
-  }
-  const sorted = [...pages].sort((a, b) => a - b);
-  const items = [];
-  sorted.forEach((page, i) => {
-    if (i && page - sorted[i - 1] > 1) items.push('…');
-    items.push(page);
-  });
-  return items;
-}
-
-// The pager under the grid: where the eye is after scrolling through a page.
-function renderBottomPager() {
-  const pager = document.getElementById('gallery-pagination-bottom');
-  if (!pager) return;
-  if (searchActive || totalPages <= 1) {
-    pager.innerHTML = '';
-    pager.hidden = true;
-    return;
-  }
-  pager.hidden = false;
-  const numbers = pageWindow(currentPage, totalPages).map((item) => (
-    item === '…'
-      ? '<span class="pager-gap" aria-hidden="true">…</span>'
-      : `<button type="button" class="pager-page${item === currentPage ? ' is-current' : ''}"
-           data-page="${item}" ${item === currentPage ? 'aria-current="page"' : ''}
-           aria-label="Página ${item}">${item}</button>`
-  )).join('');
-  pager.innerHTML = `
-    <nav class="pager" aria-label="Páginas da galeria">
-      <button type="button" class="btn pager-step" data-page="${currentPage - 1}"
-              ${currentPage <= 1 ? 'disabled' : ''}>← Anterior</button>
-      <div class="pager-pages">${numbers}</div>
-      <button type="button" class="btn pager-step" data-page="${currentPage + 1}"
-              ${currentPage >= totalPages ? 'disabled' : ''}>Próxima →</button>
-    </nav>
-    <p class="pager-info">Página ${currentPage} de ${totalPages}</p>`;
-  pager.querySelectorAll('[data-page]').forEach((button) => {
-    button.onclick = () => {
-      goToPage(parseInt(button.dataset.page, 10));
-      document.getElementById('gallery-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    };
-  });
-}
-
-function updatePaginationUI() {
-  renderBottomPager();
-  const count = `${totalItems.toLocaleString('pt-BR')} ${totalItems === 1 ? 'item' : 'itens'}`;
-  document.getElementById('gallery-page-info').textContent =
-    totalPages > 1 ? `${count} · página ${currentPage} de ${totalPages}` : count;
-  document.getElementById('gallery-prev').disabled = currentPage <= 1;
-  document.getElementById('gallery-next').disabled = currentPage >= totalPages;
-  const pageInput = document.getElementById('gallery-page-jump');
-  pageInput.max = totalPages;
-  pageInput.value = currentPage;
-}
-
 // ── Lazy image loading ───────────────────────────────────────────────────
 
 function observeLazyImages(container) {
@@ -667,12 +612,53 @@ function openDetailAt(index) {
   else openDetail([{ index }], 0);
 }
 
+// ── Selection ─────────────────────────────────────────────────────────────
+
+// Where the last selection click landed, for Shift+click ranges.
+let selectionAnchor = null;
+
+function setSelected(index, on) {
+  if (on) window.__irisSelection.set(index, true);
+  else window.__irisSelection.delete(index);
+  const box = document.getElementById(`sel_${index}`);
+  if (box) box.checked = on;
+}
+
+/* A click that selects: Shift extends from the previous click to this one,
+   in the order the grid shows; otherwise the item toggles. */
+function selectFromClick(index, shiftKey, on = !window.__irisSelection.has(index)) {
+  const pos = currentRecords.findIndex((r) => r.index === index);
+  const anchor = currentRecords.findIndex((r) => r.index === selectionAnchor);
+  if (shiftKey && pos >= 0 && anchor >= 0) {
+    const [from, to] = pos < anchor ? [pos, anchor] : [anchor, pos];
+    for (let i = from; i <= to; i++) setSelected(currentRecords[i].index, true);
+  } else {
+    setSelected(index, on);
+  }
+  selectionAnchor = index;
+  window.dispatchEvent(new CustomEvent('iris:selection-changed'));
+}
+
+function gallerySelectionActive() {
+  return window.__irisSelection.size > 0
+    && document.getElementById('tab-gallery')?.classList.contains('active');
+}
+
 document.addEventListener('click', (e) => {
-  // Clicking the card image opens the detail modal (replaces the lightbox here).
+  const box = e.target.closest('input.media-checkbox');
+  if (box && box.closest('#gallery-grid')) {
+    selectFromClick(parseInt(box.dataset.index, 10), e.shiftKey, box.checked);
+    return;
+  }
+
+  // Clicking the card image opens the viewer; while choosing photos (or with
+  // Ctrl/⌘), it selects instead, as photo apps do.
   const img = e.target.closest('img[data-open-detail]');
   if (img) {
     e.preventDefault();
-    openDetailAt(parseInt(img.dataset.openDetail));
+    const index = parseInt(img.dataset.openDetail, 10);
+    if (gallerySelectionActive() || e.ctrlKey || e.metaKey || e.shiftKey) selectFromClick(index, e.shiftKey);
+    else openDetailAt(index);
     return;
   }
 
@@ -732,19 +718,24 @@ document.addEventListener('change', (e) => {
   window.dispatchEvent(new CustomEvent('iris:selection-changed'));
 });
 
-// ── Keyboard navigation ──────────────────────────────────────────────────
-
+// ── Keyboard ──────────────────────────────────────────────────────────────
+// Esc lets go of the selection; Delete sends it to the trash (the same
+// button, so it still asks first).
 document.addEventListener('keydown', (e) => {
-  // Only when gallery tab is active and the detail modal is not capturing keys
-  const galleryPane = document.getElementById('tab-gallery');
-  if (!galleryPane.classList.contains('active')) return;
-  if (document.body.classList.contains('detail-open')) return;
-  if (e.target.matches('input, textarea, select, [contenteditable="true"]')) return;
-
-  if (e.key === 'ArrowLeft') { e.preventDefault(); goToPage(currentPage - 1); }
-  if (e.key === 'ArrowRight') { e.preventDefault(); goToPage(currentPage + 1); }
+  if (!gallerySelectionActive()) return;
+  if (document.body.classList.contains('detail-open') || document.querySelector('.app-modal')) return;
+  if (e.target.matches('input:not(.media-checkbox), textarea, select, [contenteditable="true"]')) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    for (const index of [...window.__irisSelection.keys()]) setSelected(index, false);
+    selectionAnchor = null;
+    window.dispatchEvent(new CustomEvent('iris:selection-changed'));
+  } else if (e.key === 'Delete') {
+    e.preventDefault();
+    document.getElementById('btn-trash-selected')?.click();
+  }
 });
 
 // ── Export for app.js ─────────────────────────────────────────────────────
 
-export { loadPage, goToPage, renderGrid, invalidateCache, currentPage, totalPages, getCurrentRecords };
+export { renderGrid, invalidateCache, getCurrentRecords };

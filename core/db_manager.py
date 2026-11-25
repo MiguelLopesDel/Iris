@@ -76,7 +76,8 @@ class DatabaseManager:
         conn = self.get_connection()
         rows = conn.execute(
             """
-            SELECT c.id, c.name, c.description, COUNT(mc.meme_id) AS count
+            SELECT c.id, c.name, c.description, COUNT(mc.meme_id) AS count,
+                   MAX(mc.meme_id) AS cover_db_id
             FROM collections c
             LEFT JOIN media_collections mc ON mc.collection_id = c.id
             GROUP BY c.id

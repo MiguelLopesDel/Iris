@@ -2849,7 +2849,11 @@ async def search_random(n: int = Query(20, ge=1, le=100)):
 async def list_collections():
     backend = _get_backend()
     with trace("api.collections.list"):
-        return {"collections": backend.list_collections()}
+        collections = backend.list_collections()
+        for collection in collections:
+            record = _record_for_db_id(collection.pop("cover_db_id", None) or 0)
+            collection["cover_url"] = _thumbnail_url(record) if record is not None else ""
+        return {"collections": collections}
 
 
 @app.post("/api/collections", response_model=OkOut)

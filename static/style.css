@@ -883,33 +883,15 @@ input[type="range"] {
   min-height: 36px;
 }
 
-.control-field-page {
-  min-width: 126px;
-}
 
-.gallery-number-input {
-  min-width: 0;
-  height: 36px;
-}
 
 #gallery-per-page-custom {
   width: 108px;
   margin-top: 6px;
 }
 
-.page-jump {
-  display: flex;
-  gap: 6px;
-}
 
-.page-jump input {
-  width: 72px;
-}
 
-.page-jump .btn {
-  min-height: 36px;
-  padding-inline: 11px;
-}
 
 .sort-direction {
   display: inline-flex;
@@ -920,11 +902,6 @@ input[type="range"] {
   cursor: pointer;
 }
 
-.pagination-actions {
-  display: flex;
-  gap: 6px;
-  margin-left: auto;
-}
 
 /* Full-screen image viewer */
 
@@ -2579,6 +2556,26 @@ body.detail-open {
   font-size: 20px;
 }
 
+/* Folds the information panel away for a larger photo (key I). */
+.detail-info-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  font-family: Georgia, serif;
+  font-size: 18px;
+  font-style: italic;
+  font-weight: 700;
+}
+
+.detail-info-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.detail-modal.info-hidden .detail-aside {
+  display: none;
+}
+
 .detail-nav {
   position: absolute;
   top: 50%;
@@ -3580,24 +3577,12 @@ body[data-view="search"] .section-lead {
     order: 3;
   }
 
-  .pagination-actions {
-    order: 4;
-  }
 
   .control-field,
   .control-field-small,
-  .control-field-page {
-    min-width: 0;
-  }
 
   #gallery-per-page-custom,
-  .page-jump input {
-    width: 100%;
-  }
 
-  .page-jump input {
-    min-width: 0;
-  }
 
   .image-lightbox-toolbar {
     padding-inline: 10px;
@@ -4296,66 +4281,17 @@ a.btn {
   margin: 8px 8px 0 0;
 }
 
-/* Gallery pager, under the grid. */
-#gallery-pagination-bottom {
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  margin: 24px 0 8px;
-}
-
-.pager {
+/* Under the grid: where the next batch loads, or a retry. */
+.gallery-sentinel {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   justify-content: center;
-  gap: 8px;
+  min-height: 1px;
+  margin: 18px 0 32px;
 }
 
-.pager-pages {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.pager-page {
-  min-width: 40px;
-  height: 40px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.pager-page:hover {
-  border-color: var(--accent);
-}
-
-.pager-page.is-current {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 700;
-}
-
-.pager-gap {
-  align-self: center;
-  padding: 0 4px;
+.gallery-sentinel-text {
   color: var(--text-muted);
-}
-
-.pager-step[disabled] {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.pager-info {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-muted);
+  font-size: 14px;
 }
 
 /* Gallery as a timeline of tiles, like a phone's gallery: dense square
@@ -4377,8 +4313,53 @@ a.btn {
 }
 
 .media-grid.timeline {
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 4px;
+}
+
+/* By date, days flow side by side: a group is as wide as its tiles, up to
+   the whole row, so days with a few photos share a line instead of each
+   taking one. */
+.media-grid.timeline.by-day {
+  --tile: 184px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 28px;
+}
+
+.day-group {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.day-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.day-tiles .media-card {
+  flex: 0 0 var(--tile);
+  width: var(--tile);
+}
+
+/* The heading follows the group's width instead of setting it: a long date
+   over a single photo must not widen the group. */
+.timeline.by-day .grid-day {
+  width: 0;
+  min-width: 100%;
+  margin: 14px 0 8px 2px;
+  overflow: hidden;
+  font-size: 15px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 1700px) {
+  .media-grid.timeline.by-day {
+    --tile: 210px;
+  }
 }
 
 .timeline .grid-day {
@@ -4465,6 +4446,16 @@ a.btn {
   opacity: 1;
 }
 
+/* While choosing photos every box shows, and a chosen photo is outlined. */
+#gallery-grid:has(.media-checkbox:checked) .media-checkbox {
+  opacity: 1;
+}
+
+.timeline .media-card:has(.media-checkbox:checked) .media-card-img {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
 .timeline .play-overlay::before {
   width: 36px;
   height: 36px;
@@ -4475,6 +4466,21 @@ a.btn {
   .media-grid.timeline {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 2px;
+  }
+
+  /* A phone shows three columns per day, each day under its heading. */
+  .media-grid.timeline.by-day {
+    display: block;
+  }
+
+  .day-tiles {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .day-tiles .media-card {
+    width: auto;
   }
 
   .timeline .media-card {

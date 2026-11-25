@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=66">
+  <link rel="stylesheet" href="/static/style.css?v=67">
 </head>
 <body>
 
@@ -248,31 +248,6 @@
           <input type="checkbox" id="gallery-sort-asc">
           <span>Ordem crescente</span>
         </label>
-        <div class="control-field control-field-small">
-          <label for="gallery-per-page">Por página</label>
-          <select id="gallery-per-page">
-            <option value="12">12</option>
-            <option value="24" selected>24</option>
-            <option value="36">36</option>
-            <option value="48">48</option>
-            <option value="96">96</option>
-            <option value="custom">Personalizado</option>
-          </select>
-          <input id="gallery-per-page-custom" class="gallery-number-input" type="number"
-                 min="12" max="500" step="1" value="120" aria-label="Itens personalizados por página" hidden>
-        </div>
-        <div class="control-field control-field-page">
-          <label for="gallery-page-jump">Página</label>
-          <div class="page-jump">
-            <input id="gallery-page-jump" class="gallery-number-input" type="number"
-                   min="1" step="1" value="1" inputmode="numeric">
-            <button id="gallery-page-go" class="btn btn-subtle" type="button">Ir</button>
-          </div>
-        </div>
-        <div class="pagination-actions">
-          <button id="gallery-prev" class="icon-btn" disabled aria-label="Página anterior">←</button>
-          <button id="gallery-next" class="icon-btn" disabled aria-label="Próxima página">→</button>
-        </div>
         </div>
       </details>
       <div id="gallery-context" class="gallery-context" hidden>
@@ -282,7 +257,7 @@
       </div>
       <button id="gallery-new-media" class="btn btn-subtle gallery-new-media" type="button" hidden>Fotos novas chegaram · ver</button>
       <div id="gallery-grid" class="media-grid timeline"></div>
-      <div id="gallery-pagination-bottom"></div>
+      <div id="gallery-sentinel" class="gallery-sentinel" aria-live="polite"></div>
     </section>
 
     <!-- Collections tab -->
@@ -903,6 +878,8 @@
 <div id="detail-modal" class="detail-modal" role="dialog" aria-modal="true" hidden>
   <div class="detail-stage">
     <button id="detail-close" class="icon-btn detail-close" type="button" aria-label="Fechar detalhes">×</button>
+    <button class="icon-btn detail-info-toggle" type="button" data-info-toggle aria-pressed="true"
+            aria-label="Informações (I)" title="Informações (I)">i</button>
     <button id="detail-prev" class="detail-nav detail-nav-prev" type="button" aria-label="Anterior">‹</button>
     <div id="detail-media" class="detail-media"></div>
     <button id="detail-next" class="detail-nav detail-nav-next" type="button" aria-label="Próxima">›</button>
@@ -913,7 +890,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=88"></script>
+<script type="module" src="/static/app.js?v=89"></script>
 
 </body>
 </html>

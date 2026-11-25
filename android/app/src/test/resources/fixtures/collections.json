@@ -4,13 +4,15 @@
       "id": 1,
       "name": "Abril 2026",
       "description": "",
-      "count": 1
+      "count": 1,
+      "cover_url": "<masked>"
     },
     {
       "id": 2,
       "name": "Memórias de férias",
       "description": "",
-      "count": 0
+      "count": 0,
+      "cover_url": "<masked>"
     }
   ]
 }
