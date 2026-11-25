@@ -19,18 +19,18 @@ import {
   openFolder,
   rejectEnrichmentSuggestion,
   trashRecords
-} from './api.js?v=50';
-import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=51';
-import { openDetail } from './detail.js?v=14';
-import { initCollections } from './collections.js?v=37';
-import { initConcepts } from './concepts.js?v=37';
-import { initDuplicates } from './duplicates.js?v=36';
-import { initSystem, uploadDroppedFiles } from './system.js?v=53';
-import { initPersons } from './persons.js?v=10';
-import { initImportReview } from './import-review.js?v=11';
-import { chooseSpaceFor, initSpaces } from './spaces.js?v=7';
-import { initTrash } from './trash.js?v=4';
-import { confirmModal, toast } from './ui.js?v=6';
+} from './api.js?v=51';
+import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=52';
+import { openDetail } from './detail.js?v=15';
+import { initCollections } from './collections.js?v=38';
+import { initConcepts } from './concepts.js?v=38';
+import { initDuplicates } from './duplicates.js?v=37';
+import { initSystem, uploadDroppedFiles } from './system.js?v=54';
+import { initPersons } from './persons.js?v=11';
+import { initImportReview } from './import-review.js?v=12';
+import { chooseSpaceFor, initSpaces } from './spaces.js?v=8';
+import { initTrash } from './trash.js?v=5';
+import { confirmModal, toast } from './ui.js?v=7';
 
 window.__irisSelection = window.__irisSelection || new Map();
 

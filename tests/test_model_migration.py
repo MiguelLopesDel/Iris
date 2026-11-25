@@ -214,7 +214,7 @@ def test_a_worker_moves_a_library_to_the_new_model(server, tmp_path, monkeypatch
 
     def fake_pipeline(files, model_name, _workdir):
         assert model_name == SIGLIP
-        return {path.name: _result(int(path.stem)) for path in files}
+        return {path.name: _result(int(path.stem.split(".")[1])) for path in files}
 
     totals = iris_ai_worker.work_once(client, batch=3, process=fake_pipeline, log=lambda _m: None)
 

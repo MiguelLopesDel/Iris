@@ -46,10 +46,14 @@ def recover_pending_uploads(
 
         users = list_users(users_db_path)
 
-    use_ai = bool(sync_ai_processing and load_model)
     for user in users:
         if stop_event.is_set():
             return
+        # A callable decides per account (instance mode and the owner's choice).
+        use_ai = bool(
+            (sync_ai_processing(user) if callable(sync_ai_processing) else sync_ai_processing)
+            and load_model
+        )
         if settle_batches:
             try:
                 # First, so a batch upload found complete joins the work below.

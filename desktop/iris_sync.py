@@ -255,11 +255,12 @@ def trust_server(server: str, store_dir: Path, confirm) -> str:
 
 
 def login(server: str, username: str, password: str, device_name: str,
-          config_class: type[Config] = Config, confirm=lambda _code: False) -> Config:
+          config_class: type[Config] = Config, confirm=lambda _code: False,
+          platform: str = "desktop") -> Config:
     ca_file = trust_server(server, config_dir(config_class.APP), confirm) if server.startswith("https") else ""
     body = urllib.parse.urlencode({
         "username": username, "password": password,
-        "device_name": device_name, "platform": "desktop",
+        "device_name": device_name, "platform": platform,
     }).encode()
     request = urllib.request.Request(
         server.rstrip("/") + "/api/auth/devices/login", data=body, method="POST",

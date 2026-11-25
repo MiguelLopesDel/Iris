@@ -107,6 +107,23 @@ def _addresses(raw: str) -> str:
         raise SettingError(str(exc)) from exc
 
 
+# Before AI processing was a setting, IRIS_SYNC_AI_PROCESSING=1 meant "on this
+# server" and anything else "not here"; that stays the default it maps to.
+_AI_DEFAULT = (
+    "server" if os.environ.get("IRIS_SYNC_AI_PROCESSING", "0").strip().lower() in {"1", "true", "yes", "on"}
+    else "worker"
+)
+# Models a library may be moved to (core/model_migration.py); "" = no move.
+AI_NEXT_MODELS = ("", "google/siglip2-base-patch16-224")
+
+
+def _next_model(raw: str) -> str:
+    value = str(raw).strip()
+    if value not in AI_NEXT_MODELS:
+        raise SettingError(f"use um de: {', '.join(m or '(nenhum)' for m in AI_NEXT_MODELS)}")
+    return value
+
+
 @dataclass(frozen=True)
 class Setting:
     key: str
@@ -134,6 +151,13 @@ SETTINGS: dict[str, Setting] = {
         Setting("gpu", "IRIS_GPU", "on", _choice("on", "off")),
         # Offered to devices by the pairing code, after the address the browser is using.
         Setting("pairing_addresses", "IRIS_PAIRING_ADDRESSES", "", _addresses),
+        # Where AI runs: on this server at upload, on processing computers that
+        # pull work (desktop/iris_ai_worker.py), or nowhere.
+        Setting("ai_processing", "IRIS_AI_PROCESSING", _AI_DEFAULT, _choice("server", "worker", "off")),
+        # Also read text with Florence-2 (better on stylised text, slower).
+        Setting("ai_florence_ocr", "IRIS_AI_FLORENCE_OCR", "on", _choice("on", "off")),
+        # A model libraries are being moved to, without a search outage.
+        Setting("ai_model_next", "IRIS_MODEL_NEXT", "", _next_model),
     )
 }
 
@@ -280,3 +304,19 @@ def space_storage_policy(path: Path, spaces_dir: Path) -> SpaceStoragePolicy:
 
 def gpu_allowed(path: Path) -> bool:
     return resolve_all(path)["gpu"].value == "on"
+
+
+@dataclass(frozen=True)
+class AiSettings:
+    mode: str  # "server" | "worker" | "off"
+    florence_ocr: bool
+    model_next: str
+
+
+def ai_settings(path: Path) -> AiSettings:
+    resolved = resolve_all(path)
+    return AiSettings(
+        mode=str(resolved["ai_processing"].value),
+        florence_ocr=resolved["ai_florence_ocr"].value == "on",
+        model_next=str(resolved["ai_model_next"].value),
+    )

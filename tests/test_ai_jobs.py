@@ -261,9 +261,10 @@ def test_a_worker_fills_the_library_and_the_search_indices(server, tmp_path, mon
         results = {}
         for path in files:
             seen.append(hashlib.sha256(path.read_bytes()).hexdigest())
-            if path.name.startswith("1."):  # one file the pipeline cannot read
+            # Files are named <account>.<item><ext>; item 1 is one the pipeline cannot read.
+            if path.stem.split(".")[1] == "1":
                 continue
-            results[path.name] = _result(seed=int(path.stem))
+            results[path.name] = _result(seed=int(path.stem.split(".")[1]))
         return results
 
     totals = iris_ai_worker.work_once(client, batch=2, process=fake_pipeline, log=lambda _m: None)

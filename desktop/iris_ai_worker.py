@@ -208,8 +208,9 @@ def work_once(client: Client, *, batch: int = BATCH, log=print, limit: int | Non
         status, body = client.request("POST", f"/api/ai-jobs/claim?{query}")
         if status != 200:
             raise SyncError(body.get("detail") or f"HTTP {status}")
-        jobs, model_name = body.get("jobs", []), body.get("model_name", "")
+        jobs = body.get("jobs", [])
         queue = int(body.get("pending", 0))
+        _apply_server_options(body.get("options") or {})
         if not jobs:
             return finish()
         started = time.monotonic()
@@ -236,25 +237,31 @@ def work_once(client: Client, *, batch: int = BATCH, log=print, limit: int | Non
                     fail(job, "o arquivo baixado não confere com o da biblioteca")
                     continue
                 files[target.name] = job
-            if files:
+            # Libraries can be on different models while one is being moved:
+            # each model's items go through the pipeline together.
+            results: dict[str, dict] = {}
+            by_model: dict[str, list[str]] = {}
+            for name, job in files.items():
+                by_model.setdefault(job.get("model_name") or body.get("model_name", ""), []).append(name)
+            for index, (model_name, names) in enumerate(by_model.items()):
+                group_dir = workdir / f"model-{index}"
+                group_dir.mkdir()
                 try:
-                    results = process(sorted(media / name for name in files), model_name, workdir)
-                except Exception as exc:  # the whole batch: report each item
-                    results = {}
-                    for job in files.values():
-                        fail(job, f"{type(exc).__name__}: {exc}")
-                    files = {}
-                for name, job in files.items():
-                    result = results.get(name)
-                    if result is None:
-                        fail(job, "o pipeline não conseguiu processar este arquivo")
-                        continue
-                    result["sha256"] = job.get("sha256", "")
-                    status, body = client.request("POST", f"/api/ai-jobs/{job['id']}/result", json_body=result)
-                    if status == 200:
-                        totals["done"] += 1
-                    else:
-                        fail(job, body.get("detail") or f"HTTP {status}")
+                    results.update(process(sorted(media / name for name in names), model_name, group_dir))
+                except Exception as exc:  # the whole group: report each item
+                    for name in names:
+                        fail(files.pop(name), f"{type(exc).__name__}: {exc}")
+            for name, job in files.items():
+                result = results.get(name)
+                if result is None:
+                    fail(job, "o pipeline não conseguiu processar este arquivo")
+                    continue
+                result["sha256"] = job.get("sha256", "")
+                status, body = client.request("POST", f"/api/ai-jobs/{job['id']}/result", json_body=result)
+                if status == 200:
+                    totals["done"] += 1
+                else:
+                    fail(job, body.get("detail") or f"HTTP {status}")
         dirty = True
         if time.monotonic() - last_flush > FLUSH_EVERY:
             client.request("POST", "/api/ai-jobs/flush")
@@ -280,7 +287,7 @@ def cmd_login(args) -> None:
     password = getpass.getpass("Senha: ")
     name = args.device_name or f"{socket.gethostname()} (IA)"
     config = iris_sync.login(args.server, username, password, name, WorkerConfig,
-                             confirm=iris_sync.confirm_identity)
+                             confirm=iris_sync.confirm_identity, platform="ai-worker")
     print(f"Conectado a {config.server} como “{name}”.")
 
 
@@ -296,9 +303,20 @@ def cmd_status(args) -> None:
         print(f"Mudança para {m['target']}: {m['done']} de {m['total']} itens com vetores novos")
 
 
+# Set from the command line; otherwise the server's choice applies.
+_FLORENCE_FORCED_OFF = False
+
+
+def _apply_server_options(options: dict) -> None:
+    global FLORENCE_OCR
+    if not _FLORENCE_FORCED_OFF and "florence_ocr" in options:
+        FLORENCE_OCR = bool(options["florence_ocr"])
+
+
 def _apply_options(args) -> None:
-    global FLORENCE_OCR, VERBOSE
-    FLORENCE_OCR = not getattr(args, "no_florence_ocr", False)
+    global FLORENCE_OCR, VERBOSE, _FLORENCE_FORCED_OFF
+    _FLORENCE_FORCED_OFF = getattr(args, "no_florence_ocr", False)
+    FLORENCE_OCR = not _FLORENCE_FORCED_OFF
     VERBOSE = getattr(args, "verbose", False)
     if not VERBOSE:
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")

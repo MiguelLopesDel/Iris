@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=69">
+  <link rel="stylesheet" href="/static/style.css?v=70">
 </head>
 <body>
 
@@ -465,11 +465,44 @@
 
     <!-- System tab -->
     <section id="tab-system" class="tab-pane">
-      <div class="section-lead section-lead-compact">
-        <div>
-          <span class="eyebrow">Operação local</span>
-        </div>
-      </div>
+      <div class="settings-layout">
+        <nav class="settings-nav" aria-label="Seções da configuração">
+          <p class="settings-nav-group">Minha conta</p>
+          <a href="#my-ai" data-nav-for="my-ai">Privacidade e IA</a>
+          <a href="#devices-panel" data-nav-for="devices-panel">Dispositivos</a>
+          <a href="#computer-trust" data-nav-for="computer-trust">Este computador</a>
+          <a href="#appearance-card" data-nav-for="appearance-card">Aparência</a>
+          <p class="settings-nav-group">Biblioteca</p>
+          <a href="#import-section" data-nav-for="import-section">Importar</a>
+          <a href="#review-card" data-nav-for="review-card">Revisão de importação</a>
+          <a href="#host-config" data-nav-for="host-config">Banco e modelos</a>
+          <a href="#portability-card" data-nav-for="portability-card">Portabilidade</a>
+          <p class="settings-nav-group" data-nav-group="admin">Administração</p>
+          <a href="#ai-settings" data-nav-for="ai-settings">Processamento por IA</a>
+          <a href="#account-management" data-nav-for="account-management">Contas</a>
+          <a href="#pairing-settings" data-nav-for="pairing-settings">Celulares</a>
+          <a href="#instance-settings" data-nav-for="instance-settings">Grupos e lixeira</a>
+          <a href="#backup-settings" data-nav-for="backup-settings">Backup do servidor</a>
+        </nav>
+        <div class="settings-content">
+          <h2 class="settings-group-title">Minha conta</h2>
+      <section id="my-ai" class="detail-panel system-card" hidden>
+        <span class="eyebrow">PRIVACIDADE</span>
+        <h4>Análise das suas fotos por IA</h4>
+        <p class="system-hint">A IA analisa cada foto para você poder buscar pelo conteúdo ("cachorro na praia"),
+          achar o texto que aparece nas imagens, separar documentos e reconhecer pessoas.</p>
+        <label class="switch-row"><input type="checkbox" id="my-ai-enabled"><span class="switch-control"></span><span>Analisar minhas fotos com IA</span></label>
+        <p id="my-ai-where" class="system-hint"></p>
+        <p id="my-ai-counts" class="system-hint"></p>
+        <details class="settings-more">
+          <summary>Apagar o que a IA já extraiu</summary>
+          <p class="system-hint">Apaga, só da sua biblioteca, o que a IA calculou: a "impressão" de cada foto usada na
+            busca, o texto lido das imagens, as categorias e os rostos e pessoas. As fotos continuam intactas.
+            Com a análise ligada, tudo é calculado de novo aos poucos.</p>
+          <button id="my-ai-forget" class="btn btn-subtle btn-danger-text" type="button">Apagar dados de IA das minhas fotos</button>
+        </details>
+        <span id="my-ai-status" class="system-status"></span>
+      </section>
 
       <section id="devices-panel" class="detail-panel system-card" hidden>
         <span class="eyebrow">SEGURANÇA</span>
@@ -488,7 +521,9 @@
         <p id="computer-trust-status" class="system-hint"></p>
         <p id="computer-trust-address" class="system-warning" hidden></p>
         <a id="computer-trust-download" class="btn btn-primary" href="/api/tls/ca.crt" download>Baixar certificado</a>
-        <details class="trust-steps">
+        <details class="settings-more">
+          <summary>Como confiar no certificado, passo a passo</summary>
+          <details class="trust-steps">
           <summary>Windows (Chrome, Edge)</summary>
           <ol>
             <li>Abra o arquivo baixado e clique em <strong>Instalar certificado</strong>.</li>
@@ -525,30 +560,198 @@
             <li>Recarregue a página.</li>
           </ol>
         </details>
+        </details>
         <p class="system-hint">Se os endereços do servidor mudarem, a autoridade é refeita: baixe e confie de novo.
           Celulares não precisam disso; o app confere o servidor pelo código de pareamento.</p>
       </section>
 
-      <section id="pairing-settings" class="detail-panel system-card" data-settings-section hidden>
-        <span class="eyebrow">CELULARES</span>
-        <h4>Pareamento</h4>
-        <p class="system-hint">O código "Conectar um celular" oferece o endereço desta página e os endereços abaixo,
-          nessa ordem. Endereços locais (127.0.0.1) ficam de fora: um celular não os alcança.</p>
-        <label>Outros endereços de acesso (um por linha)
-          <textarea rows="3" spellcheck="false" placeholder="https://iris.exemplo&#10;http://100.64.0.10:8501" data-setting="pairing_addresses"></textarea>
-          <small class="instance-source" data-source-for="pairing_addresses"></small>
-        </label>
-        <button class="btn btn-primary" type="button" data-save-settings>Salvar endereços</button>
+      <section id="appearance-card" class="detail-panel system-card">
+          <span class="eyebrow">APARÊNCIA</span>
+          <h4>Organização da biblioteca</h4>
+          <p class="system-hint">Esta preferência fica neste dispositivo. Ela não muda as fotos nem as permissões da conta.</p>
+          <label for="ui-experience">Experiência
+            <select id="ui-experience">
+              <option value="photos">Fotos — simples e familiar</option>
+              <option value="workspace">Espaço de trabalho — controles avançados</option>
+            </select>
+          </label>
+          <p id="ui-experience-help" class="system-hint"></p>
+        </section>
+
+          <h2 class="settings-group-title">Biblioteca</h2>
+      <section id="import-section" class="detail-panel system-card system-card-wide">
+          <span class="eyebrow">Entrada de mídia</span>
+          <h4>Importar e indexar</h4>
+          <p id="private-library-health" class="system-status" hidden></p>
+          <div class="folder-browser" data-host-import>
+            <label>Pasta
+              <input type="text" id="import-folder" placeholder="/caminho/da/pasta">
+            </label>
+            <div class="folder-actions">
+              <button id="folder-go" class="btn btn-subtle">Abrir</button>
+              <button id="folder-up" class="btn btn-subtle">Subir</button>
+            </div>
+            <div id="folder-list" class="folder-list"></div>
+          </div>
+          <label>Ou envie arquivos
+            <input type="file" id="import-files" accept="image/*,video/*,audio/*,.svg" multiple>
+          </label>
+          <label data-account-import hidden>Ou uma pasta inteira
+            <input type="file" id="import-folder-files" webkitdirectory multiple>
+          </label>
+          <div class="form-grid" data-host-import>
+            <label>Biblioteca<input type="text" id="import-library" value="default"></label>
+            <label>Raiz gerenciada<input type="text" id="import-library-root" value="data/library"></label>
+            <label>Batch size<input type="number" id="import-batch" value="8" min="1" max="64"></label>
+            <label>Dispositivo
+              <select id="import-device">
+                <option value="auto">Auto</option>
+                <option value="cuda">CUDA</option>
+                <option value="mps">MPS</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </label>
+            <label>Caption model<input type="text" id="import-caption" value="microsoft/Florence-2-large"></label>
+            <label>Whisper model<input type="text" id="import-whisper" value="tiny"></label>
+          </div>
+          <div class="inline-switches" data-host-import>
+            <label class="switch-row"><input type="checkbox" id="import-low-resource"><span class="switch-control"></span><span>Modo PC fraco (CPU, modelo menor; desativa recursos extras)</span></label>
+            <label class="switch-row"><input type="checkbox" id="import-use-folder"><span class="switch-control"></span><span>Importar a pasta exibida acima</span></label>
+            <label class="switch-row"><input type="checkbox" id="import-recursive" checked><span class="switch-control"></span><span>Incluir subpastas</span></label>
+            <label class="switch-row"><input type="checkbox" id="import-copy" checked><span class="switch-control"></span><span>Copiar para biblioteca gerenciada</span></label>
+          </div>
+          <button id="import-start" class="btn btn-primary">Importar e indexar</button>
+          <button id="import-stop" class="btn btn-subtle" type="button" hidden>Parar</button>
+          <div id="import-status" class="system-status"></div>
+          <details id="import-failures" class="import-failures" hidden><summary></summary><ul></ul></details>
+        </section>
+
+      <section id="review-card" class="detail-panel system-card system-card-wide">
+          <span class="eyebrow">Deduplicação</span>
+          <h4>Revisão de importação</h4>
+          <p class="system-hint">Arquivos detectados como possíveis duplicatas durante a importação ficam aqui, separados por tipo de detecção. As mídias sem problema já foram indexadas.</p>
+          <div id="import-review" class="import-review"></div>
+        </section>
+
+      <section id="host-config" class="detail-panel system-card" data-host-only>
+          <span class="eyebrow">Configuração ativa</span>
+          <h4>Banco e modelos</h4>
+          <label>Banco de dados
+            <select id="system-db"></select>
+          </label>
+          <label>Pasta de mídias
+            <input type="text" id="system-media-root" placeholder="/caminho/das/midias">
+          </label>
+          <label>Modelo CLIP
+            <input type="text" id="system-model">
+          </label>
+          <div id="system-health" class="system-status"></div>
+          <button id="system-save" class="btn btn-primary">Aplicar e recarregar</button>
+        </section>
+
+      <section id="portability-card" class="detail-panel system-card system-card-wide" data-host-only>
+          <span class="eyebrow">Portabilidade</span>
+          <h4>Backup do catálogo (snapshots)</h4>
+          <p class="backup-hint">Salva só o catálogo (banco + embeddings) num destino externo, fora da cota. FAISS é reconstruído na restauração; a mídia é tratada à parte.</p>
+
+          <div class="backup-config">
+            <label>Destino externo dos snapshots
+              <span class="row-inline">
+                <input type="text" id="backup-dir" placeholder="/mnt/externo/iris_backups">
+                <button id="backup-config-save" class="btn btn-subtle">Salvar</button>
+              </span>
+            </label>
+            <label class="switch-row"><input type="checkbox" id="backup-auto" checked><span class="switch-control"></span><span>Snapshot automático antes de operações arriscadas (import / trash / restore)</span></label>
+            <label>Manter os últimos <input type="number" id="backup-keep" min="1" value="10"> snapshots</label>
+            <div id="backup-config-status" class="system-status"></div>
+          </div>
+          <hr>
+
+          <div class="row-inline">
+            <button id="snapshot-now" class="btn btn-primary">Snapshot agora</button>
+            <span id="snapshot-status" class="system-status"></span>
+          </div>
+          <div id="snapshot-list" class="snapshot-list"></div>
+          <hr>
+
+          <h4>Mídia</h4>
+          <p class="backup-hint">A mídia não entra no backup do catálogo. Reconcilie para relinkar arquivos faltantes a partir dos originais (por hash), ou exporte a biblioteca inteira para o disco externo.</p>
+          <div class="row-inline">
+            <button id="media-reconcile" class="btn btn-subtle">Verificar / reconciliar mídia</button>
+            <button id="media-export" class="btn btn-subtle">Exportar biblioteca p/ disco externo</button>
+          </div>
+          <div id="media-status" class="system-status"></div>
+        </section>
+
+          <h2 class="settings-group-title" data-group-title="admin">Administração</h2>
+      <section id="ai-settings" class="detail-panel system-card system-card-wide" data-settings-section hidden>
+        <span class="eyebrow">ADMINISTRAÇÃO</span>
+        <h4>Processamento por IA</h4>
+        <p class="system-hint">Vale para todo o servidor. Cada pessoa ainda escolhe, na própria conta, se as fotos
+          dela são analisadas (ligado por padrão).</p>
+        <fieldset class="choice-cards">
+          <legend>Onde processar</legend>
+          <input type="hidden" data-setting="ai_processing">
+          <button type="button" class="choice-card" data-ai-mode="server" aria-pressed="false">
+            <strong>Neste servidor</strong>
+            <span>Cada foto é analisada assim que chega. Pede um servidor com bom processador ou GPU.</span>
+          </button>
+          <button type="button" class="choice-card" data-ai-mode="worker" aria-pressed="false">
+            <strong>Em computadores de processamento</strong>
+            <span>Um computador com GPU (o seu PC, por exemplo) busca as fotos que faltam e devolve o resultado.
+              Serve todas as contas que permitiram.</span>
+          </button>
+          <button type="button" class="choice-card" data-ai-mode="off" aria-pressed="false">
+            <strong>Desligado</strong>
+            <span>Nada é analisado. A galeria funciona; busca por conteúdo, documentos e pessoas, não.</span>
+          </button>
+        </fieldset>
+        <small class="instance-source" data-source-for="ai_processing"></small>
+        <p id="ai-server-warning" class="system-warning" hidden>Este servidor está sem os modelos de IA carregados
+          (<code>IRIS_LOAD_MODEL=0</code>): no modo "Neste servidor", nada seria analisado.</p>
+        <div class="system-form-grid">
+          <label>Leitura do texto nas imagens
+            <select data-setting="ai_florence_ocr">
+              <option value="on">Reforçada — melhor em memes e prints</option>
+              <option value="off">Rápida — um leitor só, menos preciso</option>
+            </select>
+            <small class="instance-source" data-source-for="ai_florence_ocr"></small>
+          </label>
+          <label>Trocar o modelo de busca para
+            <select data-setting="ai_model_next">
+              <option value="">Não trocar</option>
+              <option value="google/siglip2-base-patch16-224">SigLIP 2 — busca melhor e entende português</option>
+            </select>
+            <small class="instance-source" data-source-for="ai_model_next"></small>
+          </label>
+          <label id="gpu-settings">Usar GPU NVIDIA deste servidor
+            <select id="instance-gpu" data-setting="gpu">
+              <option value="on">Ligada — usar quando disponível</option>
+              <option value="off">Desligada — só o processador</option>
+            </select>
+            <small class="instance-source" data-source-for="gpu"></small>
+          </label>
+        </div>
+        <p id="instance-gpu-report" class="system-hint"></p>
+        <div id="ai-migration" class="ai-migration" hidden></div>
+        <button class="btn btn-primary" type="button" data-save-settings>Salvar</button>
         <span class="system-status" data-settings-status></span>
-        <hr>
-        <p class="system-hint">Autoridade de certificado: para servidores com certificado de uma CA privada
-          (a interna de um proxy, por exemplo). O código leva a impressão digital dela, e o app passa a confiar
-          nela para este servidor depois de conferi-la.</p>
-        <p id="pairing-ca-status" class="system-hint"></p>
-        <label class="btn btn-subtle file-button">Enviar certificado da CA (.crt / .pem)
-          <input id="pairing-ca-file" type="file" accept=".crt,.pem,.cer,application/x-x509-ca-cert,application/x-pem-file" hidden>
-        </label>
-        <button id="pairing-ca-remove" class="btn btn-subtle" type="button" hidden>Remover certificado</button>
+
+        <h5 class="settings-subtitle">Computadores de processamento</h5>
+        <ul id="ai-workers" class="devices-list"></ul>
+        <details class="settings-more">
+          <summary>Adicionar um computador de processamento</summary>
+          <ol class="ai-worker-steps">
+            <li>No computador com GPU, tenha uma cópia deste projeto e o ambiente Python com PyTorch.</li>
+            <li>Entre com uma conta de administrador e confira o código de identidade
+              <strong id="ai-identity-code">—</strong>:
+              <pre><code id="ai-worker-login"></code></pre></li>
+            <li>Deixe rodando como serviço: <pre><code>python desktop/iris_ai_worker.py install-service --enable</code></pre></li>
+          </ol>
+        </details>
+
+        <h5 class="settings-subtitle">Fila por conta</h5>
+        <div id="ai-accounts" class="ai-accounts"></div>
       </section>
 
       <section id="account-management" class="detail-panel system-card" hidden>
@@ -562,6 +765,30 @@
         </div>
         <button id="account-create" class="btn btn-primary" type="button">Criar conta</button>
         <span id="account-status" class="system-status"></span>
+      </section>
+
+      <section id="pairing-settings" class="detail-panel system-card" data-settings-section hidden>
+        <span class="eyebrow">CELULARES</span>
+        <h4>Pareamento</h4>
+        <p class="system-hint">O código "Conectar um celular" oferece o endereço desta página e os endereços abaixo,
+          nessa ordem. Endereços locais (127.0.0.1) ficam de fora: um celular não os alcança.</p>
+        <label>Outros endereços de acesso (um por linha)
+          <textarea rows="3" spellcheck="false" placeholder="https://iris.exemplo&#10;http://100.64.0.10:8501" data-setting="pairing_addresses"></textarea>
+          <small class="instance-source" data-source-for="pairing_addresses"></small>
+        </label>
+        <button class="btn btn-primary" type="button" data-save-settings>Salvar endereços</button>
+        <span class="system-status" data-settings-status></span>
+        <details class="settings-more">
+          <summary>Avançado: autoridade de certificado própria</summary>
+        <p class="system-hint">Autoridade de certificado: para servidores com certificado de uma CA privada
+          (a interna de um proxy, por exemplo). O código leva a impressão digital dela, e o app passa a confiar
+          nela para este servidor depois de conferi-la.</p>
+        <p id="pairing-ca-status" class="system-hint"></p>
+        <label class="btn btn-subtle file-button">Enviar certificado da CA (.crt / .pem)
+          <input id="pairing-ca-file" type="file" accept=".crt,.pem,.cer,application/x-x509-ca-cert,application/x-pem-file" hidden>
+        </label>
+        <button id="pairing-ca-remove" class="btn btn-subtle" type="button" hidden>Remover certificado</button>
+      </details>
       </section>
 
       <section id="instance-settings" class="detail-panel system-card" data-settings-section hidden>
@@ -595,26 +822,6 @@
           </label>
         </div>
         <p class="system-hint">O modo de cópia vale para os próximos itens; os que já estão nos grupos não mudam.</p>
-        <button class="btn btn-primary" type="button" data-save-settings>Salvar</button>
-        <span class="system-status" data-settings-status></span>
-      </section>
-
-      <section id="gpu-settings" class="detail-panel system-card" data-settings-section hidden>
-        <span class="eyebrow">INSTALAÇÃO</span>
-        <h4>Processamento</h4>
-        <p class="system-hint">Busca, indexação e reconhecimento de rostos podem usar uma GPU NVIDIA quando a
-          instalação enxerga uma. Desligar faz tudo rodar no processador.</p>
-        <p id="instance-gpu-report" class="system-hint"></p>
-        <div class="system-form-grid">
-          <label>Usar GPU NVIDIA
-            <select id="instance-gpu" data-setting="gpu">
-              <option value="on">Ligada — usar quando disponível (recomendado)</option>
-              <option value="off">Desligada — processar só na CPU</option>
-            </select>
-            <small class="instance-source" data-source-for="gpu"></small>
-          </label>
-        </div>
-        <p class="system-hint">A troca vale na hora: os modelos são recarregados no novo dispositivo na próxima busca ou importação.</p>
         <button class="btn btn-primary" type="button" data-save-settings>Salvar</button>
         <span class="system-status" data-settings-status></span>
       </section>
@@ -667,124 +874,7 @@
         <p id="backup-last" class="system-hint"></p>
         <div id="backup-list" class="backup-list"></div>
       </section>
-
-      <div class="system-grid">
-        <section class="detail-panel system-card">
-          <span class="eyebrow">APARÊNCIA</span>
-          <h4>Organização da biblioteca</h4>
-          <p class="system-hint">Esta preferência fica neste dispositivo. Ela não muda as fotos nem as permissões da conta.</p>
-          <label for="ui-experience">Experiência
-            <select id="ui-experience">
-              <option value="photos">Fotos — simples e familiar</option>
-              <option value="workspace">Espaço de trabalho — controles avançados</option>
-            </select>
-          </label>
-          <p id="ui-experience-help" class="system-hint"></p>
-        </section>
-
-        <section class="detail-panel system-card" data-host-only>
-          <span class="eyebrow">Configuração ativa</span>
-          <h4>Banco e modelos</h4>
-          <label>Banco de dados
-            <select id="system-db"></select>
-          </label>
-          <label>Pasta de mídias
-            <input type="text" id="system-media-root" placeholder="/caminho/das/midias">
-          </label>
-          <label>Modelo CLIP
-            <input type="text" id="system-model">
-          </label>
-          <div id="system-health" class="system-status"></div>
-          <button id="system-save" class="btn btn-primary">Aplicar e recarregar</button>
-        </section>
-
-        <section id="import-section" class="detail-panel system-card system-card-wide">
-          <span class="eyebrow">Entrada de mídia</span>
-          <h4>Importar e indexar</h4>
-          <p id="private-library-health" class="system-status" hidden></p>
-          <div class="folder-browser" data-host-import>
-            <label>Pasta
-              <input type="text" id="import-folder" placeholder="/caminho/da/pasta">
-            </label>
-            <div class="folder-actions">
-              <button id="folder-go" class="btn btn-subtle">Abrir</button>
-              <button id="folder-up" class="btn btn-subtle">Subir</button>
-            </div>
-            <div id="folder-list" class="folder-list"></div>
-          </div>
-          <label>Ou envie arquivos
-            <input type="file" id="import-files" accept="image/*,video/*,audio/*,.svg" multiple>
-          </label>
-          <label data-account-import hidden>Ou uma pasta inteira
-            <input type="file" id="import-folder-files" webkitdirectory multiple>
-          </label>
-          <div class="form-grid" data-host-import>
-            <label>Biblioteca<input type="text" id="import-library" value="default"></label>
-            <label>Raiz gerenciada<input type="text" id="import-library-root" value="data/library"></label>
-            <label>Batch size<input type="number" id="import-batch" value="8" min="1" max="64"></label>
-            <label>Dispositivo
-              <select id="import-device">
-                <option value="auto">Auto</option>
-                <option value="cuda">CUDA</option>
-                <option value="mps">MPS</option>
-                <option value="cpu">CPU</option>
-              </select>
-            </label>
-            <label>Caption model<input type="text" id="import-caption" value="microsoft/Florence-2-large"></label>
-            <label>Whisper model<input type="text" id="import-whisper" value="tiny"></label>
-          </div>
-          <div class="inline-switches" data-host-import>
-            <label class="switch-row"><input type="checkbox" id="import-low-resource"><span class="switch-control"></span><span>Modo PC fraco (CPU, modelo menor; desativa recursos extras)</span></label>
-            <label class="switch-row"><input type="checkbox" id="import-use-folder"><span class="switch-control"></span><span>Importar a pasta exibida acima</span></label>
-            <label class="switch-row"><input type="checkbox" id="import-recursive" checked><span class="switch-control"></span><span>Incluir subpastas</span></label>
-            <label class="switch-row"><input type="checkbox" id="import-copy" checked><span class="switch-control"></span><span>Copiar para biblioteca gerenciada</span></label>
-          </div>
-          <button id="import-start" class="btn btn-primary">Importar e indexar</button>
-          <button id="import-stop" class="btn btn-subtle" type="button" hidden>Parar</button>
-          <div id="import-status" class="system-status"></div>
-          <details id="import-failures" class="import-failures" hidden><summary></summary><ul></ul></details>
-        </section>
-
-        <section class="detail-panel system-card system-card-wide">
-          <span class="eyebrow">Deduplicação</span>
-          <h4>Revisão de importação</h4>
-          <p class="system-hint">Arquivos detectados como possíveis duplicatas durante a importação ficam aqui, separados por tipo de detecção. As mídias sem problema já foram indexadas.</p>
-          <div id="import-review" class="import-review"></div>
-        </section>
-
-        <section class="detail-panel system-card system-card-wide" data-host-only>
-          <span class="eyebrow">Portabilidade</span>
-          <h4>Backup do catálogo (snapshots)</h4>
-          <p class="backup-hint">Salva só o catálogo (banco + embeddings) num destino externo, fora da cota. FAISS é reconstruído na restauração; a mídia é tratada à parte.</p>
-
-          <div class="backup-config">
-            <label>Destino externo dos snapshots
-              <span class="row-inline">
-                <input type="text" id="backup-dir" placeholder="/mnt/externo/iris_backups">
-                <button id="backup-config-save" class="btn btn-subtle">Salvar</button>
-              </span>
-            </label>
-            <label class="switch-row"><input type="checkbox" id="backup-auto" checked><span class="switch-control"></span><span>Snapshot automático antes de operações arriscadas (import / trash / restore)</span></label>
-            <label>Manter os últimos <input type="number" id="backup-keep" min="1" value="10"> snapshots</label>
-            <div id="backup-config-status" class="system-status"></div>
-          </div>
-          <hr>
-
-          <div class="row-inline">
-            <button id="snapshot-now" class="btn btn-primary">Snapshot agora</button>
-            <span id="snapshot-status" class="system-status"></span>
-          </div>
-          <div id="snapshot-list" class="snapshot-list"></div>
-          <hr>
-
-          <h4>Mídia</h4>
-          <p class="backup-hint">A mídia não entra no backup do catálogo. Reconcilie para relinkar arquivos faltantes a partir dos originais (por hash), ou exporte a biblioteca inteira para o disco externo.</p>
-          <div class="row-inline">
-            <button id="media-reconcile" class="btn btn-subtle">Verificar / reconciliar mídia</button>
-            <button id="media-export" class="btn btn-subtle">Exportar biblioteca p/ disco externo</button>
-          </div>
-          <div id="media-status" class="system-status"></div>
-        </section>
+        </div>
       </div>
     </section>
   </div>
@@ -890,7 +980,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=90"></script>
+<script type="module" src="/static/app.js?v=91"></script>
 
 </body>
 </html>
