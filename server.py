@@ -43,6 +43,7 @@ from starlette.middleware.sessions import SessionMiddleware
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core import (
+    ai_policy,
     app_config,
     compute_device,
     equivalence_graph,
@@ -138,6 +139,7 @@ from core.web_enrichment import (
 from core.web_sessions import web_session_device
 from routers.admin import router as admin_router
 from routers.ai_jobs import router as ai_jobs_router
+from routers.ai_settings import router as ai_settings_router
 from routers.auth import router as auth_router
 from routers.backup import BackupRouteOperations
 from routers.backup import router as backup_router
@@ -790,7 +792,7 @@ async def lifespan(app: FastAPI):
         )
         stop_event, worker = start_pending_upload_recovery(
             users_db_path=app.state.users_db_path,
-            sync_ai_processing=app.state.sync_ai_processing,
+            sync_ai_processing=app.state.ai_on_server,
             load_model=app.state.load_model,
             on_finished=app.state.backend_registry.refresh,
             processing_workers=processing_workers,
@@ -849,6 +851,11 @@ app.state.auth_secret = load_or_create_secret(_DATA_DIR / "secret_key")
 app.state.account_quota_bytes = _ACCOUNT_QUOTA_BYTES
 app.state.load_model = _LOAD_MODEL
 app.state.sync_ai_processing = _SYNC_AI_PROCESSING
+# Per account: the instance's choice of where AI runs and the owner's consent.
+app.state.ai_on_server = lambda user: ai_policy.on_server(_USERS_DB, user, _LOAD_MODEL)
+model_migration.set_next_model_provider(
+    lambda: instance_settings.ai_settings(_USERS_DB).model_next
+)
 _server_mode = os.environ.get("IRIS_SERVER_MODE", "legacy").lower()
 _private_server_requested = _server_mode in {"private", "multiuser"}
 _has_users = has_users(_USERS_DB)
@@ -1115,6 +1122,7 @@ app.include_router(backup_router)
 app.include_router(records_router)
 app.include_router(setup_router)
 app.include_router(ai_jobs_router)
+app.include_router(ai_settings_router)
 if perf_probe.enabled():
 
     @app.get("/api/_perf/probe", include_in_schema=False)
@@ -3977,6 +3985,24 @@ class PrivateOriginal:
     metadata: space_catalog.ItemMetadata
 
 
-# Seams for routers/spaces.py, which must not import this module.
+def _original_for_user(user: IrisUser, db_id: int) -> PrivateOriginal | None:
+    """Another account's original, for an administrator's processing computer.
+
+    The lookup is the one shared spaces use, run as that account: the item must
+    be in its catalogue and pass its /media/ allow-list. Callers check first
+    that the account lets its photos be processed (routers/ai_jobs.py).
+    """
+    backend = app.state.backend_registry.get(user.id)
+    user_token = _request_user.set(user)
+    backend_token = _request_backend.set(backend)
+    try:
+        return _private_original_for(db_id)
+    finally:
+        _request_backend.reset(backend_token)
+        _request_user.reset(user_token)
+
+
+# Seams for routers/spaces.py and routers/ai_jobs.py, which must not import this module.
 app.state.private_original_for = _private_original_for
+app.state.original_for_user = _original_for_user
 app.state.thumbnail_generator = _generate_thumbnail

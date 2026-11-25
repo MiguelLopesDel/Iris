@@ -332,7 +332,11 @@ def rebuild_vector_indices(db_path: Path) -> None:
     finally:
         conn.close()
     widths = [len(r[0]) // 4 for r in rows if r[0]]
+    prefix = db_path.with_suffix("")
     if not widths:
+        # No vectors left (all forgotten): an old index must not keep answering.
+        for suffix in ("image", "desc"):
+            prefix.with_name(f"{prefix.name}_{suffix}.faiss").unlink(missing_ok=True)
         return
     dim = max(set(widths), key=widths.count)
 
@@ -344,7 +348,6 @@ def rebuild_vector_indices(db_path: Path) -> None:
                 out[i] = np.frombuffer(blob, dtype=np.float32)
         return out
 
-    prefix = db_path.with_suffix("")
     for column, suffix in ((0, "image"), (1, "desc")):
         data = matrix(column)
         norms = np.linalg.norm(data, axis=1, keepdims=True)
@@ -360,3 +363,31 @@ def rebuild_vector_indices(db_path: Path) -> None:
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+
+
+# Columns the AI fills; forgetting a library's AI data empties them.
+FORGET_COLUMNS = {
+    "embedding": None, "desc_embedding": None, "embedding_dim": 0, "model_name": "",
+    **{name: "" for name in TEXT_COLUMNS},
+}
+
+
+def forget(conn: sqlite3.Connection) -> int:
+    """Erase what AI derived from a library's photos; the photos stay.
+
+    Vectors, text read from images, taxonomy and descriptions, faces and the
+    people grouped from them, pending new-model vectors and leases. Returns how
+    many items had AI data.
+    """
+    ensure_table(conn)
+    had = conn.execute(
+        "SELECT COUNT(*) FROM memes WHERE embedding IS NOT NULL AND length(embedding) > 0"
+    ).fetchone()[0]
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    with conn:
+        assignments = ", ".join(f"{name} = ?" for name in FORGET_COLUMNS)
+        conn.execute(f"UPDATE memes SET {assignments}", list(FORGET_COLUMNS.values()))
+        for table in ("faces", "persons", "embedding_next", "ai_jobs"):
+            if table in tables:
+                conn.execute(f"DELETE FROM {table}")
+    return had

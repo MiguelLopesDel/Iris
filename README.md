@@ -141,14 +141,20 @@ under **Sistema → Conectar um celular**; nothing is sent before that.
 
 ### Let another computer do the AI
 
-A server without a GPU catalogues uploads without AI
-(`IRIS_SYNC_AI_PROCESSING=0`): they show in the gallery but have no embedding,
-OCR, taxonomy or faces, so search, documents and people cannot reach them.
-`desktop/iris_ai_worker.py` lends a computer's GPU to one account: it signs in
-as a device of that account, takes the items still lacking AI (new uploads and
-old ones alike), downloads the originals, runs the same indexer pipeline with
-the library's model, and sends the results back; the server rebuilds its search
-indices after each batch. It sees only the account it signed in with.
+Where AI runs is an instance setting (**Configuração → Processamento por IA**,
+or `IRIS_AI_PROCESSING`): on this server as uploads arrive, on processing
+computers, or nowhere. Each account decides, under **Privacidade e IA**, whether
+its photos are analysed at all (on by default) and can erase what AI already
+derived from them; the photos stay.
+
+A server without a GPU is better served by a processing computer:
+`desktop/iris_ai_worker.py` lends a computer's GPU to the instance. Signed in with
+an administrator account, it serves every account that lets its photos be
+analysed; with any other account, only that account. It takes the items still
+lacking AI (new uploads and old ones alike), downloads the originals, runs the
+same indexer pipeline with each library's model, and sends the results back; the
+server rebuilds the search indices of the libraries it touched. The settings page
+lists the processing computers, what each did, and how much waits per account.
 
 Run it from a checkout of this repository, with the environment that has the
 models' runtime (PyTorch, ideally with CUDA):
@@ -160,8 +166,8 @@ python desktop/iris_ai_worker.py once                  # work until none is left
 python desktop/iris_ai_worker.py install-service --enable   # keep picking up new uploads
 ```
 
-If the computer is off, nothing breaks: items wait, as they do today. An item
-the pipeline cannot read is retried a few times, then left alone.
+If no processing computer is on, nothing breaks: items wait. An item the
+pipeline cannot read is retried a few times, then left alone.
 
 ### 4. Day to day
 

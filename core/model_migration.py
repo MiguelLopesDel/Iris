@@ -18,8 +18,18 @@ from pathlib import Path
 
 from core.embedding_models import resolve_embedding_model
 
+_provider = None
+
+
+def set_next_model_provider(provider) -> None:
+    """Where the target model comes from (the instance settings, in the server)."""
+    global _provider
+    _provider = provider
+
 
 def next_model() -> str:
+    if _provider is not None:
+        return (_provider() or "").strip()
     return (os.environ.get("IRIS_MODEL_NEXT") or "").strip()
 
 

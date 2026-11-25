@@ -95,6 +95,19 @@ def init_users_db(path: Path) -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)")
+        # Per-account preferences that are the account owner's to decide.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, key),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
 
 
 # Users databases whose schema this process already created, by file
@@ -391,3 +404,23 @@ def list_devices(path: Path, user_id: int) -> list[IrisDevice]:
     with _connect(path) as conn:
         rows = conn.execute("SELECT * FROM devices WHERE user_id = ? ORDER BY last_seen_at DESC", (user_id,)).fetchall()
     return [_device_from_row(row) for row in rows]
+
+
+def user_ai_enabled(path: Path, user_id: int) -> bool:
+    """Whether this account lets its photos be processed by AI (yes by default)."""
+    _ensure_schema(path)
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT value FROM user_settings WHERE user_id = ? AND key = 'ai_processing'", (user_id,)
+        ).fetchone()
+    return row is None or row[0] != "off"
+
+
+def set_user_ai_enabled(path: Path, user_id: int, enabled: bool) -> None:
+    _ensure_schema(path)
+    with _connect(path) as conn:
+        conn.execute(
+            """INSERT INTO user_settings (user_id, key, value, updated_at) VALUES (?, 'ai_processing', ?, ?)
+               ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+            (user_id, "on" if enabled else "off", now_iso()),
+        )
