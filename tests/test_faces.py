@@ -78,9 +78,9 @@ def test_extract_dedups_same_face_across_frames(conn):
     faces.set_detector(
         FakeDetector(
             {
-                id(img1): [(a, (0, 0, 5, 5), 0.99)],
-                id(img2): [(a, (1, 1, 5, 5), 0.95)],
-                id(img3): [(b, (0, 0, 5, 5), 0.90)],
+                id(img1): [(a, (0, 0, 80, 80), 0.99)],
+                id(img2): [(a, (1, 1, 80, 80), 0.95)],
+                id(img3): [(b, (0, 0, 80, 80), 0.90)],
             }
         )
     )
@@ -101,7 +101,7 @@ def test_cluster_groups_into_persons(conn):
         conn.execute(
             "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at)"
             " VALUES (?,?,?,?,?)",
-            (mid, "[0,0,5,5]", 0.9, emb.astype(np.float32).tobytes(), "now"),
+            (mid, "[0,0,80,80]", 0.9, emb.astype(np.float32).tobytes(), "now"),
         )
     conn.commit()
 
@@ -118,7 +118,7 @@ def test_cluster_is_incremental(conn):
     mid = _add_meme(conn, "a.jpg")
     conn.execute(
         "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
-        (mid, "[0,0,5,5]", 0.9, base.astype(np.float32).tobytes(), "now"),
+        (mid, "[0,0,80,80]", 0.9, base.astype(np.float32).tobytes(), "now"),
     )
     conn.commit()
     faces.cluster_faces(conn, threshold=0.5)
@@ -129,7 +129,7 @@ def test_cluster_is_incremental(conn):
     mid2 = _add_meme(conn, "b.jpg")
     conn.execute(
         "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
-        (mid2, "[0,0,5,5]", 0.9, near.astype(np.float32).tobytes(), "now"),
+        (mid2, "[0,0,80,80]", 0.9, near.astype(np.float32).tobytes(), "now"),
     )
     conn.commit()
     faces.cluster_faces(conn, threshold=0.5)
@@ -141,7 +141,7 @@ def test_rename_merge_delete_person(conn):
         mid = _add_meme(conn, "x.jpg")
         conn.execute(
             "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
-            (mid, "[0,0,5,5]", 0.9, emb.astype(np.float32).tobytes(), "now"),
+            (mid, "[0,0,80,80]", 0.9, emb.astype(np.float32).tobytes(), "now"),
         )
     conn.commit()
     faces.cluster_faces(conn, threshold=0.5)
@@ -168,8 +168,8 @@ def test_embed_query_face_picks_largest(conn):
         FakeDetector(
             {
                 id(img): [
-                    (small, (0, 0, 2, 2), 0.99),  # área 4
-                    (big, (0, 0, 8, 8), 0.80),    # área 64 (maior)
+                    (small, (0, 0, 50, 50), 0.99),  # área 2500
+                    (big, (0, 0, 90, 90), 0.80),    # área 8100 (maior)
                 ]
             }
         )
@@ -198,7 +198,7 @@ def test_search_face_aggregates_by_media(tmp_path):
     for mid, emb in [(m1, target), (m1, other), (m2, other)]:
         conn.execute(
             "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
-            (mid, "[0,0,5,5]", 0.9, emb.astype(np.float32).tobytes(), "now"),
+            (mid, "[0,0,80,80]", 0.9, emb.astype(np.float32).tobytes(), "now"),
         )
     conn.commit()
     conn.close()
@@ -223,7 +223,7 @@ def test_search_face_by_record_uses_gallery_item(tmp_path):
     for mid, emb in [(m1, target), (m2, target), (m3, other)]:
         conn.execute(
             "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
-            (mid, "[0,0,5,5]", 0.9, emb.astype(np.float32).tobytes(), "now"),
+            (mid, "[0,0,80,80]", 0.9, emb.astype(np.float32).tobytes(), "now"),
         )
     conn.commit()
     conn.close()
@@ -253,7 +253,7 @@ def test_search_face_by_record_none_without_face(tmp_path):
 def _add_face(conn: sqlite3.Connection, meme_id: int, emb: np.ndarray, det_score: float = 0.9) -> int:
     cur = conn.execute(
         "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
-        (meme_id, "[0,0,5,5]", det_score, emb.astype(np.float32).tobytes(), "now"),
+        (meme_id, "[0,0,80,80]", det_score, emb.astype(np.float32).tobytes(), "now"),
     )
     conn.commit()
     return int(cur.lastrowid)
@@ -351,7 +351,7 @@ def test_get_person_media(tmp_path):
     m1 = _add_meme(conn, "a.jpg")
     conn.execute(
         "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
-        (m1, "[0,0,5,5]", 0.9, a.astype(np.float32).tobytes(), "now"),
+        (m1, "[0,0,80,80]", 0.9, a.astype(np.float32).tobytes(), "now"),
     )
     conn.commit()
     faces.cluster_faces(conn, threshold=0.5)
@@ -362,3 +362,45 @@ def test_get_person_media(tmp_path):
     results = engine.get_person_media(person_id)
     assert len(results) == 1
     assert results[0].index == 0
+
+
+def test_avatar_sized_and_doubtful_faces_are_not_kept(conn):
+    """Chat and comment screenshots are full of 16-30 px avatars, each of which
+    used to become a one-photo "person"."""
+    meme_id = _add_meme(conn, "print.png")
+    img = Image.new("RGB", (10, 10))
+    faces.set_detector(FakeDetector({id(img): [
+        (_unit([1.0, 0.0, 0.0]), (0, 0, 24, 24), 0.95),   # avatar
+        (_unit([0.0, 1.0, 0.0]), (0, 0, 120, 120), 0.55),  # doubtful detection
+        (_unit([0.0, 0.0, 1.0]), (0, 0, 120, 120), 0.90),  # a face
+    ]}))
+
+    assert faces.extract_faces_for_record(conn, meme_id, [img]) == 1
+
+
+def test_small_faces_already_stored_do_not_become_new_people(conn):
+    mid = _add_meme(conn, "old.png")
+    conn.execute(
+        "INSERT INTO faces (meme_id, bbox, det_score, embedding, created_at) VALUES (?,?,?,?,?)",
+        (mid, "[0,0,20,20]", 0.9, _unit([1.0, 0.0, 0.0]).astype(np.float32).tobytes(), "now"),
+    )
+    conn.commit()
+
+    assert faces.cluster_faces(conn, threshold=0.5)["assigned"] == 0
+
+
+def test_people_seen_once_and_unnamed_are_left_out_unless_asked_for(conn):
+    once, twice, named = _unit([1, 0, 0]), _unit([0, 1, 0]), _unit([0, 0, 1])
+    for emb, media in ((once, 1), (twice, 2), (named, 1)):
+        for _ in range(media):
+            _add_face(conn, _add_meme(conn, "x.jpg"), emb)
+    faces.cluster_faces(conn, threshold=0.5)
+    named_id = next(p["id"] for p in faces.list_persons(conn) if p["media_count"] == 1
+                    and p["cover_face_id"] == conn.execute("SELECT MAX(id) FROM faces").fetchone()[0])
+    faces.rename_person(conn, named_id, "Alice")
+
+    shown = faces.list_persons(conn, include_single=False)
+
+    assert sorted(p["media_count"] for p in shown) == [1, 2]
+    assert any(p["name"] == "Alice" for p in shown)
+    assert len(faces.list_persons(conn)) == 3

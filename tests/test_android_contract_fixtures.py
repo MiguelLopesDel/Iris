@@ -47,7 +47,7 @@ FIXTURE_DIR = Path(__file__).resolve().parent.parent / (
 # FastAPI não descartou nenhum campo silenciosamente.
 ENDPOINTS: dict[str, str] = {
     "records.json": "/api/records?page=1&per_page=12",
-    "persons.json": "/api/persons",
+    "persons.json": "/api/persons?include_single=true",
     "collections.json": "/api/collections",
     "concepts.json": "/api/concepts",
     "info.json": "/api/info",
@@ -258,7 +258,7 @@ def test_android_fixtures_are_current(contract_client):
 
 def test_seeded_catalog_actually_exercises_the_edge_cases(contract_client):
     """Guarda o valor deste arquivo: sem os casos-limite, as fixtures são inúteis."""
-    persons = contract_client.get("/api/persons").json()["persons"]
+    persons = contract_client.get("/api/persons?include_single=true").json()["persons"]
     assert any(p["name"] is None for p in persons), (
         "Nenhuma pessoa sem nome nas fixtures — era exatamente esse payload que "
         "derrubava a aba Pessoas."

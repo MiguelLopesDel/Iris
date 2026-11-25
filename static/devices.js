@@ -1,9 +1,9 @@
 // "Dispositivos conectados": every phone and browser signed in to this account.
 // Disconnecting one invalidates its session; disconnecting this browser signs out.
-import { escapeHtml } from './api.js?v=49';
-import { confirmModal } from './ui.js?v=5';
+import { escapeHtml } from './api.js?v=50';
+import { confirmModal } from './ui.js?v=6';
 
-const PLATFORM_LABELS = { web: 'Navegador', android: 'Android' };
+const PLATFORM_LABELS = { web: 'Navegador', android: 'Android', desktop: 'Computador' };
 
 function lastSeen(iso) {
   if (!iso) return '';

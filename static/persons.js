@@ -10,18 +10,22 @@ import {
   listPersons,
   mergePersons,
   renamePerson,
-} from './api.js?v=49';
-import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
+} from './api.js?v=50';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=6';
 
 let _persons = [];
+let _hiddenSingle = 0;
+// People seen in one photo and never named are hidden until asked for.
+let _showSingle = false;
 
 export async function initPersons() {
   const container = document.getElementById('persons-list');
   if (!container) return;
   container.innerHTML = '<p class="filter-empty">Carregando pessoas...</p>';
   try {
-    const data = await listPersons();
+    const data = await listPersons(_showSingle);
     _persons = data.persons || [];
+    _hiddenSingle = data.hidden_single || 0;
     renderPersons();
   } catch (err) {
     container.innerHTML = `<p style="color:var(--accent);">Erro: ${escapeHtml(err.message)}</p>`;
@@ -68,8 +72,19 @@ function renderPersons() {
     container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">☻</span><p>Nenhuma pessoa ainda.</p><small>Indexe mídias com rostos (ou rode o backfill) e clique em “Agrupar rostos”.</small></div>';
     return;
   }
-  container.innerHTML = _persons.map(renderPersonCard).join('');
+  const note = _showSingle
+    ? '<p class="persons-hidden-note"><button type="button" class="btn btn-subtle" data-action="persons-single">Esconder quem aparece numa foto só</button></p>'
+    : _hiddenSingle
+      ? `<p class="persons-hidden-note">${_hiddenSingle} pessoa(s) que aparecem numa foto só estão ocultas. <button type="button" class="btn btn-subtle" data-action="persons-single">Mostrar</button></p>`
+      : '';
+  container.innerHTML = _persons.map(renderPersonCard).join('') + note;
 }
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('[data-action="persons-single"]')) return;
+  _showSingle = !_showSingle;
+  initPersons();
+});
 
 function personCover(p) {
   return p.cover_face_id

@@ -17,9 +17,9 @@ import {
   mediaUrl,
   trashRecords,
   setFavorite,
-} from './api.js?v=49';
-import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
-import { pickPersonModal } from './persons.js?v=9';
+} from './api.js?v=50';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=6';
+import { pickPersonModal } from './persons.js?v=10';
 
 const modal = document.getElementById('detail-modal');
 const stageMedia = document.getElementById('detail-media');

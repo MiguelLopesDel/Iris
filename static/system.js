@@ -20,10 +20,10 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=49';
-import { confirmModal } from './ui.js?v=5';
-import { loadDevices } from './devices.js?v=2';
-import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=4';
+} from './api.js?v=50';
+import { confirmModal } from './ui.js?v=6';
+import { loadDevices } from './devices.js?v=3';
+import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=5';
 import { uploadFiles } from './web_upload.js?v=1';
 
 let initialized = false;

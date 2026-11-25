@@ -3152,12 +3152,16 @@ async def reject_concept_media(concept_id: int, db_ids: str = Form(...)):
 
 
 @app.get("/api/persons", response_model=PersonsOut)
-async def list_persons():
+async def list_persons(include_single: bool = False):
     backend = _get_backend()
     with trace("api.persons.list"):
         if not backend.has_face_tables():
             return {"persons": []}
-        return {"persons": backend.list_persons()}
+        everyone = backend.list_persons()
+        if include_single:
+            return {"persons": everyone}
+        shown = backend.list_persons(include_single=False)
+        return {"persons": shown, "hidden_single": len(everyone) - len(shown)}
 
 
 @app.get("/api/persons/{person_id}/media", response_model=PersonMediaOut)

@@ -219,6 +219,8 @@ class PersonOut(_Out):
 
 class PersonsOut(_Out):
     persons: list[PersonOut] = []
+    # People seen in a single photo and not named, left out unless asked for.
+    hidden_single: int = 0
 
 
 class PersonMediaOut(_Out):
