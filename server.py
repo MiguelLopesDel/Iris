@@ -412,25 +412,54 @@ def _extension_counts(backend: SearchBackend) -> dict[str, int]:
     return cached
 
 
+def _media_path_key(path: str, cwd: str) -> str:
+    """The form a path takes in the /media/ allow-list: absolute and normalised.
+
+    Pure string work. The list used to hold ``Path(p).resolve()`` of every
+    record, which is one lstat per path component per record: seconds for a
+    library of tens of thousands of items with a warm cache, and much longer
+    on a cold disk. It ran on the event loop, on the first
+    original opened after any library change -- every sync batch -- so it
+    froze every other request with it.
+    """
+    return os.path.normpath(os.path.join(cwd, path))
+
+
 def _allowed_media_paths() -> frozenset[str]:
     """The set of originals /media/ may serve, resolved once per backend load.
 
-    The check itself is a security boundary — it is what stops the route from
-    serving any file on disk — so it stays exact. What changed is that the set
-    is no longer rebuilt (one resolve() syscall per record) inside every
-    request handler.
+    The check itself is a security boundary -- it is what stops the route from
+    serving any file on disk -- so it stays exact: a request must name, after
+    normalisation, a path the catalogue holds. It no longer touches the disk to
+    build (see ``_media_path_key``), and it is not rebuilt per request.
     """
     backend = _get_backend()
     key = _backend_cache_key(backend)
     cached = _allowed_media_paths_cache.get(key)
     if cached is None:
-        cached = frozenset(
-            str(Path(record.resolved_path).resolve())
-            for record in backend.get_all_records()
-            if record.resolved_path
-        )
+        cwd = os.getcwd()
+        records = backend.get_all_records()
+        if isinstance(records, RecordCatalog):
+            paths = records.columns.resolved_path
+        else:
+            paths = (record.resolved_path for record in records)
+        cached = frozenset(_media_path_key(path, cwd) for path in paths if path)
         _allowed_media_paths_cache[key] = cached
     return cached
+
+
+def _media_request_path(file_path: str) -> str | None:
+    """The catalogued path a /media/ request names, or None.
+
+    A request that only names a catalogued file after ``.``/``..`` or doubled
+    slashes are collapsed is refused: normalisation is string-level, and with a
+    symlinked directory ``a/link/../b`` is not the file ``a/b`` names.
+    """
+    raw = "/" + file_path
+    normalised = os.path.normpath(raw)
+    if normalised != raw or normalised not in _allowed_media_paths():
+        return None
+    return normalised
 
 
 def _record_positions_by_db_id() -> dict[int, int]:
@@ -3803,12 +3832,10 @@ async def serve_thumbnail(filename: str):
 @app.get("/media/{file_path:path}")
 async def serve_media(file_path: str):
     """Serve an original media file. Path is relative to filesystem root."""
-    resolved = (Path("/") / file_path).resolve()
-    if str(resolved) not in _allowed_media_paths():
+    path = _media_request_path(file_path)
+    if path is None or not os.path.exists(path):
         raise HTTPException(404, f"File not found: {file_path}")
-    if not resolved.exists():
-        raise HTTPException(404, f"File not found: {file_path}")
-    return FileResponse(resolved, media_type=_guess_mime(str(resolved)))
+    return FileResponse(path, media_type=_guess_mime(path))
 
 
 def _private_original_for(db_id: int) -> PrivateOriginal | None:
@@ -3823,8 +3850,11 @@ def _private_original_for(db_id: int) -> PrivateOriginal | None:
     record = _record_for_db_id(db_id)
     if record is None or not record.resolved_path:
         return None
-    resolved = Path(record.resolved_path).resolve()
-    if str(resolved) not in _allowed_media_paths() or not resolved.is_file():
+    allowed = _media_path_key(record.resolved_path, os.getcwd())
+    if allowed not in _allowed_media_paths():
+        return None
+    resolved = Path(allowed)
+    if not resolved.is_file():
         return None
     words = (
         record.descricao_ia,

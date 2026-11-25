@@ -11,9 +11,12 @@ halves: the index must be used, and it must disappear when the backend reloads.
 
 from __future__ import annotations
 
+import asyncio
+import os
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 import server
 from core.search_types import IndexRecord
@@ -99,6 +102,65 @@ def test_the_allow_list_still_refuses_a_file_outside_the_catalog(backend, tmp_pa
     intruder.write_text("nope")
 
     assert str(intruder.resolve()) not in server._allowed_media_paths()
+
+
+def test_building_the_allow_list_does_not_touch_the_disk(backend, monkeypatch):
+    """One lstat per path component per record froze the event loop.
+
+    Seconds for a library of tens of thousands of items, and longer stalls on
+    a cold disk, paid on the first original opened
+    after every library change. Building the list is string work now.
+    """
+    def no_disk(*_args, **_kwargs):
+        raise AssertionError("the allow-list must not touch the filesystem")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "resolve", no_disk)
+        patched.setattr(os, "stat", no_disk)
+        patched.setattr(os, "lstat", no_disk)
+        allowed = server._allowed_media_paths()
+
+    assert len(allowed) == 3
+
+
+def _serve(file_path: str):
+    return asyncio.run(server.serve_media(file_path))
+
+
+def test_the_media_route_serves_a_catalogued_original(backend, tmp_path):
+    response = _serve(str(tmp_path / "photo1.jpg").lstrip("/"))
+
+    assert Path(response.path) == tmp_path / "photo1.jpg"
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "{dir}/../{base}/photo1.jpg",  # climbs out and back into the library
+        "{dir}/./photo1.jpg",
+        "{dir}//photo1.jpg",
+    ],
+)
+def test_the_media_route_refuses_a_path_that_only_normalises_into_the_catalog(
+    backend, tmp_path, spelling
+):
+    """Normalisation is string-level, so only the exact catalogued spelling counts."""
+    file_path = spelling.format(dir=str(tmp_path).lstrip("/"), base=tmp_path.name)
+
+    with pytest.raises(HTTPException) as refused:
+        _serve(file_path)
+
+    assert refused.value.status_code == 404
+
+
+def test_the_media_route_refuses_a_file_outside_the_catalog(backend, tmp_path):
+    intruder = tmp_path / "secret.txt"
+    intruder.write_text("nope")
+
+    with pytest.raises(HTTPException) as refused:
+        _serve(str(intruder).lstrip("/"))
+
+    assert refused.value.status_code == 404
 
 
 def test_extension_counts_are_not_recomputed_per_poll(backend):
