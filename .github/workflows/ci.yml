@@ -37,9 +37,9 @@ jobs:
           ./scripts/lock_deps.sh
           git diff --exit-code -- requirements.txt requirements-cuda.txt requirements-dev.txt
       - name: Compile
-        run: python -m compileall -q core routers scripts tests server.py
+        run: python -m compileall -q core routers scripts tests desktop server.py
       - name: Lint
-        run: python -m ruff check core routers scripts tests server.py
+        run: python -m ruff check core routers scripts tests desktop server.py
       - name: Browser for end-to-end tests
         run: python -m playwright install --with-deps chromium
       - name: Test
