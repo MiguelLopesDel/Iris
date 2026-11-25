@@ -52,6 +52,7 @@ from core import (
     instance_lock,
     instance_settings,
     library_trash,
+    model_migration,
     pairing,
     perf_probe,
     server_identity,
@@ -136,6 +137,7 @@ from core.web_enrichment import (
 )
 from core.web_sessions import web_session_device
 from routers.admin import router as admin_router
+from routers.ai_jobs import router as ai_jobs_router
 from routers.auth import router as auth_router
 from routers.backup import BackupRouteOperations
 from routers.backup import router as backup_router
@@ -1112,6 +1114,7 @@ app.include_router(pairing_router)
 app.include_router(backup_router)
 app.include_router(records_router)
 app.include_router(setup_router)
+app.include_router(ai_jobs_router)
 if perf_probe.enabled():
 
     @app.get("/api/_perf/probe", include_in_schema=False)
@@ -1819,7 +1822,7 @@ async def get_info(check_missing: int = Query(0)):
             "db_path": "" if user else str(_active_config["db_path"]),
             "media_root": "" if user else str(_active_config["media_root"]),
             "model_name": (
-                resolve_embedding_model(user.model_name)
+                model_migration.library_model(user.db_path, user.model_name)
                 if user
                 else str(_active_config["model_name"])
             ),
@@ -2070,7 +2073,8 @@ async def start_import(
         LOW_RESOURCE_MODEL
         if low_resource
         else (
-            resolve_embedding_model(user.model_name) if user else str(_active_config["model_name"])
+            model_migration.library_model(user.db_path, user.model_name)
+            if user else str(_active_config["model_name"])
         )
     )
     settings = {
@@ -3831,6 +3835,81 @@ async def serve_thumbnail(filename: str):
         media_type="image/jpeg",
         headers={"Cache-Control": "private, max-age=86400"},
     )
+
+
+@app.get("/ai-preview", response_class=HTMLResponse)
+async def ai_preview(q: str = ""):
+    """Compare the current and the next model on the items processed so far.
+
+    A page for judging a model change on a trial batch (see core/ai_preview.py):
+    the same query ranked by both models over the photos the worker already did.
+    """
+    from html import escape
+
+    from core import ai_preview, query_translation
+
+    user = _current_user()
+    if user is None:
+        raise HTTPException(401, "Autenticação necessária")
+    target = model_migration.migration_target(user.db_path, user.model_name)
+    if not target:
+        return HTMLResponse("<p>Nenhuma troca de modelo em andamento (IRIS_MODEL_NEXT).</p>")
+    query = q.strip()
+    preview = None
+    if query:
+        def build():
+            new_query, _shown = query_translation.encode_multilingual(ai_preview.encoder_for(target), query)
+            engine = getattr(_get_backend(), "engine", None)
+            current_query = None
+            if engine is not None and getattr(engine, "model", None) is not None:
+                current_query, _ = engine.encode_text(query)
+            conn = sqlite3.connect(user.db_path)
+            try:
+                return ai_preview.compare(conn, target, new_query, current_query)
+            finally:
+                conn.close()
+
+        preview = await run_in_threadpool(build)
+
+    def column(title: str, hits) -> str:
+        cards = []
+        for hit in hits:
+            record = _record_for_db_id(hit.media_id)
+            thumb = _thumbnail_url(record) if record is not None else ""
+            name = escape(record.arquivo if record is not None else str(hit.media_id))
+            text = escape(hit.text[:160])
+            cards.append(
+                f'<figure><img src="{escape(thumb)}" alt="" loading="lazy">'
+                f"<figcaption><b>{name}</b> · {hit.score:.3f}<br><small>{text}</small></figcaption></figure>"
+            )
+        body = "".join(cards) or "<p>Nada para comparar ainda.</p>"
+        return f"<section><h2>{escape(title)}</h2><div class=grid>{body}</div></section>"
+
+    summary = ""
+    columns = ""
+    if preview is not None:
+        summary = (f"<p>{preview.processed} itens já processados com o modelo novo; "
+                   f"{preview.with_current} deles também têm vetor do modelo atual.</p>")
+        columns = column(f"Modelo novo: {target}", preview.new) + column(
+            f"Modelo atual: {model_migration.library_model(user.db_path, user.model_name)}", preview.current
+        )
+    return HTMLResponse(f"""<!doctype html><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Comparar modelos</title>
+<style>
+body{{font-family:system-ui,sans-serif;margin:16px;background:#f6f5f1;color:#1d1d1b}}
+form{{display:flex;gap:8px;margin-bottom:8px}} input{{flex:1;padding:8px;font-size:16px}}
+.cols{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}}
+figure{{margin:0;background:#fff;border-radius:8px;overflow:hidden}}
+img{{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:#ddd}}
+figcaption{{padding:6px;font-size:12px;word-break:break-word}}
+@media (max-width:800px){{.cols{{grid-template-columns:1fr}}}}
+</style>
+<h1>Comparar modelos de busca</h1>
+<form><input name=q value="{escape(query)}" placeholder="ex.: cachorro, print de conversa, caderno" autofocus>
+<button>Buscar</button></form>
+{summary}<div class=cols>{columns}</div>""")
 
 
 @app.get("/media/{file_path:path}")

@@ -10,8 +10,8 @@ from pathlib import Path
 
 from core import compute_device
 from core.backend import SearchBackend, create_backend
-from core.embedding_models import resolve_embedding_model
 from core.indexer_db import init_db
+from core.model_migration import library_model
 from core.polite import make_current_thread_polite
 from core.users_db import IrisUser, get_user_by_id
 
@@ -83,7 +83,7 @@ class BackendRegistry:
         # backend reads it: the gallery is often the first thing to open an
         # account after an upgrade, and the catalog it loads is cached.
         init_db(user.db_path).close()
-        model_name = resolve_embedding_model(user.model_name)
+        model_name = library_model(user.db_path, user.model_name)
         if not self.load_model:
             return create_backend(
                 db_path=str(user.db_path), media_root=str(user.media_root),
@@ -199,7 +199,7 @@ class BackendRegistry:
         init_db(user.db_path).close()
         detached = create_backend(
             db_path=str(user.db_path), media_root=str(user.media_root),
-            model_name=resolve_embedding_model(user.model_name), load_model=False,
+            model_name=library_model(user.db_path, user.model_name), load_model=False,
         )
         return detached.get_all_records()
 

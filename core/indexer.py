@@ -29,7 +29,9 @@ from transformers import logging as transformers_logging
 from core import compute_device, fingerprint_index, import_review
 from core.deleted_registry import load_deleted_content_hashes
 from core.embedding_models import (
+    DEFAULT_MODEL,
     EmbeddingEncoder,
+    is_siglip,
     load_encoder,
     max_text_tokens,
     resolve_embedding_model,
@@ -128,6 +130,8 @@ class IndexerConfig:
     clap_model: str = "none"
     force_reimport_video_audio: bool = False
     extract_faces: bool = True
+    # Also read text with Florence-2 and keep what EasyOCR missed (see extract_text).
+    florence_ocr: bool = False
 
 
 @dataclass
@@ -142,6 +146,12 @@ class LoadedModels:
     taxonomy_embeddings: np.ndarray | None
     clap_model: object | None = None
     clap_processor: object | None = None
+    # Florence-2 may be loaded only for OCR; captions are a separate choice.
+    florence_captions: bool = True
+    florence_ocr: bool = False
+    # Set when the search model is not the one the taxonomy was calibrated on
+    # (CLIP): images are then also encoded with this one, for taxonomy only.
+    taxonomy_encoder: EmbeddingEncoder | None = None
 
 
 def parse_arguments() -> IndexerConfig:
@@ -268,8 +278,11 @@ def load_models(config: IndexerConfig) -> LoadedModels:
 
     florence_model = None
     florence_processor = None
-    if config.caption_model.lower() != "none":
-        caption_model_id = resolve_caption_model(config.caption_model)
+    captions = config.caption_model.lower() != "none"
+    if captions or config.florence_ocr:
+        caption_model_id = resolve_caption_model(
+            config.caption_model if captions else DEFAULT_CAPTION_MODEL
+        )
         print(f"  -> Caption: {caption_model_id}")
         try:
             florence_model = Florence2ForConditionalGeneration.from_pretrained(
@@ -284,8 +297,16 @@ def load_models(config: IndexerConfig) -> LoadedModels:
 
     print(f"  -> CLIP: {config.model_name}")
     clip_model = load_encoder(config.model_name, device=config.device, half=True)
+    # The taxonomy's thresholds were calibrated on CLIP similarities; another
+    # model's scores sit on a different scale. With SigLIP the search vectors
+    # come from SigLIP and the taxonomy keeps running on CLIP, so it needs no
+    # recalibration.
+    taxonomy_encoder = None
+    if is_siglip(config.model_name):
+        print(f"  -> Taxonomia: {DEFAULT_MODEL}")
+        taxonomy_encoder = load_encoder(DEFAULT_MODEL, device=config.device, half=True)
     taxonomy_rows = build_taxonomy_prompt_rows()
-    taxonomy_embeddings = clip_model.encode(
+    taxonomy_embeddings = (taxonomy_encoder or clip_model).encode(
         [row["prompt"] for row in taxonomy_rows],
         batch_size=32,
         show_progress_bar=False,
@@ -324,6 +345,9 @@ def load_models(config: IndexerConfig) -> LoadedModels:
         taxonomy_embeddings=taxonomy_embeddings,
         clap_model=clap_model_inst,
         clap_processor=clap_processor_inst,
+        florence_captions=captions,
+        florence_ocr=config.florence_ocr and florence_model is not None,
+        taxonomy_encoder=taxonomy_encoder,
     )
 
 
@@ -636,7 +660,13 @@ def process_images(
     job_id: str | None = None,
     dedup_enabled: bool = True,
     explicit_files: list[Path] | None = None,
+    models: LoadedModels | None = None,
 ) -> dict[str, int]:
+    """Index media into ``config.db_path``.
+
+    ``models`` lets a caller that indexes batch after batch (the AI worker)
+    load the models once instead of on every call.
+    """
     if not config.media_dir.exists():
         # Don't sys.exit: this runs in a server background thread. Signal an
         # unavailable source so the caller can pause (not fail) and resume later
@@ -742,7 +772,7 @@ def process_images(
 
     library_root = (config.library_root / config.library_name).resolve()
     library_id = get_or_create_library(conn, config.library_name, library_root)
-    models = load_models(config)
+    models = models or load_models(config)
     cursor = conn.cursor()
 
     _proc_done = 0
@@ -879,7 +909,12 @@ def process_images(
                             storage_path = indexed_path.relative_to(library_root).as_posix()
                         image, audio_text = load_media_preview(indexed_path, models, config)
                         extracted_text = extract_text(indexed_path, image, audio_text, models)
-                        ocr_en = translate_text(extracted_text)
+                        # A multilingual model reads the text as it is; only
+                        # CLIP needs it in English (and that goes to Google).
+                        ocr_en = (
+                            extracted_text if is_siglip(config.model_name)
+                            else translate_text(extracted_text)
+                        )
                         visual, tags = describe_image(image, models, config)
                         visual_profile = build_visual_profile(
                             image=image,
@@ -1014,8 +1049,16 @@ def process_images(
                         show_progress_bar=False,
                     )
                     _clip_map: dict[int, np.ndarray] = dict(zip(_real_indices, _clip_out, strict=True))
+                    _taxonomy_map: dict[int, np.ndarray] = (
+                        dict(zip(_real_indices, models.taxonomy_encoder.encode(
+                            list(_real_imgs), batch_size=len(_real_imgs), show_progress_bar=False,
+                        ), strict=True))
+                        if models.taxonomy_encoder is not None
+                        else _clip_map
+                    )
                 else:
                     _clip_map = {}
+                    _taxonomy_map = {}
 
                 # Merge: use pre-computed for videos, CLIP batch output for the rest
                 image_embeddings_list: list[np.ndarray] = []
@@ -1041,6 +1084,23 @@ def process_images(
                     text_inputs,
                     batch_size=len(text_inputs),
                     show_progress_bar=False,
+                )
+                # With a separate taxonomy encoder (CLIP), its description
+                # vectors are kept too: see secondary_vectors below.
+                _secondary_desc = (
+                    models.taxonomy_encoder.encode(
+                        [
+                            build_embedding_text(
+                                visual=str(item["visual"]), ocr=str(item["ocr_en"]),
+                                tags=str(item["tags"]), model=models.taxonomy_encoder,
+                            )
+                            for item in batch_metadata
+                        ],
+                        batch_size=len(batch_metadata),
+                        show_progress_bar=False,
+                    )
+                    if models.taxonomy_encoder is not None
+                    else None
                 )
 
                 for idx, item in enumerate(batch_metadata):
@@ -1082,9 +1142,15 @@ def process_images(
                             _quarantined += 1
                             continue
 
+                    # A video's frames were encoded for search only; with a
+                    # separate taxonomy encoder it goes without taxonomy.
+                    _taxonomy_vector = (
+                        _taxonomy_map.get(idx) if models.taxonomy_encoder is not None
+                        else image_embedding
+                    )
                     taxonomy_matches = (
                         classify_embedding(
-                            image_embedding,
+                            np.asarray(_taxonomy_vector, dtype=np.float32),
                             models.taxonomy_embeddings,
                             models.taxonomy_rows,
                             text_content=(
@@ -1092,7 +1158,7 @@ def process_images(
                                 f"{item['visual']} {item['tags']}"
                             ),
                         )
-                        if models.taxonomy_embeddings is not None
+                        if models.taxonomy_embeddings is not None and _taxonomy_vector is not None
                         else []
                     )
                     visual_profile = merge_taxonomy_into_profile(
@@ -1177,6 +1243,21 @@ def process_images(
                     known_hashes.add(str(item["content_hash"]))
                     _imported += 1
                     _meme_id = int(cursor.lastrowid)
+                    if _secondary_desc is not None and _taxonomy_vector is not None:
+                        # The CLIP vectors the taxonomy was computed from, kept
+                        # beside the SigLIP ones: while a library moves from CLIP
+                        # to SigLIP, an item that had no AI can be searched with
+                        # the current model right away (see core/ai_jobs.py).
+                        cursor.execute(
+                            "CREATE TABLE IF NOT EXISTS secondary_vectors (meme_id INTEGER PRIMARY KEY,"
+                            " model_name TEXT NOT NULL, embedding BLOB NOT NULL, desc_embedding BLOB)"
+                        )
+                        cursor.execute(
+                            "INSERT OR REPLACE INTO secondary_vectors VALUES (?, ?, ?, ?)",
+                            (_meme_id, DEFAULT_MODEL,
+                             np.asarray(_taxonomy_vector, dtype=np.float32).tobytes(),
+                             np.asarray(_secondary_desc[idx], dtype=np.float32).tobytes()),
+                        )
                     if config.extract_faces and not item.get("is_audio"):
                         _extract_faces_safe(conn, _meme_id, item, config.device)
                     if dedup is not None:
@@ -1525,8 +1606,42 @@ def extract_text(path: Path, image: Image.Image, audio_text: str, models: Loaded
         return audio_text.strip()
     # Sempre usa o numpy array da imagem já carregada (RGB, frame único).
     # Isso evita que EasyOCR tente abrir SVG/GIF animado/imagens de 2 canais via PIL.
-    text_results = models.reader.readtext(np.array(image), detail=0, paragraph=True)
-    return (" ".join(text_results).strip() + audio_text).strip()
+    text = " ".join(models.reader.readtext(np.array(image), detail=0, paragraph=True)).strip()
+    if text and models.florence_ocr:
+        text = merge_ocr(text, florence_ocr(image, models))
+    return (text + audio_text).strip()
+
+
+def florence_ocr(image: Image.Image, models: LoadedModels) -> str:
+    """Florence-2's reading of the text in an image, or "" if it fails."""
+    try:
+        inputs = models.florence_processor(text="<OCR>", images=image, return_tensors="pt").to(
+            models.florence_model.device, models.florence_model.dtype
+        )
+        ids = models.florence_model.generate(
+            input_ids=inputs["input_ids"], pixel_values=inputs["pixel_values"],
+            max_new_tokens=512, num_beams=3,
+        )
+        return models.florence_processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
+    except Exception:
+        return ""
+
+
+def merge_ocr(easyocr_text: str, florence_text: str) -> str:
+    """Keep EasyOCR's reading and add Florence-2's when it found other words.
+
+    Measured on a sample of images with text in them, each engine
+    misreads what the other gets right: EasyOCR garbles stylised meme lettering
+    and reads "o" as "0"; Florence-2 reads lettering well but sometimes drops
+    accents and stops early on long text. Search only needs the words to be
+    present, so both readings are kept when they differ.
+    """
+    florence_text = " ".join(florence_text.split())
+    if not florence_text:
+        return easyocr_text
+    known = set(normalize_text(easyocr_text).split())
+    new = [w for w in normalize_text(florence_text).split() if w not in known and len(w) > 1]
+    return f"{easyocr_text}\n{florence_text}" if new else easyocr_text
 
 
 def translate_text(text: str) -> str:
@@ -1643,7 +1758,7 @@ def infer_objects(content: str, tags: str, visual: str) -> str:
 def describe_image(
     image: Image.Image, models: LoadedModels, config: IndexerConfig
 ) -> tuple[str, str]:
-    if not models.florence_model or not models.florence_processor:
+    if not models.florence_model or not models.florence_processor or not models.florence_captions:
         return "N/A", "N/A"
 
     visual = run_florence_task(
