@@ -20,12 +20,12 @@ import {
   rejectEnrichmentSuggestion,
   trashRecords
 } from './api.js?v=49';
-import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=49';
-import { openDetail } from './detail.js?v=12';
-import { initCollections } from './collections.js?v=35';
+import { initGallery, invalidateCache, onLibraryChanged, runGallerySimilar, runGalleryRandom, runGalleryFaceSearch, runGalleryPerson, runGalleryFaceByFace, runGalleryFaceByRecord } from './gallery.js?v=50';
+import { openDetail } from './detail.js?v=13';
+import { initCollections } from './collections.js?v=36';
 import { initConcepts } from './concepts.js?v=36';
 import { initDuplicates } from './duplicates.js?v=35';
-import { initSystem } from './system.js?v=51';
+import { initSystem, uploadDroppedFiles } from './system.js?v=52';
 import { initPersons } from './persons.js?v=9';
 import { initImportReview } from './import-review.js?v=10';
 import { chooseSpaceFor, initSpaces } from './spaces.js?v=6';
@@ -1085,4 +1085,39 @@ window.__showStats = async function() {
     ? 'gallery'
     : 'home';
   switchTab(window.location.hash.slice(1) || defaultTab);
+})();
+
+// ── Drop files to upload ────────────────────────────────────────────────
+// Files dragged from the computer onto the page are sent to the library; the
+// image search box keeps its own drop (search by image) and marks it handled.
+(function() {
+  var depth = 0;
+  function carriesFiles(event) {
+    return Array.from((event.dataTransfer && event.dataTransfer.types) || []).indexOf('Files') >= 0;
+  }
+  document.addEventListener('dragenter', function(event) {
+    if (!carriesFiles(event)) return;
+    depth += 1;
+    document.body.classList.add('drop-upload');
+  });
+  document.addEventListener('dragleave', function(event) {
+    if (!carriesFiles(event)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) document.body.classList.remove('drop-upload');
+  });
+  document.addEventListener('dragover', function(event) {
+    if (carriesFiles(event)) event.preventDefault();
+  });
+  document.addEventListener('drop', async function(event) {
+    depth = 0;
+    document.body.classList.remove('drop-upload');
+    if (event.defaultPrevented || !carriesFiles(event)) return;
+    event.preventDefault();
+    var files = Array.from(event.dataTransfer.files || []);
+    switchTab('system');
+    revealWhileLoading(document.getElementById('import-section'));
+    if (!(await uploadDroppedFiles(files))) {
+      toast('Este servidor importa de uma pasta: escolha a pasta em Importar.', 'info');
+    }
+  });
 })();

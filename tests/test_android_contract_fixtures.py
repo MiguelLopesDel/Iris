@@ -78,6 +78,7 @@ _VOLATILE_KEYS = {
     "resolved_path",
     "caminho",
     "thumbnail_url",
+    "cover_url",
     "db_path",
     "media_root",
     "backup_dir",

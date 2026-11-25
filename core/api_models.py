@@ -245,6 +245,8 @@ class CollectionOut(_Out):
     name: str | None = None
     description: str = ""
     count: int = 0
+    # Thumbnail of the most recently added item; empty for an empty album.
+    cover_url: str = ""
 
 
 class CollectionsOut(_Out):

@@ -280,6 +280,20 @@ function renderUploadProgress(stats) {
   }
 }
 
+/* Files dropped anywhere on the page (see app.js) go through the same upload
+   as the picker: put in its input, so a retry with the button resends them.
+   Only an account library takes uploads; returns false where it does not. */
+export async function uploadDroppedFiles(files) {
+  const info = systemInfo || await fetchInfo().catch(() => null);
+  if (!info?.multiuser || !files.length) return false;
+  const transfer = new DataTransfer();
+  for (const file of files) transfer.items.add(file);
+  document.getElementById('import-files').files = transfer.files;
+  document.getElementById('import-folder-files').value = '';
+  runAccountUpload();
+  return true;
+}
+
 async function runAccountUpload() {
   const status = document.getElementById('import-status');
   const button = document.getElementById('import-start');

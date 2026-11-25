@@ -1,4 +1,4 @@
-"""The web gallery's pager, in a real browser against a real server.
+"""The web gallery, in a real browser against a real server.
 
 Skipped where Playwright and its Chromium are not installed, except when
 IRIS_REQUIRE_BROWSER_TESTS=1 (as in CI), where a missing browser is a failure.
@@ -23,7 +23,8 @@ else:
 
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = "synthetic password 1"
-ITEMS = 30  # three pages of 12
+ITEMS = 30  # fewer than one batch
+BATCH = 120  # gallery.js BATCH_SIZE
 
 
 def _free_port() -> int:
@@ -33,7 +34,11 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def server(tmp_path: Path):
+def server(tmp_path: Path, request):
+    # Indirect parameters: {"items": n, "spacing": seconds between photos}.
+    options = getattr(request, "param", {})
+    items = options.get("items", ITEMS)
+    spacing = options.get("spacing", 1)
     env = dict(
         os.environ, PYTHONPATH=str(ROOT), IRIS_SERVER_MODE="private",
         IRIS_SESSION_HTTPS_ONLY="false", IRIS_LOAD_MODEL="0", IRIS_THUMBNAIL_WARMUP="0", IRIS_BACKEND_PRELOAD="0",
@@ -56,11 +61,12 @@ def server(tmp_path: Path):
             "        conn.execute(\"UPDATE devices SET last_seen_at = '2020-01-01T00:00:00+00:00' WHERE id = ?\", (device.id,))\n"
             "ana.media_root.mkdir(parents=True, exist_ok=True)\n"
             "with sqlite3.connect(ana.db_path) as conn:\n"
-            f"    for i in range({ITEMS}):\n"
+            f"    for i in range({items}):\n"
             "        name = f'IMG_{i:04}.jpg'\n"
-            "        Image.new('RGB', (8, 8), (i * 8, 80, 160)).save(ana.media_root / name)\n"
+            "        Image.new('RGB', (8, 8), (i * 8 % 256, 80, 160)).save(ana.media_root / name)\n"
             "        conn.execute('INSERT INTO memes (arquivo, caminho, file_mtime, embedding)'\n"
-            "                     ' VALUES (?, ?, ?, NULL)', (name, str(ana.media_root / name), 1.7e9 + i))\n"
+            "                     ' VALUES (?, ?, ?, NULL)',"
+            f" (name, str(ana.media_root / name), 1.7e9 + i * {spacing}))\n"
         )],
         cwd=tmp_path, env=env, check=True, timeout=60,
     )
@@ -108,7 +114,7 @@ def test_the_viewer_renames_and_moves_a_photo_to_the_trash(server) -> None:
     with sync_api.sync_playwright() as playwright:
         browser, page = _signed_in_gallery(playwright, base)
         tiles = page.locator("#gallery-grid .media-card")
-        sync_api.expect(tiles).to_have_count(24)
+        sync_api.expect(tiles).to_have_count(ITEMS)
         tiles.first.locator("img").click()
 
         aside = page.locator("#detail-aside")
@@ -137,7 +143,7 @@ def test_after_the_trash_the_viewer_still_shows_and_acts_on_each_photo(server) -
     with sync_api.sync_playwright() as playwright:
         browser, page = _signed_in_gallery(playwright, base)
         tiles = page.locator("#gallery-grid .media-card")
-        sync_api.expect(tiles).to_have_count(24)
+        sync_api.expect(tiles).to_have_count(ITEMS)
         tiles.nth(2).locator("img").click()
         aside = page.locator("#detail-aside")
         sync_api.expect(aside.locator(".detail-meta")).to_contain_text("IMG_0027.jpg")
@@ -158,40 +164,28 @@ def test_after_the_trash_the_viewer_still_shows_and_acts_on_each_photo(server) -
         browser.close()
 
 
-def test_the_pager_under_the_grid_moves_between_pages(server) -> None:
+@pytest.mark.parametrize("server", [{"items": BATCH + 10, "spacing": 86_400}], indirect=True)
+def test_the_gallery_scrolls_through_the_library_with_days_side_by_side(server) -> None:
     base, _ = server
     with sync_api.sync_playwright() as playwright:
-        try:
-            browser = playwright.chromium.launch()
-        except Exception as exc:  # browser binaries missing
-            if REQUIRED:
-                raise
-            pytest.skip(f"Chromium unavailable: {exc}")
-        page = browser.new_page(viewport={"width": 1280, "height": 900})
-        page.goto(base + "/login")
-        page.fill("input[name=username]", "ana")
-        page.fill("input[name=password]", PASSWORD)
-        page.click("button[type=submit]")
-        page.wait_for_url(base + "/")
-        page.evaluate("window.location.hash = 'gallery'")
-        page.get_by_text("Organizar visualização").click()
-        page.select_option("#gallery-per-page", "12")
-
-        pager = page.locator("#gallery-pagination-bottom")
-        sync_api.expect(pager).to_contain_text("Página 1 de 3")
+        browser, page = _signed_in_gallery(playwright, base)
         tiles = page.locator("#gallery-grid .media-card")
-        sync_api.expect(tiles).to_have_count(12)
-        # Sorted by date by default, under a heading per day, as in the app.
-        sync_api.expect(page.locator("#gallery-grid .grid-day").first).to_be_visible()
+        sync_api.expect(page.locator("#gallery-page-info")).to_have_text(f"{BATCH + 10} itens")
+        sync_api.expect(tiles).to_have_count(BATCH)
 
-        pager.get_by_role("button", name="Próxima →").click()
-        sync_api.expect(pager).to_contain_text("Página 2 de 3")
-        sync_api.expect(pager.locator("[aria-current=page]")).to_have_text("2")
+        # One photo a day: days share a line instead of each taking a row.
+        groups = page.locator("#gallery-grid .day-group")
+        first, second = groups.nth(0).bounding_box(), groups.nth(1).bounding_box()
+        assert abs(first["y"] - second["y"]) < 2 and second["x"] > first["x"]
 
-        pager.get_by_role("button", name="Página 3").click()
-        sync_api.expect(pager).to_contain_text("Página 3 de 3")
-        sync_api.expect(pager.get_by_role("button", name="Próxima →")).to_be_disabled()
-        sync_api.expect(tiles).to_have_count(ITEMS - 24)
+        # Scrolling to the end brings the next batch, without a pager.
+        page.locator("#gallery-sentinel").scroll_into_view_if_needed()
+        sync_api.expect(tiles).to_have_count(BATCH + 10)
+        sync_api.expect(page.locator("#gallery-sentinel")).to_contain_text("começo da biblioteca")
+        # The viewer walks everything loaded, not one page of it.
+        tiles.last.locator("img").click()
+        sync_api.expect(page.locator("#detail-aside .detail-meta")).to_contain_text("IMG_0000.jpg")
+        page.keyboard.press("Escape")
 
         # Adding photos is one click from the gallery, not hidden in Organizar.
         page.get_by_role("button", name="+ Adicionar fotos").click()
@@ -243,7 +237,7 @@ def test_a_heart_in_the_viewer_puts_the_photo_under_favourites(server) -> None:
     with sync_api.sync_playwright() as playwright:
         browser, page = _signed_in_gallery(playwright, base)
         tiles = page.locator("#gallery-grid .media-card")
-        sync_api.expect(tiles).to_have_count(24)
+        sync_api.expect(tiles).to_have_count(ITEMS)
         tiles.first.locator("img").click()
 
         heart = page.locator("#detail-aside [data-detail-action=favorite]")
@@ -285,4 +279,92 @@ def test_the_home_page_shows_this_day_in_earlier_years(server) -> None:
         sync_api.expect(section.locator(".home-memory-year")).to_have_text(f"Há 2 anos · {taken.year}")
         section.locator(".home-recent-card").first.click()
         sync_api.expect(page.locator("#detail-aside .detail-meta")).to_contain_text("IMG_00")
+        browser.close()
+
+
+def test_albums_show_their_cover_and_open_as_a_grid_of_photos(server) -> None:
+    base, _media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        created = page.request.post(base + "/api/collections", multipart={"name": "Praia"})
+        album = created.json()["collection_id"]
+        page.request.post(f"{base}/api/collections/{album}/members", multipart={"db_ids": "3,4,5"})
+
+        page.evaluate("window.location.hash = 'collections'")
+        card = page.locator(".album-card", has_text="Praia")
+        sync_api.expect(card.locator(".album-cover img")).to_be_visible()
+        sync_api.expect(card.locator(".album-count")).to_have_text("3 itens")
+
+        card.click()
+        sync_api.expect(page.locator(".album-head h2")).to_have_text("Praia")
+        photos = page.locator(".album-photos .media-card")
+        sync_api.expect(photos).to_have_count(3)
+        photos.first.locator("img").click()
+        sync_api.expect(page.locator("#detail-aside .detail-meta")).to_contain_text("IMG_")
+        page.keyboard.press("Escape")
+
+        page.get_by_role("button", name="← Álbuns").click()
+        sync_api.expect(card).to_be_visible()
+        browser.close()
+
+
+def test_shift_click_selects_a_range_and_escape_lets_go(server) -> None:
+    base, _media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        tiles = page.locator("#gallery-grid .media-card")
+        sync_api.expect(tiles).to_have_count(ITEMS)
+
+        tiles.nth(0).locator(".media-checkbox").check()
+        # While choosing, a click on a photo selects instead of opening it.
+        tiles.nth(4).locator("img").click(modifiers=["Shift"])
+        sync_api.expect(page.locator("#floating-count")).to_have_text("5 selecionado(s)")
+        sync_api.expect(page.locator("#detail-modal")).to_be_hidden()
+        tiles.nth(9).locator("img").click()
+        sync_api.expect(page.locator("#floating-count")).to_have_text("6 selecionado(s)")
+
+        page.keyboard.press("Escape")
+        sync_api.expect(page.locator("#gallery-grid .media-checkbox:checked")).to_have_count(0)
+        # With nothing chosen, a click opens the photo again.
+        tiles.nth(1).locator("img").click()
+        sync_api.expect(page.locator("#detail-modal")).to_be_visible()
+        browser.close()
+
+
+def test_viewer_shortcuts_favourite_and_fold_the_information(server) -> None:
+    base, _media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        page.locator("#gallery-grid .media-card img").first.click()
+        aside = page.locator("#detail-aside")
+        heart = aside.locator("[data-detail-action=favorite]")
+        sync_api.expect(heart).to_have_attribute("aria-pressed", "false")
+
+        page.keyboard.press("f")
+        sync_api.expect(heart).to_have_attribute("aria-pressed", "true")
+        page.keyboard.press("i")
+        sync_api.expect(aside).to_be_hidden()
+        page.keyboard.press("i")
+        sync_api.expect(aside).to_be_visible()
+        browser.close()
+
+
+def test_files_dropped_on_the_page_are_sent_to_the_library(server) -> None:
+    base, media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        sync_api.expect(page.locator("#gallery-grid .media-card")).to_have_count(ITEMS)
+        page.evaluate("""() => {
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = 4;
+            return new Promise((resolve) => canvas.toBlob((blob) => {
+                const transfer = new DataTransfer();
+                transfer.items.add(new File([blob], 'dropped.png', { type: 'image/png' }));
+                document.body.dispatchEvent(new DragEvent('drop', {
+                    dataTransfer: transfer, bubbles: true, cancelable: true,
+                }));
+                resolve();
+            }, 'image/png'));
+        }""")
+        sync_api.expect(page.locator("#import-status")).to_contain_text("Enviados 1", timeout=30_000)
         browser.close()

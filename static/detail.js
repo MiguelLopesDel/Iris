@@ -597,12 +597,14 @@ async function loadMetadata(r, btn) {
 
 if (modal) {
   closeBtn.addEventListener('click', closeDetail);
+  modal.querySelector('[data-info-toggle]')?.addEventListener('click', () => toggleInfoPanel());
+  try { if (localStorage.getItem('irisViewerInfoHidden') === '1') toggleInfoPanel(true); } catch { /* private mode */ }
   prevBtn.addEventListener('click', () => nav(-1));
   nextBtn.addEventListener('click', () => nav(1));
 
   // Click on the media toggles immersive mode; click on the empty stage closes.
   modal.querySelector('.detail-stage').addEventListener('click', (e) => {
-    if (e.target.closest('.detail-nav, .detail-close, .detail-counter')) return;
+    if (e.target.closest('.detail-nav, .detail-close, .detail-counter, .detail-info-toggle')) return;
     if (e.target.closest('#detail-media')) {
       modal.classList.toggle('immersive');
     } else {
@@ -621,7 +623,22 @@ if (modal) {
     }
     if (e.key === 'ArrowLeft') { e.preventDefault(); nav(-1); }
     if (e.key === 'ArrowRight') { e.preventDefault(); nav(1); }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // Shortcuts press the same buttons the panel shows, so a confirmation or
+    // a refusal behaves as it does with the mouse.
+    const press = (action) => asideEl.querySelector(`[data-detail-action="${action}"]`)?.click();
+    if (e.key === 'f' || e.key === 'F') { e.preventDefault(); press('favorite'); }
+    if (e.key === 'Delete') { e.preventDefault(); press('trash'); }
+    if (e.key === 'i' || e.key === 'I') { e.preventDefault(); toggleInfoPanel(); }
   }, true);
+}
+
+// The information panel can be folded away for a larger photo; the choice
+// sticks for the next photos and visits.
+function toggleInfoPanel(force) {
+  const hidden = modal.classList.toggle('info-hidden', force);
+  try { localStorage.setItem('irisViewerInfoHidden', hidden ? '1' : '0'); } catch { /* private mode */ }
+  modal.querySelector('[data-info-toggle]')?.setAttribute('aria-pressed', String(!hidden));
 }
 
 // Other tabs still open details by index (single-item mode).
