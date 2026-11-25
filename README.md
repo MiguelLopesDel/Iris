@@ -139,6 +139,30 @@ A server whose certificate comes from its own authority (an Iris local CA) is
 trusted at `login` only after you confirm its identity code, the one Iris shows
 under **Sistema → Conectar um celular**; nothing is sent before that.
 
+### Let another computer do the AI
+
+A server without a GPU catalogues uploads without AI
+(`IRIS_SYNC_AI_PROCESSING=0`): they show in the gallery but have no embedding,
+OCR, taxonomy or faces, so search, documents and people cannot reach them.
+`desktop/iris_ai_worker.py` lends a computer's GPU to one account: it signs in
+as a device of that account, takes the items still lacking AI (new uploads and
+old ones alike), downloads the originals, runs the same indexer pipeline with
+the library's model, and sends the results back; the server rebuilds its search
+indices after each batch. It sees only the account it signed in with.
+
+Run it from a checkout of this repository, with the environment that has the
+models' runtime (PyTorch, ideally with CUDA):
+
+```bash
+python desktop/iris_ai_worker.py login https://<server>.<tailnet>.ts.net
+python desktop/iris_ai_worker.py status                # items waiting for AI
+python desktop/iris_ai_worker.py once                  # work until none is left
+python desktop/iris_ai_worker.py install-service --enable   # keep picking up new uploads
+```
+
+If the computer is off, nothing breaks: items wait, as they do today. An item
+the pipeline cannot read is retried a few times, then left alone.
+
 ### 4. Day to day
 
 ```bash
@@ -264,17 +288,30 @@ profile: CPU, batch 1, smaller CLIP, and no caption/transcription/face models.
 Use it for a new catalog (or reindex an old one): different CLIP models cannot be
 mixed in a database.
 
-### SigLIP 2 (optional, requires a full reindex)
+### SigLIP 2 (recommended for new and migrated libraries)
 
-`IRIS_MODEL` also accepts a SigLIP 2 checkpoint, e.g.
-`google/siglip2-base-patch16-224` or `google/siglip2-so400m-patch14-384`. It is a
-stronger retrieval model than `clip-ViT-L-14` and it is multilingual, but the two
-embedding spaces are unrelated: **an existing catalog must be reindexed**, and the
-taxonomy thresholds in `core/taxonomy.py` were calibrated for the CLIP similarity
-distribution, so they need recalibrating too. Point `IRIS_MODEL` at SigLIP without
-reindexing and search refuses to run rather than returning a meaningless ranking —
-`siglip2-base` happens to have the same 768 dimensions as CLIP, so the shape check
-alone would not catch the mistake.
+`IRIS_MODEL` also accepts a SigLIP 2 checkpoint; `google/siglip2-base-patch16-224`
+is the recommended one. On a labelled sample of personal gallery images queried
+in Portuguese, it retrieved the right item in the top five for 94% of the queries
+against 85% for `clip-ViT-L-14`, at
+half the size and twice the encoding speed; the larger `siglip2-so400m` was barely
+better and four times heavier. It is multilingual, so queries and OCR text no
+longer need a web translator: the query is searched as typed together with an
+English rendering made on the server (`core/query_translation.py`,
+`IRIS_LOCAL_QUERY_TRANSLATION=0` turns it off), and nothing leaves the machine.
+The taxonomy keeps running on CLIP, whose similarities its thresholds were
+calibrated on, so it needs no recalibration.
+
+The two embedding spaces are unrelated, so **an existing library has to be
+re-encoded**. Without a search outage: set `IRIS_MODEL_NEXT` to the new model and
+run an AI worker (see *Let another computer do the AI*); it computes the new
+vectors beside the current ones, search keeps using the old model meanwhile, and
+each library switches in one step once all of its items have them
+(`iris_ai_worker.py status` shows the progress). When every library has switched,
+set `IRIS_MODEL` to the new model and clear `IRIS_MODEL_NEXT`. Point `IRIS_MODEL`
+at SigLIP without re-encoding and search refuses to run rather than returning a
+meaningless ranking — `siglip2-base` happens to have the same 768 dimensions as
+CLIP, so the shape check alone would not catch the mistake.
 
 The environment variable is a deployment-wide override. It applies to the server,
 existing multi-user accounts, newly created accounts, and `python -m core.indexer`

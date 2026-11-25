@@ -29,7 +29,9 @@ from transformers import logging as transformers_logging
 from core import compute_device, fingerprint_index, import_review
 from core.deleted_registry import load_deleted_content_hashes
 from core.embedding_models import (
+    DEFAULT_MODEL,
     EmbeddingEncoder,
+    is_siglip,
     load_encoder,
     max_text_tokens,
     resolve_embedding_model,
@@ -295,8 +297,16 @@ def load_models(config: IndexerConfig) -> LoadedModels:
 
     print(f"  -> CLIP: {config.model_name}")
     clip_model = load_encoder(config.model_name, device=config.device, half=True)
+    # The taxonomy's thresholds were calibrated on CLIP similarities; another
+    # model's scores sit on a different scale. With SigLIP the search vectors
+    # come from SigLIP and the taxonomy keeps running on CLIP, so it needs no
+    # recalibration.
+    taxonomy_encoder = None
+    if is_siglip(config.model_name):
+        print(f"  -> Taxonomia: {DEFAULT_MODEL}")
+        taxonomy_encoder = load_encoder(DEFAULT_MODEL, device=config.device, half=True)
     taxonomy_rows = build_taxonomy_prompt_rows()
-    taxonomy_embeddings = clip_model.encode(
+    taxonomy_embeddings = (taxonomy_encoder or clip_model).encode(
         [row["prompt"] for row in taxonomy_rows],
         batch_size=32,
         show_progress_bar=False,
@@ -337,6 +347,7 @@ def load_models(config: IndexerConfig) -> LoadedModels:
         clap_processor=clap_processor_inst,
         florence_captions=captions,
         florence_ocr=config.florence_ocr and florence_model is not None,
+        taxonomy_encoder=taxonomy_encoder,
     )
 
 
@@ -649,7 +660,13 @@ def process_images(
     job_id: str | None = None,
     dedup_enabled: bool = True,
     explicit_files: list[Path] | None = None,
+    models: LoadedModels | None = None,
 ) -> dict[str, int]:
+    """Index media into ``config.db_path``.
+
+    ``models`` lets a caller that indexes batch after batch (the AI worker)
+    load the models once instead of on every call.
+    """
     if not config.media_dir.exists():
         # Don't sys.exit: this runs in a server background thread. Signal an
         # unavailable source so the caller can pause (not fail) and resume later
@@ -755,7 +772,7 @@ def process_images(
 
     library_root = (config.library_root / config.library_name).resolve()
     library_id = get_or_create_library(conn, config.library_name, library_root)
-    models = load_models(config)
+    models = models or load_models(config)
     cursor = conn.cursor()
 
     _proc_done = 0
@@ -892,7 +909,12 @@ def process_images(
                             storage_path = indexed_path.relative_to(library_root).as_posix()
                         image, audio_text = load_media_preview(indexed_path, models, config)
                         extracted_text = extract_text(indexed_path, image, audio_text, models)
-                        ocr_en = translate_text(extracted_text)
+                        # A multilingual model reads the text as it is; only
+                        # CLIP needs it in English (and that goes to Google).
+                        ocr_en = (
+                            extracted_text if is_siglip(config.model_name)
+                            else translate_text(extracted_text)
+                        )
                         visual, tags = describe_image(image, models, config)
                         visual_profile = build_visual_profile(
                             image=image,
@@ -1027,8 +1049,16 @@ def process_images(
                         show_progress_bar=False,
                     )
                     _clip_map: dict[int, np.ndarray] = dict(zip(_real_indices, _clip_out, strict=True))
+                    _taxonomy_map: dict[int, np.ndarray] = (
+                        dict(zip(_real_indices, models.taxonomy_encoder.encode(
+                            list(_real_imgs), batch_size=len(_real_imgs), show_progress_bar=False,
+                        ), strict=True))
+                        if models.taxonomy_encoder is not None
+                        else _clip_map
+                    )
                 else:
                     _clip_map = {}
+                    _taxonomy_map = {}
 
                 # Merge: use pre-computed for videos, CLIP batch output for the rest
                 image_embeddings_list: list[np.ndarray] = []
@@ -1054,6 +1084,23 @@ def process_images(
                     text_inputs,
                     batch_size=len(text_inputs),
                     show_progress_bar=False,
+                )
+                # With a separate taxonomy encoder (CLIP), its description
+                # vectors are kept too: see secondary_vectors below.
+                _secondary_desc = (
+                    models.taxonomy_encoder.encode(
+                        [
+                            build_embedding_text(
+                                visual=str(item["visual"]), ocr=str(item["ocr_en"]),
+                                tags=str(item["tags"]), model=models.taxonomy_encoder,
+                            )
+                            for item in batch_metadata
+                        ],
+                        batch_size=len(batch_metadata),
+                        show_progress_bar=False,
+                    )
+                    if models.taxonomy_encoder is not None
+                    else None
                 )
 
                 for idx, item in enumerate(batch_metadata):
@@ -1095,9 +1142,15 @@ def process_images(
                             _quarantined += 1
                             continue
 
+                    # A video's frames were encoded for search only; with a
+                    # separate taxonomy encoder it goes without taxonomy.
+                    _taxonomy_vector = (
+                        _taxonomy_map.get(idx) if models.taxonomy_encoder is not None
+                        else image_embedding
+                    )
                     taxonomy_matches = (
                         classify_embedding(
-                            image_embedding,
+                            np.asarray(_taxonomy_vector, dtype=np.float32),
                             models.taxonomy_embeddings,
                             models.taxonomy_rows,
                             text_content=(
@@ -1105,7 +1158,7 @@ def process_images(
                                 f"{item['visual']} {item['tags']}"
                             ),
                         )
-                        if models.taxonomy_embeddings is not None
+                        if models.taxonomy_embeddings is not None and _taxonomy_vector is not None
                         else []
                     )
                     visual_profile = merge_taxonomy_into_profile(
@@ -1190,6 +1243,21 @@ def process_images(
                     known_hashes.add(str(item["content_hash"]))
                     _imported += 1
                     _meme_id = int(cursor.lastrowid)
+                    if _secondary_desc is not None and _taxonomy_vector is not None:
+                        # The CLIP vectors the taxonomy was computed from, kept
+                        # beside the SigLIP ones: while a library moves from CLIP
+                        # to SigLIP, an item that had no AI can be searched with
+                        # the current model right away (see core/ai_jobs.py).
+                        cursor.execute(
+                            "CREATE TABLE IF NOT EXISTS secondary_vectors (meme_id INTEGER PRIMARY KEY,"
+                            " model_name TEXT NOT NULL, embedding BLOB NOT NULL, desc_embedding BLOB)"
+                        )
+                        cursor.execute(
+                            "INSERT OR REPLACE INTO secondary_vectors VALUES (?, ?, ?, ?)",
+                            (_meme_id, DEFAULT_MODEL,
+                             np.asarray(_taxonomy_vector, dtype=np.float32).tobytes(),
+                             np.asarray(_secondary_desc[idx], dtype=np.float32).tobytes()),
+                        )
                     if config.extract_faces and not item.get("is_audio"):
                         _extract_faces_safe(conn, _meme_id, item, config.device)
                     if dedup is not None:

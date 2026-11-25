@@ -14,10 +14,15 @@ import torch
 from deep_translator import GoogleTranslator
 from PIL import Image
 
-from core import compute_device, vector_sidecar
+from core import compute_device, query_translation, vector_sidecar
 from core.db_manager import DatabaseManager
 from core.embedding_models import DEFAULT_MODEL as DEFAULT_MODEL  # historical re-export
-from core.embedding_models import EmbeddingEncoder, load_encoder, resolve_embedding_model
+from core.embedding_models import (
+    EmbeddingEncoder,
+    is_siglip,
+    load_encoder,
+    resolve_embedding_model,
+)
 from core.record_catalog import RecordCatalog, RecordColumns
 from core.record_text import TEXT_COLUMNS, TextStore
 from core.search_types import (
@@ -915,6 +920,8 @@ class IrisEngine:
     def encode_text(self, query: str, translate: bool = True) -> tuple[np.ndarray, str]:
         if self.model is None:
             raise RuntimeError("Search model is not loaded.")
+        if is_siglip(self.model_name):
+            return self._encode_multilingual(query, translate)
         search_text = query
         if translate and query and queries_may_leave_the_machine():
             try:
@@ -925,6 +932,11 @@ class IrisEngine:
                 search_text = query
         embedding = self.model.encode(search_text).astype("float32")
         return self._normalize_vector(embedding), search_text
+
+    def _encode_multilingual(self, query: str, translate: bool) -> tuple[np.ndarray, str]:
+        """A multilingual model needs no translation service: nothing leaves
+        the machine (see core/query_translation.encode_multilingual)."""
+        return query_translation.encode_multilingual(self.model, query, translate)
 
     def encode_image(self, image: Image.Image) -> np.ndarray:
         if self.model is None:
