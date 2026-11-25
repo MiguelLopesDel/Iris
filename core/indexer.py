@@ -128,6 +128,8 @@ class IndexerConfig:
     clap_model: str = "none"
     force_reimport_video_audio: bool = False
     extract_faces: bool = True
+    # Also read text with Florence-2 and keep what EasyOCR missed (see extract_text).
+    florence_ocr: bool = False
 
 
 @dataclass
@@ -142,6 +144,12 @@ class LoadedModels:
     taxonomy_embeddings: np.ndarray | None
     clap_model: object | None = None
     clap_processor: object | None = None
+    # Florence-2 may be loaded only for OCR; captions are a separate choice.
+    florence_captions: bool = True
+    florence_ocr: bool = False
+    # Set when the search model is not the one the taxonomy was calibrated on
+    # (CLIP): images are then also encoded with this one, for taxonomy only.
+    taxonomy_encoder: EmbeddingEncoder | None = None
 
 
 def parse_arguments() -> IndexerConfig:
@@ -268,8 +276,11 @@ def load_models(config: IndexerConfig) -> LoadedModels:
 
     florence_model = None
     florence_processor = None
-    if config.caption_model.lower() != "none":
-        caption_model_id = resolve_caption_model(config.caption_model)
+    captions = config.caption_model.lower() != "none"
+    if captions or config.florence_ocr:
+        caption_model_id = resolve_caption_model(
+            config.caption_model if captions else DEFAULT_CAPTION_MODEL
+        )
         print(f"  -> Caption: {caption_model_id}")
         try:
             florence_model = Florence2ForConditionalGeneration.from_pretrained(
@@ -324,6 +335,8 @@ def load_models(config: IndexerConfig) -> LoadedModels:
         taxonomy_embeddings=taxonomy_embeddings,
         clap_model=clap_model_inst,
         clap_processor=clap_processor_inst,
+        florence_captions=captions,
+        florence_ocr=config.florence_ocr and florence_model is not None,
     )
 
 
@@ -1525,8 +1538,42 @@ def extract_text(path: Path, image: Image.Image, audio_text: str, models: Loaded
         return audio_text.strip()
     # Sempre usa o numpy array da imagem já carregada (RGB, frame único).
     # Isso evita que EasyOCR tente abrir SVG/GIF animado/imagens de 2 canais via PIL.
-    text_results = models.reader.readtext(np.array(image), detail=0, paragraph=True)
-    return (" ".join(text_results).strip() + audio_text).strip()
+    text = " ".join(models.reader.readtext(np.array(image), detail=0, paragraph=True)).strip()
+    if text and models.florence_ocr:
+        text = merge_ocr(text, florence_ocr(image, models))
+    return (text + audio_text).strip()
+
+
+def florence_ocr(image: Image.Image, models: LoadedModels) -> str:
+    """Florence-2's reading of the text in an image, or "" if it fails."""
+    try:
+        inputs = models.florence_processor(text="<OCR>", images=image, return_tensors="pt").to(
+            models.florence_model.device, models.florence_model.dtype
+        )
+        ids = models.florence_model.generate(
+            input_ids=inputs["input_ids"], pixel_values=inputs["pixel_values"],
+            max_new_tokens=512, num_beams=3,
+        )
+        return models.florence_processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
+    except Exception:
+        return ""
+
+
+def merge_ocr(easyocr_text: str, florence_text: str) -> str:
+    """Keep EasyOCR's reading and add Florence-2's when it found other words.
+
+    Measured on a sample of images with text in them, each engine
+    misreads what the other gets right: EasyOCR garbles stylised meme lettering
+    and reads "o" as "0"; Florence-2 reads lettering well but sometimes drops
+    accents and stops early on long text. Search only needs the words to be
+    present, so both readings are kept when they differ.
+    """
+    florence_text = " ".join(florence_text.split())
+    if not florence_text:
+        return easyocr_text
+    known = set(normalize_text(easyocr_text).split())
+    new = [w for w in normalize_text(florence_text).split() if w not in known and len(w) > 1]
+    return f"{easyocr_text}\n{florence_text}" if new else easyocr_text
 
 
 def translate_text(text: str) -> str:
@@ -1643,7 +1690,7 @@ def infer_objects(content: str, tags: str, visual: str) -> str:
 def describe_image(
     image: Image.Image, models: LoadedModels, config: IndexerConfig
 ) -> tuple[str, str]:
-    if not models.florence_model or not models.florence_processor:
+    if not models.florence_model or not models.florence_processor or not models.florence_captions:
         return "N/A", "N/A"
 
     visual = run_florence_task(
