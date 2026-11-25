@@ -167,7 +167,7 @@ class SearchBackend(ABC):
     def search_face_by_face(self, face_id: int, top_k: int = 50) -> list[SearchResult]: pass
 
     @abstractmethod
-    def list_persons(self) -> list[dict]: pass
+    def list_persons(self, include_single: bool = True) -> list[dict]: pass
 
     @abstractmethod
     def get_person_media(self, person_id: int) -> list[SearchResult]: pass
@@ -388,10 +388,10 @@ class LocalBackend(SearchBackend):
     def search_face_by_face(self, face_id: int, top_k: int = 50) -> list[SearchResult]:
         return self.engine.search_face_by_face(face_id, top_k=top_k)
 
-    def list_persons(self) -> list[dict]:
+    def list_persons(self, include_single: bool = True) -> list[dict]:
         conn = self.engine.db.get_connection()
         import core.faces as faces
-        return faces.list_persons(conn)
+        return faces.list_persons(conn, include_single=include_single)
 
     def get_person_media(self, person_id: int) -> list[SearchResult]:
         return self.engine.get_person_media(person_id)

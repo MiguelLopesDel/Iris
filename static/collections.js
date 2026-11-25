@@ -2,9 +2,9 @@
    Albums as a grid of covers; an album opens as a grid of its photos, and a
    photo opens the viewer over the album. */
 
-import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, removeCollectionMembers, escapeHtml } from './api.js?v=49';
-import { openDetail } from './detail.js?v=13';
-import { confirmModal, promptModal, toast } from './ui.js?v=5';
+import { listCollections, createCollection, renameCollection, deleteCollection, getCollectionMembers, removeCollectionMembers, escapeHtml } from './api.js?v=50';
+import { openDetail } from './detail.js?v=14';
+import { confirmModal, promptModal, toast } from './ui.js?v=6';
 
 let openAlbum = null;  // { id, name, records } while an album is open
 

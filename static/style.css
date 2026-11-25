@@ -4636,3 +4636,11 @@ body.drop-upload::after {
   font-weight: 700;
   pointer-events: none;
 }
+
+/* Under the people grid: how many one-photo strangers are hidden. */
+.persons-hidden-note {
+  grid-column: 1 / -1;
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}

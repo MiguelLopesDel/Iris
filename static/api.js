@@ -353,8 +353,8 @@ export async function rejectConceptMedia(conceptId, dbIds) {
 
 // ── Pessoas (rostos) ──────────────────────────────────────────────────────
 
-export async function listPersons() {
-  return apiGet('/api/persons');
+export async function listPersons(includeSingle = false) {
+  return apiGet('/api/persons', includeSingle ? { include_single: 'true' } : {});
 }
 
 export async function getPersonMedia(id) {

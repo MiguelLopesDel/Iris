@@ -28,8 +28,8 @@ import {
   removeSpaceMember,
   restoreSpaceItem,
   saveSpaceItem,
-} from './api.js?v=49';
-import { confirmModal, openModal, promptModal, toast } from './ui.js?v=5';
+} from './api.js?v=50';
+import { confirmModal, openModal, promptModal, toast } from './ui.js?v=6';
 
 const ROLE_LABELS = { viewer: 'Visualizador', contributor: 'Colaborador', manager: 'Gestor' };
 const CAN_ADD = new Set(['contributor', 'manager']);

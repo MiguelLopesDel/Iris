@@ -20,7 +20,11 @@ from core.timestamps import UtcTimestamp
 
 FACE_EMBED_DIM = 512
 # Detecções abaixo deste score são descartadas (ruído / falsos positivos).
-MIN_DET_SCORE = 0.50
+MIN_DET_SCORE = 0.60
+# Rostos menores que isto (largura ou altura, em pixels) são descartados. Em
+# prints de redes sociais e chats, boa parte dos rostos detectados são avatares
+# de 16-30 px: cada um virava uma "pessoa" de uma foto só, soterrando as reais.
+MIN_FACE_PX = 40
 # Dois rostos da MESMA mídia com cosseno >= isto são o mesmo rosto (dedup de frames de vídeo).
 SAME_FACE_COSINE = 0.92
 # Rostos com cosseno >= isto pertencem à mesma pessoa (ArcFace ~0.45–0.55 típico).
@@ -191,6 +195,20 @@ def _dedup_faces(faces: list[DetectedFace]) -> list[DetectedFace]:
     return kept
 
 
+def is_significant(bbox: list[float] | str, det_score: float) -> bool:
+    """Whether a detection is a face worth grouping: big and confident enough."""
+    if isinstance(bbox, str):
+        try:
+            bbox = json.loads(bbox)
+        except ValueError:
+            return False
+    try:
+        width, height = float(bbox[2]), float(bbox[3])
+    except (TypeError, IndexError, ValueError):
+        return False
+    return det_score >= MIN_DET_SCORE and min(width, height) >= MIN_FACE_PX
+
+
 def extract_faces_for_record(
     conn: sqlite3.Connection,
     meme_id: int,
@@ -213,6 +231,7 @@ def extract_faces_for_record(
             face.frame_time = ft
             detected.append(face)
 
+    detected = [face for face in detected if is_significant(face.bbox, face.det_score)]
     unique = _dedup_faces(detected)
     if replace:
         conn.execute("DELETE FROM faces WHERE meme_id = ?", (meme_id,))
@@ -256,7 +275,7 @@ def cluster_faces(
         conn.commit()
 
     rows = conn.execute(
-        "SELECT id, embedding, person_id, det_score FROM faces ORDER BY det_score DESC"
+        "SELECT id, embedding, person_id, det_score, bbox FROM faces ORDER BY det_score DESC"
     ).fetchall()
 
     # Centróides incrementais: person_id -> [soma_vetorial, contagem]
@@ -274,6 +293,9 @@ def cluster_faces(
     assignments: list[tuple[int, int]] = []
     for r in rows:
         if r["person_id"] is not None:
+            continue
+        # Faces stored before the size filter existed stay out of new people.
+        if not is_significant(r["bbox"], float(r["det_score"])):
             continue
         emb = np.frombuffer(r["embedding"], dtype=np.float32)
         best_pid, best_sim = None, -1.0
@@ -322,18 +344,28 @@ def _count_persons(conn: sqlite3.Connection) -> int:
 # ---------------------------------------------------------------------------
 # Consultas / CRUD de pessoas
 # ---------------------------------------------------------------------------
-def list_persons(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_persons(conn: sqlite3.Connection, include_single: bool = True) -> list[dict[str, Any]]:
+    """People, most photographed first.
+
+    Without ``include_single``, someone seen in a single photo and never named
+    is left out: in a library of screenshots and memes those are mostly
+    strangers, and they buried the people who matter.
+    """
     if not has_face_tables(conn):
         return []
     conn.row_factory = sqlite3.Row
+    having = "" if include_single else (
+        "HAVING COUNT(DISTINCT f.meme_id) >= 2 OR COALESCE(TRIM(p.name), '') != ''"
+    )
     rows = conn.execute(
-        """
+        f"""
         SELECT p.id, p.name, p.cover_face_id,
                COUNT(DISTINCT f.meme_id) AS media_count,
                COUNT(f.id) AS face_count
         FROM persons p
         LEFT JOIN faces f ON f.person_id = p.id
         GROUP BY p.id
+        {having}
         ORDER BY media_count DESC, p.id
         """
     ).fetchall()

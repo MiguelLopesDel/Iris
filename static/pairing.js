@@ -1,7 +1,7 @@
 // "Conectar um celular": the pairing code (QR + link) any signed-in person can show,
 // and, for administrators, the addresses and certificate authority it offers.
-import { escapeHtml } from './api.js?v=49';
-import { openModal } from './ui.js?v=5';
+import { escapeHtml } from './api.js?v=50';
+import { openModal } from './ui.js?v=6';
 
 async function request(path, init = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...init });
