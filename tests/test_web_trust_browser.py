@@ -127,6 +127,8 @@ def test_anyone_can_download_the_authority_and_check_it_by_eye(browser, tmp_path
         # Opened by an address the certificate names: nothing to warn about.
         sync_api.expect(card.locator("#computer-trust-address")).to_be_hidden()
 
+        # The steps per system are folded under one disclosure.
+        card.locator("summary", has_text="Como confiar no certificado").click()
         page.locator(".trust-steps summary", has_text="Firefox").click()
         sync_api.expect(card).to_contain_text("Confiar nesta CA para identificar sites")
         if SCREENSHOT:

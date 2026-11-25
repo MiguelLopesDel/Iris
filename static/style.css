@@ -315,6 +315,7 @@ select,
 input[type="text"],
 input[type="number"],
 input[type="time"],
+input[type="password"],
 textarea {
   width: 100%;
   min-height: 40px;
@@ -341,6 +342,7 @@ select {
 input[type="text"],
 input[type="number"],
 input[type="time"],
+input[type="password"],
 textarea {
   padding: 10px 12px;
 }
@@ -353,6 +355,7 @@ select:hover,
 input[type="text"]:hover,
 input[type="number"]:hover,
 input[type="time"]:hover,
+input[type="password"]:hover,
 textarea:hover {
   border-color: var(--border-strong);
 }
@@ -4643,4 +4646,218 @@ body.drop-upload::after {
   margin: 12px 0 0;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+/* Settings: a side navigation over one column of cards in three groups. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-group {
+  margin: 16px 0 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-nav-group:first-child {
+  margin-top: 0;
+}
+
+.settings-nav a {
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.settings-nav a:hover {
+  background: var(--surface);
+}
+
+.settings-nav a.is-current {
+  background: var(--surface);
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settings-content > .system-card {
+  margin: 0;
+  scroll-margin-top: 96px;
+}
+
+.settings-group-title {
+  margin: 18px 0 -4px;
+  font-size: 20px;
+}
+
+.settings-group-title:first-child {
+  margin-top: 0;
+}
+
+.settings-subtitle {
+  margin: 22px 0 8px;
+  font-size: 15px;
+}
+
+/* Long explanations and advanced options, folded. */
+.settings-more {
+  margin: 10px 0;
+}
+
+.settings-more > summary {
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings-more[open] > summary {
+  margin-bottom: 8px;
+}
+
+/* Where AI runs: three cards, one pressed. */
+.choice-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 12px 0 4px;
+  padding: 0;
+  border: 0;
+}
+
+.choice-cards legend {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.choice-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.choice-card span {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.choice-card[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.ai-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.ai-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.ai-accounts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.ai-accounts-table th,
+.ai-accounts-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.ai-worker-steps pre {
+  overflow-x: auto;
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* On a phone the navigation becomes a row of chips above the cards. */
+@media (max-width: 900px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+
+  .settings-nav-group {
+    display: none;
+  }
+
+  .settings-nav a {
+    flex: 0 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+}
+
+/* A switch reads as one line in a settings card, and an empty status leaves no box. */
+.settings-content .system-card .switch-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.settings-content .system-status:empty {
+  display: none;
+}
+
+/* Settings forms: label above its field, where-it-comes-from under it, two columns when wide. */
+.settings-content .system-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0 18px;
+}
+
+.settings-content .system-form-grid label {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
 }

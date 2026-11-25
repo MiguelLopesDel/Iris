@@ -368,3 +368,29 @@ def test_files_dropped_on_the_page_are_sent_to_the_library(server) -> None:
         }""")
         sync_api.expect(page.locator("#import-status")).to_contain_text("Enviados 1", timeout=30_000)
         browser.close()
+
+
+def test_settings_let_the_admin_choose_where_ai_runs_and_anyone_opt_out(server) -> None:
+    base, _media = server
+    with sync_api.sync_playwright() as playwright:
+        browser, page = _signed_in_gallery(playwright, base)
+        page.evaluate("window.location.hash = 'system'")
+        nav = page.locator(".settings-nav")
+        sync_api.expect(nav.get_by_role("link", name="Processamento por IA")).to_be_visible()
+
+        # Administrator: the cards set the mode; saving keeps it.
+        nav.get_by_role("link", name="Processamento por IA").click()
+        panel = page.locator("#ai-settings")
+        panel.locator('[data-ai-mode="off"]').click()
+        sync_api.expect(panel.locator('[data-ai-mode="off"]')).to_have_attribute("aria-pressed", "true")
+        panel.get_by_role("button", name="Salvar").click()
+        sync_api.expect(panel.locator("[data-settings-status]")).to_contain_text("salvas")
+        assert page.request.get(base + "/api/admin/ai").json()["mode"] == "off"
+
+        # Anyone: their own photos' analysis, on by default.
+        mine = page.locator("#my-ai")
+        sync_api.expect(mine.locator("#my-ai-enabled")).to_be_checked()
+        mine.get_by_text("Analisar minhas fotos com IA").click()
+        sync_api.expect(mine.locator("#my-ai-status")).to_contain_text("desligada")
+        assert page.request.get(base + "/api/me/ai").json()["enabled"] is False
+        browser.close()

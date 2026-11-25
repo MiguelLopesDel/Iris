@@ -20,11 +20,12 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=50';
-import { confirmModal } from './ui.js?v=6';
-import { loadDevices } from './devices.js?v=3';
-import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=5';
+} from './api.js?v=51';
+import { confirmModal } from './ui.js?v=7';
+import { loadDevices } from './devices.js?v=4';
+import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=6';
 import { uploadFiles } from './web_upload.js?v=1';
+import { loadAdminAi, loadMyAi, syncAiModeCards, syncSettingsNav } from './settings_ai.js?v=1';
 
 let initialized = false;
 let importPoll = null;
@@ -47,10 +48,13 @@ export function initSystem() {
     }
     pollImportStatus();
     loadComputerTrust();
+    if (info.multiuser) loadMyAi();
     if (info.multiuser && info.current_user?.is_admin) {
       loadInstanceSettings();
       loadPairingAuthority();
+      loadAdminAi();
     }
+    syncSettingsNav();
   });
   if (initialized) return;
   initialized = true;
@@ -103,7 +107,7 @@ async function loadSystemInfo() {
     document.getElementById('instance-settings').hidden = !administrator;
     document.getElementById('pairing-settings').hidden = !administrator;
     document.getElementById('backup-settings').hidden = !administrator;
-    document.getElementById('gpu-settings').hidden = !administrator;
+    document.getElementById('ai-settings').hidden = !administrator;
     const privateHealth = document.getElementById('private-library-health');
     privateHealth.hidden = hostAdministration;
     privateHealth.innerHTML = `<strong>${info.total_records}</strong> itens na sua biblioteca`
@@ -612,6 +616,7 @@ function renderInstanceSettings(state) {
     const setting = settings[input.dataset.setting];
     if (setting) input.value = displayValue(input, setting.value);
   });
+  syncAiModeCards();
   document.querySelectorAll('[data-source-for]').forEach((element) => {
     const key = element.dataset.sourceFor;
     const setting = settings[key];
@@ -670,6 +675,7 @@ async function saveSettingsSection(section) {
     renderInstanceSettings(await saveInstanceSettings(changed));
     status.textContent = 'Configurações salvas. Valem a partir de agora, sem reiniciar.';
     loadBackupStatus();
+    if (section.id === 'ai-settings') loadAdminAi();
   } catch (error) {
     status.textContent = `Erro: ${error.message}`;
   } finally {

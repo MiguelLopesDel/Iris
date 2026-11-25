@@ -3,8 +3,8 @@
    the server deletes the original. Restoring brings the photo back with its
    albums, description and faces. */
 
-import { escapeHtml, listTrash, restoreTrash } from './api.js?v=50';
-import { toast } from './ui.js?v=6';
+import { escapeHtml, listTrash, restoreTrash } from './api.js?v=51';
+import { toast } from './ui.js?v=7';
 
 let initialized = false;
 let cursor = null;

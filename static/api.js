@@ -90,6 +90,24 @@ export async function saveInstanceSettings(values) {
   return apiJson('PUT', '/api/admin/settings', values);
 }
 
+// ── AI processing ─────────────────────────────────────────────────────────
+
+export async function getAdminAi() {
+  return apiGet('/api/admin/ai');
+}
+
+export async function getMyAi() {
+  return apiGet('/api/me/ai');
+}
+
+export async function setMyAi(enabled) {
+  return apiJson('PUT', '/api/me/ai', { enabled });
+}
+
+export async function forgetMyAi() {
+  return apiJson('POST', '/api/me/ai/forget', {});
+}
+
 // ── Shared spaces ─────────────────────────────────────────────────────────
 
 const spaceUrl = (id, rest = '') => `/api/spaces/${encodeURIComponent(id)}${rest}`;
