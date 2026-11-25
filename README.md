@@ -116,6 +116,29 @@ how the app trusts private certificates or plain HTTP is in
 [docs/connectivity.md](docs/connectivity.md).
 Do not map the port to `0.0.0.0` without TLS and rate limiting.
 
+### Back up folders of a computer
+
+`desktop/iris_sync.py` keeps folders of a Linux or macOS computer backed up,
+as the Android app does for the phone: it signs in as a device and sends the
+photos and videos the library lacks over the same resumable protocol. Files
+already in the library are recognised by content and never sent twice. It needs
+only Python 3.11+.
+
+```bash
+python3 desktop/iris_sync.py login https://<server>.<tailnet>.ts.net
+python3 desktop/iris_sync.py add ~/Pictures
+python3 desktop/iris_sync.py once                       # one pass now
+python3 desktop/iris_sync.py install-service --enable   # every 5 minutes, as a systemd --user service
+python3 desktop/iris_sync.py status
+```
+
+The computer shows up in **Sistema → Dispositivos**, where "Sair" ends its
+session. Its refresh token is kept in `~/.config/iris-sync/config.json`
+(mode 600); what it has sent is recorded in `~/.local/state/iris-sync/`.
+A server whose certificate comes from its own authority (an Iris local CA) is
+trusted at `login` only after you confirm its identity code, the one Iris shows
+under **Sistema → Conectar um celular**; nothing is sent before that.
+
 ### 4. Day to day
 
 ```bash
