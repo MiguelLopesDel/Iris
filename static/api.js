@@ -208,6 +208,18 @@ export async function startBackup({ pin = false } = {}) {
   return apiJson('POST', '/api/admin/backups', { pin });
 }
 
+export async function getUpdateStatus() {
+  return apiGet('/api/admin/update');
+}
+
+export async function checkForUpdate() {
+  return apiJson('POST', '/api/admin/update/check');
+}
+
+export async function applyUpdate() {
+  return apiJson('POST', '/api/admin/update/apply');
+}
+
 export async function resetInstanceSetting(key) {
   return apiJson('DELETE', `/api/admin/settings/${encodeURIComponent(key)}`);
 }

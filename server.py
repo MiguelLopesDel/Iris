@@ -103,6 +103,7 @@ from core.file_ops import move_to_trash
 from core.index_rebuild import rebuild_indexes_in_background
 from core.indexer_db import init_db
 from core.ingest_policy import IngestPolicy
+from core.instance_backup import iris_version
 from core.observability import configure_logging, request_path
 from core.perf import dump, trace
 from core.polite import PressureGate
@@ -111,6 +112,7 @@ from core.search_engine import DEFAULT_MODEL, IMAGE_EXTENSIONS, LOW_RESOURCE_MOD
 from core.search_types import IndexRecord, SearchOptions, SearchResult, normalize_text
 from core.sqlite_write_registry import SQLiteWriteCoordinatorRegistry
 from core.sync_upload_service import SyncUploadService
+from core.updates import UpdateChecker
 from core.upload_processing_workers import UploadProcessingWorkers
 from core.users_db import (
     IrisUser,
@@ -750,6 +752,9 @@ async def lifespan(app: FastAPI):
         app.state.backup_service.start(
             startup_delay=float(os.environ.get("IRIS_BACKUP_STARTUP_DELAY", "300"))
         )
+        app.state.update_checker.start(
+            startup_delay=float(os.environ.get("IRIS_UPDATE_STARTUP_DELAY", "60"))
+        )
         if os.environ.get("IRIS_THUMBNAIL_WARMUP", "1").lower() not in {"0", "false", "no"}:
             from core.thumbnail_warmer import Library, ThumbnailWarmer
 
@@ -820,6 +825,7 @@ async def lifespan(app: FastAPI):
         if processing_workers is not None and not processing_workers.stop(timeout=10):
             logger.warning("upload_processing_shutdown_timeout")
         app.state.backup_service.stop()
+        app.state.update_checker.stop()
         thumbnail_warmer = getattr(app.state, "thumbnail_warmer", None)
         if thumbnail_warmer is not None:
             thumbnail_warmer.stop()
@@ -883,6 +889,9 @@ if app.state.multiuser_enabled:
     app.state.space_policy = instance_settings.space_storage_policy(_USERS_DB, _DATA_DIR / "spaces")
     app.state.space_storage = app.state.space_policy.storage
     compute_device.set_gpu_allowed(instance_settings.gpu_allowed(_USERS_DB))
+    # Newer releases, checked against GitHub; installing one goes through the host
+    # agent (scripts/server.sh updater install), never through this process.
+    app.state.update_checker = UpdateChecker(iris_version())
     # Whole-instance backups: scheduled by this process, configured in the
     # interface. The destination is a volume in Docker (IRIS_BACKUP_DIR).
     _media_root = Path(os.environ.get("IRIS_MEDIA_DIR", "media"))

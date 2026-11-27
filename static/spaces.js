@@ -28,7 +28,7 @@ import {
   removeSpaceMember,
   restoreSpaceItem,
   saveSpaceItem,
-} from './api.js?v=51';
+} from './api.js?v=52';
 import { confirmModal, openModal, promptModal, toast } from './ui.js?v=7';
 
 const ROLE_LABELS = { viewer: 'Visualizador', contributor: 'Colaborador', manager: 'Gestor' };

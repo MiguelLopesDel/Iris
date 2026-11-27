@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core import compute_device, faces, fs_clone, instance_settings
+from core import compute_device, faces, fs_clone, instance_settings, updates
 from core.instance_backup import BackupError, snapshots
 from core.instance_settings import SettingError
 
@@ -168,3 +168,36 @@ def run_backup(request: Request, payload: RunBackupIn):
     except BackupError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"started": True}
+
+
+# -- updates ------------------------------------------------------------------
+
+
+def _update_payload(request: Request) -> dict[str, Any]:
+    return updates.info_dict(request.app.state.update_checker, Path(request.app.state.data_dir))
+
+
+@router.get("/update")
+def update_status(request: Request):
+    """The running version, the newest release, and the host agent's progress."""
+    _admin(request)
+    return _update_payload(request)
+
+
+@router.post("/update/check")
+def check_for_update(request: Request):
+    """Ask GitHub now instead of waiting for the next periodic check."""
+    _admin(request)
+    request.app.state.update_checker.check()
+    return _update_payload(request)
+
+
+@router.post("/update/apply", status_code=202)
+def apply_update(request: Request):
+    """Leave a request for the host agent, which runs scripts/server.sh update."""
+    user = _admin(request)
+    try:
+        updates.request_update(Path(request.app.state.data_dir), requested_by=user.username)
+    except updates.UpdateRequestError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _update_payload(request)

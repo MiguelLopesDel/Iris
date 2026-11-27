@@ -1,6 +1,6 @@
 /* ── Iris Duplicates module ───────────────────────────────────────────────── */
 
-import { escapeHtml, fetchDuplicates, mediaUrl } from './api.js?v=51';
+import { escapeHtml, fetchDuplicates, mediaUrl } from './api.js?v=52';
 
 var viewMode = 'groups'; // 'groups' | 'flat'
 var duplicateLevels = {

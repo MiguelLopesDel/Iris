@@ -3,7 +3,7 @@
    Biblioteca and Administração; the side navigation jumps between them
    without touching the URL hash (which picks the app's tab). */
 
-import { escapeHtml, forgetMyAi, getAdminAi, getMyAi, setMyAi } from './api.js?v=51';
+import { escapeHtml, forgetMyAi, getAdminAi, getMyAi, setMyAi } from './api.js?v=52';
 import { confirmModal, toast } from './ui.js?v=7';
 
 // ── Navigation ────────────────────────────────────────────────────────────

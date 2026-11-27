@@ -1,6 +1,7 @@
 """scripts/server.sh install, run for real against stub docker/nvidia-smi/curl commands."""
 from __future__ import annotations
 
+import json
 import shutil
 import stat
 import subprocess
@@ -510,3 +511,72 @@ def test_a_time_zone_set_by_hand_is_kept(tmp_path: Path) -> None:
     _server(project, env, "update")
 
     assert _env_value(project, "TZ") == "Europe/Lisbon"
+
+
+# -- update agent ----------------------------------------------------------------
+
+
+def _agent_env(tmp_path: Path, **extra: str) -> tuple[dict, Path]:
+    bin_dir = _docker_stub(tmp_path, **extra)
+    _stub(bin_dir, "systemctl", f'echo "systemctl $*" >> "{tmp_path}/systemctl.log"\n')
+    units = tmp_path / "systemd"
+    units.mkdir()
+    return _env(tmp_path, bin_dir, IRIS_SYSTEMD_DIR=str(units)), units
+
+
+def test_the_update_agent_installs_a_path_unit_watching_the_request(tmp_path: Path) -> None:
+    env, units = _agent_env(tmp_path)
+    project = _released_clone(tmp_path, env)
+    result = _server(project, env, "updater", "install")
+    assert "Update agent installed (iris-updater.path)" in result.stdout
+
+    path_unit = (units / "iris-updater.path").read_text()
+    service = (units / "iris-updater.service").read_text()
+    assert f"PathExists={project}/data/updater/request.json" in path_unit
+    assert f"ExecStart={project}/scripts/server.sh updater run" in service
+    assert "Environment=IRIS_UPDATER_RUN=1" in service
+    assert "systemctl enable --now iris-updater.path" in (tmp_path / "systemctl.log").read_text()
+    # The web interface offers the button only once the agent says it is there.
+    assert (project / "data" / "updater" / "agent.json").is_file()
+
+    _server(project, env, "updater", "uninstall")
+    assert not (units / "iris-updater.path").exists()
+    assert not (project / "data" / "updater" / "agent.json").exists()
+
+
+def test_the_agent_does_nothing_without_a_request(tmp_path: Path) -> None:
+    env, _ = _agent_env(tmp_path)
+    project = _released_clone(tmp_path, env)
+    (project / "data" / "updater").mkdir(parents=True)
+    _server(project, env, "updater", "run")
+    assert not (project / "data" / "updater" / "status.json").exists()
+    assert not (tmp_path / "docker.log").exists() or not _pulled(tmp_path)
+
+
+def test_a_request_runs_a_normal_update_and_reports_it(tmp_path: Path) -> None:
+    env, _ = _agent_env(tmp_path)
+    project = _released_clone(tmp_path, env)
+    folder = project / "data" / "updater"
+    folder.mkdir(parents=True)
+    (folder / "request.json").write_text('{"requested_by": "alice"}')
+
+    _server(project, env, "updater", "run")
+    status = json.loads((folder / "status.json").read_text())
+    assert status["state"] == "done" and status["to"] == "0.5.0"
+    assert "Release: v0.5.0" in (folder / "last.log").read_text()
+    # Consumed, or the path unit would start the service again and again.
+    assert not (folder / "request.json").exists()
+    assert _head(project, env) == "v0.5.0"
+
+
+def test_a_failed_update_is_reported_and_not_retried(tmp_path: Path) -> None:
+    env, _ = _agent_env(tmp_path, unpublished="0.5.0")
+    project = _released_clone(tmp_path, env)
+    folder = project / "data" / "updater"
+    folder.mkdir(parents=True)
+    (folder / "request.json").write_text("{}")
+
+    _server(project, env, "updater", "run", ok=False)
+    assert json.loads((folder / "status.json").read_text())["state"] == "failed"
+    assert "not available yet" in (folder / "last.log").read_text()
+    assert not (folder / "request.json").exists()
