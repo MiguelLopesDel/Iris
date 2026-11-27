@@ -10,8 +10,6 @@ ARG IRIS_PROFILE=cpu
 # by the host account.
 ARG IRIS_UID=1000
 ARG IRIS_GID=1000
-# Recorded in every backup, so a backup says which Iris wrote it.
-ARG IRIS_COMMIT=""
 WORKDIR /app
 
 # ffmpeg: video/audio decoding. libchromaprint-tools: fpcalc for audio
@@ -58,6 +56,10 @@ EXPOSE 8501 8443
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -fsS http://localhost:8501/healthz || exit 1
 
+# Recorded in every backup, so a backup says which Iris wrote it. Declared
+# here, after every RUN: a build argument in scope changes the cache key of
+# each RUN below it, and a new commit would then reinstall every dependency.
+ARG IRIS_COMMIT=""
 ENV PYTHONPATH=/app \
     IRIS_COMMIT=${IRIS_COMMIT} \
     HOME=/home/iris \
