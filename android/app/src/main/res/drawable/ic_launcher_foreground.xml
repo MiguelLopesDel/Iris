@@ -1,22 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Iris aperture logo; same geometry as static/brand/iris-mark.svg (64-unit canvas,
+     centred in the 108dp adaptive-icon grid, inside the 66dp safe zone). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#6750A4"
-        android:pathData="M0,0h108v108h-108z" />
-    <!-- Eye outline -->
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4"
-        android:fillColor="#00000000"
-        android:pathData="M24,54 C34,36 74,36 84,54 C74,72 34,72 24,54 Z" />
-    <!-- Pupil / Iris -->
-    <path
-        android:fillColor="#D0BCFF"
-        android:pathData="M54,54m-12,0a12,12 0 1,0 24,0a12,12 0 1,0 -24,0" />
-    <path
-        android:fillColor="#381E72"
-        android:pathData="M54,54m-6,0a6,6 0 1,0 12,0a6,6 0 1,0 -12,0" />
+    <group
+        android:translateX="22"
+        android:translateY="22">
+        <!-- Outer ring -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#B8FF5A"
+            android:strokeWidth="3.2"
+            android:pathData="M5,32 a27,27 0 1,0 54,0 a27,27 0 1,0 -54,0" />
+        <!-- Six aperture blades -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#B8FF5A"
+            android:strokeWidth="3.2"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M32.00,22.50 L58.38,37.73 M40.23,27.25 L40.23,57.72 M40.23,36.75 L13.84,51.98 M32.00,41.50 L5.62,26.27 M23.77,36.75 L23.77,6.28 M23.77,27.25 L50.16,12.02" />
+        <!-- Catchlight -->
+        <path
+            android:fillColor="#B8FF5A"
+            android:pathData="M34.2,29.8 m-2.6,0 a2.6,2.6 0 1,0 5.2,0 a2.6,2.6 0 1,0 -5.2,0" />
+    </group>
 </vector>
