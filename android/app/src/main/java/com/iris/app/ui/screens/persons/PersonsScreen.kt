@@ -1,6 +1,5 @@
 package com.iris.app.ui.screens.persons
 
-import com.iris.app.ui.text.countOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +36,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import com.iris.app.ui.text.countPluralResource
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -52,6 +53,7 @@ import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.iris.app.IrisApplication
+import com.iris.app.R
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.MediaCard
 import com.iris.app.ui.theme.IrisAccent
@@ -75,14 +77,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Text(
-                        text = "Pessoas",
+                        text = stringResource(R.string.persons_title),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
                 },
                 actions = {
                     IconButton(onClick = { viewModel.loadPersons(isRefresh = true) }) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = stringResource(R.string.common_refresh))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
@@ -109,9 +111,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                 uiState.error != null && uiState.persons.isEmpty() -> {
                     EmptyState(
-                        title = "Erro ao carregar pessoas",
+                        title = stringResource(R.string.persons_error_load),
                         message = uiState.error ?: "",
-                        actionLabel = "Tentar novamente",
+                        actionLabel = stringResource(R.string.common_retry),
                         onAction = { viewModel.loadPersons() }
                     )
                 }
@@ -119,9 +121,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 uiState.persons.isEmpty() -> {
                     EmptyState(
                         icon = Icons.Outlined.Face,
-                        title = "Nenhuma pessoa encontrada",
-                        message = "O reconhecimento facial não detectou rostos agrupados no servidor.",
-                        actionLabel = "Atualizar",
+                        title = stringResource(R.string.persons_empty_title),
+                        message = stringResource(R.string.persons_empty_message),
+                        actionLabel = stringResource(R.string.common_refresh),
                         onAction = { viewModel.loadPersons(isRefresh = true) }
                     )
                 }
@@ -200,7 +202,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = person.name.ifBlank { "Pessoa #${person.id}" },
+                                        text = person.name.ifBlank { stringResource(R.string.person_fallback_name, person.id) },
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.sp,
                                         maxLines = 1,
@@ -208,7 +210,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = countOf(person.mediaCount, "mídia", "mídias"),
+                                        text = countPluralResource(R.plurals.common_media_count, person.mediaCount, person.mediaCount),
                                         fontSize = 11.sp,
                                         color = IrisTextSoft
                                     )
@@ -237,13 +239,13 @@ fun PersonMediaScreen(
                 title = {
                     Column {
                         Text(
-                            text = uiState.personName.ifBlank { "Pessoa #${uiState.personId}" },
+                            text = uiState.personName.ifBlank { stringResource(R.string.person_fallback_name, uiState.personId) },
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         )
                         if (uiState.total > 0) {
                             Text(
-                                text = countOf(uiState.total, "mídia", "mídias"),
+                                text = countPluralResource(R.plurals.common_media_count, uiState.total, uiState.total),
                                 fontSize = 12.sp,
                                 color = IrisTextSoft
                             )
@@ -254,13 +256,13 @@ fun PersonMediaScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Voltar"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.loadMedia() }) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = stringResource(R.string.common_refresh))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
@@ -282,9 +284,9 @@ fun PersonMediaScreen(
 
             uiState.error != null -> {
                 EmptyState(
-                    title = "Erro ao carregar mídias",
+                    title = stringResource(R.string.person_media_error_load),
                     message = uiState.error ?: "",
-                    actionLabel = "Tentar novamente",
+                    actionLabel = stringResource(R.string.common_retry),
                     onAction = { viewModel.loadMedia() },
                     modifier = Modifier.padding(paddingValues)
                 )
@@ -292,8 +294,8 @@ fun PersonMediaScreen(
 
             uiState.media.isEmpty() -> {
                 EmptyState(
-                    title = "Nenhuma mídia vinculada",
-                    message = "Esta pessoa não possui mídias cadastradas.",
+                    title = stringResource(R.string.person_media_empty_title),
+                    message = stringResource(R.string.person_media_empty_message),
                     modifier = Modifier.padding(paddingValues)
                 )
             }

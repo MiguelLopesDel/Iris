@@ -58,6 +58,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iris.app.R
 import kotlinx.coroutines.launch
 
 /** One action of a viewer bar or menu. */
@@ -213,7 +215,7 @@ internal fun ViewerScaffold(
                     .size(48.dp)
                     .background(Color.Black.copy(alpha = 0.55f), CircleShape)
             ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Fechar informações", tint = Color.White)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.viewer_close_info), tint = Color.White)
             }
         }
     }
@@ -241,7 +243,7 @@ internal fun ViewerTopBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onBack, modifier = Modifier.size(52.dp)) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.viewer_back), tint = Color.White)
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -286,7 +288,7 @@ internal fun ViewerTopBar(
                 enabled = menu.isNotEmpty(),
                 modifier = Modifier.size(52.dp)
             ) {
-                Icon(Icons.Default.MoreVert, contentDescription = "Mais opções", tint = Color.White)
+                Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.viewer_more_options), tint = Color.White)
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 menu.forEach { action ->

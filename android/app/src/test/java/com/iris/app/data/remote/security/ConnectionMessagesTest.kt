@@ -13,6 +13,12 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
 class ConnectionMessagesTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
 
     private val security = ConnectionSecurity.Unrestricted
 

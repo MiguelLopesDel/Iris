@@ -27,6 +27,12 @@ import org.junit.Test
 import kotlinx.coroutines.runBlocking
 
 class IrisApiClientAuthTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
 
     private lateinit var server: MockWebServer
 

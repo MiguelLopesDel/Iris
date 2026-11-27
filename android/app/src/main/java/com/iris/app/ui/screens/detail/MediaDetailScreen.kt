@@ -19,6 +19,9 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.ui.res.stringResource
+import com.iris.app.R
+import com.iris.app.ui.text.appString
 import com.iris.app.ui.theme.IrisDanger
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Share
@@ -227,13 +230,13 @@ internal fun MediaDetailScreen(
                 onTitleClick = if (record != null || details != null) ({ openDetails() }) else null,
                 menu = when {
                     record != null && mediaUrl != null -> listOf(
-                        ViewerAction(Icons.Outlined.Info, "Sobre") { openDetails() },
-                        ViewerAction(Icons.Outlined.DriveFileRenameOutline, "Renomear") { renaming = true },
-                        ViewerAction(Icons.Outlined.FileDownload, "Salvar no celular") {
+                        ViewerAction(Icons.Outlined.Info, stringResource(R.string.viewer_about)) { openDetails() },
+                        ViewerAction(Icons.Outlined.DriveFileRenameOutline, stringResource(R.string.viewer_rename)) { renaming = true },
+                        ViewerAction(Icons.Outlined.FileDownload, stringResource(R.string.viewer_save_to_phone)) {
                             download(mediaUrl, record.cleanFilename)
                         },
                     )
-                    details != null -> listOf(ViewerAction(Icons.Outlined.Info, "Sobre") { openDetails() })
+                    details != null -> listOf(ViewerAction(Icons.Outlined.Info, stringResource(R.string.viewer_about)) { openDetails() })
                     else -> emptyList()
                 },
             )
@@ -242,14 +245,14 @@ internal fun MediaDetailScreen(
             when {
                 record != null && mediaUrl != null -> ViewerActionBar(
                     listOf(
-                        ViewerAction(Icons.Outlined.Share, "Compartilhar") { share(mediaUrl, record.cleanFilename) },
+                        ViewerAction(Icons.Outlined.Share, stringResource(R.string.viewer_share)) { share(mediaUrl, record.cleanFilename) },
                         if (record.favorite) {
-                            ViewerAction(Icons.Filled.Favorite, "Favorita") { viewModel?.toggleFavorite() }
+                            ViewerAction(Icons.Filled.Favorite, stringResource(R.string.viewer_favorite_on)) { viewModel?.toggleFavorite() }
                         } else {
-                            ViewerAction(Icons.Outlined.FavoriteBorder, "Favoritar") { viewModel?.toggleFavorite() }
+                            ViewerAction(Icons.Outlined.FavoriteBorder, stringResource(R.string.viewer_favorite_off)) { viewModel?.toggleFavorite() }
                         },
-                        ViewerAction(Icons.Default.Add, "Adicionar a") { pickingSpace = true },
-                        ViewerAction(Icons.Outlined.Delete, "Lixeira") { confirmingTrash = true },
+                        ViewerAction(Icons.Default.Add, stringResource(R.string.viewer_add_to)) { pickingSpace = true },
+                        ViewerAction(Icons.Outlined.Delete, stringResource(R.string.viewer_trash_action)) { confirmingTrash = true },
                     )
                 )
                 deviceUri != null -> Column {
@@ -257,10 +260,10 @@ internal fun MediaDetailScreen(
                     notInBackup?.let { NotInBackupBanner(it) }
                     ViewerActionBar(
                         listOf(
-                            ViewerAction(Icons.Outlined.Share, "Compartilhar") {
+                            ViewerAction(Icons.Outlined.Share, stringResource(R.string.viewer_share)) {
                                 shareDeviceMedia(context, Uri.parse(deviceUri), deviceDetails?.mimeType)
                             },
-                            ViewerAction(Icons.Outlined.Info, "Informações") { openDetails() },
+                            ViewerAction(Icons.Outlined.Info, stringResource(R.string.viewer_info)) { openDetails() },
                         )
                     )
                 }
@@ -327,18 +330,18 @@ internal fun MediaDetailScreen(
                 pickingSpace = false
                 val dbId = record.dbId
                 if (dbId == null) {
-                    viewModel.showNotice("Esta mídia ainda não pode ser enviada")
+                    viewModel.showNotice(appString(R.string.viewer_notice_cannot_send))
                 } else {
                     scope.launch {
                         application.irisRepository.addToSpace(space.id, dbId)
                             .onSuccess { added ->
                                 viewModel.showNotice(
-                                    if (added.created) "Enviada para ${space.name}"
-                                    else "Já estava em ${space.name}"
+                                    if (added.created) appString(R.string.viewer_notice_sent_to, space.name)
+                                    else appString(R.string.viewer_notice_already_in, space.name)
                                 )
                             }
                             .onFailure { e ->
-                                viewModel.showNotice(e.localizedMessage ?: "Não foi possível enviar")
+                                viewModel.showNotice(e.localizedMessage ?: appString(R.string.viewer_error_send))
                             }
                     }
                 }
@@ -350,11 +353,10 @@ internal fun MediaDetailScreen(
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmingTrash = false },
             containerColor = IrisBackground,
-            title = { Text("Mover para a lixeira?", color = MaterialTheme.colorScheme.onSurface) },
+            title = { Text(stringResource(R.string.viewer_trash_title), color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Text(
-                    "A foto sai da sua biblioteca no Iris e fica na lixeira, de onde pode ser " +
-                        "restaurada pelo site. A cópia no celular não é apagada.",
+                    stringResource(R.string.viewer_trash_message),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             },
@@ -365,10 +367,10 @@ internal fun MediaDetailScreen(
                         viewModel?.moveToTrash(onMoved = onBack)
                     },
                     enabled = !uiState.isTrashing
-                ) { Text("Mover para a lixeira", color = IrisDanger) }
+                ) { Text(stringResource(R.string.gallery_trash_confirm), color = IrisDanger) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmingTrash = false }) { Text("Cancelar") }
+                TextButton(onClick = { confirmingTrash = false }) { Text(stringResource(R.string.common_cancel)) }
             }
         )
     }
@@ -415,7 +417,7 @@ private fun ServerPage(
                 key = item.key,
                 image = localUri,
                 isVideo = record?.isVideo ?: localIsVideo ?: false,
-                description = record?.cleanFilename ?: "Mídia do aparelho",
+                description = record?.cleanFilename ?: stringResource(R.string.viewer_device_media),
             ),
             isCurrent = isCurrent,
             onTap = gestures.onTap,
@@ -444,9 +446,9 @@ private fun ServerPage(
             )
         }
         state.error != null -> EmptyState(
-            title = "Erro ao carregar",
+            title = stringResource(R.string.viewer_error_load),
             message = state.error,
-            actionLabel = "Tentar novamente",
+            actionLabel = stringResource(R.string.common_retry),
             onAction = onRetry
         )
         else -> Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -463,7 +465,7 @@ private fun DevicePage(item: ViewerItem.Device, isCurrent: Boolean, gestures: Pa
     val video = remember(item.uri) { isVideo(context, uri) }
     ZoomableMedia(
         // Coil draws a video's frame from its content URI.
-        content = MediaContent(key = item.key, image = uri, isVideo = video, description = "Mídia do aparelho"),
+        content = MediaContent(key = item.key, image = uri, isVideo = video, description = stringResource(R.string.viewer_device_media)),
         isCurrent = isCurrent,
         onTap = gestures.onTap,
         onZoomChanged = gestures.onZoomChanged,
@@ -537,7 +539,7 @@ private fun RenameDialog(
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = IrisBackground,
-        title = { Text("Renomear", color = MaterialTheme.colorScheme.onSurface) },
+        title = { Text(stringResource(R.string.viewer_rename), color = MaterialTheme.colorScheme.onSurface) },
         text = {
             Column {
                 OutlinedTextField(
@@ -545,11 +547,11 @@ private fun RenameDialog(
                     onValueChange = { value = it },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    label = { Text("Nome") }
+                    label = { Text(stringResource(R.string.viewer_rename_label)) }
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "A extensão é mantida pelo servidor.",
+                    stringResource(R.string.viewer_rename_hint),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -559,10 +561,10 @@ private fun RenameDialog(
             TextButton(
                 onClick = { onConfirm(value.trim()) },
                 enabled = !isWorking && value.isNotBlank()
-            ) { Text("Renomear", color = IrisAccent) }
+            ) { Text(stringResource(R.string.viewer_rename), color = IrisAccent) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
 }

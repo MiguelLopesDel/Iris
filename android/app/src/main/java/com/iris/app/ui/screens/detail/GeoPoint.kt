@@ -1,5 +1,8 @@
 package com.iris.app.ui.screens.detail
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
+
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -21,9 +24,9 @@ internal data class GeoPoint(val latitude: Double, val longitude: Double) {
     /** "41,15790° N · 8,62910° O", the way a person reads coordinates. */
     val label: String
         get() {
-            val br = Locale("pt", "BR")
-            val lat = String.format(br, "%.5f° %s", abs(latitude), if (latitude >= 0) "N" else "S")
-            val lon = String.format(br, "%.5f° %s", abs(longitude), if (longitude >= 0) "L" else "O")
+            val locale = Locale.getDefault()
+            val lat = String.format(locale, "%.5f° %s", abs(latitude), appString(if (latitude >= 0) R.string.geo_north else R.string.geo_south))
+            val lon = String.format(locale, "%.5f° %s", abs(longitude), appString(if (longitude >= 0) R.string.geo_east else R.string.geo_west))
             return "$lat · $lon"
         }
 

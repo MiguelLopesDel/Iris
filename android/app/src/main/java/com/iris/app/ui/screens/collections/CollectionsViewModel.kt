@@ -3,6 +3,7 @@ package com.iris.app.ui.screens.collections
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.model.IrisCollection
 import com.iris.app.data.model.IrisConcept
 import com.iris.app.data.model.MediaRecord
@@ -10,6 +11,7 @@ import com.iris.app.data.repository.IrisRepository
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
 import com.iris.app.ui.state.LatestJob
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -98,7 +100,7 @@ class CollectionsViewModel(
                     it.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        error = "Erro ao carregar álbuns do servidor"
+                        error = appString(R.string.collections_error_load_server)
                     )
                 }
             }
@@ -202,7 +204,7 @@ class CollectionMediaViewModel(
                     it.copy(
                         isLoading = false,
                         isLoadingMore = false,
-                        error = ex.localizedMessage ?: "Erro ao carregar membros da coleção"
+                        error = ex.localizedMessage ?: appString(R.string.collection_error_load_members)
                     )
                 }
             }

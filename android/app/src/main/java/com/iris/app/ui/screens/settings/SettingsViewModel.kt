@@ -1,6 +1,8 @@
 package com.iris.app.ui.screens.settings
 
+import com.iris.app.R
 import com.iris.app.ui.state.LatestJob
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
@@ -135,7 +137,7 @@ class SettingsViewModel(
                     isServerOnline = false,
                     serverMode = null,
                     serverInfo = null,
-                    connectionTestResult = "Informe o endereço do servidor para testar a conexão."
+                    connectionTestResult = appString(R.string.settings_msg_enter_address)
                 )
             }
             return
@@ -174,7 +176,7 @@ class SettingsViewModel(
                         isServerOnline = true,
                         serverMode = health.mode,
                         serverInfo = info,
-                        connectionTestResult = "Servidor online e acessível (modo: ${health.mode})",
+                        connectionTestResult = appString(R.string.settings_msg_online, health.mode),
                         connectionProblem = null,
                     )
                 }
@@ -184,7 +186,7 @@ class SettingsViewModel(
                 val problem = if (failure != null && origin != null) {
                     ConnectionProblem.from(failure, origin, security)
                 } else null
-                val err = failure?.localizedMessage ?: "Servidor inacessível"
+                val err = failure?.localizedMessage ?: appString(R.string.settings_msg_unreachable)
                 _uiState.update {
                     it.copy(
                         isTestingConnection = false,
@@ -192,7 +194,7 @@ class SettingsViewModel(
                         serverMode = null,
                         serverInfo = null,
                         connectionProblem = problem,
-                        connectionTestResult = problem?.let(::describe) ?: "Servidor inacessível: $err"
+                        connectionTestResult = problem?.let(::describe) ?: appString(R.string.settings_msg_unreachable_with_error, err)
                     )
                 }
             }
@@ -245,15 +247,14 @@ class SettingsViewModel(
         val origin = currentOrigin() ?: return
         val certificates = runCatching { ConnectionSecurity.parseCertificates(bytes) }.getOrDefault(emptyList())
         if (certificates.isEmpty()) {
-            _uiState.update { it.copy(securityMessage = "O arquivo não contém um certificado X.509 (PEM ou DER).") }
+            _uiState.update { it.copy(securityMessage = appString(R.string.settings_msg_not_certificate)) }
             return
         }
         val anchor = certificates.firstOrNull { security.anchorsLastRejected(origin, it) }
         if (anchor == null) {
             _uiState.update {
                 it.copy(
-                    securityMessage = "Esse certificado não é a autoridade que emitiu o certificado do servidor. " +
-                        "Nada foi alterado."
+                    securityMessage = appString(R.string.settings_msg_not_issuer)
                 )
             }
             return
@@ -320,7 +321,7 @@ class SettingsViewModel(
                 withContext(Dispatchers.IO) { irisRepository.apiClient.resetConnections() }
                 _uiState.update {
                     it.copy(isPairing = false, serverUrl = result.address,
-                        pairingMessage = "Pareado com o servidor em ${result.address}. Entre com a sua conta.")
+                        pairingMessage = appString(R.string.settings_msg_paired, result.address))
                 }
                 testConnection()
             } else {
@@ -334,12 +335,12 @@ class SettingsViewModel(
     }
 
     private fun describe(outcomes: List<AddressOutcome>): String =
-        "Nenhum endereço do código respondeu como este servidor:\n" + outcomes.joinToString("\n") { outcome ->
+        appString(R.string.settings_msg_no_address_matched) + "\n" + outcomes.joinToString("\n") { outcome ->
             "• ${outcome.address}: " + when (outcome) {
-                is AddressOutcome.Connected -> "conectado"
-                is AddressOutcome.OtherServer -> "respondeu, mas é outro servidor"
+                is AddressOutcome.Connected -> appString(R.string.settings_msg_connected)
+                is AddressOutcome.OtherServer -> appString(R.string.settings_msg_other_server)
                 is AddressOutcome.Skipped -> outcome.reason
-                is AddressOutcome.Failed -> outcome.problem?.let(::describe) ?: "não respondeu"
+                is AddressOutcome.Failed -> outcome.problem?.let(::describe) ?: appString(R.string.settings_msg_no_answer)
             }
         }
 

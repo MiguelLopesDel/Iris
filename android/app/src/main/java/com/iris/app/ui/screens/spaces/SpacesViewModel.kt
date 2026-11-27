@@ -3,6 +3,7 @@ package com.iris.app.ui.screens.spaces
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.model.SpaceAlbum
 import com.iris.app.data.model.SpaceItem
 import com.iris.app.data.model.SpaceItemsResponse
@@ -10,6 +11,7 @@ import com.iris.app.data.model.SpaceMember
 import com.iris.app.data.model.SpaceSummary
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.ui.state.LatestJob
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,7 +65,7 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                     _uiState.update {
-                        it.copy(isLoading = false, error = e.localizedMessage ?: "Erro ao carregar grupos")
+                        it.copy(isLoading = false, error = e.localizedMessage ?: appString(R.string.spaces_error_load_groups))
                     }
                 }
         }
@@ -83,7 +85,7 @@ class SpacesViewModel(private val repository: IrisRepository) : ViewModel() {
                 }
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value == requestedSession) {
-                        showNotice(e.localizedMessage ?: "Não foi possível criar o grupo")
+                        showNotice(e.localizedMessage ?: appString(R.string.spaces_error_create))
                     }
                 }
         }
@@ -213,7 +215,7 @@ class SpaceViewModel(
             _uiState.update { it.copy(items = result.items, nextBefore = result.nextBefore, isLoading = false) }
         }.onFailure { e ->
             if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
-            _uiState.update { it.failedToLoad(e.localizedMessage ?: "Erro ao carregar o grupo") }
+            _uiState.update { it.failedToLoad(e.localizedMessage ?: appString(R.string.spaces_error_load_one)) }
         }
     }
 
@@ -246,13 +248,13 @@ class SpaceViewModel(
                 .onSuccess { result ->
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                     showNotice(
-                        if (result.state == "duplicate") "Esta foto já está na sua biblioteca"
-                        else "Salva na sua biblioteca; aparece na Galeria depois de processada"
+                        if (result.state == "duplicate") appString(R.string.spaces_notice_duplicate)
+                        else appString(R.string.spaces_notice_saved)
                     )
                 }
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value == requestedSession) {
-                        showNotice(e.localizedMessage ?: "Não foi possível salvar")
+                        showNotice(e.localizedMessage ?: appString(R.string.spaces_error_save))
                     }
                 }
         }
@@ -265,12 +267,12 @@ class SpaceViewModel(
                 .onSuccess {
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                     _uiState.update { state -> state.copy(items = state.items.filterNot { it.id == item.id }) }
-                    showNotice("Removida do grupo; pode ser restaurada pela lixeira do grupo na web")
+                    showNotice(appString(R.string.spaces_notice_removed))
                     onRemoved()
                 }
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value == requestedSession) {
-                        showNotice(e.localizedMessage ?: "Não foi possível remover")
+                        showNotice(e.localizedMessage ?: appString(R.string.spaces_error_remove))
                     }
                 }
         }
@@ -298,7 +300,7 @@ class SpaceViewModel(
                 }
                 .onFailure { e ->
                     if (repository.credentialsStore.sessionIdentity.value == requestedSession) {
-                        showNotice(e.localizedMessage ?: "Não foi possível sair do grupo")
+                        showNotice(e.localizedMessage ?: appString(R.string.spaces_error_leave))
                     }
                 }
         }

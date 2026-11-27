@@ -10,6 +10,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.iris.app.IrisApplication
+import com.iris.app.R
 import com.iris.app.data.MediaDownloader
 import kotlinx.coroutines.launch
 
@@ -27,13 +28,13 @@ fun rememberMediaDownload(onNotice: (String) -> Unit): (String, String) -> Unit 
     var pending by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     fun start(url: String, fileName: String) {
-        onNotice("Baixando…")
+        onNotice(context.getString(R.string.download_started))
         scope.launch {
             val result = MediaDownloader(context, apiClient).download(url, fileName)
             onNotice(
                 when (result) {
-                    is MediaDownloader.Result.Saved -> "Salvo em Downloads: ${result.displayName}"
-                    is MediaDownloader.Result.Failed -> "Falha ao baixar: ${result.reason}"
+                    is MediaDownloader.Result.Saved -> context.getString(R.string.download_saved, result.displayName)
+                    is MediaDownloader.Result.Failed -> context.getString(R.string.download_failed, result.reason)
                 }
             )
         }
@@ -45,7 +46,7 @@ fun rememberMediaDownload(onNotice: (String) -> Unit): (String, String) -> Unit 
         val request = pending ?: return@rememberLauncherForActivityResult
         pending = null
         if (grants.values.all { it }) start(request.first, request.second)
-        else onNotice("Sem permissão de armazenamento, não dá para baixar")
+        else onNotice(context.getString(R.string.download_no_permission))
     }
 
     return { url, fileName ->

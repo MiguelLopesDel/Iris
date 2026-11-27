@@ -222,7 +222,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Text(
-                        text = "Backup",
+                        text = stringResource(R.string.backup_title),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -230,16 +230,16 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 navigationIcon = {
                     if (onBack != null) {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                         }
                     }
                 },
                 actions = {
                     IconButton(onClick = onConfigureServer) {
-                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Configurações")
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = stringResource(R.string.backup_settings))
                     }
                     IconButton(onClick = { viewModel.loadQueue() }) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar fila")
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = stringResource(R.string.backup_refresh_queue))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
@@ -284,14 +284,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Conectar Dispositivo",
+                                    text = stringResource(R.string.backup_connect_title),
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Autentique seu aparelho para iniciar o backup contínuo de mídias.",
+                                text = stringResource(R.string.backup_connect_help),
                                 fontSize = 13.sp,
                                 color = IrisTextSoft
                             )
@@ -302,9 +302,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("Servidor", fontSize = 12.sp, color = IrisTextMuted)
+                                    Text(stringResource(R.string.backup_server), fontSize = 12.sp, color = IrisTextMuted)
                                     Text(
-                                        text = uiState.serverUrl.ifBlank { "Endereço não configurado" },
+                                        text = uiState.serverUrl.ifBlank { stringResource(R.string.backup_address_not_set) },
                                         fontSize = 13.sp,
                                         color = IrisTextSoft,
                                         maxLines = 1,
@@ -312,7 +312,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     )
                                 }
                                 TextButton(onClick = onConfigureServer) {
-                                    Text(if (uiState.serverUrl.isBlank()) "Configurar" else "Trocar")
+                                    Text(if (uiState.serverUrl.isBlank()) stringResource(R.string.backup_configure) else stringResource(R.string.backup_change))
                                 }
                             }
 
@@ -321,7 +321,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             OutlinedTextField(
                                 value = uiState.loginUsernameInput,
                                 onValueChange = { viewModel.onUsernameChange(it) },
-                                label = { Text("Nome de usuário") },
+                                label = { Text(stringResource(R.string.backup_username)) },
                                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
@@ -338,7 +338,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             OutlinedTextField(
                                 value = uiState.loginPasswordInput,
                                 onValueChange = { viewModel.onPasswordChange(it) },
-                                label = { Text("Senha") },
+                                label = { Text(stringResource(R.string.backup_password)) },
                                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                                 visualTransformation = PasswordVisualTransformation(),
                                 singleLine = true,
@@ -382,9 +382,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                         strokeWidth = 2.dp
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Autenticando…", fontWeight = FontWeight.Bold)
+                                    Text(stringResource(R.string.backup_signing_in), fontWeight = FontWeight.Bold)
                                 } else {
-                                    Text("Entrar e Sincronizar", fontWeight = FontWeight.Bold)
+                                    Text(stringResource(R.string.backup_sign_in_sync), fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -430,7 +430,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = "Dispositivo Conectado",
+                                                text = stringResource(R.string.backup_device_connected),
                                                 fontSize = 12.sp,
                                                 color = IrisTextSoft
                                             )
@@ -441,14 +441,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                     onClick = { viewModel.logoutDevice() },
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Text("Desconectar", fontSize = 12.sp, color = IrisDanger)
+                                    Text(stringResource(R.string.backup_disconnect), fontSize = 12.sp, color = IrisDanger)
                                 }
                             }
 
                             if (uiState.deviceId.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Text(
-                                    text = "ID: ${uiState.deviceId.take(12)}…",
+                                    text = stringResource(R.string.backup_device_id, uiState.deviceId.take(12)),
                                     fontSize = 11.sp,
                                     color = IrisTextMuted
                                 )
@@ -473,7 +473,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Status da Sincronização",
+                                    text = stringResource(R.string.backup_sync_status),
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 15.sp
                                 )
@@ -570,8 +570,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                         // Preferences switches
                         PreferenceSwitch(
-                            title = "Backup automático contínuo",
-                            subtitle = "Descobre novas fotos e vídeos via MediaStore",
+                            title = stringResource(R.string.backup_auto_title),
+                            subtitle = stringResource(R.string.backup_auto_subtitle),
                             checked = uiState.autoBackupEnabled,
                             onCheckedChange = { enabled ->
                                 if (enabled) requestMediaPermission(MediaPermissionFollowUp.EnableAutoBackup)
@@ -675,8 +675,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         Spacer(modifier = Modifier.height(8.dp))
 
                         PreferenceSwitch(
-                            title = "Apenas em redes Wi-Fi",
-                            subtitle = "Economiza os dados móveis do plano",
+                            title = stringResource(R.string.backup_wifi_title),
+                            subtitle = stringResource(R.string.backup_wifi_subtitle),
                             checked = uiState.syncWifiOnly,
                             onCheckedChange = { viewModel.setSyncWifiOnly(it) }
                         )
@@ -684,8 +684,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         Spacer(modifier = Modifier.height(8.dp))
 
                         PreferenceSwitch(
-                            title = "Apenas enquanto carrega",
-                            subtitle = "Evita consumo excessivo de bateria",
+                            title = stringResource(R.string.backup_charging_title),
+                            subtitle = stringResource(R.string.backup_charging_subtitle),
                             checked = uiState.syncChargingOnly,
                             onCheckedChange = { viewModel.setSyncChargingOnly(it) }
                         )
@@ -740,8 +740,8 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 item {
                     EmptyState(
                         icon = Icons.Default.CloudUpload,
-                        title = "Nenhum item na fila",
-                        message = "Suas fotos e vídeos locais aparecerão aqui quando forem detectados e enviados."
+                        title = stringResource(R.string.backup_queue_empty_title),
+                        message = stringResource(R.string.backup_queue_empty_message)
                     )
                 }
             } else {
@@ -1004,13 +1004,13 @@ private fun UploadJobCard(job: LocalUploadJob) {
 @Composable
 private fun JobStateBadge(state: UploadJobState) {
     val (label, bg, fg) = when (state) {
-        UploadJobState.QUEUED -> Triple("Pendente", IrisSurfaceBright, IrisTextSoft)
-        UploadJobState.UPLOADING -> Triple("Enviando…", IrisAccent, IrisOnAccent)
-        UploadJobState.PENDING_PROCESSING -> Triple("Processando (Backup OK)", IrisViolet, Color.White)
-        UploadJobState.PROCESSING -> Triple("Processando…", IrisViolet, Color.White)
-        UploadJobState.READY -> Triple("Pronto", Color(0xFF2E7D32), Color.White)
-        UploadJobState.DUPLICATE -> Triple("Duplicado", Color(0xFF1565C0), Color.White)
-        UploadJobState.FAILED, UploadJobState.FAILED_PROCESSING -> Triple("Falhou", IrisDanger, Color.White)
+        UploadJobState.QUEUED -> Triple(stringResource(R.string.job_state_queued), IrisSurfaceBright, IrisTextSoft)
+        UploadJobState.UPLOADING -> Triple(stringResource(R.string.job_state_uploading), IrisAccent, IrisOnAccent)
+        UploadJobState.PENDING_PROCESSING -> Triple(stringResource(R.string.job_state_pending_processing), IrisViolet, Color.White)
+        UploadJobState.PROCESSING -> Triple(stringResource(R.string.job_state_processing), IrisViolet, Color.White)
+        UploadJobState.READY -> Triple(stringResource(R.string.job_state_ready), Color(0xFF2E7D32), Color.White)
+        UploadJobState.DUPLICATE -> Triple(stringResource(R.string.job_state_duplicate), Color(0xFF1565C0), Color.White)
+        UploadJobState.FAILED, UploadJobState.FAILED_PROCESSING -> Triple(stringResource(R.string.job_state_failed), IrisDanger, Color.White)
     }
 
     Box(

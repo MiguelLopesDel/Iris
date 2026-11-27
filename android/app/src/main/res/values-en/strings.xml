@@ -5,10 +5,15 @@
     <string name="tab_persons">People</string>
     <string name="tab_collections">Collections</string>
     <string name="tab_settings">Settings</string>
-
     <string name="sync_all_folders">All folders</string>
     <string name="sync_all_folders_on">Includes every visible source on this device</string>
     <string name="sync_all_folders_off">Includes only the folders selected below</string>
+    <string name="sync_backup_setup_title">Set up automatic backup?</string>
+    <string name="sync_backup_setup_message">Choose to send every folder or only some. That way you can leave out downloads and files you do not care about. The media goes to this account\'s private library.</string>
+    <string name="sync_backup_all_folders_action">All folders</string>
+    <string name="sync_backup_choose_folders_action">Choose folders</string>
+    <string name="sync_backup_not_now_action">Not now</string>
+    <string name="sync_backup_choose_scope_hint">Select at least one folder to start automatic backup.</string>
     <string name="sync_photos">Photos</string>
     <string name="sync_photos_description">Includes images from the selected folders</string>
     <string name="sync_videos">Videos</string>
@@ -26,6 +31,7 @@
     <string name="local_media_kind_videos">Videos</string>
     <string name="local_media_include_folder">Back it up</string>
     <string name="origin_iris_only">In Iris only, not on this device</string>
+    <string name="origin_device_only">Only on this device</string>
     <string name="origin_uploading">Uploading to Iris</string>
     <string name="origin_processing">In Iris, still processing</string>
     <string name="origin_failed">Upload failed, only on this device</string>
@@ -66,11 +72,21 @@
     <string name="queue_state_already_on_server">Already on the server</string>
     <string name="sync_status_scanning">Checking device media: %1$d of %2$d</string>
     <string name="sync_status_uploading">Uploading media in the background…</string>
+    <string name="sync_status_scanning_and_uploading">Scanning %1$d of %2$d · uploading</string>
+    <string name="backup_counter_total">Total</string>
+    <string name="backup_counter_saved">Saved</string>
+    <string name="backup_counter_remaining">Remaining</string>
+    <string name="backup_counter_failed">%1$d failed</string>
     <string name="sync_status_retry_pending">The last sync did not finish. Iris will retry on its own, but it may take a while; tap Retry now to skip the wait.</string>
     <string name="sync_status_idle">Ready to sync</string>
     <string name="sync_action_sync">Sync</string>
     <string name="sync_action_retry_now">Try now</string>
     <string name="queue_state_failed">Failed</string>
+    <string name="cloud_connection_unavailable">No connection to the cloud. Your local media stays on the device; Iris will reconnect and sync automatically in the background.</string>
+    <string name="tailscale_open">Open Tailscale</string>
+    <string name="tailscale_vpn_off">Tailscale seems to be off. Open it and turn the connection on so Iris can sync again.</string>
+    <string name="cloud_sync_retrying">The server is reachable, but the sync did not finish. Iris will try again in the background.</string>
+    <string name="cloud_queue_numbers_stale">The queue numbers could not be updated. The last values are kept, and Iris will try again.</string>
     <!-- Sync speed and history -->
     <string name="sync_speed_now">Now: %1$s</string>
     <string name="sync_speed_average">This run\'s average: %1$s</string>
@@ -128,24 +144,6 @@
     <string name="sync_history_foreground_service">Ran as a service with a notification</string>
     <string name="sync_history_foreground_refused">Android did not allow it to run as a service (battery restriction)</string>
     <string name="sync_notification_progress_no_rate">%1$d sent · %2$s left</string>
-
-    <string name="sync_backup_setup_title">Set up automatic backup?</string>
-    <string name="sync_backup_setup_message">Choose to send every folder or only some. That way you can leave out downloads and files you do not care about. The media goes to this account\'s private library.</string>
-    <string name="sync_backup_all_folders_action">All folders</string>
-    <string name="sync_backup_choose_folders_action">Choose folders</string>
-    <string name="sync_backup_not_now_action">Not now</string>
-    <string name="sync_backup_choose_scope_hint">Select at least one folder to start automatic backup.</string>
-    <string name="origin_device_only">Only on this device</string>
-    <string name="sync_status_scanning_and_uploading">Scanning %1$d of %2$d · uploading</string>
-    <string name="backup_counter_total">Total</string>
-    <string name="backup_counter_saved">Saved</string>
-    <string name="backup_counter_remaining">Remaining</string>
-    <string name="backup_counter_failed">%1$d failed</string>
-    <string name="cloud_connection_unavailable">No connection to the cloud. Your local media stays on the device; Iris will reconnect and sync automatically in the background.</string>
-    <string name="tailscale_open">Open Tailscale</string>
-    <string name="tailscale_vpn_off">Tailscale seems to be off. Open it and turn the connection on so Iris can sync again.</string>
-    <string name="cloud_sync_retrying">The server is reachable, but the sync did not finish. Iris will try again in the background.</string>
-    <string name="cloud_queue_numbers_stale">The queue numbers could not be updated. The last values are kept, and Iris will try again.</string>
     <string name="sync_folders_main">Main</string>
     <string name="sync_folder_some_selected">some folders</string>
     <plurals name="sync_folders_others"><item quantity="one">Other folder (%d)</item><item quantity="other">Other folders (%d)</item></plurals>
@@ -154,4 +152,503 @@
     <plurals name="sync_folder_videos"><item quantity="one">%d video</item><item quantity="other">%d videos</item></plurals>
     <plurals name="sync_folder_subfolders"><item quantity="one">%d folder</item><item quantity="other">%d folders</item></plurals>
     <string name="sync_folders_chosen_none">No folder backed up</string>
+    <!-- common -->
+    <string name="common_back">Back</string>
+    <string name="common_refresh">Refresh</string>
+    <string name="common_retry">Try again</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_restore">Restore</string>
+    <string name="common_remove">Remove</string>
+    <string name="common_all">All</string>
+    <string name="common_clear_search">Clear search</string>
+    <plurals name="common_media_count"><item quantity="one">%d media item</item><item quantity="other">%d media items</item></plurals>
+    <plurals name="common_item_count"><item quantity="one">%d item</item><item quantity="other">%d items</item></plurals>
+    <!-- trash -->
+    <string name="trash_title">Trash</string>
+    <string name="trash_restore_all">Restore all</string>
+    <string name="common_check_connection">Check the connection to the server.</string>
+    <string name="trash_empty_title">The trash is empty</string>
+    <plurals name="trash_empty_message"><item quantity="one">Photos moved to the trash stay here for %d day.</item><item quantity="other">Photos moved to the trash stay here for %d days.</item></plurals>
+    <plurals name="trash_hint"><item quantity="one">Tap a photo to restore it. After %d day it is deleted for good.</item><item quantity="other">Tap a photo to restore it. After %d days it is deleted for good.</item></plurals>
+    <string name="trash_restore_one_title">Restore this photo?</string>
+    <string name="trash_restore_one_message">It goes back to your library in Iris.</string>
+    <string name="trash_restore_all_title">Restore everything?</string>
+    <string name="trash_restore_all_message">Every item in the trash goes back to your library in Iris.</string>
+    <string name="trash_last_day">Last day</string>
+    <plurals name="trash_days_left"><item quantity="one">%d day</item><item quantity="other">%d days</item></plurals>
+    <string name="trash_error_open">Could not open the trash</string>
+    <string name="trash_error_restore">Could not restore</string>
+    <plurals name="trash_restored"><item quantity="one">%d item restored</item><item quantity="other">%d items restored</item></plurals>
+    <!-- persons -->
+    <string name="persons_title">People</string>
+    <string name="persons_error_load">Error loading people</string>
+    <string name="persons_empty_title">No people found</string>
+    <string name="persons_empty_message">Face recognition has not found any grouped faces on the server.</string>
+    <string name="person_fallback_name">Person #%1$d</string>
+    <string name="person_media_error_load">Error loading media</string>
+    <string name="person_media_empty_title">No linked media</string>
+    <string name="person_media_empty_message">This person has no media on record.</string>
+    <string name="person_media_error_load_person">Error loading this person\'s media</string>
+    <!-- collections -->
+    <string name="collections_title">Albums</string>
+    <string name="collections_tab_albums">Albums (%1$d)</string>
+    <string name="collections_tab_people">People</string>
+    <string name="collections_tab_shared">Shared</string>
+    <string name="collections_shortcut_favorites">Favorites</string>
+    <string name="collections_shortcut_documents">Documents</string>
+    <string name="collections_shortcut_on_phone">On this phone</string>
+    <string name="collections_empty_title">No albums</string>
+    <string name="collections_empty_message">Create an album in Iris to gather photos and videos.</string>
+    <string name="concepts_empty_title">No concepts</string>
+    <string name="concepts_empty_message">No thematic concept is set up on the server.</string>
+    <plurals name="concept_references"><item quantity="one">%d reference</item><item quantity="other">%d references</item></plurals>
+    <string name="collection_error_load">Error loading collection</string>
+    <string name="collection_empty_title">Empty collection</string>
+    <string name="collection_empty_message">No media has been added to this collection yet.</string>
+    <string name="collections_error_load_server">Error loading albums from the server</string>
+    <string name="collection_error_load_members">Error loading collection members</string>
+    <!-- documents -->
+    <string name="documents_title">Documents</string>
+    <string name="documents_error_title">Could not load the documents</string>
+    <string name="documents_empty_title">No documents found</string>
+    <string name="documents_empty_message">Photos of documents, bills and receipts show up here on their own.</string>
+    <!-- spaces -->
+    <string name="spaces_title">Shared</string>
+    <string name="spaces_subtitle">Galleries shared with other accounts</string>
+    <string name="spaces_new_group">New group</string>
+    <string name="spaces_error_list">Could not load the groups</string>
+    <string name="spaces_empty_title">No groups yet</string>
+    <string name="spaces_empty_message">Create a group and invite other accounts on this server from the web. Only what someone sends goes in: your library stays private.</string>
+    <string name="spaces_create_action">Create group</string>
+    <string name="spaces_name_label">Name</string>
+    <string name="spaces_name_placeholder">Family, Trip 2026…</string>
+    <string name="spaces_create_confirm">Create</string>
+    <string name="spaces_members">Members</string>
+    <string name="spaces_error_open">Could not open the group</string>
+    <string name="spaces_nothing_found">Nothing found for “%1$s”</string>
+    <string name="spaces_album_empty">Empty album</string>
+    <string name="spaces_group_empty">This group has no photos yet</string>
+    <string name="spaces_search_hint">Search looks at the name and description of each photo.</string>
+    <string name="spaces_albums_hint">Group albums are set up on the web.</string>
+    <string name="spaces_add_hint">Open a photo in your gallery, tap ⋮ and then Send to a group.</string>
+    <string name="spaces_waiting_hint">When someone sends photos, they show up here.</string>
+    <string name="spaces_members_hint">Invitations and roles are managed on the web.</string>
+    <string name="spaces_member_you">(you)</string>
+    <string name="spaces_role_manager">Manager</string>
+    <string name="spaces_role_contributor">Contributor</string>
+    <string name="spaces_role_viewer">Viewer</string>
+    <string name="spaces_leave">Leave group</string>
+    <string name="spaces_leave_title">Leave %1$s?</string>
+    <string name="spaces_leave_message">You lose access to this group. The photos you sent stay in it and the copies in your library do not change.</string>
+    <string name="spaces_leave_confirm">Leave</string>
+    <string name="spaces_video">Video</string>
+    <string name="spaces_action_save">Save</string>
+    <string name="spaces_action_download">Download</string>
+    <string name="spaces_remove_title">Remove from the group?</string>
+    <string name="spaces_remove_message">The photo leaves the group for everyone. Copies in personal libraries are not affected.</string>
+    <string name="spaces_send_title">Send to a group</string>
+    <string name="spaces_error_load_groups">Error loading groups</string>
+    <string name="spaces_send_no_groups">You can only send photos to groups where you are a contributor or manager. Create one in the Groups tab.</string>
+    <string name="spaces_send_copy_hint">The group gets a copy: deleting yours does not delete theirs.</string>
+    <string name="spaces_search_placeholder">Search this group</string>
+    <string name="spaces_error_load_one">Error loading the group</string>
+    <string name="spaces_error_create">Could not create the group</string>
+    <string name="spaces_error_save">Could not save</string>
+    <string name="spaces_notice_duplicate">This photo is already in your library</string>
+    <string name="spaces_notice_saved">Saved to your library; it appears in the Gallery once processed</string>
+    <string name="spaces_notice_removed">Removed from the group; it can be restored from the group trash on the web</string>
+    <string name="spaces_error_remove">Could not remove</string>
+    <string name="spaces_error_leave">Could not leave the group</string>
+    <!-- common (cont.) -->
+    <string name="common_ok">OK</string>
+    <!-- appearance -->
+    <string name="appearance_title">Appearance</string>
+    <string name="appearance_theme">Theme</string>
+    <string name="appearance_light">Light</string>
+    <string name="appearance_light_hint">White background, like most apps</string>
+    <string name="appearance_dark">Dark</string>
+    <string name="appearance_dark_hint">Black background</string>
+    <string name="appearance_system">Same as the phone</string>
+    <string name="appearance_system_hint">Follows the system light or dark mode</string>
+    <string name="appearance_colors">Colors</string>
+    <string name="appearance_colors_iris_hint">The Iris colors</string>
+    <string name="appearance_colors_phone">From the phone</string>
+    <string name="appearance_colors_phone_hint">The colors Android takes from your wallpaper</string>
+    <!-- connection security -->
+    <string name="security_cleartext_title">Unencrypted connection</string>
+    <string name="security_cleartext_uses_http">%1$s uses HTTP. Without encryption, the password, photos and videos travel as they are.</string>
+    <string name="security_cleartext_private">The address is on a private network (local network, VPN or private mesh). Only allow it if that network is trusted or already encrypts the traffic itself.</string>
+    <string name="security_cleartext_public">This address is not on a private network: traffic may cross third-party networks. Prefer HTTPS.</string>
+    <string name="security_cleartext_scope">The permission applies only to this server and can be revoked under Connection security.</string>
+    <string name="security_cleartext_allow">Allow HTTP for this server</string>
+    <string name="security_cert_title">Unrecognized certificate</string>
+    <string name="security_cert_presented">%1$s presented a certificate that was not issued by a public authority. This is normal for a server with its own certificate. Make sure it is your server by comparing the fingerprint with that of the certificate set up on it.</string>
+    <string name="security_cert_server">Server certificate</string>
+    <string name="security_cert_issued_by">Issued by</string>
+    <string name="security_cert_device_ca_installed">This certificate\'s authority is installed on the device.</string>
+    <string name="security_cert_use_device_cas">Use authorities installed on the device</string>
+    <string name="security_cert_trust_this">Trust this certificate</string>
+    <string name="security_cert_import_ca">Import the authority certificate…</string>
+    <string name="security_cert_no_device_ca">No authority installed on the device recognizes this certificate right now.</string>
+    <string name="security_cert_issuer">Issuer: %1$s</string>
+    <string name="security_cert_valid_until">Valid until %1$s</string>
+    <string name="security_cert_fingerprint_description">SHA-256 fingerprint %1$s</string>
+    <string name="security_card_title">Connection security</string>
+    <string name="security_trust_system">Certificates: public authorities only (default)</string>
+    <string name="security_trust_device">Certificates: also authorities installed on the device</string>
+    <string name="security_trust_pinned">Certificates: only the authority pinned for this server</string>
+    <string name="security_cleartext_on">Unencrypted HTTP: allowed</string>
+    <string name="security_cleartext_off">Unencrypted HTTP: not allowed</string>
+    <string name="security_identity_pinned">Server identity: pinned by pairing (code %1$s)</string>
+    <string name="security_identity_unpinned">Server identity: not pinned. Pair with the code so the app only talks to this server.</string>
+    <string name="security_reset_default">Restore the default for this server</string>
+    <string name="pairing_entry_title">Pair with a code</string>
+    <string name="pairing_entry_help">In the browser, under System → Connected devices → Connect a phone, Iris shows a QR code. Scan the code or paste the text shown below it.</string>
+    <string name="pairing_scan_qr">Scan QR code</string>
+    <string name="pairing_paste_label">Or paste the code (iris://pair…)</string>
+    <string name="pairing_continue">Continue</string>
+    <string name="pairing_confirm_title">Trust this server?</string>
+    <string name="pairing_server_code">Server code</string>
+    <string name="pairing_server_code_description">Server code: %1$s</string>
+    <string name="pairing_compare_code">Check that it is the same code shown on the Iris screen where you read the QR. If it is different, tap Cancel.</string>
+    <string name="pairing_trust_effect">By trusting, the app accepts this server\'s certificate and only talks to it: any other device trying to pass as it is refused.</string>
+    <string name="pairing_no_identity">This server runs a version of Iris that does not show an identity code. Only confirm if you read the QR on your own server\'s screen.</string>
+    <string name="pairing_cleartext_warning">Some addresses in this code are not encrypted (http://). If the app uses one of them, only do so on a trusted network.</string>
+    <string name="pairing_no_account_access">Trusting does not give access to your account: afterwards, sign in with your username and password.</string>
+    <string name="pairing_hide_details">Hide technical details</string>
+    <string name="pairing_show_details">Show technical details</string>
+    <string name="pairing_details_addresses">The app uses the first of these addresses that answers as this server:</string>
+    <string name="pairing_details_key">Identity key (SHA-256):</string>
+    <string name="pairing_details_ca">Certificate authority (SHA-256), which becomes trusted for the https address that answers as this server:</string>
+    <string name="pairing_trust">Trust</string>
+    <!-- settings -->
+    <string name="settings_scan_prompt">Point at the code under Connect a phone</string>
+    <string name="settings_pairing_title">Pairing</string>
+    <string name="settings_certificate_title">Certificate</string>
+    <string name="settings_title">Server Settings</string>
+    <string name="settings_connection_title">Connection to the Iris Server</string>
+    <string name="settings_connection_help">Enter the IP address or domain where the Iris API is running (FastAPI).</string>
+    <string name="settings_shortcuts">Quick shortcuts:</string>
+    <string name="settings_shortcut_emulator">Emulator (10.0.2.2)</string>
+    <string name="settings_shortcut_localhost">Localhost</string>
+    <string name="settings_testing">Testing connection…</string>
+    <string name="settings_save_test">Save and Test Connection</string>
+    <string name="settings_pairing_progress">Pairing…</string>
+    <string name="settings_server_connected">Iris Server Connected</string>
+    <string name="settings_connection_failed">Connection Failed</string>
+    <string name="settings_library_access">Private Library Access</string>
+    <string name="settings_device_signed_in">Device signed in as %1$s</string>
+    <string name="settings_device_signed_out">Device not signed in</string>
+    <string name="settings_device_signed_out_hint">The server is reachable, but to view and sync your private meme library, sign this device in from the \'Backup\' tab.</string>
+    <string name="settings_library_info">Library Information</string>
+    <string name="settings_info_total_media">Total Indexed Media</string>
+    <string name="settings_info_ai_device">AI Device</string>
+    <string name="settings_info_embeddings_model">Embeddings Model</string>
+    <string name="settings_info_vlm_model">VLM Model</string>
+    <string name="settings_info_database">Database</string>
+    <string name="settings_info_faiss_index">FAISS Index</string>
+    <string name="settings_info_faiss_active">Active and loaded</string>
+    <string name="settings_info_faiss_inactive">Not initialized</string>
+    <string name="settings_perf_title">Performance diagnostics</string>
+    <string name="settings_perf_help">Only measures aggregated timings on this device. It does not record photos, URLs, accounts or passwords.</string>
+    <string name="settings_perf_stop">Stop diagnostics</string>
+    <string name="settings_perf_start">Start diagnostics</string>
+    <string name="settings_perf_median">Median / P90 / max</string>
+    <string name="settings_perf_upload_throughput">%1$.1f MB/s during PUT calls • %2$.1f MiB/s queue average • %3$.1f MiB in %4$.1f s (%5$d runs)</string>
+    <string name="settings_perf_confirmed_items">%1$.2f items/s • %2$d confirmed in %3$d runs</string>
+    <!-- settings messages -->
+    <string name="settings_msg_enter_address">Enter the server address to test the connection.</string>
+    <string name="settings_msg_online">Server online and reachable (mode: %1$s)</string>
+    <string name="settings_msg_unreachable">Server unreachable</string>
+    <string name="settings_msg_unreachable_with_error">Server unreachable: %1$s</string>
+    <string name="settings_msg_not_certificate">The file does not contain an X.509 certificate (PEM or DER).</string>
+    <string name="settings_msg_not_issuer">That certificate is not the authority that issued the server\'s certificate. Nothing was changed.</string>
+    <string name="settings_msg_paired">Paired with the server at %1$s. Sign in with your account.</string>
+    <string name="settings_msg_no_address_matched">No address in the code answered as this server:</string>
+    <string name="settings_msg_connected">connected</string>
+    <string name="settings_msg_other_server">answered, but it is a different server</string>
+    <string name="settings_msg_no_answer">did not answer</string>
+    <!-- backup screen -->
+    <string name="backup_title">Backup</string>
+    <string name="backup_settings">Settings</string>
+    <string name="backup_refresh_queue">Refresh queue</string>
+    <string name="backup_connect_title">Connect Device</string>
+    <string name="backup_connect_help">Sign in on this device to start continuous media backup.</string>
+    <string name="backup_server">Server</string>
+    <string name="backup_address_not_set">Address not set</string>
+    <string name="backup_configure">Set up</string>
+    <string name="backup_change">Change</string>
+    <string name="backup_username">Username</string>
+    <string name="backup_password">Password</string>
+    <string name="backup_signing_in">Signing in…</string>
+    <string name="backup_sign_in_sync">Sign In and Sync</string>
+    <string name="backup_device_connected">Device Connected</string>
+    <string name="backup_disconnect">Disconnect</string>
+    <string name="backup_sync_status">Sync Status</string>
+    <string name="backup_auto_title">Continuous automatic backup</string>
+    <string name="backup_auto_subtitle">Finds new photos and videos through MediaStore</string>
+    <string name="backup_wifi_title">Wi-Fi networks only</string>
+    <string name="backup_wifi_subtitle">Saves your mobile data plan</string>
+    <string name="backup_charging_title">Only while charging</string>
+    <string name="backup_charging_subtitle">Avoids excessive battery use</string>
+    <string name="backup_queue_empty_title">No items in the queue</string>
+    <string name="backup_queue_empty_message">Your local photos and videos will appear here once they are detected and sent.</string>
+    <string name="backup_device_id">ID: %1$s…</string>
+    <string name="job_state_queued">Pending</string>
+    <string name="job_state_uploading">Sending…</string>
+    <string name="job_state_pending_processing">Processing (backed up)</string>
+    <string name="job_state_processing">Processing…</string>
+    <string name="job_state_ready">Ready</string>
+    <string name="job_state_duplicate">Duplicate</string>
+    <string name="job_state_failed">Failed</string>
+    <string name="backup_error_sign_in">Error signing in the device</string>
+    <!-- device folders -->
+    <string name="folder_camera">Camera</string>
+    <string name="folder_screenshots">Screenshots</string>
+    <string name="folder_screen_recordings">Screen recordings</string>
+    <string name="folder_sent">Sent</string>
+    <string name="folder_images">Images</string>
+    <string name="folder_videos">Videos</string>
+    <string name="folder_stickers">Stickers</string>
+    <!-- common (media kinds) -->
+    <string name="common_clear">Clear</string>
+    <string name="common_images">Images</string>
+    <string name="common_videos">Videos</string>
+    <string name="common_today">Today</string>
+    <string name="common_yesterday">Yesterday</string>
+    <string name="common_unknown_date">Unknown date</string>
+    <!-- errors -->
+    <string name="error_auth_required_backup">Authentication required (sign in from the Backup tab)</string>
+    <string name="error_unexpected_response">Unexpected response from the server (check the URL in Settings)</string>
+    <!-- search -->
+    <string name="search_title">Multimodal Search</string>
+    <string name="search_random">Random</string>
+    <string name="search_mode_semantic">Semantic (AI)</string>
+    <string name="search_mode_filename">File Name</string>
+    <string name="search_placeholder_semantic">Describe the scene, text or meme…</string>
+    <string name="search_placeholder_filename">Part of the file name…</string>
+    <string name="search_filters">Filters</string>
+    <string name="search_loading">Searching with AI embeddings…</string>
+    <string name="search_failed">Search failed</string>
+    <string name="search_empty_title">Search your memes</string>
+    <string name="search_empty_message">Type keywords, text found in the image or abstract concepts like \'disappointment\', \'surprised cat\', \'Monday\'.</string>
+    <string name="search_see_random">See random media</string>
+    <string name="search_no_results_title">No results</string>
+    <string name="search_no_results_message">No media matched the search \"%1$s\". Try adjusting the balance or using broader terms.</string>
+    <plurals name="search_result_count"><item quantity="one">%d result</item><item quantity="other">%d results</item></plurals>
+    <string name="search_balance_label">Search Balance:</string>
+    <string name="search_balance_visual">Visual (Colors/Objects)</string>
+    <string name="search_balance_conceptual">Conceptual (Meaning)</string>
+    <string name="search_balance_even">Balanced (50/50)</string>
+    <string name="search_balance_visual_end">🖼️ Visual</string>
+    <string name="search_balance_conceptual_end">💡 Conceptual</string>
+    <string name="search_error">Search error</string>
+    <string name="search_error_random">Error fetching random media</string>
+    <!-- gallery -->
+    <plurals name="gallery_trash_title"><item quantity="one">Move %d item to the trash?</item><item quantity="other">Move %d items to the trash?</item></plurals>
+    <string name="gallery_trash_message">They leave your library in Iris and go to the trash, from where they can be restored on the website. Copies on the phone are not deleted.</string>
+    <string name="gallery_trash_confirm">Move to trash</string>
+    <string name="gallery_cancel_selection">Cancel selection</string>
+    <string name="gallery_share">Share</string>
+    <string name="gallery_add_to_group">Add to a group</string>
+    <string name="gallery_show_device_photos">Show photos from this device</string>
+    <string name="gallery_signed_out_with_device">%1$s Meanwhile, you see the photos on this device.</string>
+    <string name="gallery_signed_out_device_only">Device photos. Sign in to also see the photos on the Iris server.</string>
+    <string name="gallery_login_required">Sign-in Required</string>
+    <string name="gallery_login_message">Server connected! To view your private library, sign this device in.</string>
+    <string name="gallery_login_action">Sign In</string>
+    <string name="gallery_error_connect">Could not connect</string>
+    <string name="gallery_error_server_unreachable">Could not reach the Iris server. Check that it is running and the URL in Settings.</string>
+    <string name="gallery_error_server_hint">Check that the Iris server is running.</string>
+    <string name="gallery_empty_title">No media found</string>
+    <string name="gallery_no_device_access_title">Device photos not available</string>
+    <string name="gallery_empty_message">No photos or videos on this device or in the Iris library.</string>
+    <string name="gallery_no_device_access_message">Allow access to photos and videos to show them alongside the Iris library.</string>
+    <string name="gallery_allow_access">Allow access to photos</string>
+    <string name="gallery_loading_more">Loading more… %1$d of %2$d</string>
+    <string name="gallery_date_same_year_pattern">MMMM d</string>
+    <string name="gallery_date_other_year_pattern">MMMM d, yyyy</string>
+    <plurals name="gallery_trashed_count"><item quantity="one">%d item moved to the trash</item><item quantity="other">%d items moved to the trash</item></plurals>
+    <string name="gallery_error_trash">Could not move to the trash</string>
+    <string name="gallery_error_load_library">Error loading media from the library</string>
+    <plurals name="gallery_added_sent"><item quantity="one">%1$d sent to %2$s</item><item quantity="other">%1$d sent to %2$s</item></plurals>
+    <plurals name="gallery_added_already"><item quantity="one">%d was already there</item><item quantity="other">%d were already there</item></plurals>
+    <plurals name="gallery_added_failed"><item quantity="one">%d could not be sent</item><item quantity="other">%d could not be sent</item></plurals>
+    <string name="gallery_added_none">Nothing was sent</string>
+    <plurals name="on_this_day_years_ago"><item quantity="one">%d year ago</item><item quantity="other">%d years ago</item></plurals>
+    <string name="on_this_day_title">On this day</string>
+    <string name="signed_out_replaced_no_accounts">The server was reinstalled and has no accounts yet. Create the account on the server and pair this device again.</string>
+    <string name="signed_out_no_accounts">The server has no accounts yet. Create the account on the server and then pair this device.</string>
+    <string name="signed_out_replaced">The server was reinstalled. Sign in with the new account or pair this device again.</string>
+    <string name="backup_state_signed_out">Sign in to back up</string>
+    <string name="backup_state_signed_out_short">Sign in</string>
+    <string name="backup_state_offline">No connection to the server</string>
+    <string name="backup_state_offline_short">No connection</string>
+    <string name="backup_state_attention">The backup needs attention</string>
+    <string name="backup_state_attention_short">Backup problem</string>
+    <string name="backup_state_ok">Backup up to date</string>
+    <plurals name="backup_label_items"><item quantity="one">%1$s item</item><item quantity="other">%1$s items</item></plurals>
+    <!-- viewer -->
+    <string name="viewer_back">Back</string>
+    <string name="viewer_close_info">Close information</string>
+    <string name="viewer_more_options">More options</string>
+    <string name="viewer_play_video">Play video</string>
+    <string name="viewer_about">About</string>
+    <string name="viewer_rename">Rename</string>
+    <string name="viewer_save_to_phone">Save to phone</string>
+    <string name="viewer_share">Share</string>
+    <string name="viewer_favorite_on">Favorite</string>
+    <string name="viewer_favorite_off">Favorite</string>
+    <string name="viewer_add_to">Add to</string>
+    <string name="viewer_info">Information</string>
+    <string name="viewer_trash_action">Trash</string>
+    <string name="viewer_notice_cannot_send">This media cannot be sent yet</string>
+    <string name="viewer_notice_sent_to">Sent to %1$s</string>
+    <string name="viewer_notice_already_in">Was already in %1$s</string>
+    <string name="viewer_error_send">Could not send</string>
+    <string name="viewer_trash_title">Move to the trash?</string>
+    <string name="viewer_trash_message">The photo leaves your library in Iris and goes to the trash, from where it can be restored on the website. The copy on the phone is not deleted.</string>
+    <string name="viewer_device_media">Device media</string>
+    <string name="viewer_error_load">Error loading</string>
+    <string name="viewer_rename_label">Name</string>
+    <string name="viewer_rename_hint">The extension is kept by the server.</string>
+    <string name="viewer_error_incompatible">The server sent an incompatible details format. Update Iris and try again.</string>
+    <string name="viewer_error_load_media">Error loading media</string>
+    <string name="viewer_error_favorite">Could not update favorites</string>
+    <string name="viewer_notice_trashed">Moved to the trash</string>
+    <string name="viewer_notice_renamed">Renamed</string>
+    <string name="viewer_error_name_taken">A file with that name already exists</string>
+    <string name="viewer_error_name_invalid">Invalid name</string>
+    <string name="viewer_error_rename">Could not rename</string>
+    <string name="viewer_selected">Selected</string>
+    <string name="viewer_not_selected">Not selected</string>
+    <string name="viewer_preview_loading">Loading preview</string>
+    <string name="viewer_preview_unavailable">Preview unavailable</string>
+    <string name="download_started">Downloading…</string>
+    <string name="download_saved">Saved to Downloads: %1$s</string>
+    <string name="download_failed">Download failed: %1$s</string>
+    <string name="download_no_permission">No storage permission, so the download is not possible</string>
+    <string name="share_preparing">Preparing to share…</string>
+    <string name="share_failed">Could not share: %1$s</string>
+    <string name="status_badge_connecting">Connecting…</string>
+    <string name="status_badge_offline">Offline</string>
+    <plurals name="status_badge_media"><item quantity="one">%d media item</item><item quantity="other">%d media items</item></plurals>
+    <string name="status_badge_login">Sign-in req.</string>
+    <string name="status_badge_online">Online</string>
+    <string name="nav_photos">Photos</string>
+    <string name="nav_albums">Albums</string>
+    <string name="nav_search">Search</string>
+    <!-- viewer info -->
+    <string name="detail_unknown_date">Unknown date</string>
+    <string name="detail_title">Details</string>
+    <string name="detail_show_less">Show less</string>
+    <string name="detail_show_more">Show more</string>
+    <string name="detail_type">Type</string>
+    <string name="detail_created_by">Created by</string>
+    <string name="detail_format">Format</string>
+    <string name="detail_device">Device</string>
+    <string name="detail_on_server">On the server</string>
+    <string name="detail_unknown_app">Unknown app (%1$s)</string>
+    <string name="detail_on_device">On this device</string>
+    <string name="detail_saved_in_iris">Saved in Iris</string>
+    <string name="detail_original_quality">Original quality</string>
+    <string name="detail_who_appears">Who appears</string>
+    <string name="detail_what_iris_saw">What Iris saw in this photo</string>
+    <string name="detail_text_in_photo">Text in the photo</string>
+    <string name="detail_albums">Albums</string>
+    <string name="detail_album_fallback">Album #%1$d</string>
+    <string name="detail_subjects">Subjects</string>
+    <string name="detail_similar">Similar photos</string>
+    <string name="detail_copy_text">Copy text</string>
+    <string name="detail_search_in_iris">Search in Iris</string>
+    <string name="detail_no_name">No name</string>
+    <string name="detail_photo_location">Photo location</string>
+    <string name="detail_open_in_maps">Open in Google Maps</string>
+    <string name="backup_card_not_in_backup">Not in backup</string>
+    <string name="backup_card_queued">Queued for Iris</string>
+    <string name="backup_card_queued_note">Goes in the next upload</string>
+    <string name="backup_card_sending">Sending to Iris</string>
+    <string name="backup_card_saved">Saved in Iris</string>
+    <string name="backup_card_saved_note">Original quality</string>
+    <string name="backup_card_failed">The upload failed</string>
+    <string name="backup_card_failed_note">It will not be sent again automatically</string>
+    <string name="backup_card_processing_failed">Original saved in Iris</string>
+    <string name="backup_card_processing_failed_note">Processing on the server failed; the file is still available</string>
+    <string name="backup_card_not_yet">Not in Iris yet</string>
+    <string name="backup_card_not_yet_note">Goes in the next backup</string>
+    <string-array name="viewer_months"><item>Jan.</item><item>Feb.</item><item>Mar.</item><item>Apr.</item><item>May</item><item>Jun.</item><item>Jul.</item><item>Aug.</item><item>Sep.</item><item>Oct.</item><item>Nov.</item><item>Dec.</item></string-array>
+    <string-array name="viewer_weekdays"><item>Mon.</item><item>Tue.</item><item>Wed.</item><item>Thu.</item><item>Fri.</item><item>Sat.</item><item>Sun.</item></string-array>
+    <string name="viewer_date_day_month">%2$s %1$d</string>
+    <string name="viewer_date_day_month_year">%2$s %1$d, %3$d</string>
+    <!-- connection messages -->
+    <string name="conn_cleartext">This address uses HTTP, without encryption, and has not been authorized on this device yet.</string>
+    <string name="conn_untrusted_cert">The server\'s certificate was not issued by an authority this device trusts.</string>
+    <string name="conn_name_mismatch">The certificate is valid, but it was not issued for %1$s. Use the address listed in the certificate or issue a certificate that includes this one.</string>
+    <string name="conn_not_https">The server at %1$s answered on port %2$d, but without HTTPS. Check the port number: Iris uses one port for the browser and another, with HTTPS, for phones.</string>
+    <string name="conn_unknown_host_tailscale">The name %1$s was not found. It belongs to Tailscale: check that Tailscale is switched on for this phone.</string>
+    <string name="conn_unknown_host">The name %1$s was not found. Check that the address is spelled correctly and that the phone has internet.</string>
+    <string name="conn_refused">The device at %1$s answered, but Iris is not listening on port %2$d. Check the port number and that Iris is running.</string>
+    <string name="conn_unreachable_tailscale">The server did not answer. %1$s is a Tailscale address: check that Tailscale is on and connected on this phone, and that the server is on.</string>
+    <string name="conn_unreachable_private">The server did not answer. %1$s is a home network address: check that the phone is on the same Wi-Fi as the server and that the server is on.</string>
+    <string name="conn_unreachable">The server at %1$s did not answer. Check that the phone has internet and that the server is on.</string>
+    <!-- pairing code -->
+    <string name="pairing_err_not_code">That is not an Iris pairing code.</string>
+    <string name="pairing_err_unknown_version">Code from an Iris version this app does not know. Update the app.</string>
+    <string name="pairing_err_incomplete">Incomplete code: the server identifier is missing.</string>
+    <string name="pairing_err_bad_address">Invalid address in the code: %1$s</string>
+    <string name="pairing_err_no_address">The code has no address.</string>
+    <string name="pairing_err_too_many_addresses">The code has too many addresses.</string>
+    <string name="pairing_err_bad_fingerprint">Invalid fingerprint in the code.</string>
+    <string name="pairing_err_bad_identity">Invalid server identity in the code.</string>
+    <string name="pairing_skip_https_required">This code confirms the server\'s identity and requires HTTPS; use the HTTPS address included in the code.</string>
+    <string name="pairing_skip_cleartext">Unencrypted HTTP was not allowed</string>
+    <string name="pairing_ca_none_answered">no HTTPS address answered</string>
+    <string name="pairing_ca_not_certificate">the response is not a certificate</string>
+    <string name="pairing_ca_mismatch">the certificate received from %1$s does not match the code</string>
+    <string name="pairing_ca_failed">Could not get the certificate authority named in the code (%1$s). Nothing was changed.</string>
+    <!-- server identity -->
+    <string name="identity_mismatch">The server at %1$s did not prove to be the paired Iris: %2$s</string>
+    <string name="identity_http_error">HTTP %1$d while verifying the identity</string>
+    <string name="identity_cannot_prove">it cannot prove its identity</string>
+    <string name="identity_bad_response">invalid identity response</string>
+    <string name="identity_unknown_format">unknown identity format</string>
+    <string name="identity_unreadable_key">unreadable key</string>
+    <string name="identity_wrong_key">the key is not the one from pairing</string>
+    <string name="identity_other_install">it is a different installation</string>
+    <string name="identity_bad_signature">invalid signature</string>
+    <string name="identity_api_detail">This is not your Iris server: %1$s. Nothing was sent to it. If you reinstalled the server, pair again with the code.</string>
+    <string name="security_cleartext_blocked">Unencrypted connection (HTTP) to %1$s not authorized</string>
+    <string name="security_no_pinned_cert">No pinned certificate for %1$s</string>
+    <!-- space and media names -->
+    <string name="media_fallback_name">Media #%1$d</string>
+    <!-- download and share errors -->
+    <string name="transfer_no_address">Media without an address</string>
+    <string name="transfer_need_storage_access">allow storage access to download</string>
+    <string name="transfer_server_replied">The server replied %1$d</string>
+    <string name="transfer_empty_response">Empty response</string>
+    <string name="download_error">Download failed</string>
+    <string name="download_error_create_file">Could not create the file</string>
+    <string name="download_error_write_file">Could not write the file</string>
+    <string name="download_error_write">Failed to save</string>
+    <string name="download_error_no_folder">Downloads folder unavailable</string>
+    <string name="share_error_nothing">Nothing to share</string>
+    <string name="share_error_prepare">Failed to prepare</string>
+    <!-- repository errors -->
+    <string name="repo_login_before_speed">Sign in before measuring the speed</string>
+    <string name="repo_login_before_sync">Sign in before syncing</string>
+    <string name="repo_account_unknown">The account could not be identified; sign in again before syncing</string>
+    <string name="repo_upload_incomplete">The upload is incomplete and will resume on the next sync</string>
+    <!-- misc -->
+    <plurals name="common_photo_count"><item quantity="one">%d photo</item><item quantity="other">%d photos</item></plurals>
+    <plurals name="gallery_selected_count"><item quantity="one">%d selected</item><item quantity="other">%d selected</item></plurals>
+    <string name="spaces_added_by">by %1$s</string>
+    <string name="geo_north">N</string>
+    <string name="geo_south">S</string>
+    <string name="geo_east">E</string>
+    <string name="geo_west">W</string>
+    <string name="settings_server_url">Server URL</string>
+    <string name="settings_device_id">Device ID: %1$s…</string>
+    <!-- server responses -->
+    <string name="api_auth_required">Authentication required</string>
+    <string name="api_https_required">This server was paired with an identity. Use the HTTPS address from the pairing code; credentials are not sent over HTTP.</string>
 </resources>

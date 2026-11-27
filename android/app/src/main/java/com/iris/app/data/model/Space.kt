@@ -1,5 +1,7 @@
 package com.iris.app.data.model
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -17,9 +19,9 @@ data class SpaceSummary(
     val canAdd: Boolean get() = role == "contributor" || role == "manager"
     val roleLabel: String
         get() = when (role) {
-            "manager" -> "Gestor"
-            "contributor" -> "Colaborador"
-            else -> "Visualizador"
+            "manager" -> appString(R.string.spaces_role_manager)
+            "contributor" -> appString(R.string.spaces_role_contributor)
+            else -> appString(R.string.spaces_role_viewer)
         }
 }
 

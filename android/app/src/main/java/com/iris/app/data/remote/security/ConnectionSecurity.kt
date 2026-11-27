@@ -1,5 +1,7 @@
 package com.iris.app.data.remote.security
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Connection
@@ -91,7 +93,7 @@ class InMemoryServerSecurityStore : ServerSecurityStore {
 
 /** HTTP to a server whose user has not accepted unencrypted traffic. */
 class CleartextNotPermittedException(val origin: ServerOrigin) :
-    IOException("Conexão sem criptografia (HTTP) com $origin não autorizada")
+    IOException(appString(R.string.security_cleartext_blocked, origin.toString()))
 
 /**
  * Connection policy shared by every HTTP client of the app: API calls,
@@ -373,7 +375,7 @@ internal class PolicyTrustManager(
                 TrustMode.DEVICE_CAS -> check(deviceCas.value ?: system)
                 TrustMode.PINNED -> {
                     val anchors = security.pinnedCertificates
-                    if (anchors.isEmpty()) throw CertificateException("Nenhum certificado fixado para $origin")
+                    if (anchors.isEmpty()) throw CertificateException(appString(R.string.security_no_pinned_cert, origin.toString()))
                     pinnedManager(anchors).checkServerTrusted(chain, authType)
                 }
             }

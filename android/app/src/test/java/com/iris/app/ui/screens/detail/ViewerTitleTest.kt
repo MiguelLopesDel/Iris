@@ -7,6 +7,12 @@ import java.time.ZoneOffset
 import java.time.ZoneId
 
 class ViewerTitleTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
     private val today = LocalDate.of(2026, 10, 8)
 
     @Test

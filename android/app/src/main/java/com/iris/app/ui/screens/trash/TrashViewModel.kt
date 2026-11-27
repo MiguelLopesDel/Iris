@@ -3,9 +3,12 @@ package com.iris.app.ui.screens.trash
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.LibraryChanges
 import com.iris.app.data.model.TrashedItem
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.ui.text.appPlural
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,7 +45,7 @@ class TrashViewModel(private val repository: IrisRepository) : ViewModel() {
                 .onSuccess { page ->
                     _uiState.update { it.copy(items = page.items, trashDays = page.trashDays, isLoading = false) }
                 }
-                .onFailure { _uiState.update { it.copy(isLoading = false, error = "Não foi possível abrir a lixeira") } }
+                .onFailure { _uiState.update { it.copy(isLoading = false, error = appString(R.string.trash_error_open)) } }
         }
     }
 
@@ -56,14 +59,14 @@ class TrashViewModel(private val repository: IrisRepository) : ViewModel() {
                         state.copy(
                             items = state.items.filterNot { it.id in restored },
                             notice = when {
-                                restored.isEmpty() -> "Não foi possível restaurar"
-                                restored.size == 1 -> "1 item restaurado"
-                                else -> "${restored.size} itens restaurados"
+                                restored.isEmpty() -> appString(R.string.trash_error_restore)
+                                restored.size == 1 -> appPlural(R.plurals.trash_restored, 1, 1)
+                                else -> appPlural(R.plurals.trash_restored, restored.size, restored.size)
                             },
                         )
                     }
                 }
-                .onFailure { _uiState.update { it.copy(notice = "Não foi possível restaurar") } }
+                .onFailure { _uiState.update { it.copy(notice = appString(R.string.trash_error_restore)) } }
         }
     }
 

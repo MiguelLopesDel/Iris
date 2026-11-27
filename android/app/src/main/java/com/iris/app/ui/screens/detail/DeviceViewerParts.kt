@@ -75,7 +75,7 @@ internal fun DeviceMediaSheet(
             .padding(bottom = 24.dp)
     ) {
         Text(
-            text = ViewerTitle.fullDate(null, details.takenAtMillis?.let { it / 1000.0 }) ?: "Data desconhecida",
+            text = ViewerTitle.fullDate(null, details.takenAtMillis?.let { it / 1000.0 }) ?: stringResource(R.string.detail_unknown_date),
             fontSize = 19.sp,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
@@ -83,7 +83,7 @@ internal fun DeviceMediaSheet(
 
         Spacer(Modifier.height(20.dp))
         Text(
-            "Detalhes",
+            stringResource(R.string.detail_title),
             fontSize = 19.sp,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(bottom = 10.dp)
@@ -100,7 +100,7 @@ internal fun DeviceMediaSheet(
             trailing = {
                 Icon(
                     if (fileExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                    contentDescription = if (fileExpanded) "Mostrar menos" else "Mostrar mais",
+                    contentDescription = stringResource(if (fileExpanded) R.string.detail_show_less else R.string.detail_show_more),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -125,8 +125,8 @@ internal fun DeviceMediaSheet(
             }
             if (fileExpanded) {
                 Spacer(Modifier.height(8.dp))
-                details.mimeType?.let { DetailLine("Tipo", it) }
-                details.ownerPackage?.let { DetailLine("Criada por", appLabel(it)) }
+                details.mimeType?.let { DetailLine(stringResource(R.string.detail_type), it) }
+                details.ownerPackage?.let { DetailLine(stringResource(R.string.detail_created_by), appLabel(it)) }
             }
         }
     }
@@ -135,15 +135,15 @@ internal fun DeviceMediaSheet(
 @Composable
 internal fun BackupCard(backup: DeviceBackupState?, notInBackup: NotInBackupNotice?) {
     val (icon, title, note) = when {
-        notInBackup != null -> Triple(Icons.Outlined.CloudOff, "Fora do backup", notInBackup.message)
-        backup == DeviceBackupState.QUEUED -> Triple(Icons.Outlined.CloudUpload, "Na fila para o Iris", "Vai no próximo envio")
-        backup == DeviceBackupState.SENDING -> Triple(Icons.Outlined.CloudUpload, "Enviando para o Iris", null)
-        backup == DeviceBackupState.SAVED -> Triple(Icons.Outlined.CloudDone, "Salva no Iris", "Qualidade original")
+        notInBackup != null -> Triple(Icons.Outlined.CloudOff, stringResource(R.string.backup_card_not_in_backup), notInBackup.message)
+        backup == DeviceBackupState.QUEUED -> Triple(Icons.Outlined.CloudUpload, stringResource(R.string.backup_card_queued), stringResource(R.string.backup_card_queued_note))
+        backup == DeviceBackupState.SENDING -> Triple(Icons.Outlined.CloudUpload, stringResource(R.string.backup_card_sending), null)
+        backup == DeviceBackupState.SAVED -> Triple(Icons.Outlined.CloudDone, stringResource(R.string.backup_card_saved), stringResource(R.string.backup_card_saved_note))
         backup == DeviceBackupState.FAILED ->
-            Triple(Icons.Outlined.ErrorOutline, "O envio falhou", "Não será reenviada automaticamente")
+            Triple(Icons.Outlined.ErrorOutline, stringResource(R.string.backup_card_failed), stringResource(R.string.backup_card_failed_note))
         backup == DeviceBackupState.FAILED_PROCESSING ->
-            Triple(Icons.Outlined.ErrorOutline, "Original salvo no Iris", "O processamento no servidor falhou; o arquivo continua disponível")
-        else -> Triple(Icons.Outlined.CloudOff, "Ainda não está no Iris", "Entra no próximo backup")
+            Triple(Icons.Outlined.ErrorOutline, stringResource(R.string.backup_card_processing_failed), stringResource(R.string.backup_card_processing_failed_note))
+        else -> Triple(Icons.Outlined.CloudOff, stringResource(R.string.backup_card_not_yet), stringResource(R.string.backup_card_not_yet_note))
     }
     DetailCard(icon = icon) {
         Text(title, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -209,7 +209,7 @@ internal fun shareDeviceMedia(context: Context, uri: Uri, mimeType: String?) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(
-        Intent.createChooser(send, "Compartilhar").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        Intent.createChooser(send, context.getString(R.string.viewer_share)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     )
 }
 

@@ -1,8 +1,10 @@
 package com.iris.app.data.remote
 
+import com.iris.app.R
 import com.iris.app.data.local.DeviceAuthStore
 import com.iris.app.performance.IrisPerformanceEventListener
 import com.iris.app.performance.PerformanceMonitor
+import com.iris.app.ui.text.appString
 import kotlinx.serialization.json.Json
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.ServerIdentityMismatchException
@@ -131,7 +133,7 @@ class IrisApiClient(
             return@Interceptor response.newBuilder()
                 .code(401)
                 .message("Autenticação necessária")
-                .body("{\"detail\":\"Autenticação necessária\"}".toResponseBody(jsonMediaType))
+                .body("{\"detail\":\"${appString(R.string.api_auth_required)}\"}".toResponseBody(jsonMediaType))
                 .build()
         }
 
@@ -159,7 +161,7 @@ class IrisApiClient(
                 .code(HTTPS_REQUIRED_CODE)
                 .message("HTTPS required for paired server")
                 .body(
-                    "{\"detail\":\"Este servidor foi pareado com uma identidade. Use o endereço HTTPS do código de pareamento; credenciais não são enviadas por HTTP.\"}"
+                    "{\"detail\":\"${appString(R.string.api_https_required)}\"}"
                         .toResponseBody("application/json".toMediaType())
                 )
                 .build()
@@ -174,7 +176,7 @@ class IrisApiClient(
                 .code(IDENTITY_MISMATCH_CODE)
                 .message("Server identity not proven")
                 .body(
-                    """{"detail":"Este não é o seu servidor Iris: ${mismatch.message?.replace("\"", "'")}. Nada foi enviado a ele. Se você reinstalou o servidor, pareie de novo pelo código."}"""
+                    """{"detail":"${appString(R.string.identity_api_detail, mismatch.message?.replace("\"", "'").orEmpty()).replace("\"", "'")}"}"""
                         .toResponseBody("application/json".toMediaType())
                 )
                 .build()

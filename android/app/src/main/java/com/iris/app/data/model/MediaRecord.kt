@@ -1,5 +1,7 @@
 package com.iris.app.data.model
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -60,7 +62,7 @@ data class MediaRecord(
 
     val cleanFilename: String
         get() = arquivo.ifBlank {
-            resolvedPath?.substringAfterLast('/') ?: "Mídia #$index"
+            resolvedPath?.substringAfterLast('/') ?: appString(R.string.media_fallback_name, index)
         }
 
     val tagsList: List<String>

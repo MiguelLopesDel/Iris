@@ -3,9 +3,11 @@ package com.iris.app.ui.screens.persons
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.Person
 import com.iris.app.data.repository.IrisRepository
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,7 +74,7 @@ class PersonsViewModel(
                     it.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        error = ex.localizedMessage ?: "Erro ao carregar pessoas"
+                        error = ex.localizedMessage ?: appString(R.string.persons_error_load)
                     )
                 }
             }
@@ -138,7 +140,7 @@ class PersonMediaViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = ex.localizedMessage ?: "Erro ao carregar mídias da pessoa"
+                        error = ex.localizedMessage ?: appString(R.string.person_media_error_load_person)
                     )
                 }
             }

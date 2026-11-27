@@ -6,6 +6,12 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class BackupFoldersTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
     private fun source(bucket: String, name: String, path: String, kind: String = "image", count: Int = 10) =
         DeviceMediaSource(
             id = "external_primary:$bucket:$kind",

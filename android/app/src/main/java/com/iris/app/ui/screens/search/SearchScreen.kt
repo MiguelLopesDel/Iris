@@ -1,6 +1,5 @@
 package com.iris.app.ui.screens.search
 
-import com.iris.app.ui.text.countOf
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -55,6 +54,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import com.iris.app.ui.text.countPluralResource
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -67,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iris.app.R
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.MediaCard
 import com.iris.app.ui.theme.IrisOnAccent
@@ -92,7 +94,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Text(
-                        text = "Busca Multimodal",
+                        text = stringResource(R.string.search_title),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -101,7 +103,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     IconButton(onClick = { viewModel.searchRandom() }) {
                         Icon(
                             imageVector = Icons.Default.Casino,
-                            contentDescription = "Aleatório",
+                            contentDescription = stringResource(R.string.search_random),
                             tint = IrisAccent
                         )
                     }
@@ -133,12 +135,12 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 Tab(
                     selected = uiState.mode == SearchMode.SEMANTIC,
                     onClick = { viewModel.setMode(SearchMode.SEMANTIC) },
-                    text = { Text("Semântica (IA)", fontWeight = FontWeight.SemiBold) }
+                    text = { Text(stringResource(R.string.search_mode_semantic), fontWeight = FontWeight.SemiBold) }
                 )
                 Tab(
                     selected = uiState.mode == SearchMode.FILENAME,
                     onClick = { viewModel.setMode(SearchMode.FILENAME) },
-                    text = { Text("Nome de Arquivo", fontWeight = FontWeight.SemiBold) }
+                    text = { Text(stringResource(R.string.search_mode_filename), fontWeight = FontWeight.SemiBold) }
                 )
             }
 
@@ -155,9 +157,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     placeholder = {
                         Text(
                             if (uiState.mode == SearchMode.SEMANTIC)
-                                "Descreva a cena, texto ou meme…"
+                                stringResource(R.string.search_placeholder_semantic)
                             else
-                                "Parte do nome do arquivo…"
+                                stringResource(R.string.search_placeholder_filename)
                         )
                     },
                     leadingIcon = {
@@ -166,7 +168,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     trailingIcon = {
                         if (uiState.query.isNotEmpty()) {
                             IconButton(onClick = { viewModel.onQueryChange("") }) {
-                                Icon(imageVector = Icons.Default.Clear, contentDescription = "Limpar")
+                                Icon(imageVector = Icons.Default.Clear, contentDescription = stringResource(R.string.common_clear))
                             }
                         }
                     },
@@ -198,7 +200,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     ) {
                         Icon(
                             imageVector = Icons.Default.Tune,
-                            contentDescription = "Filtros",
+                            contentDescription = stringResource(R.string.search_filters),
                             tint = if (uiState.showFilters) IrisOnAccent else IrisTextSoft
                         )
                     }
@@ -239,7 +241,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 FilterChip(
                     selected = uiState.mediaType == "all",
                     onClick = { viewModel.setMediaType("all") },
-                    label = { Text("Todas") },
+                    label = { Text(stringResource(R.string.common_all)) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = IrisAccent,
                         selectedLabelColor = IrisOnAccent
@@ -248,7 +250,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 FilterChip(
                     selected = uiState.mediaType == "image",
                     onClick = { viewModel.setMediaType("image") },
-                    label = { Text("Imagens") },
+                    label = { Text(stringResource(R.string.common_images)) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = IrisAccent,
                         selectedLabelColor = IrisOnAccent
@@ -257,7 +259,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 FilterChip(
                     selected = uiState.mediaType == "video",
                     onClick = { viewModel.setMediaType("video") },
-                    label = { Text("Vídeos") },
+                    label = { Text(stringResource(R.string.common_videos)) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = IrisAccent,
                         selectedLabelColor = IrisOnAccent
@@ -267,7 +269,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 if (uiState.results.isNotEmpty()) {
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
-                        text = countOf(uiState.total, "resultado", "resultados"),
+                        text = countPluralResource(R.plurals.search_result_count, uiState.total, uiState.total),
                         fontSize = 12.sp,
                         color = IrisTextSoft,
                         modifier = Modifier.align(Alignment.CenterVertically)
@@ -286,7 +288,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                             CircularProgressIndicator(color = IrisAccent)
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Buscando com embeddings de IA…",
+                                text = stringResource(R.string.search_loading),
                                 color = IrisTextSoft,
                                 fontSize = 14.sp
                             )
@@ -296,9 +298,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                 uiState.error != null -> {
                     EmptyState(
-                        title = "Falha na busca",
+                        title = stringResource(R.string.search_failed),
                         message = uiState.error ?: "",
-                        actionLabel = "Tentar novamente",
+                        actionLabel = stringResource(R.string.common_retry),
                         onAction = { viewModel.performSearch() }
                     )
                 }
@@ -306,18 +308,18 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 !uiState.hasSearched -> {
                     EmptyState(
                         icon = Icons.Outlined.Search,
-                        title = "Busque em seus memes",
-                        message = "Digite palavras-chave, textos presentes na imagem ou conceitos abstratos como 'decepção', 'gato surpreso', 'segunda-feira'.",
-                        actionLabel = "Ver mídias aleatórias",
+                        title = stringResource(R.string.search_empty_title),
+                        message = stringResource(R.string.search_empty_message),
+                        actionLabel = stringResource(R.string.search_see_random),
                         onAction = { viewModel.searchRandom() }
                     )
                 }
 
                 uiState.results.isEmpty() -> {
                     EmptyState(
-                        title = "Nenhum resultado",
-                        message = "Nenhuma mídia correspondeu à busca \"${uiState.query}\". Tente ajustar o balanço ou usar termos mais amplos.",
-                        actionLabel = "Limpar busca",
+                        title = stringResource(R.string.search_no_results_title),
+                        message = stringResource(R.string.search_no_results_message, uiState.query),
+                        actionLabel = stringResource(R.string.common_clear_search),
                         onAction = { viewModel.onQueryChange("") }
                     )
                 }
@@ -360,15 +362,15 @@ private fun SemanticBalanceControl(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "Balanço de Busca:",
+                text = stringResource(R.string.search_balance_label),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = IrisTextSoft
             )
             val balanceLabel = when {
-                localBalance < 0.35f -> "Visual (Cores/Objetos)"
-                localBalance > 0.65f -> "Conceitual (Significado)"
-                else -> "Equilibrado (50/50)"
+                localBalance < 0.35f -> stringResource(R.string.search_balance_visual)
+                localBalance > 0.65f -> stringResource(R.string.search_balance_conceptual)
+                else -> stringResource(R.string.search_balance_even)
             }
             Text(
                 text = balanceLabel,
@@ -394,8 +396,8 @@ private fun SemanticBalanceControl(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("🖼️ Visual", fontSize = 11.sp, color = IrisTextMuted)
-            Text("💡 Conceitual", fontSize = 11.sp, color = IrisTextMuted)
+            Text(stringResource(R.string.search_balance_visual_end), fontSize = 11.sp, color = IrisTextMuted)
+            Text(stringResource(R.string.search_balance_conceptual_end), fontSize = 11.sp, color = IrisTextMuted)
         }
     }
 }

@@ -4,6 +4,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DetailFormatTest {
+    private val originalLocale = java.util.Locale.getDefault()
+
+    @org.junit.Before
+    fun useBrazilianPortuguese() = java.util.Locale.setDefault(java.util.Locale("pt", "BR"))
+
+    @org.junit.After
+    fun restoreLocale() = java.util.Locale.setDefault(originalLocale)
+
 
     @Test
     fun `megapixels are rounded to one decimal, as a gallery shows them`() {

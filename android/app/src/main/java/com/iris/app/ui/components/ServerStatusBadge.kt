@@ -17,9 +17,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import com.iris.app.ui.text.countPluralResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iris.app.R
 import com.iris.app.data.model.ServerInfo
 import com.iris.app.ui.theme.IrisAccent
 import com.iris.app.ui.theme.IrisDanger
@@ -46,11 +49,11 @@ fun ServerStatusBadge(
         else -> IrisAccent
     }
     val label = when {
-        isConnecting -> "Conectando…"
-        !isOnline -> "Offline"
-        effectiveRecords > 0 -> "$effectiveRecords mídias"
-        !isDeviceLoggedIn -> "Login nec."
-        else -> "Online"
+        isConnecting -> stringResource(R.string.status_badge_connecting)
+        !isOnline -> stringResource(R.string.status_badge_offline)
+        effectiveRecords > 0 -> countPluralResource(R.plurals.status_badge_media, effectiveRecords, effectiveRecords)
+        !isDeviceLoggedIn -> stringResource(R.string.status_badge_login)
+        else -> stringResource(R.string.status_badge_online)
     }
 
     Row(

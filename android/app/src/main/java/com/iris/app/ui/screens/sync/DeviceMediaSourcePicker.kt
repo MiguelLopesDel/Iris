@@ -46,7 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.pluralStringResource
+import com.iris.app.ui.text.countPluralResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -161,7 +161,7 @@ internal fun DeviceMediaSourcePicker(
                 Text(
                     // Portuguese plural rules read 0 as "one", which would say "0 pasta".
                     text = if (chosenFolders == 0) stringResource(R.string.sync_folders_chosen_none)
-                    else pluralStringResource(R.plurals.sync_folders_chosen, chosenFolders, chosenFolders),
+                    else countPluralResource(R.plurals.sync_folders_chosen, chosenFolders, chosenFolders),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )

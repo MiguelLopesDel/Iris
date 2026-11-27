@@ -3,6 +3,7 @@ package com.iris.app.ui.screens.gallery
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.LibraryChanges
 import com.iris.app.data.model.MediaOriginIndex
 import com.iris.app.data.sync.DeviceFolders
@@ -20,6 +21,8 @@ import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.performance.Metric
 import com.iris.app.performance.PerformanceMonitor
 import com.iris.app.ui.state.isUnreadableResponse
+import com.iris.app.ui.text.appPlural
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -511,9 +514,9 @@ class GalleryViewModel(
                 .onSuccess { moved ->
                     // The collector in init reloads the grid.
                     LibraryChanges.changed()
-                    onDone(if (moved == 1) "1 item movido para a lixeira" else "$moved itens movidos para a lixeira")
+                    onDone(appPlural(R.plurals.gallery_trashed_count, moved, moved))
                 }
-                .onFailure { onDone("Não foi possível mover para a lixeira") }
+                .onFailure { onDone(appString(R.string.gallery_error_trash)) }
         }
     }
 
@@ -614,10 +617,10 @@ class GalleryViewModel(
                 val errorMsg = when {
                     rawMsg.contains("401") -> "AUTH_REQUIRED"
                     isUnreadableResponse(ex) ->
-                        "Resposta inesperada do servidor (verifique a URL em Configurações)"
+                        appString(R.string.error_unexpected_response)
                     rawMsg.contains("Connection refused", ignoreCase = true) || rawMsg.contains("ConnectException", ignoreCase = true) ->
                         "SERVER_OFFLINE"
-                    else -> rawMsg.ifBlank { "Erro ao carregar mídias da biblioteca" }
+                    else -> rawMsg.ifBlank { appString(R.string.gallery_error_load_library) }
                 }
                 if (errorMsg == "AUTH_REQUIRED") {
                     repository.logoutDevice()

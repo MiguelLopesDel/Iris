@@ -28,6 +28,12 @@ import java.util.concurrent.atomic.AtomicReference
  * at the same kind of address.
  */
 class ServerIdentityTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
     private val servers = mutableListOf<MockWebServer>()
     private val store = InMemoryServerSecurityStore()
     private val security = ConnectionSecurity(store, systemTrust = ConnectionSecurity.defaultTrustManager(null), deviceCaStore = { null })

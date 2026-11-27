@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
+import com.iris.app.R
 import com.iris.app.data.remote.IrisApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -51,17 +52,17 @@ class MediaDownloader(
     }
 
     suspend fun download(url: String, fileName: String): Result = withContext(Dispatchers.IO) {
-        if (url.isBlank()) return@withContext Result.Failed("Mídia sem endereço")
+        if (url.isBlank()) return@withContext Result.Failed(context.getString(R.string.transfer_no_address))
         if (missingPermissions(context).isNotEmpty()) {
-            return@withContext Result.Failed("permita o acesso ao armazenamento para baixar")
+            return@withContext Result.Failed(context.getString(R.string.transfer_need_storage_access))
         }
         try {
             val request = Request.Builder().url(url).build()
             apiClient.authenticatedOkHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.Failed("O servidor respondeu ${response.code}")
+                    return@withContext Result.Failed(context.getString(R.string.transfer_server_replied, response.code))
                 }
-                val body = response.body ?: return@withContext Result.Failed("Resposta vazia")
+                val body = response.body ?: return@withContext Result.Failed(context.getString(R.string.transfer_empty_response))
                 val mimeType = response.header("Content-Type") ?: "application/octet-stream"
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -79,7 +80,7 @@ class MediaDownloader(
                 }
             }
         } catch (e: Exception) {
-            Result.Failed(e.localizedMessage ?: "Falha ao baixar")
+            Result.Failed(e.localizedMessage ?: context.getString(R.string.download_error))
         }
     }
 
@@ -99,11 +100,11 @@ class MediaDownloader(
         }
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val item = resolver.insert(collection, values)
-            ?: return Result.Failed("Não foi possível criar o arquivo")
+            ?: return Result.Failed(context.getString(R.string.download_error_create_file))
 
         return try {
             resolver.openOutputStream(item)?.use(write)
-                ?: return Result.Failed("Não foi possível escrever o arquivo")
+                ?: return Result.Failed(context.getString(R.string.download_error_write_file))
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(item, values, null, null)
@@ -112,7 +113,7 @@ class MediaDownloader(
             // A half-written pending entry would linger in Downloads as a file
             // the user cannot open.
             resolver.delete(item, null, null)
-            Result.Failed(e.localizedMessage ?: "Falha ao gravar")
+            Result.Failed(e.localizedMessage ?: context.getString(R.string.download_error_write))
         }
     }
 
@@ -125,7 +126,7 @@ class MediaDownloader(
             Environment.DIRECTORY_DOWNLOADS
         )
         if (!directory.exists() && !directory.mkdirs()) {
-            return Result.Failed("Pasta de downloads indisponível")
+            return Result.Failed(context.getString(R.string.download_error_no_folder))
         }
         val target = uniqueFile(directory, fileName)
         return try {
@@ -136,7 +137,7 @@ class MediaDownloader(
             Result.Saved(target.name)
         } catch (e: Exception) {
             target.delete()
-            Result.Failed(e.localizedMessage ?: "Falha ao gravar")
+            Result.Failed(e.localizedMessage ?: context.getString(R.string.download_error_write))
         }
     }
 

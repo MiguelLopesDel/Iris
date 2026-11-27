@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.res.stringResource
+import com.iris.app.R
 import com.iris.app.data.model.SpaceAlbum
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -93,7 +95,12 @@ import com.iris.app.ui.theme.IrisSurface
 import com.iris.app.ui.theme.IrisTextMuted
 import com.iris.app.ui.theme.IrisTextSoft
 
-private val ROLE_LABELS = mapOf("manager" to "Gestor", "contributor" to "Colaborador", "viewer" to "Visualizador")
+private fun roleLabelRes(role: String): Int? = when (role) {
+    "manager" -> R.string.spaces_role_manager
+    "contributor" -> R.string.spaces_role_contributor
+    "viewer" -> R.string.spaces_role_viewer
+    else -> null
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,20 +122,20 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Column {
-                        Text("Compartilhados", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text("Galerias compartilhadas com outras contas", fontSize = 12.sp, color = IrisTextSoft)
+                        Text(stringResource(R.string.spaces_title), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.spaces_subtitle), fontSize = 12.sp, color = IrisTextSoft)
                     }
                 },
                 navigationIcon = {
                     if (onBack != null) {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                         }
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.load() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Atualizar")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.common_refresh))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground),
@@ -139,7 +146,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 onClick = { creating = true },
                 containerColor = IrisAccent,
                 contentColor = IrisOnAccent,
-            ) { Icon(Icons.Default.Add, contentDescription = "Novo grupo") }
+            ) { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.spaces_new_group)) }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = IrisBackground,
@@ -150,18 +157,17 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             ) { CircularProgressIndicator(color = IrisAccent) }
 
             uiState.error != null && uiState.spaces.isEmpty() -> EmptyState(
-                title = "Não foi possível carregar os grupos",
+                title = stringResource(R.string.spaces_error_list),
                 message = uiState.error ?: "",
-                actionLabel = "Tentar novamente",
+                actionLabel = stringResource(R.string.common_retry),
                 onAction = { viewModel.load() },
                 modifier = Modifier.padding(padding),
             )
 
             uiState.spaces.isEmpty() -> EmptyState(
-                title = "Nenhum grupo ainda",
-                message = "Crie um grupo e convide outras contas deste servidor pela web. " +
-                    "Só entra nele o que alguém enviar: sua biblioteca continua privada.",
-                actionLabel = "Criar grupo",
+                title = stringResource(R.string.spaces_empty_title),
+                message = stringResource(R.string.spaces_empty_message),
+                actionLabel = stringResource(R.string.spaces_create_action),
                 onAction = { creating = true },
                 modifier = Modifier.padding(padding),
             )
@@ -194,13 +200,13 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
         var name by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { creating = false },
-            title = { Text("Novo grupo") },
+            title = { Text(stringResource(R.string.spaces_new_group)) },
             text = {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it.take(120) },
-                    label = { Text("Nome") },
-                    placeholder = { Text("Família, Viagem 2026…") },
+                    label = { Text(stringResource(R.string.spaces_name_label)) },
+                    placeholder = { Text(stringResource(R.string.spaces_name_placeholder)) },
                     singleLine = true,
                 )
             },
@@ -208,9 +214,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 TextButton(enabled = name.isNotBlank(), onClick = {
                     creating = false
                     viewModel.create(name) { space -> onSpaceClick(space.id, space.name) }
-                }) { Text("Criar") }
+                }) { Text(stringResource(R.string.spaces_create_confirm)) }
             },
-            dismissButton = { TextButton(onClick = { creating = false }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { creating = false }) { Text(stringResource(R.string.common_cancel)) } },
         )
     }
 }
@@ -254,15 +260,15 @@ fun SpaceScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.loadMembers(); showMembers = true }) {
-                        Icon(Icons.Default.Group, contentDescription = "Membros")
+                        Icon(Icons.Default.Group, contentDescription = stringResource(R.string.spaces_members))
                     }
                     IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Atualizar")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.common_refresh))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground),
@@ -285,24 +291,24 @@ fun SpaceScreen(
                     ) { CircularProgressIndicator(color = IrisAccent) }
 
                     uiState.error != null && uiState.items.isEmpty() -> EmptyState(
-                        title = "Não foi possível abrir o grupo",
+                        title = stringResource(R.string.spaces_error_open),
                         message = uiState.error ?: "",
-                        actionLabel = "Tentar novamente",
+                        actionLabel = stringResource(R.string.common_retry),
                         onAction = { viewModel.refresh() },
                     )
 
                     uiState.items.isEmpty() -> EmptyState(
                         title = when {
-                            uiState.query.isNotEmpty() -> "Nada encontrado para “${uiState.query}”"
-                            uiState.albumId != null -> "Álbum vazio"
-                            else -> "Este grupo ainda não tem fotos"
+                            uiState.query.isNotEmpty() -> stringResource(R.string.spaces_nothing_found, uiState.query)
+                            uiState.albumId != null -> stringResource(R.string.spaces_album_empty)
+                            else -> stringResource(R.string.spaces_group_empty)
                         },
                         message = when {
-                            uiState.query.isNotEmpty() -> "A busca olha o nome e a descrição de cada foto."
-                            uiState.albumId != null -> "Os álbuns do grupo são montados pela web."
+                            uiState.query.isNotEmpty() -> stringResource(R.string.spaces_search_hint)
+                            uiState.albumId != null -> stringResource(R.string.spaces_albums_hint)
                             uiState.space?.canAdd == true ->
-                                "Abra uma foto da sua galeria, toque em ⋮ e depois em Enviar para um grupo."
-                            else -> "Quando alguém enviar fotos, elas aparecem aqui."
+                                stringResource(R.string.spaces_add_hint)
+                            else -> stringResource(R.string.spaces_waiting_hint)
                         },
                     )
 
@@ -341,10 +347,10 @@ fun SpaceScreen(
     if (showMembers) {
         ModalBottomSheet(onDismissRequest = { showMembers = false }, containerColor = IrisBackground) {
             Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-                Text("Membros", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = IrisText)
+                Text(stringResource(R.string.spaces_members), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = IrisText)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Convites e papéis são administrados pela web.",
+                    stringResource(R.string.spaces_members_hint),
                     fontSize = 12.sp, color = IrisTextMuted,
                 )
                 Spacer(Modifier.height(12.dp))
@@ -352,17 +358,17 @@ fun SpaceScreen(
                     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                (member.displayName.ifBlank { member.username }) + if (member.isYou) " (você)" else "",
+                                (member.displayName.ifBlank { member.username }) + if (member.isYou) " " + stringResource(R.string.spaces_member_you) else "",
                                 color = IrisText,
                             )
                             Text(member.username, fontSize = 12.sp, color = IrisTextMuted)
                         }
-                        Text(ROLE_LABELS[member.role] ?: member.role, fontSize = 12.sp, color = IrisTextSoft)
+                        Text(roleLabelRes(member.role)?.let { stringResource(it) } ?: member.role, fontSize = 12.sp, color = IrisTextSoft)
                     }
                 }
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = { confirmLeave = true }) {
-                    Text("Sair do grupo", color = IrisDanger)
+                    Text(stringResource(R.string.spaces_leave), color = IrisDanger)
                 }
             }
         }
@@ -371,16 +377,16 @@ fun SpaceScreen(
     if (confirmLeave) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false },
-            title = { Text("Sair de ${uiState.name}?") },
+            title = { Text(stringResource(R.string.spaces_leave_title, uiState.name)) },
             text = {
-                Text("Você perde o acesso a este grupo. As fotos que enviou continuam nele e as cópias na sua biblioteca não mudam.")
+                Text(stringResource(R.string.spaces_leave_message))
             },
             confirmButton = {
                 TextButton(onClick = { confirmLeave = false; showMembers = false; viewModel.leave() }) {
-                    Text("Sair")
+                    Text(stringResource(R.string.spaces_leave_confirm))
                 }
             },
-            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text(stringResource(R.string.common_cancel)) } },
         )
     }
 }
@@ -404,7 +410,7 @@ private fun SpaceThumbnail(item: SpaceItem, onClick: () -> Unit) {
         )
         if (item.isVideo) {
             Icon(
-                Icons.Default.PlayCircle, contentDescription = "Vídeo", tint = Color.White,
+                Icons.Default.PlayCircle, contentDescription = stringResource(R.string.spaces_video), tint = Color.White,
                 modifier = Modifier.align(Alignment.Center).size(32.dp),
             )
         }
@@ -438,11 +444,11 @@ private fun SpaceItemViewer(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onClose) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back), tint = Color.White)
             }
             Column {
                 Text(item.name, color = Color.White, fontSize = 15.sp)
-                item.addedByUsername?.let { Text("por $it", color = IrisTextSoft, fontSize = 12.sp) }
+                item.addedByUsername?.let { Text(stringResource(R.string.spaces_added_by, it), color = IrisTextSoft, fontSize = 12.sp) }
             }
         }
         Row(
@@ -450,21 +456,21 @@ private fun SpaceItemViewer(
                 .background(Color.Black.copy(alpha = 0.55f)).navigationBarsPadding().padding(vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            ViewerAction(Icons.Default.LibraryAdd, "Salvar", onSave)
-            ViewerAction(Icons.Default.Download, "Baixar") {
+            ViewerAction(Icons.Default.LibraryAdd, stringResource(R.string.spaces_action_save), onSave)
+            ViewerAction(Icons.Default.Download, stringResource(R.string.spaces_action_download)) {
                 download(apiClient.resolveThumbnailUrl(item.originalUrl), item.name)
             }
-            if (item.canRemove) ViewerAction(Icons.Default.Delete, "Remover") { confirmRemove = true }
+            if (item.canRemove) ViewerAction(Icons.Default.Delete, stringResource(R.string.common_remove)) { confirmRemove = true }
         }
     }
 
     if (confirmRemove) {
         AlertDialog(
             onDismissRequest = { confirmRemove = false },
-            title = { Text("Remover do grupo?") },
-            text = { Text("A foto sai do grupo para todos. As cópias nas bibliotecas pessoais não são afetadas.") },
-            confirmButton = { TextButton(onClick = { confirmRemove = false; onRemove() }) { Text("Remover") } },
-            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancelar") } },
+            title = { Text(stringResource(R.string.spaces_remove_title)) },
+            text = { Text(stringResource(R.string.spaces_remove_message)) },
+            confirmButton = { TextButton(onClick = { confirmRemove = false; onRemove() }) { Text(stringResource(R.string.common_remove)) } },
+            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text(stringResource(R.string.common_cancel)) } },
         )
     }
 }
@@ -497,23 +503,22 @@ fun SpacePickerDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Enviar para um grupo") },
+        title = { Text(stringResource(R.string.spaces_send_title)) },
         text = {
             val result = loaded
             when {
                 result == null -> CircularProgressIndicator(color = IrisAccent)
-                result.isFailure -> Text(result.exceptionOrNull()?.localizedMessage ?: "Erro ao carregar grupos")
+                result.isFailure -> Text(result.exceptionOrNull()?.localizedMessage ?: stringResource(R.string.spaces_error_load_groups))
                 else -> {
                     val spaces = result.getOrDefault(emptyList()).filter { it.canAdd }
                     if (spaces.isEmpty()) {
                         Text(
-                            "Você só pode enviar fotos a grupos em que é colaborador ou gestor. " +
-                                "Crie um na aba Grupos."
+                            stringResource(R.string.spaces_send_no_groups)
                         )
                     } else {
                         Column {
                             Text(
-                                "O grupo ganha uma cópia: apagar a sua não apaga a de lá.",
+                                stringResource(R.string.spaces_send_copy_hint),
                                 fontSize = 12.sp, color = IrisTextMuted,
                             )
                             Spacer(Modifier.height(8.dp))
@@ -536,7 +541,7 @@ fun SpacePickerDialog(
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -557,13 +562,13 @@ private fun SpaceFilters(
         OutlinedTextField(
             value = text,
             onValueChange = { text = it.take(300) },
-            placeholder = { Text("Buscar neste grupo") },
+            placeholder = { Text(stringResource(R.string.spaces_search_placeholder)) },
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             trailingIcon = {
                 if (text.isNotEmpty()) {
                     IconButton(onClick = { text = ""; onSearch("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "Limpar busca")
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.common_clear_search))
                     }
                 }
             },
@@ -580,7 +585,7 @@ private fun SpaceFilters(
                     FilterChip(
                         selected = albumId == null && query.isEmpty(),
                         onClick = { onAlbum(null) },
-                        label = { Text("Todas") },
+                        label = { Text(stringResource(R.string.common_all)) },
                     )
                 }
                 items(albums, key = { it.id }) { album ->

@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.iris.app.IrisApplication
+import com.iris.app.R
 import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.data.model.MediaPersonRef
 import com.iris.app.ui.components.MediaCard
@@ -94,14 +96,14 @@ fun MediaDetailsSheet(
             .padding(bottom = 24.dp)
     ) {
         Text(
-            text = ViewerTitle.fullDate(curated?.textOf("captured_at"), record.fileMtime) ?: "Data desconhecida",
+            text = ViewerTitle.fullDate(curated?.textOf("captured_at"), record.fileMtime) ?: stringResource(R.string.detail_unknown_date),
             fontSize = 19.sp,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
         )
 
         if (record.persons.isNotEmpty()) {
-            Section("Quem aparece") {
+            Section(stringResource(R.string.detail_who_appears)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -116,11 +118,11 @@ fun MediaDetailsSheet(
         }
 
         record.descricaoIa?.takeIf { it.isNotBlank() }?.let { description ->
-            Section("O que o Iris viu nesta foto") { TextCard(description) }
+            Section(stringResource(R.string.detail_what_iris_saw)) { TextCard(description) }
         }
 
         record.textoExtraido?.takeIf { it.isNotBlank() }?.let { text ->
-            Section("Texto na foto") {
+            Section(stringResource(R.string.detail_text_in_photo)) {
                 PhotoTextCard(
                     text = text,
                     thumbnailUrl = record.thumbnailUrl,
@@ -130,17 +132,17 @@ fun MediaDetailsSheet(
         }
 
         if (record.collections.isNotEmpty()) {
-            Section("Álbuns") {
-                ChipRow(record.collections.map { it.name.ifBlank { "Álbum #${it.id}" } })
+            Section(stringResource(R.string.detail_albums)) {
+                ChipRow(record.collections.map { it.name.ifBlank { stringResource(R.string.detail_album_fallback, it.id) } })
             }
         }
 
         if (record.tagsList.isNotEmpty()) {
-            Section("Assuntos") { ChipRow(record.tagsList) }
+            Section(stringResource(R.string.detail_subjects)) { ChipRow(record.tagsList) }
         }
 
         if (state.isLoadingSimilars || state.similarRecords.isNotEmpty()) {
-            Section("Fotos parecidas") {
+            Section(stringResource(R.string.detail_similar)) {
                 if (state.similarRecords.isEmpty()) {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                 } else {
@@ -162,7 +164,7 @@ fun MediaDetailsSheet(
 
         Spacer(Modifier.height(20.dp))
         Text(
-            "Detalhes",
+            stringResource(R.string.detail_title),
             fontSize = 19.sp,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(bottom = 10.dp)
@@ -179,11 +181,11 @@ fun MediaDetailsSheet(
         // Where the item is kept: Iris holds the original as it was sent.
         DetailCard(icon = Icons.Outlined.CloudDone) {
             Text(
-                listOfNotNull("Salva no Iris", record.fileSize?.let(::formatBytes)).joinToString(" • "),
+                listOfNotNull(stringResource(R.string.detail_saved_in_iris), record.fileSize?.let(::formatBytes)).joinToString(" • "),
                 fontSize = 16.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Text("Qualidade original", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.detail_original_quality), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         state.deviceCopy?.let { copy ->
             Spacer(Modifier.height(4.dp))
@@ -199,7 +201,7 @@ fun MediaDetailsSheet(
             trailing = {
                 Icon(
                     if (fileExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (fileExpanded) "Mostrar menos" else "Mostrar mais",
+                    contentDescription = stringResource(if (fileExpanded) R.string.detail_show_less else R.string.detail_show_more),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -226,11 +228,11 @@ fun MediaDetailsSheet(
             }
             if (fileExpanded) {
                 Spacer(Modifier.height(8.dp))
-                full?.textOf("format")?.let { DetailLine("Formato", it) }
-                curated?.textOf("device")?.let { DetailLine("Aparelho", it) }
+                full?.textOf("format")?.let { DetailLine(stringResource(R.string.detail_format), it) }
+                curated?.textOf("device")?.let { DetailLine(stringResource(R.string.detail_device), it) }
                 (state.deviceCopy?.ownerPackage?.let { appLabel(it) } ?: curated?.textOf("source_app"))
-                    ?.let { DetailLine("Criada por", it) }
-                record.resolvedPath?.let { DetailLine("No servidor", it) }
+                    ?.let { DetailLine(stringResource(R.string.detail_created_by), it) }
+                record.resolvedPath?.let { DetailLine(stringResource(R.string.detail_on_server), it) }
             }
         }
     }
@@ -300,8 +302,8 @@ internal fun PhotoTextCard(text: String, thumbnailUrl: String?, onSearch: () -> 
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActionChip(Icons.Outlined.ContentCopy, "Copiar texto") { clipboard.setText(AnnotatedString(text)) }
-            ActionChip(Icons.Outlined.Search, "Buscar no Iris", onSearch)
+            ActionChip(Icons.Outlined.ContentCopy, stringResource(R.string.detail_copy_text)) { clipboard.setText(AnnotatedString(text)) }
+            ActionChip(Icons.Outlined.Search, stringResource(R.string.detail_search_in_iris), onSearch)
         }
     }
 }
@@ -379,7 +381,7 @@ internal fun DetailLine(label: String, value: String) {
 @Composable
 private fun PersonFace(person: MediaPersonRef, onPersonClick: (Int, String) -> Unit) {
     val apiClient = (LocalContext.current.applicationContext as IrisApplication).apiClient
-    val name = person.name.ifBlank { "Sem nome" }
+    val name = person.name.ifBlank { stringResource(R.string.detail_no_name) }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -447,12 +449,12 @@ private fun ChipRow(values: List<String>) {
 
 /** "1,2 MP", the way a gallery sizes a photo. */
 internal fun megapixels(width: Int, height: Int): String =
-    String.format(Locale("pt", "BR"), "%.1f MP", width.toLong() * height / 1_000_000.0)
+    String.format(Locale.getDefault(), "%.1f MP", width.toLong() * height / 1_000_000.0)
 
 internal fun formatBytes(bytes: Long): String = when {
-    bytes >= 1_073_741_824 -> String.format(Locale("pt", "BR"), "%.1f GB", bytes / 1_073_741_824.0)
-    bytes >= 1_048_576 -> String.format(Locale("pt", "BR"), "%.1f MB", bytes / 1_048_576.0)
-    bytes >= 1024 -> String.format(Locale("pt", "BR"), "%.0f kB", bytes / 1024.0)
+    bytes >= 1_073_741_824 -> String.format(Locale.getDefault(), "%.1f GB", bytes / 1_073_741_824.0)
+    bytes >= 1_048_576 -> String.format(Locale.getDefault(), "%.1f MB", bytes / 1_048_576.0)
+    bytes >= 1024 -> String.format(Locale.getDefault(), "%.0f kB", bytes / 1024.0)
     else -> "$bytes B"
 }
 
@@ -461,7 +463,7 @@ internal fun formatBytes(bytes: Long): String = when {
 internal fun DeviceCopyCard(copy: DeviceMediaDetails) {
     DetailCard(icon = Icons.Outlined.PhoneAndroid) {
         Text(
-            listOfNotNull("No dispositivo", copy.sizeBytes?.let(::formatBytes)).joinToString(" • "),
+            listOfNotNull(stringResource(R.string.detail_on_device), copy.sizeBytes?.let(::formatBytes)).joinToString(" • "),
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -473,17 +475,18 @@ internal fun DeviceCopyCard(copy: DeviceMediaDetails) {
 
 /**
  * The name people know an app by. Android may hide other apps from this one;
- * then the package is shown as the gallery does ("App desconhecido (…)").
+ * then the package is shown as the gallery does ("Unknown app (…)").
  */
 @Composable
 internal fun appLabel(packageName: String): String {
     val packageManager = LocalContext.current.packageManager
+    val unknownApp = stringResource(R.string.detail_unknown_app, packageName)
     return remember(packageName) {
         try {
             val info = packageManager.getApplicationInfo(packageName, 0)
             packageManager.getApplicationLabel(info).toString()
         } catch (_: Exception) {
-            "App desconhecido ($packageName)"
+            unknownApp
         }
     }
 }
@@ -499,14 +502,14 @@ private fun LocationCard(place: String?, point: GeoPoint?) {
     val open = point?.let { { GeoPoint.openInGoogleMaps(context, it, place) } }
     DetailCard(icon = Icons.Outlined.Place, onClick = open) {
         Text(
-            place ?: "Local da foto",
+            place ?: stringResource(R.string.detail_photo_location),
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onSurface
         )
         if (point != null) {
             Text(point.label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(10.dp))
-            ActionChip(Icons.Outlined.Map, "Abrir no Google Maps") { open?.invoke() }
+            ActionChip(Icons.Outlined.Map, stringResource(R.string.detail_open_in_maps)) { open?.invoke() }
         }
     }
 }

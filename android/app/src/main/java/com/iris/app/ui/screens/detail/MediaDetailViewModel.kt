@@ -3,12 +3,14 @@ package com.iris.app.ui.screens.detail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.local.DeviceMediaDetails
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.RecordMetadataResponse
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.LibraryChanges
 import com.iris.app.ui.state.LatestJob
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -84,9 +86,9 @@ class MediaDetailViewModel(
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 val rawMessage = ex.localizedMessage.orEmpty()
                 val userMessage = if (rawMessage.contains("Unexpected JSON token", ignoreCase = true)) {
-                    "O servidor enviou um formato de detalhes incompatível. Atualize o Iris e tente novamente."
+                    appString(R.string.viewer_error_incompatible)
                 } else {
-                    rawMessage.ifBlank { "Erro ao carregar mídia" }
+                    rawMessage.ifBlank { appString(R.string.viewer_error_load_media) }
                 }
                 _uiState.update {
                     it.copy(isLoading = false, error = userMessage)
@@ -105,7 +107,7 @@ class MediaDetailViewModel(
                 _uiState.update {
                     it.copy(
                         record = it.record?.copy(favorite = !wanted),
-                        notice = "Não foi possível atualizar os favoritos"
+                        notice = appString(R.string.viewer_error_favorite)
                     )
                 }
             }
@@ -122,12 +124,12 @@ class MediaDetailViewModel(
                 .onSuccess {
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onSuccess
                     LibraryChanges.changed()
-                    _uiState.update { it.copy(isTrashing = false, notice = "Movida para a lixeira") }
+                    _uiState.update { it.copy(isTrashing = false, notice = appString(R.string.viewer_notice_trashed)) }
                     onMoved()
                 }
                 .onFailure {
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
-                    _uiState.update { it.copy(isTrashing = false, notice = "Não foi possível mover para a lixeira") }
+                    _uiState.update { it.copy(isTrashing = false, notice = appString(R.string.gallery_error_trash)) }
                 }
         }
     }
@@ -143,14 +145,14 @@ class MediaDetailViewModel(
                     // O nome vem do servidor (extensão preservada, colisão
                     // resolvida), então recarrega em vez de adivinhar.
                     loadDetail()
-                    _uiState.update { it.copy(isRenaming = false, notice = "Renomeado") }
+                    _uiState.update { it.copy(isRenaming = false, notice = appString(R.string.viewer_notice_renamed)) }
                 }
                 .onFailure { ex ->
                     if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                     val motivo = when {
-                        ex.localizedMessage?.contains("409") == true -> "Já existe um arquivo com esse nome"
-                        ex.localizedMessage?.contains("400") == true -> "Nome inválido"
-                        else -> "Não foi possível renomear"
+                        ex.localizedMessage?.contains("409") == true -> appString(R.string.viewer_error_name_taken)
+                        ex.localizedMessage?.contains("400") == true -> appString(R.string.viewer_error_name_invalid)
+                        else -> appString(R.string.viewer_error_rename)
                     }
                     _uiState.update { it.copy(isRenaming = false, notice = motivo) }
                 }

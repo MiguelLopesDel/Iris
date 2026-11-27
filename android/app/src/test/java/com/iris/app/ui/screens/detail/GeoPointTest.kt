@@ -8,6 +8,20 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class GeoPointTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
+    private val originalLocale = java.util.Locale.getDefault()
+
+    @org.junit.Before
+    fun useBrazilianPortuguese() = java.util.Locale.setDefault(java.util.Locale("pt", "BR"))
+
+    @org.junit.After
+    fun restoreLocale() = java.util.Locale.setDefault(originalLocale)
+
     private fun curated(json: String): JsonObject = Json.parseToJsonElement(json).jsonObject
 
     @Test
