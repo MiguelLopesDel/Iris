@@ -580,3 +580,12 @@ def test_a_failed_update_is_reported_and_not_retried(tmp_path: Path) -> None:
     assert json.loads((folder / "status.json").read_text())["state"] == "failed"
     assert "not available yet" in (folder / "last.log").read_text()
     assert not (folder / "request.json").exists()
+
+
+def test_update_does_not_back_up_first(tmp_path: Path) -> None:
+    """An update replaces code and images, never the originals; the daily backup covers data."""
+    env = _env(tmp_path, _docker_stub(tmp_path))
+    project = _released_clone(tmp_path, env)
+    result = _server(project, env, "update")
+    assert "Backing up" not in result.stdout
+    assert not any("backup_scheduler" in line for line in _docker(tmp_path))

@@ -26,7 +26,7 @@ import { loadDevices } from './devices.js?v=4';
 import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=6';
 import { uploadFiles } from './web_upload.js?v=1';
 import { loadAdminAi, loadMyAi, syncAiModeCards, syncSettingsNav } from './settings_ai.js?v=1';
-import { loadUpdates } from './updates.js?v=1';
+import { loadUpdates } from './updates.js?v=2';
 
 let initialized = false;
 let importPoll = null;

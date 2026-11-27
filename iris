@@ -19,7 +19,7 @@
 #   ./iris staging [--pr N]...   put main (plus open PRs) on the staging server
 #   ./iris release X.Y.Z         1st run: PR that bumps the version and adds notes;
 #                                2nd run, after it merged: tag vX.Y.Z (publishes the image)
-#   ./iris deploy                move production to the newest release (backs up first)
+#   ./iris deploy                move production to the newest release
 #   ./iris status                health of production and staging
 #   ./iris logs [prod|staging]   follow the server logs
 #   ./iris doctor [prod|staging] who else on the server can read the library
@@ -254,7 +254,7 @@ release() {
         {
             printf '# Iris %s\n\n## Changes since %s\n\n' "$version" "${previous#v}"
             git log --no-merges --format='- %s' "${previous:+$previous..}HEAD" -- . ':!docs/releases'
-            printf '\n## Deployment\n\n- `./scripts/server.sh update` (backs up first).\n'
+            printf '\n## Deployment\n\n- `./scripts/server.sh update`.\n'
         } > "$notes"
     fi
     "${EDITOR:-vi}" "$notes"

@@ -529,7 +529,7 @@ media_dir() {
 # The web interface cannot update the server itself: the container has no access
 # to Docker. An administrator's "update now" writes <data>/updater/request.json;
 # a systemd path unit sees it and runs `updater run`, which is a normal `update`
-# (backup, release, health check). The request carries no command, so a forged
+# (release, health check). The request carries no command, so a forged
 # one can at most start the update this installation would run anyway.
 
 updater_dir() {
@@ -748,8 +748,9 @@ case "${1:-}" in
         if [ -d .git ]; then
             git diff --quiet || { echo "Commit or stash local changes before updating." >&2; exit 1; }
         fi
-        echo "Backing up before updating..."
-        run_backup || { echo "Backup failed; not updating." >&2; exit 1; }
+        # No backup here: an update changes code and images, never the originals,
+        # and the scheduled daily backup already covers the data. Run
+        # `./scripts/server.sh backup` first when you want one.
         if [ -d .git ]; then
             git fetch --quiet --tags origin
             follow_release || exit 1

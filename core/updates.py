@@ -8,8 +8,7 @@ Two halves, kept apart on purpose:
 * The container cannot replace itself, and it is never given the Docker socket.
   An administrator's "update now" only writes ``updater/request.json`` in the
   data directory. A systemd path unit on the host (``server.sh updater install``)
-  notices the file and runs ``server.sh update`` -- backup, new release, health
-  check -- writing its progress to ``updater/status.json``. The request carries
+  notices the file and runs ``server.sh update`` -- new release, health check -- writing its progress to ``updater/status.json``. The request carries
   no command or version: the host always updates to what its own configuration
   selects, so a forged request can at most trigger a normal update.
 """
