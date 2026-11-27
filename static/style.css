@@ -176,43 +176,24 @@ textarea:focus-visible {
   gap: 11px;
 }
 
+/* The aperture logo (static/brand/iris-mark.svg) inlined so it follows the theme accent. */
 .brand-mark {
-  position: relative;
   width: 36px;
   height: 36px;
   flex: 0 0 auto;
-  border: 1px solid rgba(184, 255, 90, 0.45);
-  border-radius: 50%;
-  background: rgba(184, 255, 90, 0.07);
-  box-shadow: inset 0 0 18px rgba(184, 255, 90, 0.08);
+  color: var(--accent);
 }
 
-.brand-mark::before,
-.brand-mark::after,
-.brand-mark span {
-  content: "";
-  position: absolute;
-  border-radius: 50%;
+.brand-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.brand-mark::before {
-  inset: 7px;
-  border: 1px solid var(--accent);
-}
-
-.brand-mark::after {
-  width: 6px;
-  height: 6px;
-  top: 15px;
-  left: 15px;
-  background: var(--accent);
-  box-shadow: 0 0 14px var(--accent);
-}
-
-.brand-mark span {
-  inset: 2px 15px;
-  border-left: 1px solid rgba(184, 255, 90, 0.45);
-  border-right: 1px solid rgba(184, 255, 90, 0.45);
+.login-brand-mark {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 14px;
 }
 
 .brand-lockup h1 {
