@@ -9,14 +9,20 @@
 # never discards git work.
 #
 #   ./scripts/staging.sh status
-#   ./scripts/staging.sh update [--pr N]... [--ref REF] [--dry-run]
-#   ./scripts/staging.sh rollback [--dry-run]
+#   ./scripts/staging.sh update [--pr N]... [--ref REF] [--rebuild] [--dry-run]
+#   ./scripts/staging.sh rollback [--rebuild] [--dry-run]
 #   ./scripts/staging.sh refresh-data --from BACKUP [--dry-run]
 #
 # `update` checks out REF (default origin/main) detached, merges each PR on
-# top in a throwaway commit that is never pushed, builds this project's image
-# and restarts this project's container. A merge conflict or a failed build
-# puts the checkout back where it was and leaves the running container alone.
+# top in a throwaway commit that is never pushed, and restarts this project's
+# container. A merge conflict or a failed build puts the checkout back where it
+# was and leaves the running container alone.
+#
+# The code runs from this checkout, mounted read-only into the container
+# (docker-compose.staging-code.yml); the image only supplies the dependencies.
+# The image is built again only when they change (Dockerfile, locks, the
+# repository's top-level layout), so most updates are a restart, not a build.
+# --rebuild builds anyway.
 #
 # `refresh-data` replaces this installation's data and media with a copy of a
 # production backup (an iris-backup-* folder), so staging tests the library as
@@ -81,13 +87,54 @@ host_timezone() {
     printf '%s' "$zone"
 }
 
+# The installation's own Compose files (COMPOSE_FILE in .env, or Compose's
+# default pair), plus the code mounts when this checkout has them; an older
+# commit without the file runs the code baked into its image.
+code_overlay="docker-compose.staging-code.yml"
+compose_files() {
+    local files
+    files="$(env_value COMPOSE_FILE)"
+    if [ -z "$files" ]; then
+        files="docker-compose.yml"
+        [ -f docker-compose.override.yml ] && files="$files:docker-compose.override.yml"
+    fi
+    [ -f "$code_overlay" ] && files="$files:$code_overlay"
+    printf '%s' "$files"
+}
+
 # The container runs in the host's time zone, as production does; a TZ in
-# this checkout's .env wins.
+# this checkout's .env wins. IRIS_COMMIT is the checkout's, since that is the
+# code that runs.
 compose() {
     local zone
     zone="$(env_value TZ)"
     [ -n "$zone" ] || zone="$(host_timezone)"
-    TZ="${zone:-UTC}" docker_cmd compose -p "$project" "$@"
+    TZ="${zone:-UTC}" COMPOSE_FILE="$(compose_files)" \
+        IRIS_COMMIT="${IRIS_COMMIT:-$(git rev-parse --short HEAD)}" \
+        docker_cmd compose -p "$project" "$@"
+}
+
+# What the image has to be rebuilt for: everything the code mounts do not
+# cover. A new top-level entry counts too, since it would not be mounted.
+deps_key() {
+    {
+        compose_files; echo
+        git ls-tree HEAD -- Dockerfile .dockerignore requirements.txt requirements-cuda.txt \
+            scripts/check_deps.py "$code_overlay"
+        git ls-tree --name-only HEAD
+    } | sha256sum | cut -c1-16
+}
+
+# The key the current image was built with; empty when it has none.
+image_key() {
+    local image
+    image="$(compose config --format json | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["services"]["iris"].get("image", ""))
+')" || return 0
+    [ -n "$image" ] || return 0
+    docker_cmd image inspect --format '{{ index .Config.Labels "iris.staging.deps" }}' "$image" \
+        2>/dev/null || true
 }
 
 # --- Guards: nothing changes before every one of these passes. -------------
@@ -192,8 +239,8 @@ wait_for_health() {
 }
 
 deploy() {
-    local ref="$1" dry_run="$2"; shift 2
-    local prs=("$@") previous pr
+    local ref="$1" dry_run="$2" rebuild="$3"; shift 3
+    local prs=("$@") previous pr key
     guard_all
     previous="$(git rev-parse HEAD)"
     git fetch -q origin main
@@ -216,7 +263,10 @@ deploy() {
         fi
     done
 
-    if ! IRIS_COMMIT="$(git rev-parse --short HEAD)" compose build iris; then
+    key="$(deps_key)"
+    if [ "$rebuild" = 0 ] && [ -f "$code_overlay" ] && [ "$(image_key)" = "$key" ]; then
+        say "dependencies unchanged: no image build, the code is mounted from this checkout."
+    elif ! IRIS_STAGING_DEPS_KEY="$key" compose build iris; then
         restore_checkout "$previous"
         die "build failed; the checkout is back on $(git rev-parse --short "$previous") and the running container was not touched."
     fi
@@ -334,13 +384,14 @@ show_status() {
 
 command="${1:-}"
 [ -n "$command" ] && shift
-ref="origin/main"; dry_run=0; prs=(); backup=""
+ref="origin/main"; dry_run=0; rebuild=0; prs=(); backup=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --from) [ $# -ge 2 ] || die "--from needs a backup folder"; backup="$2"; shift 2 ;;
         --pr) [ $# -ge 2 ] || die "--pr needs a number"; [[ "$2" =~ ^[0-9]+$ ]] || die "--pr takes a PR number, not '$2'"; prs+=("$2"); shift 2 ;;
         --ref) [ $# -ge 2 ] || die "--ref needs a value"; ref="$2"; shift 2 ;;
         --dry-run) dry_run=1; shift ;;
+        --rebuild) rebuild=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option: $1" ;;
     esac
@@ -348,11 +399,11 @@ done
 
 case "$command" in
     status) show_status ;;
-    update) deploy "$ref" "$dry_run" "${prs[@]}" ;;
+    update) deploy "$ref" "$dry_run" "$rebuild" "${prs[@]}" ;;
     rollback)
         git rev-parse --quiet --verify "$previous_ref" >/dev/null || die "no previous deployment recorded."
         [ "${#prs[@]}" -eq 0 ] || die "rollback takes no --pr"
-        deploy "$(git rev-parse "$previous_ref")" "$dry_run"
+        deploy "$(git rev-parse "$previous_ref")" "$dry_run" "$rebuild"
         ;;
     refresh-data)
         [ "${#prs[@]}" -eq 0 ] || die "refresh-data takes no --pr"

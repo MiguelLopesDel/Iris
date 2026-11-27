@@ -31,6 +31,8 @@ def staging(tmp_path: Path):
     seed.mkdir()
     git(seed, "init", "-q", "-b", "main")
     (seed / "app.txt").write_text("base\n")
+    (seed / "Dockerfile").write_text("FROM scratch\n")
+    (seed / "docker-compose.staging-code.yml").write_text("services: {}\n")
     (seed / "scripts").mkdir()
     (seed / "scripts" / "staging.sh").write_text(SCRIPT.read_text())
     git(seed, "add", ".")
@@ -59,6 +61,7 @@ def staging(tmp_path: Path):
     log = tmp_path / "docker.log"
     config = {
         "services": {"iris": {
+            "image": "ghcr.io/miguellopesdel/iris:dev",
             "volumes": [
                 {"type": "bind", "source": "/srv/staging/data", "target": "/app/data"},
                 {"type": "bind", "source": "/srv/staging/media", "target": "/app/media"},
@@ -74,12 +77,17 @@ def staging(tmp_path: Path):
     docker.write_text(f"""#!/usr/bin/env bash
 echo "$*" >> {log}
 F={fake}
+printf '%s\t%s\n' "$COMPOSE_FILE" "$IRIS_COMMIT" >> $F/compose-env.txt
 case "$*" in
+  "image inspect "*) cat $F/image-key.txt 2>/dev/null || true ;;
   *"config --format json"*) cat $F/config.json ;;
   "ps -a "*) cat $F/ps-a.txt ;;
   "ps --format"*) cat $F/ps-ports.txt ;;
   inspect*) id="${{@: -1}}"; cat "$F/inspect-$id.txt" 2>/dev/null || true ;;
-  *" build iris") exit "${{FAKE_BUILD_STATUS:-0}}" ;;
+  *" build iris")
+    status="${{FAKE_BUILD_STATUS:-0}}"
+    [ "$status" = 0 ] && printf '%s\n' "$IRIS_STAGING_DEPS_KEY" > $F/image-key.txt
+    exit "$status" ;;
   *) exit 0 ;;
 esac
 """)
@@ -356,3 +364,77 @@ def test_refresh_data_checks_it_can_write_next_to_the_data_before_reading_the_ba
     assert "cannot create folders" in result.stderr
     assert "checking" not in result.stdout  # failed before the long verification
     assert sorted(path.name for path in live.iterdir()) == ["data", "media"]
+
+
+def builds(calls: list[str]) -> list[str]:
+    return [c for c in calls if c.endswith(" build iris")]
+
+
+def test_a_code_only_update_restarts_without_building(staging):
+    checkout, fake, run, calls = staging
+    assert run("update").returncode == 0
+    assert len(builds(calls())) == 1
+
+    # PR 8 only changes code that the staging overlay mounts.
+    result = run("update", "--pr", "8")
+
+    assert result.returncode == 0, result.stderr
+    assert "no image build" in result.stdout
+    assert len(builds(calls())) == 1
+    assert calls()[-1] == "compose -p iris-staging up -d --no-build iris"
+    files, commit = (fake / "compose-env.txt").read_text().splitlines()[-1].split("\t")
+    assert files.split(":")[-1] == "docker-compose.staging-code.yml"
+    assert commit == git(checkout, "rev-parse", "--short", "HEAD")
+    assert_nothing_destructive(calls())
+
+
+def test_a_dependency_change_builds_the_image(staging):
+    checkout, _, run, calls = staging
+    assert run("update").returncode == 0
+    origin = Path(git(checkout, "remote", "get-url", "origin"))
+    seed = origin.parent / "seed"
+    (seed / "Dockerfile").write_text("FROM scratch\nRUN true\n")
+    git(seed, "commit", "-q", "-am", "deps")
+    git(seed, "push", "-q", str(origin), "main")
+
+    result = run("update")
+
+    assert result.returncode == 0, result.stderr
+    assert len(builds(calls())) == 2
+
+
+def test_a_new_top_level_entry_builds_the_image(staging):
+    _, _, run, calls = staging
+    assert run("update").returncode == 0
+
+    # PR 7 adds feature.txt at the root: not mounted, so the image must carry it.
+    result = run("update", "--pr", "7")
+
+    assert result.returncode == 0, result.stderr
+    assert len(builds(calls())) == 2
+
+
+def test_rebuild_builds_even_when_dependencies_are_unchanged(staging):
+    _, _, run, calls = staging
+    assert run("update").returncode == 0
+
+    result = run("update", "--rebuild")
+
+    assert result.returncode == 0, result.stderr
+    assert len(builds(calls())) == 2
+
+
+def test_a_checkout_without_the_code_overlay_always_builds(staging):
+    checkout, fake, run, calls = staging
+    origin = Path(git(checkout, "remote", "get-url", "origin"))
+    seed = origin.parent / "seed"
+    git(seed, "rm", "-q", "docker-compose.staging-code.yml")
+    git(seed, "commit", "-q", "-m", "old layout")
+    git(seed, "push", "-q", str(origin), "main")
+
+    assert run("update").returncode == 0
+    assert run("update").returncode == 0
+
+    assert len(builds(calls())) == 2
+    files = (fake / "compose-env.txt").read_text().splitlines()[-1].split("\t")[0]
+    assert "staging-code" not in files
