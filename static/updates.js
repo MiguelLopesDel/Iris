@@ -75,7 +75,7 @@ export function loadUpdates() {
     document.getElementById('update-check').addEventListener('click', () => refresh(checkForUpdate));
     document.getElementById('update-apply').addEventListener('click', async () => {
       const latest = document.getElementById('update-latest').textContent;
-      if (!window.confirm(`Atualizar o servidor para ${latest}? Um backup é feito antes, e o servidor fica fora do ar por alguns minutos.`)) return;
+      if (!window.confirm(`Atualizar o servidor para ${latest}? O servidor fica fora do ar por alguns minutos.`)) return;
       await refresh(applyUpdate);
     });
   }

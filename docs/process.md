@@ -23,7 +23,7 @@ pastas de `.iris.local` (ignorado pelo git, ver `./iris help`).
 | guardar uma mudança pronta como commit local | `./iris save "fix(ui): summary"` |
 | testar a `main` (e PRs abertos) no servidor | `./iris staging [--pr N]` |
 | lançar uma versão | `./iris release X.Y.Z` duas vezes: a primeira abre o PR do bump e das notas; a segunda, depois do merge, cria a tag |
-| atualizar a produção | `./iris deploy` (faz backup antes) |
+| atualizar a produção | `./iris deploy` |
 | ver se está tudo de pé | `./iris status` |
 
 Um PR por assunto continua valendo, mas não é preciso esperar um terminar para
@@ -168,8 +168,8 @@ cujo `version` em `pyproject.toml` é `X.Y.Z`. Para isso, um PR
 
 ### Produção
 
-- Servidor: `./iris deploy` (roda `./scripts/server.sh update` lá). Ele faz backup, coloca o checkout na tag
-  do release e sobe a imagem dessa mesma versão.
+- Servidor: `./iris deploy` (roda `./scripts/server.sh update` lá). Ele coloca o checkout na tag
+  do release e sobe a imagem dessa mesma versão. Não faz backup; rode um antes se quiser.
 - Celular: o APK do release, instalado por cima do anterior (mesma chave de
   assinatura, então login e dados ficam).
 - **Conferência depois de atualizar** (dois minutos):

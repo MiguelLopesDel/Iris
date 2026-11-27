@@ -403,7 +403,9 @@ Os backups antigos não são apagados automaticamente; remova-os quando quiser.
 ./scripts/server.sh status
 ```
 
-Com `IRIS_BACKUP_DIR` definido, o update faz um backup antes de atualizar.
+O update não faz backup: troca código e imagem, nunca os originais, e o backup
+automático diário já cobre os dados. Para ter um antes de atualizar, rode
+`./scripts/server.sh backup` (ou "Fazer backup agora" em Configurações).
 
 O servidor roda sempre um **release**, nunca a `main`. Releases são as tags
 `vX.Y.Z`: a `main` é onde as mudanças são integradas, e só o que recebe tag chega
@@ -418,7 +420,7 @@ explicitamente (`IRIS_VERSION=0.6.0-rc.1`). O update exige uma árvore Git limpa
 ainda está sendo publicada, nada muda e ele pede para tentar de novo em alguns
 minutos. Para voltar,
 fixe a versão anterior em `IRIS_VERSION`, execute `./scripts/server.sh update`
-e, se o esquema dos dados tiver mudado, restaure o backup feito antes do update.
+e, se o esquema dos dados tiver mudado, restaure o backup mais recente.
 
 ### Atualizar pelo navegador
 
@@ -435,8 +437,7 @@ servidor:
 
 O container não ganha acesso ao Docker. O botão só deixa um pedido em
 `<dados>/updater/request.json`; uma unidade `systemd` do host vê o arquivo e roda
-o mesmo `./scripts/server.sh update` de sempre, com backup antes e conferência de
-saúde depois. O pedido não leva comando nem versão: o host atualiza para o que o
+o mesmo `./scripts/server.sh update` de sempre, com conferência de saúde depois. O pedido não leva comando nem versão: o host atualiza para o que o
 próprio `.env` escolhe, então uma versão fixada em `IRIS_VERSION` continua
 fixada. O resultado fica em `<dados>/updater/status.json`, e a saída completa em
 `<dados>/updater/last.log`.
