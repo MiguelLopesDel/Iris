@@ -62,6 +62,11 @@ env_value() {
     sed -n "s/^$1=//p" .env | tail -n 1
 }
 
+# What compose reads from the environment. sudo resets the environment, so
+# these are handed over explicitly; without that the code mounts, the image
+# key and the commit never reached Compose on a server where Docker needs sudo.
+forwarded_env=(TZ COMPOSE_FILE IRIS_COMMIT IRIS_STAGING_DEPS_KEY)
+
 # Docker, with sudo only when the user cannot reach the daemon directly.
 docker_cmd() {
     if [ -n "${IRIS_STAGING_DOCKER:-}" ]; then
@@ -70,7 +75,11 @@ docker_cmd() {
     elif docker info >/dev/null 2>&1; then
         docker "$@"
     else
-        sudo -n docker "$@"
+        local name assignments=()
+        for name in "${forwarded_env[@]}"; do
+            [ -n "${!name+set}" ] && assignments+=("$name=${!name}")
+        done
+        sudo -n env "${assignments[@]}" docker "$@"
     fi
 }
 
