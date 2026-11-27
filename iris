@@ -194,6 +194,36 @@ sync() {
     say "main is at $(git log -1 --format='%h %s')"
 }
 
+publish_github_release() {
+    # The GitHub Release is what the Android app checks for updates: notes plus
+    # the APK, built here from the tag and signed with the project key, which
+    # never leaves this computer (.release-keys/ is ignored by git).
+    local version="$1" tag="v$1" notes="docs/releases/$1.md" back apk out
+    local -a assets=()
+    if [ -f .release-keys/release.env ]; then
+        set -a; . .release-keys/release.env; set +a
+        # release.env may name the key by a path from another machine or a container.
+        [ -f "${IRIS_RELEASE_KEYSTORE:-}" ] || IRIS_RELEASE_KEYSTORE="$PWD/.release-keys/iris-release.jks"
+        export IRIS_RELEASE_KEYSTORE
+        back="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
+        git switch --quiet --detach "$tag"
+        if (cd android && ./gradlew -q :app:assembleRelease); then
+            apk="android/app/build/outputs/apk/release/app-release.apk"
+            out="$(mktemp -d)/iris-$version.apk"
+            cp "$apk" "$out"
+            assets+=("$out")
+        else
+            say "the APK did not build; the release goes out without it (attach it later with gh release upload $tag)"
+        fi
+        git switch --quiet "$back" 2>/dev/null || git switch --quiet --detach "$back"
+    else
+        say "no .release-keys/release.env: the release goes out without the APK"
+    fi
+    gh release create "$tag" --title "Iris $version" \
+        --notes-file "$( [ -f "$notes" ] && echo "$notes" || echo /dev/null )" "${assets[@]}" >/dev/null
+    say "GitHub Release: $(gh release view "$tag" --json url --jq .url)"
+}
+
 release() {
     local version="${1:-}" tag current notes previous
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || die "usage: ./iris release X.Y.Z"
@@ -208,6 +238,7 @@ release() {
         git tag -a "$tag" -m "Iris $version" origin/main
         git push --quiet origin "$tag"
         say "tagged $tag at $(git rev-parse --short origin/main); the image is published in a few minutes"
+        publish_github_release "$version"
         say "after testing it on staging, run: ./iris deploy"
         return
     fi

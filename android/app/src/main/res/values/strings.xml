@@ -651,4 +651,11 @@
     <!-- server responses -->
     <string name="api_auth_required">Autenticação necessária</string>
     <string name="api_https_required">Este servidor foi pareado com uma identidade. Use o endereço HTTPS do código de pareamento; credenciais não são enviadas por HTTP.</string>
+    <!-- app updates -->
+    <string name="app_update_available">Nova versão %1$s do Iris</string>
+    <string name="app_update_hint">Atualize para ter as correções e novidades. O Android pede uma confirmação.</string>
+    <string name="app_update_install">Atualizar</string>
+    <string name="app_update_not_now">Agora não</string>
+    <string name="app_update_downloading">Baixando…</string>
+    <string name="app_update_failed">Não foi possível baixar a atualização. Tente de novo mais tarde.</string>
 </resources>

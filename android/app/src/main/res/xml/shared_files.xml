@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Only the folder MediaSharer fills; nothing else in the app is reachable. -->
+<!-- Only the folders MediaSharer and AppUpdates fill; nothing else in the app is reachable. -->
 <paths>
     <cache-path name="shared" path="shared/" />
+    <cache-path name="updates" path="updates/" />
 </paths>
