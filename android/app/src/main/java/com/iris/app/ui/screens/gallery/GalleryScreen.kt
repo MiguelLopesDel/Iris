@@ -32,6 +32,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import com.iris.app.ui.text.countPluralResource
+import androidx.compose.ui.res.stringResource
+import com.iris.app.R
 import com.iris.app.ui.screens.spaces.SpacePickerDialog
 import androidx.compose.material.icons.filled.Add
 import androidx.activity.compose.BackHandler
@@ -41,6 +44,7 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.platform.LocalContext
 import com.iris.app.ui.components.rememberMediaShareAll
+import com.iris.app.ui.text.appString
 import com.iris.app.ui.theme.IrisDanger
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -57,6 +61,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -228,11 +233,10 @@ fun GalleryScreen(
     if (confirmingTrash) {
         AlertDialog(
             onDismissRequest = { confirmingTrash = false },
-            title = { Text(if (selectedRecords.size == 1) "Mover 1 item para a lixeira?" else "Mover ${selectedRecords.size} itens para a lixeira?") },
+            title = { Text(countPluralResource(R.plurals.gallery_trash_title, selectedRecords.size, selectedRecords.size)) },
             text = {
                 Text(
-                    "Saem da sua biblioteca no Iris e ficam na lixeira, de onde podem ser " +
-                        "restaurados pelo site. As cópias no celular não são apagadas."
+                    stringResource(R.string.gallery_trash_message)
                 )
             },
             confirmButton = {
@@ -240,9 +244,9 @@ fun GalleryScreen(
                     confirmingTrash = false
                     viewModel.moveToTrash(selectedRecords.mapNotNull { it.dbId }, toast)
                     selected = emptySet()
-                }) { Text("Mover para a lixeira", color = IrisDanger) }
+                }) { Text(stringResource(R.string.gallery_trash_confirm), color = IrisDanger) }
             },
-            dismissButton = { TextButton(onClick = { confirmingTrash = false }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { confirmingTrash = false }) { Text(stringResource(R.string.common_cancel)) } },
         )
     }
 
@@ -252,23 +256,23 @@ fun GalleryScreen(
                 TopAppBar(
                     navigationIcon = {
                         IconButton(onClick = { selected = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancelar seleção")
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.gallery_cancel_selection))
                         }
                     },
-                    title = { Text(if (selected.size == 1) "1 selecionada" else "${selected.size} selecionadas") },
+                    title = { Text(countPluralResource(R.plurals.gallery_selected_count, selected.size, selected.size)) },
                     actions = {
                         IconButton(onClick = {
                             shareAll(selectedRecords.map {
                                 apiClient.resolveMediaUrl(it.resolvedPath ?: it.caminho) to it.cleanFilename
                             })
                         }) {
-                            Icon(Icons.Outlined.Share, contentDescription = "Compartilhar")
+                            Icon(Icons.Outlined.Share, contentDescription = stringResource(R.string.gallery_share))
                         }
                         IconButton(onClick = { pickingSpace = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Adicionar a um grupo")
+                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.gallery_add_to_group))
                         }
                         IconButton(onClick = { confirmingTrash = true }) {
-                            Icon(Icons.Outlined.Delete, contentDescription = "Mover para a lixeira")
+                            Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.gallery_trash_confirm))
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
@@ -304,14 +308,14 @@ fun GalleryScreen(
         ) {
             if (!uiState.deviceMediaPermissionGranted) {
                 TextButton(onClick = { mediaPermissionLauncher.launch(requestedMediaPermissions) }) {
-                    Text("Mostrar fotos deste aparelho")
+                    Text(stringResource(R.string.gallery_show_device_photos))
                 }
             }
 
             if (uiState.error == "AUTH_REQUIRED" && uiState.records.any { it.deviceUri != null }) {
                 Text(
-                    text = signedOutText?.let { "$it Enquanto isso, você vê as fotos do aparelho." }
-                        ?: "Fotos do aparelho. Entre para ver também as fotos do servidor Iris.",
+                    text = signedOutText?.let { stringResource(R.string.gallery_signed_out_with_device, it) }
+                        ?: stringResource(R.string.gallery_signed_out_device_only),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -339,10 +343,10 @@ fun GalleryScreen(
                     uiState.error == "AUTH_REQUIRED" && uiState.records.isEmpty() -> {
                         EmptyState(
                             icon = Icons.Default.Lock,
-                            title = "Login Necessário",
+                            title = stringResource(R.string.gallery_login_required),
                             message = signedOutText
-                                ?: "Servidor conectado! Para visualizar sua biblioteca privada, autentique este dispositivo.",
-                            actionLabel = "Fazer Login",
+                                ?: stringResource(R.string.gallery_login_message),
+                            actionLabel = stringResource(R.string.gallery_login_action),
                             onAction = onLoginClick
                         )
                     }
@@ -353,14 +357,14 @@ fun GalleryScreen(
 
                     uiState.error != null && uiState.records.isEmpty() -> {
                         EmptyState(
-                            title = "Não foi possível conectar",
+                            title = stringResource(R.string.gallery_error_connect),
                             message = if (uiState.error == "SERVER_OFFLINE") {
                                 uiState.offlineReason
-                                    ?: "Não foi possível alcançar o servidor Iris. Verifique se ele está rodando e a URL em Configurações."
+                                    ?: stringResource(R.string.gallery_error_server_unreachable)
                             } else {
-                                uiState.error ?: "Verifique se o servidor Iris está em execução."
+                                uiState.error ?: stringResource(R.string.gallery_error_server_hint)
                             },
-                            actionLabel = "Tentar novamente",
+                            actionLabel = stringResource(R.string.common_retry),
                             onAction = { viewModel.checkServerAndLoad() }
                         )
                     }
@@ -368,13 +372,13 @@ fun GalleryScreen(
                     uiState.records.isEmpty() -> {
                         EmptyState(
                             icon = Icons.Outlined.PhotoLibrary,
-                            title = if (uiState.deviceMediaPermissionGranted) "Nenhuma mídia encontrada" else "Fotos do aparelho não disponíveis",
+                            title = if (uiState.deviceMediaPermissionGranted) stringResource(R.string.gallery_empty_title) else stringResource(R.string.gallery_no_device_access_title),
                             message = if (uiState.deviceMediaPermissionGranted) {
-                                "Nenhuma foto ou vídeo neste aparelho ou na biblioteca Iris."
+                                stringResource(R.string.gallery_empty_message)
                             } else {
-                                "Permita acesso às fotos e vídeos para mostrá-los junto com a biblioteca Iris."
+                                stringResource(R.string.gallery_no_device_access_message)
                             },
-                            actionLabel = if (uiState.deviceMediaPermissionGranted) "Atualizar" else "Permitir acesso às fotos",
+                            actionLabel = if (uiState.deviceMediaPermissionGranted) stringResource(R.string.common_refresh) else stringResource(R.string.gallery_allow_access),
                             onAction = {
                                 if (uiState.deviceMediaPermissionGranted) viewModel.refresh()
                                 else mediaPermissionLauncher.launch(requestedMediaPermissions)
@@ -534,7 +538,7 @@ private fun LoadingMoreFooter(loaded: Int, total: Int) {
         )
         Spacer(modifier = Modifier.width(10.dp))
         Text(
-            text = "Carregando mais… $loaded de $total",
+            text = stringResource(R.string.gallery_loading_more, loaded, total),
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -555,10 +559,8 @@ private fun DateSectionHeader(label: String) {
 private data class DateSection(val label: String, val records: List<MediaRecord>)
 
 private val dateSectionZone: ZoneId = ZoneId.systemDefault()
-private val dateSectionSameYearFormatter =
-    DateTimeFormatter.ofPattern("d 'de' MMMM", Locale("pt", "BR"))
-private val dateSectionOtherYearFormatter =
-    DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", Locale("pt", "BR"))
+private fun dateSectionFormatter(@StringRes pattern: Int): DateTimeFormatter =
+    DateTimeFormatter.ofPattern(appString(pattern), Locale.getDefault())
 
 /**
  * Buckets records into Google-Photos-style date sections. Relies on records
@@ -571,15 +573,15 @@ private fun groupByDate(records: List<MediaRecord>): List<DateSection> {
     val yesterday = today.minusDays(1)
 
     fun labelFor(record: MediaRecord): String {
-        val mtime = record.fileMtime ?: return "Data desconhecida"
+        val mtime = record.fileMtime ?: return appString(R.string.common_unknown_date)
         val day = Instant.ofEpochSecond(mtime.toLong()).atZone(dateSectionZone).toLocalDate()
         return when (day) {
-            today -> "Hoje"
-            yesterday -> "Ontem"
+            today -> appString(R.string.common_today)
+            yesterday -> appString(R.string.common_yesterday)
             else -> if (day.year == today.year) {
-                day.format(dateSectionSameYearFormatter)
+                day.format(dateSectionFormatter(R.string.gallery_date_same_year_pattern))
             } else {
-                day.format(dateSectionOtherYearFormatter)
+                day.format(dateSectionFormatter(R.string.gallery_date_other_year_pattern))
             }
         }
     }

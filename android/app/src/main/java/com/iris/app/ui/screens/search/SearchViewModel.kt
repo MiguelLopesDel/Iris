@@ -3,12 +3,14 @@ package com.iris.app.ui.screens.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.SearchPreferences
 import com.iris.app.data.repository.ServerSettingsRepository
 import com.iris.app.ui.state.LatestJob
 import com.iris.app.ui.state.isUnreadableResponse
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -155,7 +157,7 @@ class SearchViewModel(
                     it.copy(
                         isSearching = false,
                         hasSearched = true,
-                        error = ex.localizedMessage ?: "Erro ao buscar mídias aleatórias"
+                        error = ex.localizedMessage ?: appString(R.string.search_error_random)
                     )
                 }
             }
@@ -200,10 +202,10 @@ class SearchViewModel(
                 if (repository.credentialsStore.sessionIdentity.value != requestedSession) return@onFailure
                 val rawMsg = ex.localizedMessage ?: ex.message ?: ""
                 val errorMsg = when {
-                    rawMsg.contains("401") -> "Autenticação necessária (faça login na aba Backup)"
+                    rawMsg.contains("401") -> appString(R.string.error_auth_required_backup)
                     isUnreadableResponse(ex) ->
-                        "Resposta inesperada do servidor (verifique a URL em Configurações)"
-                    else -> rawMsg.ifBlank { "Erro na busca" }
+                        appString(R.string.error_unexpected_response)
+                    else -> rawMsg.ifBlank { appString(R.string.search_error) }
                 }
                 _uiState.update {
                     it.copy(

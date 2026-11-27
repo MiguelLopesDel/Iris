@@ -1,5 +1,10 @@
 package com.iris.app.ui.screens.gallery
 
+import androidx.annotation.StringRes
+import com.iris.app.R
+import com.iris.app.ui.text.appPlural
+import com.iris.app.ui.text.appString
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
@@ -35,18 +40,22 @@ import com.iris.app.ui.theme.IrisTextSoft
 const val BACKUP_STATUS_TAG = "backup-status"
 
 /** What the gallery's top bar says about the backup, at a glance. */
-enum class BackupState(val description: String, val short: String) {
-    SIGNED_OUT("Entrar para fazer backup", "Entrar"),
-    OFFLINE("Sem conexão com o servidor", "Sem conexão"),
-    ATTENTION("O backup precisa de atenção", "Backup com problema"),
-    OK("Backup em dia", "Backup em dia"),
+enum class BackupState(@StringRes private val descriptionRes: Int, @StringRes private val shortRes: Int) {
+    SIGNED_OUT(R.string.backup_state_signed_out, R.string.backup_state_signed_out_short),
+    OFFLINE(R.string.backup_state_offline, R.string.backup_state_offline_short),
+    ATTENTION(R.string.backup_state_attention, R.string.backup_state_attention_short),
+    OK(R.string.backup_state_ok, R.string.backup_state_ok),
+    ;
+
+    val description: String get() = appString(descriptionRes)
+    val short: String get() = appString(shortRes)
 }
 
-/** "Backup em dia · 1.234 itens": the state in words, with the library's size when known. */
+/** "Backup up to date · 1,234 items": the state in words, with the library's size when known. */
 fun backupLabel(state: BackupState, totalItems: Int): String {
     if (totalItems <= 0 || state == BackupState.SIGNED_OUT) return state.short
-    val count = java.text.NumberFormat.getIntegerInstance(java.util.Locale("pt", "BR")).format(totalItems)
-    return "${state.short} · $count ${if (totalItems == 1) "item" else "itens"}"
+    val count = java.text.NumberFormat.getIntegerInstance(java.util.Locale.getDefault()).format(totalItems)
+    return "${state.short} · ${appPlural(R.plurals.backup_label_items, totalItems, count)}"
 }
 
 fun backupState(

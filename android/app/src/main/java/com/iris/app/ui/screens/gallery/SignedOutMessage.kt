@@ -1,5 +1,8 @@
 package com.iris.app.ui.screens.gallery
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
+
 /**
  * What the gallery says to a signed-out user, from the server's current
  * state: the text has to change as soon as the server gets its first
@@ -7,11 +10,11 @@ package com.iris.app.ui.screens.gallery
  */
 internal fun signedOutMessage(serverReplaced: Boolean, serverNeedsSetup: Boolean): String? = when {
     serverReplaced && serverNeedsSetup ->
-        "O servidor foi reinstalado e ainda não tem contas. Crie a conta no servidor e pareie este aparelho de novo."
+        appString(R.string.signed_out_replaced_no_accounts)
     serverNeedsSetup ->
-        "O servidor ainda não tem contas. Crie a conta no servidor e depois pareie este aparelho."
+        appString(R.string.signed_out_no_accounts)
     serverReplaced ->
-        "O servidor foi reinstalado. Entre com a conta nova ou pareie este aparelho de novo."
+        appString(R.string.signed_out_replaced)
     else -> null
 }
 

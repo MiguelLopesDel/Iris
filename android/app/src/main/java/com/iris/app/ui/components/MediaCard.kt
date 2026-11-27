@@ -134,7 +134,7 @@ fun MediaCard(
                 }
                 Icon(
                     imageVector = if (selected) Icons.Default.CheckCircle else Icons.Outlined.Circle,
-                    contentDescription = if (selected) "Selecionada" else "Não selecionada",
+                    contentDescription = stringResource(if (selected) R.string.viewer_selected else R.string.viewer_not_selected),
                     tint = if (selected) MaterialTheme.colorScheme.primary else Color.White,
                     modifier = Modifier
                         .padding(6.dp)
@@ -156,7 +156,7 @@ fun MediaCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Vídeo",
+                        contentDescription = stringResource(R.string.spaces_video),
                         tint = Color.White,
                         modifier = Modifier.size(16.dp)
                     )
@@ -239,7 +239,7 @@ private fun PreviewPlaceholder(isVideo: Boolean) {
     ) {
         Icon(
             imageVector = if (isVideo) Icons.Default.PlayArrow else Icons.Outlined.HourglassEmpty,
-            contentDescription = "Carregando prévia",
+            contentDescription = stringResource(R.string.viewer_preview_loading),
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
             modifier = Modifier.size(30.dp)
         )
@@ -256,7 +256,7 @@ private fun PreviewError(isVideo: Boolean) {
     ) {
         Icon(
             imageVector = if (isVideo) Icons.Default.PlayArrow else Icons.Outlined.BrokenImage,
-            contentDescription = "Prévia indisponível",
+            contentDescription = stringResource(R.string.viewer_preview_unavailable),
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
             modifier = Modifier.size(32.dp)
         )

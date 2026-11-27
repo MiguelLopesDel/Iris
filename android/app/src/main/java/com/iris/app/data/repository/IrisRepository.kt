@@ -1,5 +1,6 @@
 package com.iris.app.data.repository
 
+import com.iris.app.R
 import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.model.ownMembership
@@ -27,6 +28,7 @@ import com.iris.app.data.model.SpaceItemsResponse
 import com.iris.app.data.model.SpaceSearchResponse
 import com.iris.app.data.model.SpaceMember
 import com.iris.app.data.model.SpaceSummary
+import com.iris.app.ui.text.appString
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -129,7 +131,7 @@ class IrisRepository(
         onResult: (ServerSpeedTest.Result) -> Unit
     ): Result<List<ServerSpeedTest.Result>> = runCatchingCancellable {
         val sessionIdentity = credentialsStore.sessionIdentity.value
-            ?: error("Faça login antes de medir a velocidade")
+            ?: error(appString(R.string.repo_login_before_speed))
         ServerSpeedTest().run(apiClient.apiServiceForSession(sessionIdentity), onResult)
     }
 
@@ -148,9 +150,9 @@ class IrisRepository(
             }
         }
         val sessionIdentity = credentialsStore.sessionIdentity.value
-            ?: error("Faça login antes de sincronizar")
+            ?: error(appString(R.string.repo_login_before_sync))
         val accountKey = credentialsStore.accountIdentity.value
-            ?: error("A conta não pôde ser identificada; entre novamente antes de sincronizar")
+            ?: error(appString(R.string.repo_account_unknown))
         val syncSession = AccountSyncSession(sessionIdentity, accountKey)
         val isSessionCurrent = {
             syncSession.matches(
@@ -178,7 +180,7 @@ class IrisRepository(
             },
         )
         check(syncResult.queueCompleted) {
-            "O envio ficou incompleto e será retomado na próxima sincronização"
+            appString(R.string.repo_upload_incomplete)
         }
         changeFeedSync.syncChanges(accountKey, sessionIdentity, isSessionCurrent)
         syncResult.scanResult
@@ -415,7 +417,7 @@ class IrisRepository(
     } catch (e: CancellationException) {
         throw e
     } catch (e: HttpException) {
-        Result.failure(IllegalStateException(serverDetail(e) ?: "O servidor respondeu ${e.code()}", e))
+        Result.failure(IllegalStateException(serverDetail(e) ?: appString(R.string.transfer_server_replied, e.code()), e))
     } catch (e: Throwable) {
         Result.failure(e)
     }

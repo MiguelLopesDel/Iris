@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.iris.app.R
 import com.iris.app.data.local.DeviceCredentialsStore
 import com.iris.app.data.model.CloudSyncStatus
 import com.iris.app.data.model.DeviceMediaSource
@@ -17,6 +18,7 @@ import com.iris.app.data.sync.MediaSyncWorker
 import com.iris.app.data.sync.ServerSpeedTest
 import com.iris.app.data.sync.SyncRunRecorder
 import com.iris.app.data.sync.UploadSpeedSnapshot
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -261,7 +263,7 @@ class SyncViewModel(
                     _uiState.update {
                         it.copy(
                             isLoggingIn = false,
-                            loginError = ex.localizedMessage ?: "Erro ao autenticar dispositivo"
+                            loginError = ex.localizedMessage ?: appString(R.string.backup_error_sign_in)
                         )
                     }
                 }

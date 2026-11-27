@@ -36,7 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.pluralStringResource
+import com.iris.app.ui.text.countPluralResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,7 +75,7 @@ internal fun LazyListScope.backupFolderSections(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SectionHeader(
-                    pluralStringResource(R.plurals.sync_folders_others, sections.others.size, sections.others.size),
+                    countPluralResource(R.plurals.sync_folders_others, sections.others.size, sections.others.size),
                     modifier = Modifier.weight(1f),
                 )
                 Icon(if (othersExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
@@ -146,9 +146,9 @@ private fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun folderSummary(photos: Int, videos: Int, folders: Int, selection: GroupSelection): String {
     val parts = buildList {
-        if (photos > 0) add(pluralStringResource(R.plurals.sync_folder_photos, photos, photos))
-        if (videos > 0) add(pluralStringResource(R.plurals.sync_folder_videos, videos, videos))
-        if (folders > 1) add(pluralStringResource(R.plurals.sync_folder_subfolders, folders, folders))
+        if (photos > 0) add(countPluralResource(R.plurals.sync_folder_photos, photos, photos))
+        if (videos > 0) add(countPluralResource(R.plurals.sync_folder_videos, videos, videos))
+        if (folders > 1) add(countPluralResource(R.plurals.sync_folder_subfolders, folders, folders))
         if (selection == GroupSelection.SOME) add(stringResource(R.string.sync_folder_some_selected))
     }
     return parts.joinToString(" · ")

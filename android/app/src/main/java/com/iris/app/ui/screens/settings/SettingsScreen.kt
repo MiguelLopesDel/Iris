@@ -45,12 +45,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.OutlinedButton
+import com.iris.app.R
 import com.journeyapps.barcodescanner.ScanOptions
 import com.journeyapps.barcodescanner.ScanContract
 import androidx.compose.ui.Alignment
@@ -105,6 +107,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             ),
         )
     }
+    val scanPrompt = stringResource(R.string.settings_scan_prompt)
     var choosingPairing by remember { mutableStateOf(false) }
     val qrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.let(viewModel::readPairingCode)
@@ -116,7 +119,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 qrScanner.launch(
                     ScanOptions()
                         .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                        .setPrompt("Aponte para o código em Conectar um celular")
+                        .setPrompt(scanPrompt)
                         .setBeepEnabled(false)
                         .setOrientationLocked(false)
                 )
@@ -134,17 +137,17 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
     uiState.pairingMessage?.let { message ->
         AlertDialog(
             onDismissRequest = viewModel::dismissPairingMessage,
-            title = { Text("Pareamento") },
+            title = { Text(stringResource(R.string.settings_pairing_title)) },
             text = { Text(message) },
-            confirmButton = { TextButton(onClick = viewModel::dismissPairingMessage) { Text("OK") } },
+            confirmButton = { TextButton(onClick = viewModel::dismissPairingMessage) { Text(stringResource(R.string.common_ok)) } },
         )
     }
     uiState.securityMessage?.let { message ->
         AlertDialog(
             onDismissRequest = viewModel::dismissSecurityMessage,
-            title = { Text("Certificado") },
+            title = { Text(stringResource(R.string.settings_certificate_title)) },
             text = { Text(message) },
-            confirmButton = { TextButton(onClick = viewModel::dismissSecurityMessage) { Text("OK") } },
+            confirmButton = { TextButton(onClick = viewModel::dismissSecurityMessage) { Text(stringResource(R.string.common_ok)) } },
         )
     }
 
@@ -153,7 +156,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Text(
-                        text = "Configurações do Servidor",
+                        text = stringResource(R.string.settings_title),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -162,7 +165,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Voltar"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
@@ -191,14 +194,14 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Conexão com o Servidor Iris",
+                text = stringResource(R.string.settings_connection_title),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = IrisAccent
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Insira o endereço IP ou domínio onde a API do Iris está rodando (FastAPI).",
+                text = stringResource(R.string.settings_connection_help),
                 fontSize = 13.sp,
                 color = IrisTextSoft
             )
@@ -208,7 +211,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             OutlinedTextField(
                 value = uiState.serverUrl,
                 onValueChange = { viewModel.onServerUrlChange(it) },
-                label = { Text("URL do Servidor") },
+                label = { Text(stringResource(R.string.settings_server_url)) },
                 placeholder = { Text("http://192.168.1.100:8000/") },
                 leadingIcon = {
                     Icon(imageVector = Icons.Default.Dns, contentDescription = null)
@@ -228,7 +231,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
 
             // Presets
             Text(
-                text = "Atalhos rápidos:",
+                text = stringResource(R.string.settings_shortcuts),
                 fontSize = 12.sp,
                 color = IrisTextMuted
             )
@@ -237,7 +240,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 FilterChip(
                     selected = uiState.serverUrl.contains("10.0.2.2"),
                     onClick = { viewModel.onServerUrlChange("http://10.0.2.2:8000/") },
-                    label = { Text("Emulador (10.0.2.2)") },
+                    label = { Text(stringResource(R.string.settings_shortcut_emulator)) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = IrisAccent,
                         selectedLabelColor = IrisOnAccent
@@ -246,7 +249,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 FilterChip(
                     selected = uiState.serverUrl.contains("localhost"),
                     onClick = { viewModel.onServerUrlChange("http://localhost:8000/") },
-                    label = { Text("Localhost") },
+                    label = { Text(stringResource(R.string.settings_shortcut_localhost)) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = IrisAccent,
                         selectedLabelColor = IrisOnAccent
@@ -275,9 +278,9 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         strokeWidth = 2.dp
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Testando conexão…", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.settings_testing), fontWeight = FontWeight.Bold)
                 } else {
-                    Text("Salvar e Testar Conexão", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.settings_save_test), fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -291,9 +294,9 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 if (uiState.isPairing) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Pareando…")
+                    Text(stringResource(R.string.settings_pairing_progress))
                 } else {
-                    Text("Parear com código")
+                    Text(stringResource(R.string.pairing_entry_title))
                 }
             }
 
@@ -319,7 +322,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = if (isOnline) "Servidor Iris Conectado" else "Falha de Conexão",
+                                text = stringResource(if (isOnline) R.string.settings_server_connected else R.string.settings_connection_failed),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isOnline) IrisAccent else IrisDanger
@@ -348,7 +351,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Acesso à Biblioteca Privada",
+                        text = stringResource(R.string.settings_library_access),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground
@@ -363,7 +366,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Dispositivo autenticado como ${uiState.loggedInUsername}",
+                                text = stringResource(R.string.settings_device_signed_in, uiState.loggedInUsername),
                                 fontSize = 13.sp,
                                 color = IrisAccent,
                                 fontWeight = FontWeight.SemiBold
@@ -372,7 +375,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         if (uiState.deviceId.isNotBlank()) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "ID do Dispositivo: ${uiState.deviceId.take(16)}…",
+                                text = stringResource(R.string.settings_device_id, uiState.deviceId.take(16)),
                                 fontSize = 11.sp,
                                 color = IrisTextMuted
                             )
@@ -386,7 +389,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Dispositivo não autenticado",
+                                text = stringResource(R.string.settings_device_signed_out),
                                 fontSize = 13.sp,
                                 color = Color(0xFFFFB300),
                                 fontWeight = FontWeight.SemiBold
@@ -394,7 +397,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "O servidor está acessível, mas para visualizar e sincronizar sua biblioteca privada de memes, realize o login do dispositivo na aba 'Backup'.",
+                            text = stringResource(R.string.settings_device_signed_out_hint),
                             fontSize = 12.sp,
                             color = IrisTextSoft
                         )
@@ -410,7 +413,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Informações da Biblioteca",
+                    text = stringResource(R.string.settings_library_info),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
@@ -426,16 +429,16 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        InfoRow(label = "Total de Mídias Indexadas", value = "${info.records}")
-                        InfoRow(label = "Dispositivo de IA", value = info.device.ifBlank { "CUDA / CPU" })
-                        InfoRow(label = "Modelo de Embeddings", value = info.model.ifBlank { "CLIP ViT-L-14" })
+                        InfoRow(label = stringResource(R.string.settings_info_total_media), value = "${info.records}")
+                        InfoRow(label = stringResource(R.string.settings_info_ai_device), value = info.device.ifBlank { "CUDA / CPU" })
+                        InfoRow(label = stringResource(R.string.settings_info_embeddings_model), value = info.model.ifBlank { "CLIP ViT-L-14" })
                         if (info.florenceModel.isNotBlank()) {
-                            InfoRow(label = "Modelo VLM", value = info.florenceModel)
+                            InfoRow(label = stringResource(R.string.settings_info_vlm_model), value = info.florenceModel)
                         }
-                        InfoRow(label = "Banco de Dados", value = info.db.ifBlank { "iris_v1.db" })
+                        InfoRow(label = stringResource(R.string.settings_info_database), value = info.db.ifBlank { "iris_v1.db" })
                         InfoRow(
-                            label = "Índice FAISS",
-                            value = if (info.faissIndexExists) "Ativo e carregado" else "Não inicializado"
+                            label = stringResource(R.string.settings_info_faiss_index),
+                            value = stringResource(if (info.faissIndexExists) R.string.settings_info_faiss_active else R.string.settings_info_faiss_inactive)
                         )
                     }
                 }
@@ -445,14 +448,14 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
             HorizontalDivider(color = IrisSurfaceBright)
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Diagnóstico de desempenho",
+                text = stringResource(R.string.settings_perf_title),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Mede somente tempos agregados neste aparelho. Não registra fotos, URLs, contas ou senhas.",
+                text = stringResource(R.string.settings_perf_help),
                 fontSize = 12.sp,
                 color = IrisTextSoft
             )
@@ -468,7 +471,7 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (performanceReport.enabled) "Parar diagnóstico" else "Iniciar diagnóstico")
+                Text(stringResource(if (performanceReport.enabled) R.string.settings_perf_stop else R.string.settings_perf_start))
             }
             if (performanceReport.metrics.isNotEmpty() || performanceReport.upload != null) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -481,13 +484,12 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Mediana / P90 / máximo", fontSize = 12.sp, color = IrisTextMuted)
+                        Text(stringResource(R.string.settings_perf_median), fontSize = 12.sp, color = IrisTextMuted)
                         performanceReport.upload?.let { upload ->
                             InfoRow(
                                 label = "sync.upload_throughput",
-                                value = String.format(
-                                    java.util.Locale.US,
-                                    "%.1f MB/s durante chamadas PUT • %.1f MiB/s média da fila • %.1f MiB em %.1f s (%d execuções)",
+                                value = stringResource(
+                                    R.string.settings_perf_upload_throughput,
                                     upload.activeMibPerSecond * 1.048576,
                                     upload.mibPerSecond,
                                     upload.bytes / 1_048_576.0,
@@ -497,9 +499,8 @@ val performanceReport by performanceMonitor.report.collectAsStateWithLifecycle()
                             )
                             InfoRow(
                                 label = "sync.confirmed_items",
-                                value = String.format(
-                                    java.util.Locale.US,
-                                    "%.2f itens/s • %d confirmados em %d execuções",
+                                value = stringResource(
+                                    R.string.settings_perf_confirmed_items,
                                     upload.itemsPerSecond,
                                     upload.confirmedItems,
                                     upload.runs

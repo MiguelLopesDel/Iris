@@ -1,5 +1,9 @@
 package com.iris.app.ui.screens.detail
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
+import com.iris.app.ui.text.appStringArray
+
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
@@ -17,11 +21,14 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
     companion object {
         // Fixed tables: the platform's short names differ between Android
         // versions and the JVM ("out" or "out."), and the title must not.
-        private val months = listOf(
-            "jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
-            "jul.", "ago.", "set.", "out.", "nov.", "dez.",
-        )
-        private val weekdays = listOf("Seg.", "Ter.", "Qua.", "Qui.", "Sex.", "Sáb.", "Dom.")
+        private val months: List<String> get() = appStringArray(R.array.viewer_months).toList()
+        private val weekdays: List<String> get() = appStringArray(R.array.viewer_weekdays).toList()
+
+        private fun dayMonth(date: LocalDate) =
+            appString(R.string.viewer_date_day_month, date.dayOfMonth, months[date.monthValue - 1])
+
+        private fun dayMonthYear(date: LocalDate) =
+            appString(R.string.viewer_date_day_month_year, date.dayOfMonth, months[date.monthValue - 1], date.year)
 
         /**
          * [capturedAt] is an ISO capture time. Explicit offsets are converted
@@ -41,11 +48,11 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
                 ?: return ViewerTitle(fileName, place?.ifBlank { null })
             val date = taken.toLocalDate()
             val day = when {
-                date == today -> "Hoje"
-                date == today.minusDays(1) -> "Ontem"
+                date == today -> appString(R.string.common_today)
+                date == today.minusDays(1) -> appString(R.string.common_yesterday)
                 // The year only when it is not this one, as a gallery does.
-                date.year == today.year -> "${date.dayOfMonth} de ${months[date.monthValue - 1]}"
-                else -> "${date.dayOfMonth} de ${months[date.monthValue - 1]} de ${date.year}"
+                date.year == today.year -> dayMonth(date)
+                else -> dayMonthYear(date)
             }
             val sub = listOfNotNull(time(taken), place?.ifBlank { null }).joinToString(" · ")
             return ViewerTitle(day, sub)
@@ -55,8 +62,7 @@ internal data class ViewerTitle(val headline: String, val subline: String?) {
         fun fullDate(capturedAt: String?, fileMtime: Double?, zone: ZoneId = ZoneId.systemDefault()): String? {
             val taken = takenAt(capturedAt, fileMtime, zone) ?: return null
             val date = taken.toLocalDate()
-            return "${weekdays[date.dayOfWeek.value - 1]}, ${date.dayOfMonth} de " +
-                "${months[date.monthValue - 1]} de ${date.year} • ${time(taken)}"
+            return "${weekdays[date.dayOfWeek.value - 1]}, ${dayMonthYear(date)} • ${time(taken)}"
         }
 
         private fun time(taken: LocalDateTime) = "%02d:%02d".format(taken.hour, taken.minute)

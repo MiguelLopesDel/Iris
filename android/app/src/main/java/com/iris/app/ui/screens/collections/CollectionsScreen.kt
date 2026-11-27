@@ -1,6 +1,5 @@
 package com.iris.app.ui.screens.collections
 
-import com.iris.app.ui.text.countOf
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +49,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import com.iris.app.ui.text.countPluralResource
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -62,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iris.app.R
 import com.iris.app.ui.components.EmptyState
 import com.iris.app.ui.components.MediaCard
 import com.iris.app.ui.theme.IrisOnAccent
@@ -92,14 +94,14 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             TopAppBar(
                 title = {
                     Text(
-                        text = "Álbuns",
+                        text = stringResource(R.string.collections_title),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
                 },
                 actions = {
                     IconButton(onClick = { viewModel.loadData(isRefresh = true) }) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = stringResource(R.string.common_refresh))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
@@ -128,17 +130,17 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 Tab(
                     selected = uiState.selectedTab == 0,
                     onClick = { viewModel.setTab(0) },
-                    text = { Text("Álbuns (${uiState.collections.size})", fontWeight = FontWeight.SemiBold) }
+                    text = { Text(stringResource(R.string.collections_tab_albums, uiState.collections.size), fontWeight = FontWeight.SemiBold) }
                 )
                 Tab(
                     selected = false,
                     onClick = onPeopleClick,
-                    text = { Text("Pessoas", fontWeight = FontWeight.SemiBold) }
+                    text = { Text(stringResource(R.string.collections_tab_people), fontWeight = FontWeight.SemiBold) }
                 )
                 Tab(
                     selected = false,
                     onClick = onGroupsClick,
-                    text = { Text("Compartilhados", fontWeight = FontWeight.SemiBold) }
+                    text = { Text(stringResource(R.string.collections_tab_shared), fontWeight = FontWeight.SemiBold) }
                 )
             }
 
@@ -149,10 +151,10 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                AlbumShortcut(Icons.Outlined.StarBorder, "Favoritos", onFavoritesClick, Modifier.weight(1f))
-                AlbumShortcut(Icons.Outlined.Description, "Documentos", onDocumentsClick, Modifier.weight(1f))
-                AlbumShortcut(Icons.Outlined.PhoneAndroid, "No celular", onDeviceFoldersClick, Modifier.weight(1f))
-                AlbumShortcut(Icons.Outlined.Delete, "Lixeira", onTrashClick, Modifier.weight(1f))
+                AlbumShortcut(Icons.Outlined.StarBorder, stringResource(R.string.collections_shortcut_favorites), onFavoritesClick, Modifier.weight(1f))
+                AlbumShortcut(Icons.Outlined.Description, stringResource(R.string.collections_shortcut_documents), onDocumentsClick, Modifier.weight(1f))
+                AlbumShortcut(Icons.Outlined.PhoneAndroid, stringResource(R.string.collections_shortcut_on_phone), onDeviceFoldersClick, Modifier.weight(1f))
+                AlbumShortcut(Icons.Outlined.Delete, stringResource(R.string.trash_title), onTrashClick, Modifier.weight(1f))
             }
 
             PullToRefreshBox(
@@ -175,9 +177,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         if (uiState.collections.isEmpty()) {
                             EmptyState(
                                 icon = Icons.Outlined.FolderSpecial,
-                                title = "Nenhum álbum",
-                                message = "Crie um álbum no Iris para reunir fotos e vídeos.",
-                                actionLabel = "Atualizar",
+                                title = stringResource(R.string.collections_empty_title),
+                                message = stringResource(R.string.collections_empty_message),
+                                actionLabel = stringResource(R.string.common_refresh),
                                 onAction = { viewModel.loadData(isRefresh = true) }
                             )
                         } else {
@@ -218,7 +220,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                                     fontWeight = FontWeight.SemiBold
                                                 )
                                                 Text(
-                                                    text = countOf(col.count, "item", "itens"),
+                                                    text = countPluralResource(R.plurals.common_item_count, col.count, col.count),
                                                     fontSize = 13.sp,
                                                     color = IrisTextSoft
                                                 )
@@ -235,9 +237,9 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                         if (uiState.concepts.isEmpty()) {
                             EmptyState(
                                 icon = Icons.Default.Lightbulb,
-                                title = "Nenhum conceito",
-                                message = "Nenhum conceito temático configurado no servidor.",
-                                actionLabel = "Atualizar",
+                                title = stringResource(R.string.concepts_empty_title),
+                                message = stringResource(R.string.concepts_empty_message),
+                                actionLabel = stringResource(R.string.common_refresh),
                                 onAction = { viewModel.loadData(isRefresh = true) }
                             )
                         } else {
@@ -276,7 +278,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                                     )
                                                 }
                                                 Text(
-                                                    text = countOf(concept.matchCount, "mídia", "mídias"),
+                                                    text = countPluralResource(R.plurals.common_media_count, concept.matchCount, concept.matchCount),
                                                     fontSize = 12.sp,
                                                     color = IrisAccent,
                                                     fontWeight = FontWeight.SemiBold
@@ -292,7 +294,7 @@ val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                                             }
                                             Spacer(modifier = Modifier.height(4.dp))
                                             Text(
-                                                text = "${concept.referenceCount} referências",
+                                                text = countPluralResource(R.plurals.concept_references, concept.referenceCount, concept.referenceCount),
                                                 fontSize = 11.sp,
                                                 color = IrisTextMuted
                                             )
@@ -346,7 +348,7 @@ fun CollectionMediaScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = countOf(uiState.totalRecords, "mídia", "mídias"),
+                            text = countPluralResource(R.plurals.common_media_count, uiState.totalRecords, uiState.totalRecords),
                             fontSize = 12.sp,
                             color = IrisTextSoft
                         )
@@ -356,13 +358,13 @@ fun CollectionMediaScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Voltar"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.loadMembers() }) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Atualizar")
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = stringResource(R.string.common_refresh))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground)
@@ -384,9 +386,9 @@ fun CollectionMediaScreen(
 
             uiState.showsErrorScreen -> {
                 EmptyState(
-                    title = "Erro ao carregar coleção",
+                    title = stringResource(R.string.collection_error_load),
                     message = uiState.error ?: "",
-                    actionLabel = "Tentar novamente",
+                    actionLabel = stringResource(R.string.common_retry),
                     onAction = { viewModel.loadMembers() },
                     modifier = Modifier.padding(paddingValues)
                 )
@@ -394,8 +396,8 @@ fun CollectionMediaScreen(
 
             uiState.members.isEmpty() -> {
                 EmptyState(
-                    title = "Coleção vazia",
-                    message = "Nenhuma mídia adicionada a esta coleção ainda.",
+                    title = stringResource(R.string.collection_empty_title),
+                    message = stringResource(R.string.collection_empty_message),
                     modifier = Modifier.padding(paddingValues)
                 )
             }

@@ -1,5 +1,7 @@
 package com.iris.app.data.remote.security
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
@@ -18,7 +20,7 @@ import javax.net.ssl.SSLSocket
 
 /** The server at an address did not prove it holds the identity key this app paired with. */
 class ServerIdentityMismatchException(val origin: ServerOrigin, reason: String) :
-    IOException("O servidor em $origin não provou ser o Iris pareado: $reason")
+    IOException(appString(R.string.identity_mismatch, origin.toString(), reason))
 
 /**
  * Checks that a server holds the identity key named by the pairing code, before
@@ -80,14 +82,14 @@ class ServerIdentityVerifier(
             .build()
         val body = recording.newCall(request).execute().use { response ->
             when {
-                response.code == 404 -> throw ServerIdentityMismatchException(origin, "ele não sabe provar a identidade")
-                !response.isSuccessful -> throw IOException("HTTP ${response.code} ao verificar a identidade")
+                response.code == 404 -> throw ServerIdentityMismatchException(origin, appString(R.string.identity_cannot_prove))
+                !response.isSuccessful -> throw IOException(appString(R.string.identity_http_error, response.code))
                 else -> response.body?.string().orEmpty()
             }
         }
         val tlsUsesIdentityKey = url.isHttps && presentedKey.get() == expectedKeySha256
         val answer = runCatching { json.decodeFromString(Answer.serializer(), body) }
-            .getOrElse { throw ServerIdentityMismatchException(origin, "resposta de identidade inválida") }
+            .getOrElse { throw ServerIdentityMismatchException(origin, appString(R.string.identity_bad_response)) }
         verify(origin, answer, nonce, address, expectedKeySha256, expectedInstanceId)
         if (tlsUsesIdentityKey) {
             verifiedUntil[cacheKey] = nowMillis() + ttlMillis
@@ -133,15 +135,15 @@ class ServerIdentityVerifier(
             expectedInstanceId: String?,
         ) {
             if (answer.version != 1 || answer.algorithm != "ecdsa-p256-sha256") {
-                throw ServerIdentityMismatchException(origin, "formato de identidade desconhecido")
+                throw ServerIdentityMismatchException(origin, appString(R.string.identity_unknown_format))
             }
             val publicKey = runCatching { Base64.getDecoder().decode(answer.public_key) }
-                .getOrElse { throw ServerIdentityMismatchException(origin, "chave ilegível") }
+                .getOrElse { throw ServerIdentityMismatchException(origin, appString(R.string.identity_unreadable_key)) }
             if (ConnectionSecurity.keySha256(publicKey) != expectedKeySha256) {
-                throw ServerIdentityMismatchException(origin, "a chave não é a do pareamento")
+                throw ServerIdentityMismatchException(origin, appString(R.string.identity_wrong_key))
             }
             if (expectedInstanceId != null && answer.instance_id != expectedInstanceId) {
-                throw ServerIdentityMismatchException(origin, "é outra instalação")
+                throw ServerIdentityMismatchException(origin, appString(R.string.identity_other_install))
             }
             val valid = runCatching {
                 val key = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(publicKey))
@@ -151,7 +153,7 @@ class ServerIdentityVerifier(
                     verify(Base64.getDecoder().decode(answer.signature))
                 }
             }.getOrDefault(false)
-            if (!valid) throw ServerIdentityMismatchException(origin, "assinatura inválida")
+            if (!valid) throw ServerIdentityMismatchException(origin, appString(R.string.identity_bad_signature))
         }
     }
 }

@@ -1,13 +1,22 @@
 package com.iris.app.ui.screens.trash
 
 import com.iris.app.data.model.TrashPage
+import com.iris.app.ui.text.TestStrings
 import kotlinx.serialization.json.Json
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 import java.time.OffsetDateTime
 
 class TrashTest {
     private val now = OffsetDateTime.parse("2026-11-18T12:00:00+00:00")
+
+    @Before
+    fun readTextsFromResources() = TestStrings.install()
+
+    @After
+    fun restoreResolver() = TestStrings.uninstall()
 
     @Test
     fun `days left count down to the last day`() {

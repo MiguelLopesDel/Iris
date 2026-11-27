@@ -5,6 +5,20 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class BackupStatusTest {
+    private val originalLocale = java.util.Locale.getDefault()
+
+    @org.junit.Before
+    fun useBrazilianPortuguese() = java.util.Locale.setDefault(java.util.Locale("pt", "BR"))
+
+    @org.junit.After
+    fun restoreLocale() = java.util.Locale.setDefault(originalLocale)
+
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
     private fun state(
         signedIn: Boolean = true,
         online: Boolean? = true,

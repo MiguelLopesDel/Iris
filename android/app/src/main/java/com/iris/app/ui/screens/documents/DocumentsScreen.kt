@@ -37,11 +37,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.iris.app.ui.text.countPluralResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.iris.app.IrisApplication
+import com.iris.app.R
 import com.iris.app.data.model.DocumentKind
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.ui.components.EmptyState
@@ -72,10 +75,10 @@ fun DocumentsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Documentos") },
+                title = { Text(stringResource(R.string.documents_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = IrisBackground),
@@ -87,16 +90,16 @@ fun DocumentsScreen(
             val loaded = kinds
             when {
                 failed && loaded == null -> EmptyState(
-                    title = "Não foi possível carregar os documentos",
-                    message = "Verifique a conexão com o servidor.",
-                    actionLabel = "Tentar novamente",
+                    title = stringResource(R.string.documents_error_title),
+                    message = stringResource(R.string.common_check_connection),
+                    actionLabel = stringResource(R.string.common_retry),
                     onAction = { attempt++ },
                 )
                 loaded == null -> CircularProgressIndicator(color = IrisAccent, modifier = Modifier.align(Alignment.Center))
                 loaded.isEmpty() -> EmptyState(
                     icon = Icons.Outlined.Description,
-                    title = "Nenhum documento encontrado",
-                    message = "Fotos de documentos, boletos e comprovantes aparecem aqui sozinhas.",
+                    title = stringResource(R.string.documents_empty_title),
+                    message = stringResource(R.string.documents_empty_message),
                 )
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
@@ -130,7 +133,7 @@ fun DocumentsScreen(
                                 modifier = Modifier.padding(top = 6.dp),
                             )
                             Text(
-                                if (kind.count == 1) "1 foto" else "${kind.count} fotos",
+                                countPluralResource(R.plurals.common_photo_count, kind.count, kind.count),
                                 fontSize = 13.sp,
                                 color = IrisTextSoft,
                             )

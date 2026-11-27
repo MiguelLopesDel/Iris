@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import com.iris.app.IrisApplication
+import com.iris.app.R
 import com.iris.app.data.MediaSharer
 import kotlinx.coroutines.launch
 
@@ -18,11 +19,11 @@ fun rememberMediaShare(onNotice: (String) -> Unit): (String, String) -> Unit {
     val apiClient = (context.applicationContext as IrisApplication).apiClient
     val scope = rememberCoroutineScope()
     return { url, fileName ->
-        onNotice("Preparando para compartilhar…")
+        onNotice(context.getString(R.string.share_preparing))
         scope.launch {
             when (val result = MediaSharer(context, apiClient).prepare(url, fileName)) {
                 is MediaSharer.Result.Ready -> context.startActivity(result.intent)
-                is MediaSharer.Result.Failed -> onNotice("Não foi possível compartilhar: ${result.reason}")
+                is MediaSharer.Result.Failed -> onNotice(context.getString(R.string.share_failed, result.reason))
             }
         }
     }
@@ -35,11 +36,11 @@ fun rememberMediaShareAll(onNotice: (String) -> Unit): (List<Pair<String, String
     val apiClient = (context.applicationContext as IrisApplication).apiClient
     val scope = rememberCoroutineScope()
     return { items ->
-        onNotice("Preparando para compartilhar…")
+        onNotice(context.getString(R.string.share_preparing))
         scope.launch {
             when (val result = MediaSharer(context, apiClient).prepareAll(items)) {
                 is MediaSharer.Result.Ready -> context.startActivity(result.intent)
-                is MediaSharer.Result.Failed -> onNotice("Não foi possível compartilhar: ${result.reason}")
+                is MediaSharer.Result.Failed -> onNotice(context.getString(R.string.share_failed, result.reason))
             }
         }
     }

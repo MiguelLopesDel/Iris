@@ -8,6 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SignedOutMessageTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
 
     @Test
     fun `the text follows the server once its first account exists`() {

@@ -9,6 +9,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import com.iris.app.ui.text.countPluralResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,15 +26,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.iris.app.R
 import com.iris.app.data.model.MediaRecord
 import com.iris.app.data.model.OnThisDayYear
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
+import com.iris.app.ui.text.appPlural
 
-/** "Há 1 ano", "Há 3 anos": how long ago, said the way a person would. */
+/** "1 year ago", "3 years ago": how long ago, said the way a person would. */
 fun yearsAgoLabel(yearsAgo: Int): String =
-    if (yearsAgo == 1) "Há 1 ano" else "Há $yearsAgo anos"
+    appPlural(R.plurals.on_this_day_years_ago, yearsAgo, yearsAgo)
 
 /**
  * One row of large cards, one per earlier year with photos from today's date,
@@ -49,7 +53,7 @@ fun OnThisDaySection(
     val apiClient = (context.applicationContext as com.iris.app.IrisApplication).apiClient
     Column(modifier = modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         Text(
-            text = "Neste dia",
+            text = stringResource(R.string.on_this_day_title),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
@@ -92,7 +96,7 @@ fun OnThisDaySection(
                             fontSize = 18.sp,
                         )
                         Text(
-                            "${year.year} · ${if (year.total == 1) "1 foto" else "${year.total} fotos"}",
+                            "${year.year} · ${countPluralResource(R.plurals.common_photo_count, year.total, year.total)}",
                             color = Color.White.copy(alpha = 0.85f),
                             fontSize = 13.sp,
                         )

@@ -1,5 +1,7 @@
 package com.iris.app.data.remote.security
 
+import com.iris.app.R
+import com.iris.app.ui.text.appString
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -37,9 +39,9 @@ data class PairingCode(
         /** Parses a pairing link, or throws [PairingCodeException] saying what is wrong. */
         fun parse(text: String): PairingCode {
             val uri = runCatching { URI(text.trim()) }.getOrNull()
-                ?: throw PairingCodeException("Isso não é um código de pareamento do Iris.")
+                ?: throw PairingCodeException(appString(R.string.pairing_err_not_code))
             if (uri.scheme != "iris" || uri.host != "pair") {
-                throw PairingCodeException("Isso não é um código de pareamento do Iris.")
+                throw PairingCodeException(appString(R.string.pairing_err_not_code))
             }
             val query = (uri.rawQuery ?: "").split('&').filter { it.isNotEmpty() }.map { pair ->
                 val (key, value) = pair.split('=', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
@@ -47,29 +49,29 @@ data class PairingCode(
             }
             fun all(key: String) = query.filter { it.first == key }.map { it.second }
             if (all("v") != listOf("1")) {
-                throw PairingCodeException("Código de uma versão do Iris que este app não conhece. Atualize o app.")
+                throw PairingCodeException(appString(R.string.pairing_err_unknown_version))
             }
             val id = all("id").singleOrNull()?.takeIf { Regex("[0-9a-f]{32}").matches(it) }
-                ?: throw PairingCodeException("Código incompleto: falta o identificador do servidor.")
+                ?: throw PairingCodeException(appString(R.string.pairing_err_incomplete))
             val addresses = all("u").map { address ->
                 val url = address.toHttpUrlOrNull()
                 // Credentials in an address would be sent to whoever answers it.
                 if (url == null || url.encodedPath != "/" || url.query != null || url.fragment != null ||
                     url.username.isNotEmpty() || url.password.isNotEmpty()
                 ) {
-                    throw PairingCodeException("Endereço inválido no código: $address")
+                    throw PairingCodeException(appString(R.string.pairing_err_bad_address, address))
                 }
                 address.trimEnd('/')
             }.distinct()
-            if (addresses.isEmpty()) throw PairingCodeException("O código não traz nenhum endereço.")
-            if (addresses.size > MAX_ADDRESSES) throw PairingCodeException("O código traz endereços demais.")
+            if (addresses.isEmpty()) throw PairingCodeException(appString(R.string.pairing_err_no_address))
+            if (addresses.size > MAX_ADDRESSES) throw PairingCodeException(appString(R.string.pairing_err_too_many_addresses))
             val ca = all("ca").singleOrNull()
             if (ca != null && !Regex("[0-9a-f]{64}").matches(ca)) {
-                throw PairingCodeException("Impressão digital inválida no código.")
+                throw PairingCodeException(appString(R.string.pairing_err_bad_fingerprint))
             }
             val key = all("k").singleOrNull()
             if (key != null && !Regex("[0-9a-f]{64}").matches(key)) {
-                throw PairingCodeException("Identidade do servidor inválida no código.")
+                throw PairingCodeException(appString(R.string.pairing_err_bad_identity))
             }
             return PairingCode(id, addresses, ca, key)
         }
@@ -158,12 +160,12 @@ class PairingConnector(
             if (!https && code.keySha256 != null) {
                 outcomes += AddressOutcome.Skipped(
                     address,
-                    "Este código confirma a identidade do servidor e exige HTTPS; use o endereço HTTPS incluído no código.",
+                    appString(R.string.pairing_skip_https_required),
                 )
                 continue
             }
             if (!https && !allowCleartext) {
-                outcomes += AddressOutcome.Skipped(address, "HTTP sem criptografia não foi permitido")
+                outcomes += AddressOutcome.Skipped(address, appString(R.string.pairing_skip_cleartext))
                 continue
             }
             // A code without a key (from an older server, or one stripped of
@@ -220,7 +222,7 @@ class PairingConnector(
     }
 
     private fun authority(code: PairingCode, expectedSha256: String): ByteArray {
-        var lastError = "nenhum endereço HTTPS respondeu"
+        var lastError = appString(R.string.pairing_ca_none_answered)
         for (address in code.addresses.filter { it.startsWith("https://") }) {
             try {
                 val request = Request.Builder().url("$address/api/pairing/ca.pem").build()
@@ -229,9 +231,9 @@ class PairingConnector(
                     response.body?.bytes() ?: ByteArray(0)
                 }
                 val certificate = ConnectionSecurity.parseCertificates(pem).singleOrNull()
-                    ?: throw IOException("resposta não é um certificado")
+                    ?: throw IOException(appString(R.string.pairing_ca_not_certificate))
                 if (sha256Hex(certificate.encoded) == expectedSha256) return certificate.encoded
-                lastError = "o certificado recebido de $address não confere com o código"
+                lastError = appString(R.string.pairing_ca_mismatch, address)
             } catch (error: IOException) {
                 lastError = "$address: ${error.message}"
             } catch (error: java.security.cert.CertificateException) {
@@ -239,7 +241,7 @@ class PairingConnector(
             }
         }
         throw PairingAuthorityException(
-            "Não foi possível obter a autoridade de certificado indicada pelo código ($lastError). Nada foi alterado."
+            appString(R.string.pairing_ca_failed, lastError)
         )
     }
 

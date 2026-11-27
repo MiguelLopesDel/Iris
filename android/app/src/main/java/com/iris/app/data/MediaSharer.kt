@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.iris.app.R
 import com.iris.app.data.remote.IrisApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,8 +34,8 @@ class MediaSharer(
 
     /** Fetches every item, then hands them over in one share: a chat gets them all at once. */
     suspend fun prepareAll(items: List<Pair<String, String>>): Result = withContext(Dispatchers.IO) {
-        if (items.isEmpty()) return@withContext Result.Failed("Nada para compartilhar")
-        if (items.any { it.first.isBlank() }) return@withContext Result.Failed("Mídia sem endereço")
+        if (items.isEmpty()) return@withContext Result.Failed(context.getString(R.string.share_error_nothing))
+        if (items.any { it.first.isBlank() }) return@withContext Result.Failed(context.getString(R.string.transfer_no_address))
         try {
             val folder = SharedMediaFile.createShareDirectory(
                 File(context.cacheDir, SHARE_DIR),
@@ -44,9 +45,9 @@ class MediaSharer(
                 val request = Request.Builder().url(url).build()
                 apiClient.authenticatedOkHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        return@withContext Result.Failed("O servidor respondeu ${response.code}")
+                        return@withContext Result.Failed(context.getString(R.string.transfer_server_replied, response.code))
                     }
-                    val body = response.body ?: return@withContext Result.Failed("Resposta vazia")
+                    val body = response.body ?: return@withContext Result.Failed(context.getString(R.string.transfer_empty_response))
                     val mimeType = SharedMediaFile.mimeType(response.header("Content-Type"), fileName)
                     // Two photos may share a name; each keeps its own file.
                     val name = SharedMediaFile.safeName(fileName)
@@ -57,7 +58,7 @@ class MediaSharer(
             }
             Result.Ready(intentFor(fetched))
         } catch (e: Exception) {
-            Result.Failed(e.localizedMessage ?: "Falha ao preparar")
+            Result.Failed(e.localizedMessage ?: context.getString(R.string.share_error_prepare))
         }
     }
 
@@ -78,7 +79,7 @@ class MediaSharer(
             }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        return Intent.createChooser(send, "Compartilhar").apply {
+        return Intent.createChooser(send, context.getString(R.string.viewer_share)).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }

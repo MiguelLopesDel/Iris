@@ -4,6 +4,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class GallerySelectionTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
     @Test
     fun `a tap adds an item and a second tap removes it`() {
         val one = GallerySelection.toggled(emptySet(), 4)

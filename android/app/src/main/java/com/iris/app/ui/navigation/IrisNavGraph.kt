@@ -29,8 +29,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.withFrameNanos
+import com.iris.app.R
+import com.iris.app.ui.text.appString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
@@ -143,19 +146,19 @@ fun IrisNavGraph(
     val bottomNavItems = listOf(
         BottomNavItem(
             route = NavRoute.Gallery.route,
-            label = "Fotos",
+            label = stringResource(R.string.nav_photos),
             selectedIcon = Icons.Filled.PhotoLibrary,
             unselectedIcon = Icons.Outlined.PhotoLibrary
         ),
         BottomNavItem(
             route = NavRoute.Collections.route,
-            label = "Álbuns",
+            label = stringResource(R.string.nav_albums),
             selectedIcon = Icons.Filled.Folder,
             unselectedIcon = Icons.Outlined.Folder
         ),
         BottomNavItem(
             route = NavRoute.Search.route,
-            label = "Busca",
+            label = stringResource(R.string.nav_search),
             selectedIcon = Icons.Filled.Search,
             unselectedIcon = Icons.Outlined.Search
         )
@@ -343,7 +346,7 @@ fun IrisNavGraph(
                     onDeviceFoldersClick = { navController.navigate(NavRoute.DeviceFolders.route) },
                     onFavoritesClick = {
                         navController.navigate(
-                            NavRoute.CollectionMedia.createRoute(FAVORITES_COLLECTION_ID, "Favoritos")
+                            NavRoute.CollectionMedia.createRoute(FAVORITES_COLLECTION_ID, appString(R.string.collections_shortcut_favorites))
                         )
                     }
                 )

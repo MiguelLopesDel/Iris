@@ -1,6 +1,9 @@
 package com.iris.app.ui.screens.sync
 
+import com.iris.app.R
 import com.iris.app.data.model.DeviceMediaSource
+import androidx.annotation.StringRes
+import com.iris.app.ui.text.appString
 import java.util.Locale
 
 /**
@@ -15,10 +18,10 @@ import java.util.Locale
  */
 
 /** Apps and system places people recognise, in the order they are shown. */
-enum class FolderApp(val title: String) {
-    CAMERA("Câmera"),
-    SCREENSHOTS("Capturas de tela"),
-    SCREEN_RECORDINGS("Gravações de tela"),
+enum class FolderApp(private val titleText: String?, @StringRes private val titleRes: Int? = null) {
+    CAMERA(null, R.string.folder_camera),
+    SCREENSHOTS(null, R.string.folder_screenshots),
+    SCREEN_RECORDINGS(null, R.string.folder_screen_recordings),
     WHATSAPP("WhatsApp"),
     TELEGRAM("Telegram"),
     INSTAGRAM("Instagram"),
@@ -27,7 +30,10 @@ enum class FolderApp(val title: String) {
     TIKTOK("TikTok"),
     SNAPCHAT("Snapchat"),
     TWITTER("X (Twitter)"),
-    DOWNLOADS("Downloads"),
+    DOWNLOADS("Downloads"),;
+
+    /** The name shown to people, in the language the app currently runs in. */
+    val title: String get() = titleRes?.let { appString(it) } ?: titleText.orEmpty()
 }
 
 /** One folder on the phone, photos and videos together. */
@@ -141,25 +147,25 @@ object BackupFolders {
         }
     }
 
-    /** A folder's own name in a group: "Imagens", "Enviadas"; outside one, its name as the phone shows it. */
+    /** A folder's own name in a group: appString(R.string.folder_images), appString(R.string.folder_sent); outside one, its name as the phone shows it. */
     fun folderTitle(app: FolderApp?, relativePath: String, name: String): String {
         val lower = name.lowercase(Locale.ROOT)
         val sent = relativePath.trimEnd('/').substringAfterLast('/').equals("Sent", ignoreCase = true)
         return when (app) {
             FolderApp.WHATSAPP -> when {
-                sent -> "Enviadas"
-                "images" in lower -> "Imagens"
-                "video" in lower -> "Vídeos"
+                sent -> appString(R.string.folder_sent)
+                "images" in lower -> appString(R.string.folder_images)
+                "video" in lower -> appString(R.string.folder_videos)
                 "gif" in lower -> "GIFs"
-                "sticker" in lower -> "Figurinhas"
+                "sticker" in lower -> appString(R.string.folder_stickers)
                 "status" in lower -> "Status"
                 else -> name
             }
-            FolderApp.CAMERA -> "Câmera"
-            FolderApp.SCREENSHOTS -> "Capturas de tela"
-            FolderApp.SCREEN_RECORDINGS -> "Gravações de tela"
+            FolderApp.CAMERA -> appString(R.string.folder_camera)
+            FolderApp.SCREENSHOTS -> appString(R.string.folder_screenshots)
+            FolderApp.SCREEN_RECORDINGS -> appString(R.string.folder_screen_recordings)
             FolderApp.DOWNLOADS -> if (lower == "download" || lower == "downloads") "Downloads" else name
-            else -> if (sent) "Enviadas" else name
+            else -> if (sent) appString(R.string.folder_sent) else name
         }
     }
 }

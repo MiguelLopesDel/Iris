@@ -37,10 +37,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.iris.app.R
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -272,7 +274,7 @@ internal fun ZoomableMedia(
                 ) {
                     Icon(
                         Icons.Default.PlayArrow,
-                        contentDescription = "Reproduzir vídeo",
+                        contentDescription = stringResource(R.string.viewer_play_video),
                         tint = Color.White,
                         modifier = Modifier.size(48.dp)
                     )

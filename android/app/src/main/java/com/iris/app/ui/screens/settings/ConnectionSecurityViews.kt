@@ -25,12 +25,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iris.app.R
 import com.iris.app.data.remote.security.ConnectionProblem
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.PairingCode
@@ -68,28 +70,26 @@ fun ConnectionProblemDialog(problem: ConnectionProblem, actions: ConnectionProbl
 private fun CleartextDialog(problem: ConnectionProblem.CleartextNotAllowed, actions: ConnectionProblemActions) {
     AlertDialog(
         onDismissRequest = actions.dismiss,
-        title = { Text("Conexão sem criptografia") },
+        title = { Text(stringResource(R.string.security_cleartext_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("${problem.origin} usa HTTP. Sem criptografia, a senha, as fotos e os vídeos trafegam como estão.")
+                Text(stringResource(R.string.security_cleartext_uses_http, problem.origin))
                 Text(
                     if (problem.privateAddress) {
-                        "O endereço é de uma rede privada (rede local, VPN ou malha privada). Permita apenas se " +
-                            "essa rede for de confiança ou se ela própria já criptografa o tráfego."
+                        stringResource(R.string.security_cleartext_private)
                     } else {
-                        "Este endereço não é de uma rede privada: o tráfego pode passar por redes de terceiros. " +
-                            "Prefira HTTPS."
+                        stringResource(R.string.security_cleartext_public)
                     },
                     color = if (problem.privateAddress) IrisTextSoft else IrisDanger,
                 )
-                Text("A permissão vale só para este servidor e pode ser revogada em Segurança da conexão.",
+                Text(stringResource(R.string.security_cleartext_scope),
                     fontSize = 12.sp, color = IrisTextMuted)
             }
         },
         confirmButton = {
-            TextButton(onClick = actions.allowCleartext) { Text("Permitir HTTP neste servidor") }
+            TextButton(onClick = actions.allowCleartext) { Text(stringResource(R.string.security_cleartext_allow)) }
         },
-        dismissButton = { TextButton(onClick = actions.dismiss) { Text("Cancelar") } },
+        dismissButton = { TextButton(onClick = actions.dismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -101,39 +101,37 @@ private fun UntrustedCertificateDialog(
     val top = problem.chain.last()
     AlertDialog(
         onDismissRequest = actions.dismiss,
-        title = { Text("Certificado não reconhecido") },
+        title = { Text(stringResource(R.string.security_cert_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "${problem.origin} apresentou um certificado que não foi emitido por uma autoridade pública. " +
-                        "Isso é normal num servidor com certificado próprio. Confirme que é o seu servidor " +
-                        "comparando a impressão digital com a do certificado configurado nele."
+                    stringResource(R.string.security_cert_presented, problem.origin)
                 )
-                CertificateDetails("Certificado do servidor", problem.leaf)
-                if (top !== problem.leaf) CertificateDetails("Emitido por", top)
+                CertificateDetails(stringResource(R.string.security_cert_server), problem.leaf)
+                if (top !== problem.leaf) CertificateDetails(stringResource(R.string.security_cert_issued_by), top)
 
                 if (problem.trustedByDeviceCas) {
-                    Text("A autoridade deste certificado está instalada no aparelho.", color = IrisAccent)
-                    ChoiceButton("Usar autoridades instaladas no aparelho", primary = true, onClick = actions.trustDeviceCertificates)
+                    Text(stringResource(R.string.security_cert_device_ca_installed), color = IrisAccent)
+                    ChoiceButton(stringResource(R.string.security_cert_use_device_cas), primary = true, onClick = actions.trustDeviceCertificates)
                 }
                 if (problem.canTrustPresentedCertificate) {
-                    ChoiceButton("Confiar neste certificado", primary = !problem.trustedByDeviceCas, onClick = actions.trustPresentedCertificate)
+                    ChoiceButton(stringResource(R.string.security_cert_trust_this), primary = !problem.trustedByDeviceCas, onClick = actions.trustPresentedCertificate)
                 }
-                ChoiceButton("Importar certificado da autoridade…", primary = false, onClick = actions.importAuthority)
+                ChoiceButton(stringResource(R.string.security_cert_import_ca), primary = false, onClick = actions.importAuthority)
                 if (!problem.trustedByDeviceCas) {
-                    ChoiceButton("Usar autoridades instaladas no aparelho", primary = false, onClick = actions.trustDeviceCertificates)
+                    ChoiceButton(stringResource(R.string.security_cert_use_device_cas), primary = false, onClick = actions.trustDeviceCertificates)
                     Text(
-                        "Nenhuma autoridade instalada no aparelho reconhece este certificado agora.",
+                        stringResource(R.string.security_cert_no_device_ca),
                         fontSize = 12.sp, color = IrisTextMuted,
                     )
                 }
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = actions.dismiss) { Text("Cancelar") } },
+        dismissButton = { TextButton(onClick = actions.dismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -153,6 +151,7 @@ private fun ChoiceButton(label: String, primary: Boolean, onClick: () -> Unit) {
 @Composable
 private fun CertificateDetails(title: String, certificate: X509Certificate) {
     val fingerprint = ConnectionSecurity.sha256(certificate)
+    val fingerprintDescription = stringResource(R.string.security_cert_fingerprint_description, fingerprint)
     Card(
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = IrisSurface),
@@ -161,9 +160,9 @@ private fun CertificateDetails(title: String, certificate: X509Certificate) {
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, fontSize = 12.sp, color = IrisTextMuted)
             Text(commonName(certificate.subjectX500Principal.name), fontWeight = FontWeight.SemiBold)
-            Text("Emissor: ${commonName(certificate.issuerX500Principal.name)}", fontSize = 12.sp, color = IrisTextSoft)
+            Text(stringResource(R.string.security_cert_issuer, commonName(certificate.issuerX500Principal.name)), fontSize = 12.sp, color = IrisTextSoft)
             Text(
-                "Válido até ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(certificate.notAfter)}",
+                stringResource(R.string.security_cert_valid_until, DateFormat.getDateInstance(DateFormat.MEDIUM).format(certificate.notAfter)),
                 fontSize = 12.sp, color = IrisTextSoft,
             )
             Text("SHA-256", fontSize = 11.sp, color = IrisTextMuted)
@@ -171,7 +170,7 @@ private fun CertificateDetails(title: String, certificate: X509Certificate) {
                 fingerprint,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
-                modifier = Modifier.semantics { contentDescription = "Impressão digital SHA-256 $fingerprint" },
+                modifier = Modifier.semantics { contentDescription = fingerprintDescription },
             )
         }
     }
@@ -194,7 +193,7 @@ fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                "Segurança da conexão",
+                stringResource(R.string.security_card_title),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -202,9 +201,9 @@ fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
             Text(summary.origin, fontSize = 12.sp, color = IrisTextMuted)
             Text(
                 when (summary.trustMode) {
-                    TrustMode.SYSTEM -> "Certificados: apenas autoridades públicas (padrão)"
-                    TrustMode.DEVICE_CAS -> "Certificados: também autoridades instaladas no aparelho"
-                    TrustMode.PINNED -> "Certificados: apenas a autoridade fixada para este servidor"
+                    TrustMode.SYSTEM -> stringResource(R.string.security_trust_system)
+                    TrustMode.DEVICE_CAS -> stringResource(R.string.security_trust_device)
+                    TrustMode.PINNED -> stringResource(R.string.security_trust_pinned)
                 },
                 fontSize = 13.sp,
                 color = IrisTextSoft,
@@ -213,16 +212,16 @@ fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
                 Text(it, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = IrisTextSoft)
             }
             Text(
-                if (summary.cleartextAllowed) "HTTP sem criptografia: permitido" else "HTTP sem criptografia: não permitido",
+                stringResource(if (summary.cleartextAllowed) R.string.security_cleartext_on else R.string.security_cleartext_off),
                 fontSize = 13.sp,
                 color = if (summary.cleartextAllowed && !summary.usesHttps) IrisDanger else IrisTextSoft,
             )
             val identity = summary.identityKeySha256
             Text(
                 if (identity != null) {
-                    "Identidade do servidor: fixada pelo pareamento (código ${identityCode(identity)})"
+                    stringResource(R.string.security_identity_pinned, identityCode(identity))
                 } else {
-                    "Identidade do servidor: não fixada. Pareie pelo código para que o app só fale com este servidor."
+                    stringResource(R.string.security_identity_unpinned)
                 },
                 fontSize = 13.sp,
                 color = if (identity == null && !summary.usesHttps) IrisDanger else IrisTextSoft,
@@ -230,7 +229,7 @@ fun ConnectionSecurityCard(summary: SecuritySummary, onReset: () -> Unit) {
             if (!summary.isDefault) {
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) {
-                    Text("Restaurar o padrão para este servidor")
+                    Text(stringResource(R.string.security_reset_default))
                 }
             }
         }
@@ -243,28 +242,27 @@ fun PairingEntryDialog(onScan: () -> Unit, onPaste: (String) -> Unit, onDismiss:
     var text by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Parear com código") },
+        title = { Text(stringResource(R.string.pairing_entry_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "No navegador, em Sistema → Dispositivos conectados → Conectar um celular, o Iris mostra " +
-                        "um código QR. Leia o código ou cole o texto que aparece embaixo dele.",
+                    stringResource(R.string.pairing_entry_help),
                     fontSize = 13.sp,
                 )
-                ChoiceButton("Ler código QR", primary = true, onClick = onScan)
+                ChoiceButton(stringResource(R.string.pairing_scan_qr), primary = true, onClick = onScan)
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("Ou cole o código (iris://pair…)") },
+                    label = { Text(stringResource(R.string.pairing_paste_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = { onPaste(text) }, enabled = text.isNotBlank()) { Text("Continuar") }
+            TextButton(onClick = { onPaste(text) }, enabled = text.isNotBlank()) { Text(stringResource(R.string.pairing_continue)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -278,75 +276,72 @@ fun PairingConfirmDialog(code: PairingCode, onConfirm: () -> Unit, onCancel: () 
     var showDetails by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text("Confiar neste servidor?") },
+        title = { Text(stringResource(R.string.pairing_confirm_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 val identity = code.identityCode
+                val identityDescription = identity?.let {
+                    stringResource(R.string.pairing_server_code_description, it.replace("-", " ").toList().joinToString(" "))
+                }.orEmpty()
                 if (identity != null) {
-                    Text("Código do servidor", fontSize = 14.sp, color = IrisTextSoft)
+                    Text(stringResource(R.string.pairing_server_code), fontSize = 14.sp, color = IrisTextSoft)
                     Text(
                         identity,
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.semantics {
-                            contentDescription = "Código do servidor: " + identity.replace("-", " ").toList().joinToString(" ")
-                        },
+                        modifier = Modifier.semantics { contentDescription = identityDescription },
                     )
                     Text(
-                        "Confira se é o mesmo código que aparece na tela do Iris onde você leu o QR. " +
-                            "Se for diferente, toque em Cancelar.",
+                        stringResource(R.string.pairing_compare_code),
                         fontSize = 15.sp,
                     )
                     Text(
-                        "Ao confiar, o app passa a aceitar o certificado deste servidor e só conversa com ele: " +
-                            "outro aparelho que tente se passar por ele é recusado.",
+                        stringResource(R.string.pairing_trust_effect),
                         fontSize = 14.sp,
                         color = IrisTextSoft,
                     )
                 } else {
                     // Codes from servers without an identity key: only the addresses can be shown.
                     Text(
-                        "Este servidor é de uma versão do Iris que não mostra um código de identidade. " +
-                            "Só confirme se você leu o QR na tela do seu próprio servidor.",
+                        stringResource(R.string.pairing_no_identity),
                         fontSize = 15.sp,
                     )
                 }
                 if (code.usesCleartext) {
                     Text(
-                        "Alguns endereços deste código não usam criptografia (http://). Se o app usar um deles, " +
-                            "faça isso só em uma rede de confiança.",
+                        stringResource(R.string.pairing_cleartext_warning),
                         fontSize = 14.sp,
                         color = IrisDanger,
                     )
                 }
                 Text(
-                    "Confiar não dá acesso à sua conta: depois, entre com o seu usuário e senha.",
+                    stringResource(R.string.pairing_no_account_access),
                     fontSize = 14.sp,
                     color = IrisTextSoft,
                 )
                 TextButton(onClick = { showDetails = !showDetails }) {
-                    Text(if (showDetails) "Ocultar detalhes técnicos" else "Mostrar detalhes técnicos")
+                    Text(stringResource(if (showDetails) R.string.pairing_hide_details else R.string.pairing_show_details))
                 }
                 if (showDetails) {
-                    Text("O app usa o primeiro destes endereços que responder como este servidor:", fontSize = 13.sp)
+                    Text(stringResource(R.string.pairing_details_addresses), fontSize = 13.sp)
                     code.addresses.forEach { Text("• $it", fontSize = 13.sp, fontFamily = FontFamily.Monospace) }
                     code.keySha256?.let { sha ->
-                        Text("Chave de identidade (SHA-256):", fontSize = 12.sp, color = IrisTextMuted)
+                        Text(stringResource(R.string.pairing_details_key), fontSize = 12.sp, color = IrisTextMuted)
                         Text(sha.uppercase().chunked(2).joinToString(":"), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                     }
                     code.caSha256?.let { sha ->
-                        Text("Autoridade de certificado (SHA-256), que passa a ser confiável para o endereço https que responder como este servidor:",
+                        Text(stringResource(R.string.pairing_details_ca),
                             fontSize = 12.sp, color = IrisTextMuted)
                         Text(sha.uppercase().chunked(2).joinToString(":"), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                     }
                 }
             }
         },
-        confirmButton = { Button(onClick = onConfirm) { Text("Confiar") } },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancelar") } },
+        confirmButton = { Button(onClick = onConfirm) { Text(stringResource(R.string.pairing_trust)) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.common_cancel)) } },
     )
 }

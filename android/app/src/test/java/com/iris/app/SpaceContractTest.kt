@@ -21,6 +21,12 @@ import org.junit.Test
  * the case where the app must not offer adding or removing.
  */
 class SpaceContractTest {
+    @org.junit.Before
+    fun readTextsFromResources() = com.iris.app.ui.text.TestStrings.install()
+
+    @org.junit.After
+    fun restoreResolver() = com.iris.app.ui.text.TestStrings.uninstall()
+
 
     private val json = IrisApiClient.RESPONSE_JSON
 
