@@ -14,6 +14,7 @@ import com.iris.app.data.local.UploadDatabaseHelper
 import com.iris.app.data.remote.IrisApiClient
 import com.iris.app.data.remote.security.ConnectionSecurity
 import com.iris.app.data.remote.security.PreferencesServerSecurityStore
+import com.iris.app.data.update.AppUpdates
 import com.iris.app.data.repository.IrisRepository
 import com.iris.app.data.repository.DefaultGalleryDataSource
 import com.iris.app.data.repository.GalleryDataSource
@@ -53,6 +54,9 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
         private set
 
     private lateinit var connectionSecurityStore: PreferencesServerSecurityStore
+
+    lateinit var appUpdates: AppUpdates
+        private set
 
     /** Pairing links received from outside the app, waiting for the Settings screen to show them. */
     val pairingRequests = MutableStateFlow<String?>(null)
@@ -121,6 +125,11 @@ class IrisApplication : Application(), ImageLoaderFactory, Configuration.Provide
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
             override fun onActivityDestroyed(activity: Activity) = Unit
         })
+
+        // Newer app releases, from GitHub. Only the release build installs them: the
+        // lab and debug builds have another id or signing key.
+        appUpdates = AppUpdates(this, BuildConfig.VERSION_NAME, enabled = BuildConfig.BUILD_TYPE == "release")
+        applicationScope.launch { appUpdates.refresh() }
 
         credentialsStore = DeviceCredentialsStore(this)
         settingsRepository = ServerSettingsRepository(this)

@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import com.iris.app.ui.text.countPluralResource
 import androidx.compose.ui.res.stringResource
+import com.iris.app.IrisApplication
 import com.iris.app.R
 import com.iris.app.ui.screens.spaces.SpacePickerDialog
 import androidx.compose.material.icons.filled.Add
@@ -119,6 +120,8 @@ fun GalleryScreen(
     onMemoryClick: (records: List<com.iris.app.data.model.MediaRecord>, index: Int) -> Unit = { _, index -> onMediaClick(index) }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val appUpdates = remember { IrisApplication.instance.appUpdates }
+    val appUpdate by appUpdates.available.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     val signedOutText = signedOutMessage(uiState.serverReplaced, uiState.serverNeedsSetup)
     // While the server waits for its first account, notice it being created
@@ -406,6 +409,15 @@ fun GalleryScreen(
                                         onColumnCountChange = { columnCount = it }
                                     )
                             ) {
+                                appUpdate?.let { release ->
+                                    item(
+                                        key = "app-update",
+                                        contentType = "app-update",
+                                        span = { GridItemSpan(maxLineSpan) }
+                                    ) {
+                                        AppUpdateBanner(release, appUpdates)
+                                    }
+                                }
                                 if (uiState.memories.isNotEmpty() && uiState.mediaType == "all") {
                                     item(
                                         key = "on-this-day",

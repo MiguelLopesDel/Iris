@@ -651,4 +651,11 @@
     <!-- server responses -->
     <string name="api_auth_required">Authentication required</string>
     <string name="api_https_required">This server was paired with an identity. Use the HTTPS address from the pairing code; credentials are not sent over HTTP.</string>
+    <!-- app updates -->
+    <string name="app_update_available">Iris %1$s is available</string>
+    <string name="app_update_hint">Update to get the latest fixes and features. Android asks you to confirm.</string>
+    <string name="app_update_install">Update</string>
+    <string name="app_update_not_now">Not now</string>
+    <string name="app_update_downloading">Downloading…</string>
+    <string name="app_update_failed">Could not download the update. Try again later.</string>
 </resources>

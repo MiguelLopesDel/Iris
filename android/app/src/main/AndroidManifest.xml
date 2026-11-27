@@ -23,6 +23,8 @@
     <!-- Android only lets a background sync start that service when the user
          exempts the app from battery optimization; the sync screen asks. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Hands a newer release APK to the system installer; the user still confirms. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Lets the offline notice find Tailscale and offer to open it. -->
     <queries>

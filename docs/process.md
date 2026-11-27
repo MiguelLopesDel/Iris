@@ -160,7 +160,9 @@ cujo `version` em `pyproject.toml` é `X.Y.Z`. Para isso, um PR
   ```
 
   Perder a chave impede atualizar o app por cima: guarde a chave e a senha em dois
-  lugares fora deste computador. **(A construir:)** anexar o APK ao GitHub Release.
+  lugares fora deste computador. A segunda execução de `./iris release X.Y.Z`, depois
+  de criar a tag, compila esse APK a partir da tag e cria o GitHub Release com as
+  notas e o `iris-X.Y.Z.apk` anexado; é por ele que o app descobre a versão nova.
 - Pré-lançamentos (`v0.7.0-rc.1`) nunca são escolhidos automaticamente; só rodam
   quando fixados com `IRIS_VERSION`.
 
