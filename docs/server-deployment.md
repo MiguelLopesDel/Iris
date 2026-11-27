@@ -420,6 +420,27 @@ minutos. Para voltar,
 fixe a versão anterior em `IRIS_VERSION`, execute `./scripts/server.sh update`
 e, se o esquema dos dados tiver mudado, restaure o backup feito antes do update.
 
+### Atualizar pelo navegador
+
+O Iris consulta as tags publicadas no GitHub a cada seis horas, e a seção
+**Configurações › Atualizações** mostra a versão em uso e a mais recente aos
+administradores. Para desligar a consulta, use `IRIS_UPDATE_CHECK=0` no `.env`.
+
+O botão **Atualizar agora** precisa do agente de atualização, instalado uma vez no
+servidor:
+
+```bash
+./scripts/server.sh updater install     # ./scripts/server.sh updater uninstall para remover
+```
+
+O container não ganha acesso ao Docker. O botão só deixa um pedido em
+`<dados>/updater/request.json`; uma unidade `systemd` do host vê o arquivo e roda
+o mesmo `./scripts/server.sh update` de sempre, com backup antes e conferência de
+saúde depois. O pedido não leva comando nem versão: o host atualiza para o que o
+próprio `.env` escolhe, então uma versão fixada em `IRIS_VERSION` continua
+fixada. O resultado fica em `<dados>/updater/status.json`, e a saída completa em
+`<dados>/updater/last.log`.
+
 O Iris mantém fotos em texto claro no servidor para gerar busca, pessoas e
 duplicatas. Contas isolam pessoas entre si, mas quem controla o host/Docker pode
 tecnicamente acessar os originais. Criptografia ponta a ponta não faz parte deste

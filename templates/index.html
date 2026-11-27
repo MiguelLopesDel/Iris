@@ -7,7 +7,7 @@
   <title>Iris — Biblioteca visual inteligente</title>
   <script src="/static/theme.js?v=1"></script>
   <script src="/static/experience.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=71">
+  <link rel="stylesheet" href="/static/style.css?v=72">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -484,6 +484,7 @@
           <a href="#pairing-settings" data-nav-for="pairing-settings">Celulares</a>
           <a href="#instance-settings" data-nav-for="instance-settings">Grupos e lixeira</a>
           <a href="#backup-settings" data-nav-for="backup-settings">Backup do servidor</a>
+          <a href="#update-settings" data-nav-for="update-settings">Atualizações</a>
         </nav>
         <div class="settings-content">
           <h2 class="settings-group-title">Minha conta</h2>
@@ -875,6 +876,27 @@
         <p id="backup-last" class="system-hint"></p>
         <div id="backup-list" class="backup-list"></div>
       </section>
+
+      <section id="update-settings" class="detail-panel system-card" data-settings-section hidden>
+        <span class="eyebrow">INSTALAÇÃO</span>
+        <h4>Atualizações</h4>
+        <p class="system-hint">O Iris consulta as versões publicadas a cada poucas horas. Atualizar faz um backup
+          antes, troca o servidor para a versão nova e confere se ele voltou.</p>
+        <dl class="update-versions">
+          <dt>Versão em uso</dt><dd id="update-current">—</dd>
+          <dt>Mais recente</dt><dd id="update-latest">—</dd>
+        </dl>
+        <p id="update-checked" class="system-hint"></p>
+        <p id="update-available" class="update-available" hidden></p>
+        <p id="update-agent-missing" class="system-hint" hidden>Para atualizar por aqui, ative o agente uma vez no
+          servidor: <code>./scripts/server.sh updater install</code>. Sem ele, use
+          <code>./scripts/server.sh update</code>.</p>
+        <p id="update-progress" class="system-hint" hidden></p>
+        <div class="update-actions">
+          <button id="update-apply" class="btn btn-primary" type="button" hidden>Atualizar agora</button>
+          <button id="update-check" class="btn btn-subtle" type="button">Procurar agora</button>
+        </div>
+      </section>
         </div>
       </div>
     </section>
@@ -981,7 +1003,7 @@
 
 <div id="toast-container"></div>
 
-<script type="module" src="/static/app.js?v=91"></script>
+<script type="module" src="/static/app.js?v=92"></script>
 
 </body>
 </html>

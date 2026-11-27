@@ -2,7 +2,7 @@
    The library as one continuous timeline: batches load as the page scrolls,
    and days flow side by side so a day with one photo does not take a row. */
 
-import { debounce, escapeHtml, fetchFavorites, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=51';
+import { debounce, escapeHtml, fetchFavorites, fetchRecords, getPersonMedia, mediaUrl, searchFace, searchFaceByFace, searchFaceByRecord, searchFilename, searchImage, searchRandom, searchSimilar, searchText } from './api.js?v=52';
 import { openDetail } from './detail.js?v=15';
 
 // ── Module state ──────────────────────────────────────────────────────────

@@ -4842,3 +4842,43 @@ body.drop-upload::after {
   gap: 5px;
   margin: 10px 0;
 }
+
+/* ── Updates (System › Administration) ─────────────────────────────────── */
+.update-versions {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 12px 0 4px;
+}
+
+.update-versions dt {
+  color: var(--text-muted);
+}
+
+.update-versions dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.update-available {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.settings-nav a.has-update::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}

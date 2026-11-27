@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
-from core.concepts import create_concept_tables
-from core.web_enrichment import create_web_enrichment_tables
+# The suite never asks GitHub for releases; tests drive UpdateChecker with a fake fetch.
+os.environ.setdefault("IRIS_UPDATE_CHECK", "0")
+
+from core.concepts import create_concept_tables  # noqa: E402
+from core.web_enrichment import create_web_enrichment_tables  # noqa: E402
 
 
 def make_enrichment_conn(*, check_same_thread: bool = True) -> sqlite3.Connection:

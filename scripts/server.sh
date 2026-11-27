@@ -5,6 +5,16 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd -- "$script_dir/.." && pwd)"
 cd "$project_root"
 
+# The update agent (`updater install`) runs this script as root from systemd.
+# Git still runs as the checkout's owner, so .git never gains root-owned files
+# that would break the administrator's next manual update.
+if [ "${IRIS_UPDATER_RUN:-}" = 1 ] && [ "$(id -u)" = 0 ]; then
+    checkout_owner="$(stat -c %U "$project_root")"
+    if [ "$checkout_owner" != root ]; then
+        git() { runuser -u "$checkout_owner" -- git "$@"; }
+    fi
+fi
+
 # Recorded in every backup, so a backup says which Iris wrote it. The image
 # has no .git, so a local build bakes the commit in as a build argument;
 # published images carry the commit they were built from.
@@ -515,6 +525,110 @@ media_dir() {
     printf '%s\n' "${dir:-media}"
 }
 
+# -- update agent ---------------------------------------------------------------
+# The web interface cannot update the server itself: the container has no access
+# to Docker. An administrator's "update now" writes <data>/updater/request.json;
+# a systemd path unit sees it and runs `updater run`, which is a normal `update`
+# (backup, release, health check). The request carries no command, so a forged
+# one can at most start the update this installation would run anyway.
+
+updater_dir() {
+    local dir
+    dir="$(data_dir)"
+    case "$dir" in /*) ;; *) dir="$project_root/$dir" ;; esac
+    printf '%s/updater\n' "$dir"
+}
+
+updater_unit() {
+    # Production and staging on one host each get their own unit.
+    local name
+    name="$(env_value COMPOSE_PROJECT_NAME | tr -c 'a-zA-Z0-9_-' '-')"
+    printf '%s-updater\n' "${name:-iris}"
+}
+
+updater_units_dir() {
+    printf '%s\n' "${IRIS_SYSTEMD_DIR:-/etc/systemd/system}"
+}
+
+updater_write() {
+    # Files in the data folder stay its owner's, so the container can read them.
+    local target="$1" dir
+    dir="$(dirname "$target")"
+    cat > "$target.tmp"
+    if [ "$(id -u)" = 0 ]; then chown --reference="$dir" "$target.tmp"; fi
+    mv -f "$target.tmp" "$target"
+}
+
+updater_install() {
+    command -v systemctl >/dev/null 2>&1 || { echo "The update agent needs systemd." >&2; exit 1; }
+    local dir unit units
+    dir="$(updater_dir)"
+    unit="$(updater_unit)"
+    units="$(updater_units_dir)"
+    as_data_owner mkdir -p "$dir"
+    as_root tee "$units/$unit.service" >/dev/null <<EOF
+[Unit]
+Description=Iris update requested from the web interface ($project_root)
+
+[Service]
+Type=oneshot
+WorkingDirectory=$project_root
+Environment=IRIS_UPDATER_RUN=1
+ExecStart=$project_root/scripts/server.sh updater run
+EOF
+    as_root tee "$units/$unit.path" >/dev/null <<EOF
+[Unit]
+Description=Watch for Iris update requests ($project_root)
+
+[Path]
+PathExists=$dir/request.json
+Unit=$unit.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    as_root systemctl daemon-reload
+    as_root systemctl enable --now "$unit.path" >/dev/null
+    printf '{"installed_at": "%s", "unit": "%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$unit" \
+        | as_data_owner bash -c "cat > '$dir/agent.json'"
+    echo "Update agent installed ($unit.path). Administrators can now update from System in the web interface."
+}
+
+updater_uninstall() {
+    local dir unit units
+    dir="$(updater_dir)"
+    unit="$(updater_unit)"
+    units="$(updater_units_dir)"
+    as_root systemctl disable --now "$unit.path" >/dev/null 2>&1 || true
+    as_root rm -f "$units/$unit.path" "$units/$unit.service"
+    as_root systemctl daemon-reload
+    as_data_owner rm -f "$dir/agent.json" "$dir/request.json"
+    echo "Update agent removed; updates go back to ./scripts/server.sh update only."
+}
+
+updater_run() {
+    # Started by the path unit. The request is removed first: the unit fires
+    # again for as long as the file exists.
+    local dir from result="done"
+    dir="$(updater_dir)"
+    [ -f "$dir/request.json" ] || exit 0
+    rm -f "$dir/request.json"
+    from="$(checkout_version)"
+    printf '{"state": "running", "from": "%s", "started_at": "%s"}\n' \
+        "$from" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | updater_write "$dir/status.json"
+    # A fresh run: this process exported the running version as IRIS_VERSION,
+    # which the inner update would take for a pinned version and never move.
+    if ! env -u IRIS_VERSION -u IRIS_COMMIT "$project_root/scripts/server.sh" update \
+        > "$dir/last.log" 2>&1; then
+        result=failed
+    fi
+    [ "$(id -u)" = 0 ] && chown --reference="$dir" "$dir/last.log"
+    printf '{"state": "%s", "from": "%s", "to": "%s", "finished_at": "%s"}\n' \
+        "$result" "$from" "$(checkout_version)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        | updater_write "$dir/status.json"
+    [ "$result" = "done" ]
+}
+
 run_backup() {
     # The same path as the scheduled backup: recorded in the history shown in
     # the interface and followed by the retention policy. Inside the
@@ -693,8 +807,16 @@ case "${1:-}" in
         [ "$#" -eq 2 ] || { echo "Usage: $0 port <1024-65535>" >&2; exit 2; }
         set_port "$2"
         ;;
+    updater)
+        case "${2:-}" in
+            install) updater_install ;;
+            uninstall) updater_uninstall ;;
+            run) require_compose; updater_run ;;
+            *) echo "Usage: $0 updater {install|uninstall|run}" >&2; exit 2 ;;
+        esac
+        ;;
     *)
-        echo "Usage: $0 {install [--gpu|--cpu] [--no-harden]|harden|doctor|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin] [--accept-missing]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>|listen <address>}" >&2
+        echo "Usage: $0 {install [--gpu|--cpu] [--no-harden]|harden|doctor|setup-code|create-admin|attach-library --user <conta> --from data/<pasta>|status|logs|update|backup [--pin] [--accept-missing]|backups|verify-backup <folder>|restore <folder>|storage|port <1024-65535>|listen <address>|updater {install|uninstall|run}}" >&2
         exit 2
         ;;
 esac

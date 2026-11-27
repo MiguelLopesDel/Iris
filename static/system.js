@@ -20,12 +20,13 @@ import {
   startImport,
   updateSettings,
   escapeHtml,
-} from './api.js?v=51';
+} from './api.js?v=52';
 import { confirmModal } from './ui.js?v=7';
 import { loadDevices } from './devices.js?v=4';
 import { bindPairingAuthority, loadComputerTrust, loadPairingAuthority, showPairing } from './pairing.js?v=6';
 import { uploadFiles } from './web_upload.js?v=1';
 import { loadAdminAi, loadMyAi, syncAiModeCards, syncSettingsNav } from './settings_ai.js?v=1';
+import { loadUpdates } from './updates.js?v=1';
 
 let initialized = false;
 let importPoll = null;
@@ -53,6 +54,7 @@ export function initSystem() {
       loadInstanceSettings();
       loadPairingAuthority();
       loadAdminAi();
+      loadUpdates();
     }
     syncSettingsNav();
   });
@@ -107,6 +109,7 @@ async function loadSystemInfo() {
     document.getElementById('instance-settings').hidden = !administrator;
     document.getElementById('pairing-settings').hidden = !administrator;
     document.getElementById('backup-settings').hidden = !administrator;
+    document.getElementById('update-settings').hidden = !administrator;
     document.getElementById('ai-settings').hidden = !administrator;
     const privateHealth = document.getElementById('private-library-health');
     privateHealth.hidden = hostAdministration;
