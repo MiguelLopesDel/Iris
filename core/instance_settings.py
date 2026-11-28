@@ -156,6 +156,9 @@ SETTINGS: dict[str, Setting] = {
         Setting("ai_processing", "IRIS_AI_PROCESSING", _AI_DEFAULT, _choice("server", "worker", "off")),
         # Also read text with Florence-2 (better on stylised text, slower).
         Setting("ai_florence_ocr", "IRIS_AI_FLORENCE_OCR", "on", _choice("on", "off")),
+        # Describe images with Florence-2 (the caption search reads). Off, items
+        # are processed without one and are not offered again for it.
+        Setting("ai_captions", "IRIS_AI_CAPTIONS", "on", _choice("on", "off")),
         # A model libraries are being moved to, without a search outage.
         Setting("ai_model_next", "IRIS_MODEL_NEXT", "", _next_model),
     )
@@ -311,6 +314,7 @@ class AiSettings:
     mode: str  # "server" | "worker" | "off"
     florence_ocr: bool
     model_next: str
+    captions: bool = True
 
 
 def ai_settings(path: Path) -> AiSettings:
@@ -319,4 +323,5 @@ def ai_settings(path: Path) -> AiSettings:
         mode=str(resolved["ai_processing"].value),
         florence_ocr=resolved["ai_florence_ocr"].value == "on",
         model_next=str(resolved["ai_model_next"].value),
+        captions=resolved["ai_captions"].value == "on",
     )

@@ -84,9 +84,32 @@ _NO_AI = "(m.embedding IS NULL OR length(m.embedding) = 0)"
 
 SELECTIONS = ("", "new", "processed")
 
+# Without a real caption: nothing after "Visual:", or the "N/A" a pipeline
+# without a caption model wrote. Those items were catalogued with
+# caption_model="none" (uploads and workers alike) and, having an image
+# embedding, were never offered again; search reads the caption.
+_CAPTION = "trim(substr(m.descricao_ia, instr(m.descricao_ia, 'Visual:') + 7))"
+_NO_CAPTION = (
+    f"NOT (instr(COALESCE(m.descricao_ia, ''), 'Visual:') > 0 AND length({_CAPTION}) > 3"
+    f" AND {_CAPTION} NOT LIKE 'N/A%')"
+)
+NO_CAPTION_ERROR = "sem legenda"
 
-def _pending_where(target: str, only: str = "") -> tuple[str, tuple]:
+
+def has_caption(description: str | None) -> bool:
+    """The Python side of _NO_CAPTION, for a description a worker sent."""
+    text = description or ""
+    if "Visual:" not in text:
+        return False
+    caption = text.partition("Visual:")[2].strip()
+    return len(caption) > 3 and not caption.startswith("N/A")
+
+
+def _pending_where(target: str, only: str = "", captions: bool = False) -> tuple[str, tuple]:
     """Items still to process: without AI or, while moving, without new vectors.
+
+    With ``captions`` (a worker that writes them), also items that have AI but
+    no caption; "new" still means no AI at all.
 
     While moving, ``only`` narrows a trial: "new" takes items with no AI at
     all (they gain the most), "processed" items that already have it (they
@@ -102,12 +125,16 @@ def _pending_where(target: str, only: str = "") -> tuple[str, tuple]:
             where = f"{where} AND NOT {_NO_AI}"
         return where, (target,)
     # No image embedding yet (NULL, or an empty placeholder).
+    if captions and only != "new":
+        return f"({_NO_AI} OR {_NO_CAPTION})", ()
     return _NO_AI, ()
 
 
-def pending_count(conn: sqlite3.Connection, target: str = "", only: str = "") -> int:
+def pending_count(
+    conn: sqlite3.Connection, target: str = "", only: str = "", captions: bool = False,
+) -> int:
     ensure_table(conn)
-    where, params = _pending_where(target, only)
+    where, params = _pending_where(target, only, captions)
     return conn.execute(
         f"""SELECT COUNT(*) FROM memes m LEFT JOIN ai_jobs j ON j.meme_id = m.id
             WHERE {where} AND COALESCE(j.attempts, 0) < ?""",
@@ -117,7 +144,7 @@ def pending_count(conn: sqlite3.Connection, target: str = "", only: str = "") ->
 
 def claim(
     conn: sqlite3.Connection, device_id: str, limit: int, now: float | None = None, target: str = "",
-    only: str = "",
+    only: str = "", captions: bool = False,
 ) -> list[Job]:
     """Lease up to ``limit`` pending items to this device, newest first.
 
@@ -128,7 +155,7 @@ def claim(
     now = time.time() if now is None else now
     limit = max(1, min(MAX_CLAIM, int(limit)))
     ensure_table(conn)
-    where, params = _pending_where(target, only)
+    where, params = _pending_where(target, only, captions)
     with conn:
         rows = conn.execute(
             f"""SELECT m.id, COALESCE(m.arquivo, ''), COALESCE(m.file_size, 0),
@@ -137,7 +164,8 @@ def claim(
                 WHERE {where}
                   AND COALESCE(j.attempts, 0) < ?
                   AND (j.meme_id IS NULL OR j.lease_expires_at < ? OR j.device_id = ?)
-                ORDER BY COALESCE(m.file_mtime, 0) DESC, m.id DESC
+                ORDER BY CASE WHEN {_NO_AI} THEN 0 ELSE 1 END,
+                         COALESCE(m.file_mtime, 0) DESC, m.id DESC
                 LIMIT ?""",
             (*params, MAX_ATTEMPTS, now, device_id, limit),
         ).fetchall()
@@ -312,7 +340,16 @@ def store_result(
                                       thumbnail, created_at) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)""",
                 [(media_id, *face, now) for face in faces],
             )
-        conn.execute("DELETE FROM ai_jobs WHERE meme_id = ?", (media_id,))
+        if payload.get("captioned") and not has_caption(columns.get("descricao_ia")):
+            # Captioning ran and gave nothing (audio, an unreadable frame): do
+            # not offer the item again for it, or it would come back forever.
+            conn.execute(
+                """UPDATE ai_jobs SET attempts = ?, lease_expires_at = 0, device_id = '',
+                       last_error = ? WHERE meme_id = ?""",
+                (MAX_ATTEMPTS, NO_CAPTION_ERROR, media_id),
+            )
+        else:
+            conn.execute("DELETE FROM ai_jobs WHERE meme_id = ?", (media_id,))
 
 
 def rebuild_vector_indices(db_path: Path) -> None:

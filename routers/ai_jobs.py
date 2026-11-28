@@ -101,28 +101,31 @@ def _activity(request: Request, device_id: str, **changes) -> None:
 
 def _options(request: Request) -> dict:
     settings = instance_settings.ai_settings(_users_db(request))
-    return {"florence_ocr": settings.florence_ocr}
+    return {"florence_ocr": settings.florence_ocr, "captions": settings.captions}
 
 
-def _pending(libraries, only: str = "") -> int:
+def _pending(libraries, only: str = "", captions: bool = False) -> int:
     total = 0
     for user in libraries:
         _model, target = _models(user)
-        total += _run(user, lambda conn, t=target: ai_jobs.pending_count(conn, t, only))
+        total += _run(user, lambda conn, t=target: ai_jobs.pending_count(conn, t, only, captions))
     return total
 
 
 @router.get("/status")
-async def status(request: Request):
+async def status(request: Request, captions: bool = False):
     actor, device_id = _worker(request)
     _activity(request, device_id)
 
     def build():
         libraries = _libraries(request, actor)
+        settings = instance_settings.ai_settings(_users_db(request))
         body = {
-            "mode": instance_settings.ai_settings(_users_db(request)).mode,
+            "mode": settings.mode,
             "libraries": len(libraries),
-            "pending": _pending(libraries),
+            # For a worker that writes captions, items that have AI but no
+            # caption are work too (see claim).
+            "pending": _pending(libraries, captions=captions and settings.captions),
             "without_ai": _pending(libraries, "new"),
             "options": _options(request),
         }
@@ -144,12 +147,18 @@ async def status(request: Request):
 
 
 @router.post("/claim")
-async def claim(request: Request, limit: int = 8, only: str = ""):
+async def claim(request: Request, limit: int = 8, only: str = "", captions: bool = False):
+    """``captions``: the worker writes captions, so items lacking one are offered.
+
+    An older worker does not ask, and is offered what it always was: handing it
+    those items would come back without a caption and mark them as done.
+    """
     actor, device_id = _worker(request)
     _activity(request, device_id)
 
     def build():
         libraries = _libraries(request, actor)
+        captioning = captions and instance_settings.ai_settings(_users_db(request)).captions
         jobs: list[dict] = []
         if libraries:
             # Start each claim at a different library, so none waits behind another.
@@ -160,13 +169,14 @@ async def claim(request: Request, limit: int = 8, only: str = ""):
                 model, target = _models(user)
                 room = limit - len(jobs)
                 claimed = _run(user, lambda conn, t=target, n=room: ai_jobs.claim(
-                    conn, device_id, n, target=t, only=only))
+                    conn, device_id, n, target=t, only=only, captions=captioning))
                 jobs += [
                     {"id": f"{user.id}.{job.media_id}", "filename": job.filename, "size": job.size,
                      "sha256": job.sha256, "model_name": model}
                     for job in claimed
                 ]
-        body = {"jobs": jobs, "pending": _pending(libraries, only), "options": _options(request)}
+        body = {"jobs": jobs, "pending": _pending(libraries, only, captioning),
+                "options": _options(request)}
         models = {job["model_name"] for job in jobs}
         if len(models) == 1:
             body["model_name"] = models.pop()
