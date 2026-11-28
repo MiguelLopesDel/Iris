@@ -208,7 +208,7 @@ class DescriptionMatrixGapTests(unittest.TestCase):
         for name, emb, desc in rows:
             conn.execute(
                 "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia,"
-                " embedding, desc_embedding) VALUES (?, ?, '', '', ?, ?)",
+                " embedding, desc_embedding) VALUES (?, ?, '', 'Visual: a cat on a sofa', ?, ?)",
                 (name, name, emb, desc),
             )
         conn.commit()
@@ -260,6 +260,160 @@ class DescriptionMatrixGapTests(unittest.TestCase):
         engine = self._engine(with_gap=False)
 
         self.assertTrue(all(engine._has_description(i) for i in range(len(engine.records))))
+
+
+class EmptyDescriptionTests(unittest.TestCase):
+    """A description vector made from no text is not a description.
+
+    Items processed without a caption model hold "Tags: N/A. Visual: N/A" or
+    nothing, and the vector of that near-empty text sits about as close to every
+    short query. On a real library it scored 0.79 for "pombo" on thousands of
+    items, so a photo that matched by image (0.26) fell out of the results.
+    """
+
+    ROWS = (
+        # name, descricao_ia, texto_extraido, image vector, description vector
+        ("placeholder.jpg", "Tags: N/A. Visual: N/A", "", (1, 0), (0, 1)),
+        ("taxonomy-only.jpg", "Tags: N/A, anime/manga", "x", (1, 0), (0, 1)),
+        ("empty.jpg", "", "", (1, 0), (0, 1)),
+        ("caption.jpg", "Tags: cat. Visual: a cat on a sofa", "", (1, 0), (0, 1)),
+        ("leaked-prompt.jpg", "Tags: VQA><loc_0>. Visual: a dog in the park", "", (1, 0), (0, 1)),
+        ("ocr-only.jpg", "Tags: N/A. Visual: N/A", "Bom dia a todos os grupos", (1, 0), (0, 1)),
+    )
+
+    def _engine(self):
+        from core.search_engine import IrisEngine
+
+        db_path = Path(tempfile.mkdtemp()) / "memes.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE memes (id INTEGER PRIMARY KEY, arquivo TEXT, caminho TEXT,"
+            " texto_extraido TEXT, descricao_ia TEXT, embedding BLOB, desc_embedding BLOB)"
+        )
+        for name, description, text, image, desc in self.ROWS:
+            conn.execute(
+                "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia, embedding,"
+                " desc_embedding) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, name, text, description, np.asarray(image, dtype=np.float32).tobytes(),
+                 np.asarray(desc, dtype=np.float32).tobytes()),
+            )
+        conn.commit()
+        conn.close()
+        return IrisEngine(db_path=db_path, load_model=False)
+
+    def test_only_descriptions_made_from_text_count(self) -> None:
+        engine = self._engine()
+        present = {record.arquivo: engine._has_description(i) for i, record in enumerate(engine.records)}
+
+        self.assertEqual(present, {
+            "placeholder.jpg": False,
+            "taxonomy-only.jpg": False,
+            "empty.jpg": False,
+            "caption.jpg": True,
+            # The tags are garbage but the caption after them is real.
+            "leaked-prompt.jpg": True,
+            "ocr-only.jpg": True,
+        })
+
+    def test_an_empty_description_does_not_outrank_an_image_match(self) -> None:
+        """The query matches every image and no description.
+
+        A placeholder used to be averaged in like any description; now the item
+        is judged on its image alone and ranks with the items that match.
+        """
+        from core.search_engine import SearchOptions
+
+        engine = self._engine()
+        query = np.asarray([[0.6, 0.8]], dtype=np.float32)
+        options = SearchOptions(top_k=10, threshold=-2.0, balance=0.5, text_bonus=1.0, lexical_weight=0.0)
+
+        scores, _ = engine._score_candidates(
+            query, list(range(len(engine.records))), options,
+            text_query="", translated_query="", negative_terms=[],
+        )
+        by_name = {engine.records[i].arquivo: score for i, score in scores.items()}
+
+        self.assertAlmostEqual(by_name["placeholder.jpg"], 0.6, places=5)
+        self.assertAlmostEqual(by_name["caption.jpg"], 0.7, places=5)
+
+
+class DescriptionScaleTests(unittest.TestCase):
+    """Text-to-text scores sit far above text-to-image ones and must not be blended raw.
+
+    On a real library CLIP put unrelated captions at 0.6-0.8 and a photo of
+    exactly what was asked at 0.26, so every described item outranked every
+    undescribed one and the top 50 of any query held only described items.
+    """
+
+    def _engine(self, rows):
+        from core.search_engine import IrisEngine
+
+        db_path = Path(tempfile.mkdtemp()) / "memes.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE memes (id INTEGER PRIMARY KEY, arquivo TEXT, caminho TEXT,"
+            " texto_extraido TEXT, descricao_ia TEXT, embedding BLOB, desc_embedding BLOB)"
+        )
+        for name, description, image, desc in rows:
+            conn.execute(
+                "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia, embedding,"
+                " desc_embedding) VALUES (?, ?, '', ?, ?, ?)",
+                (name, name, description, np.asarray(image, dtype=np.float32).tobytes(),
+                 np.asarray(desc, dtype=np.float32).tobytes()),
+            )
+        conn.commit()
+        conn.close()
+        return IrisEngine(db_path=db_path, load_model=False)
+
+    def _catalogue(self, count: int):
+        """Images score about 0.2 against the query, descriptions about 0.7."""
+        rng = np.random.default_rng(7)
+        rows = []
+        for i in range(count):
+            image = (0.2 + rng.normal(0, 0.02), 1.0, 0.0)
+            desc = (0.7 + rng.normal(0, 0.05), 0.0, 1.0)
+            rows.append((f"described-{i}.jpg", "Visual: something unrelated", image, desc))
+        # Matches the query by image, has no description at all.
+        rows.append(("match.jpg", "", (1.0, 0.25, 0.0), (0.0, 0.0, 1.0)))
+        return rows
+
+    def _ranking(self, engine):
+        from core.search_engine import SearchOptions
+
+        query = np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32)
+        options = SearchOptions(top_k=10, threshold=-2.0, balance=0.5, text_bonus=1.0, lexical_weight=0.0)
+        scores, _ = engine._score_candidates(
+            query, list(range(len(engine.records))), options,
+            text_query="", translated_query="", negative_terms=[],
+        )
+        return [engine.records[i].arquivo for i in sorted(scores, key=scores.get, reverse=True)]
+
+    def test_an_image_match_outranks_unrelated_descriptions(self) -> None:
+        ranking = self._ranking(self._engine(self._catalogue(60)))
+
+        self.assertEqual(ranking[0], "match.jpg")
+
+    def test_description_scores_land_on_the_image_scale(self) -> None:
+        engine = self._engine(self._catalogue(60))
+        query = np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32)
+        unit = lambda m: m / np.linalg.norm(m, axis=1, keepdims=True)  # noqa: E731
+        desc_mean = float((unit(engine.desc_matrix[:60]) @ query[0]).mean())
+        image_mean = float((unit(engine.image_matrix) @ query[0]).mean())
+
+        moved = engine._on_image_scale(np.full(3, desc_mean, dtype=np.float32), query)
+
+        # An average description lands on the average image score, not 0.4 above it.
+        self.assertGreater(desc_mean - image_mean, 0.3)
+        self.assertAlmostEqual(float(moved[0]), image_mean, places=4)
+
+    def test_a_small_catalogue_keeps_the_raw_scores(self) -> None:
+        """Statistics over a handful of items would move scores at random."""
+        engine = self._engine(self._catalogue(10))
+        raw = np.asarray([0.7, 0.1], dtype=np.float32)
+
+        moved = engine._on_image_scale(raw, np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32))
+
+        self.assertTrue(np.array_equal(moved, raw))
 
 
 class WeightedSignalMeanTests(unittest.TestCase):
@@ -353,7 +507,7 @@ class VectorSidecarTests(unittest.TestCase):
             desc = None if (with_gap and position == 2) else vector
             conn.execute(
                 "INSERT INTO memes (arquivo, caminho, texto_extraido, descricao_ia,"
-                " embedding, desc_embedding) VALUES (?, ?, '', '', ?, ?)",
+                " embedding, desc_embedding) VALUES (?, ?, '', 'Visual: a cat on a sofa', ?, ?)",
                 (f"{position}.jpg", f"{position}.jpg", vector, desc),
             )
         conn.commit()
