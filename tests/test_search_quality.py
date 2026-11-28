@@ -79,7 +79,10 @@ def build_quality_engine(tmp: Path, specs: list[dict]) -> IrisEngine:
             """,
             (
                 name, str(media / name), name, name,
-                spec.get("ocr", ""), spec.get("descricao", ""), spec.get("tags", ""),
+                # A description vector stands for a caption; without one the
+                # engine treats the vector as made from no text and ignores it.
+                spec.get("ocr", ""), spec.get("descricao", "Visual: placeholder caption"),
+                spec.get("tags", ""),
                 image.tobytes(), desc.tobytes(),
             ),
         )

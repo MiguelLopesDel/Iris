@@ -41,6 +41,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("iris")
 
+# Fewer items than this on either side and the score statistics used to put
+# descriptions on the image scale say little; see IrisEngine._on_image_scale.
+_CALIBRATION_MIN = 50
+
+# Whether a description embedding was made from any text. Items processed
+# without a caption model carry "Tags: N/A. Visual: N/A", an empty caption or
+# taxonomy labels only, and the vector of that near-empty text sits about as
+# close to every short query: measured on a real library it scored 0.79 for
+# "pombo" on thousands of items, while a photo that matched by image scored
+# 0.26 and fell out of the results. A description counts when it has a real
+# caption after "Visual:" or the item has extracted text.
+_INFORMATIVE_DESCRIPTION = (
+    "(instr(coalesce(descricao_ia, ''), 'Visual:') > 0"
+    " AND length(trim(substr(descricao_ia, instr(descricao_ia, 'Visual:') + 7))) > 3"
+    " AND trim(substr(descricao_ia, instr(descricao_ia, 'Visual:') + 7)) NOT LIKE 'N/A%')"
+    " OR length(trim(coalesce(texto_extraido, ''))) >= 10"
+)
+
 # A smaller checkpoint for machines with few CPU cores and shared video memory.
 # The index and query encoder must always use the same checkpoint.
 LOW_RESOURCE_MODEL = "sentence-transformers/clip-ViT-B-32"
@@ -191,6 +209,7 @@ class IrisEngine:
         self._image_matrix: np.ndarray | None = None
         self._desc_matrix: np.ndarray | None = None
         self._desc_present: np.ndarray | None = None
+        self._norm_cache: dict[str, np.ndarray] = {}
         self._text_store: TextStore | None = None
         self.records = self._load_records()
         self.image_matrix = self._stack_embeddings("embedding")
@@ -287,6 +306,8 @@ class IrisEngine:
 
             if "id" in columns:
                 select_columns.append("id")
+            if {"descricao_ia", "texto_extraido"} <= columns:
+                select_columns.append(f"({_INFORMATIVE_DESCRIPTION}) AS desc_informative")
             order_column = "id" if "id" in columns else "arquivo"
             sql = f"SELECT {', '.join(select_columns)} FROM memes ORDER BY {order_column}"
             # Streamed, not fetched. fetchall held every row -- blobs included --
@@ -344,6 +365,7 @@ class IrisEngine:
         image_width = image_matrix.shape[1] if mapped_image else profile.image_width
         desc_width = desc_matrix.shape[1] if mapped_desc else profile.desc_width
         has_desc: list[bool] = []
+        any_desc_vector = False
         for row in rows:
             position = len(arquivos)
             embedding_blob = row["embedding"]
@@ -374,8 +396,13 @@ class IrisEngine:
                 if not mapped_desc:
                     desc_matrix[position] = desc_vector
                 has_description = True
-            has_desc.append(has_description)
+                any_desc_vector = True
             keys = row.keys()
+            # A vector made from no text is not a description (see
+            # _INFORMATIVE_DESCRIPTION); the item is judged on its image alone.
+            if has_description and "desc_informative" in keys and not row["desc_informative"]:
+                has_description = False
+            has_desc.append(has_description)
             arquivos.append(row["arquivo"] or "")
             caminhos.append(caminho)
             resolved_paths.append(resolved_path)
@@ -407,8 +434,8 @@ class IrisEngine:
         # for the whole matrix, as this used to, silently switched off
         # description search for the entire catalogue because of one gap; a zero
         # row simply never matches.
-        self._desc_matrix = desc_matrix if any(has_desc) else None
-        self._desc_present = np.array(has_desc, dtype=bool) if any(has_desc) else None
+        self._desc_matrix = desc_matrix if any_desc_vector else None
+        self._desc_present = np.array(has_desc, dtype=bool) if any_desc_vector else None
         columns = RecordColumns(
             arquivo=tuple(arquivos),
             caminho=tuple(caminhos),
@@ -652,6 +679,52 @@ class IrisEngine:
             if candidate.exists():
                 return str(candidate)
         return str(candidates[0]) if candidates else None
+
+    def _on_image_scale(self, desc_scores: np.ndarray, query_embedding: np.ndarray) -> np.ndarray:
+        """Description scores moved onto the image scores' scale for this query.
+
+        A text query against text sits far higher than the same query against
+        an image: on a real library, CLIP put unrelated captions at 0.6-0.8 and
+        a photo of exactly what was asked at 0.26. Averaged as if they were one
+        scale, any item with a description carried a quarter of a point over
+        any item without one, and the top 50 of every query held only described
+        items. Each description score is placed where the same standing (its
+        distance from the mean, in standard deviations) falls among the image
+        scores, so a blend compares like with like and scores keep the image
+        scale the search threshold is set in.
+
+        The statistics come from the whole catalogue, so they do not depend on
+        the candidate pool or a filter. Below _CALIBRATION_MIN items on either
+        side they mean little, and the scores are left as they are.
+        """
+        if self.image_matrix is None or self.desc_matrix is None or self._desc_present is None:
+            return desc_scores
+        image_present = np.array(
+            [self._has_image_embedding(i) for i in range(len(self.records))], dtype=bool
+        ) if "image" not in self._norm_cache else self._norm_cache["image_present"]
+        if int(image_present.sum()) < _CALIBRATION_MIN or int(self._desc_present.sum()) < _CALIBRATION_MIN:
+            return desc_scores
+        query = query_embedding[0] / max(float(np.linalg.norm(query_embedding[0])), 1e-12)
+        # The whole matrix times the query, then the rows that count: indexing
+        # first would copy the matrix on every search.
+        image_all = (self.image_matrix @ query / self._row_norms("image", image_present))[image_present]
+        desc_all = (self.desc_matrix @ query / self._row_norms("desc"))[self._desc_present]
+        desc_std = float(desc_all.std())
+        if desc_std < 1e-6:
+            return desc_scores
+        scale = float(image_all.std()) / desc_std
+        return ((desc_scores - float(desc_all.mean())) * scale + float(image_all.mean())).astype(np.float32)
+
+    def _row_norms(self, kind: str, image_present: np.ndarray | None = None) -> np.ndarray:
+        """Row lengths of the image or description matrix, computed once per load."""
+        cached = self._norm_cache.get(kind)
+        if cached is None:
+            matrix = self.image_matrix if kind == "image" else self.desc_matrix
+            cached = np.maximum(np.linalg.norm(matrix, axis=1), 1e-12).astype(np.float32)
+            self._norm_cache[kind] = cached
+            if kind == "image" and image_present is not None:
+                self._norm_cache["image_present"] = image_present
+        return cached
 
     def _has_description(self, record_index: int) -> bool:
         """Whether this record actually has a description embedding.
@@ -1206,6 +1279,9 @@ class IrisEngine:
                 desc_scores = _torch_cosine_similarity(
                     query_tensor, desc_tensor
                 )[0].detach().cpu().numpy()
+
+        if desc_scores is not None:
+            desc_scores = self._on_image_scale(np.asarray(desc_scores, dtype=np.float32), query_embedding)
 
         # One statement per batch instead of one per candidate: the loop below
         # reads text from every candidate it does not reject, and negative terms
