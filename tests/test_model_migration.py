@@ -301,8 +301,11 @@ def test_a_trial_stops_after_the_requested_number_of_items():
     )
 
     assert totals == {"done": 20, "failed": 0}
-    assert client.claims == ["/api/ai-jobs/claim?limit=16&only=new",
-                             "/api/ai-jobs/claim?limit=4&only=new"]
+    # Whatever else the worker asks for (captions), the trial sizes the claims.
+    assert [claim.split("&captions=")[0] for claim in client.claims] == [
+        "/api/ai-jobs/claim?limit=16&only=new",
+        "/api/ai-jobs/claim?limit=4&only=new",
+    ]
 
 
 def _current(seed: int, model: str = CLIP) -> dict:

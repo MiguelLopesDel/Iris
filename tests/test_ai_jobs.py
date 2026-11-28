@@ -290,3 +290,111 @@ def test_a_web_page_cannot_act_as_a_worker_for_another_account(server):
     with pytest.raises(urllib.error.HTTPError) as refused:
         urllib.request.urlopen(request, timeout=10)
     assert refused.value.code == 401
+
+
+# ── Captions ────────────────────────────────────────────────────────────────
+# Uploads and workers catalogued with caption_model="none", and the queue only
+# looked for items without an image embedding, so an item that had one never
+# got a caption: thousands of "Tags: N/A. Visual: N/A" and empty descriptions,
+# which search then read as if they described the image.
+
+
+def _give_ai(conn: sqlite3.Connection, filename: str, description: str) -> None:
+    conn.execute(
+        "UPDATE memes SET embedding = ?, descricao_ia = ? WHERE arquivo = ?",
+        (np.ones(DIM, dtype=np.float32).tobytes(), description, filename),
+    )
+    conn.commit()
+
+
+@pytest.mark.parametrize("description, offered", [
+    ("", True),
+    ("Tags: N/A. Visual: N/A", True),
+    ("Tags: N/A, anime/manga", True),
+    ("Tags: VQA><loc_0>. Visual: a pigeon on a tiled floor", False),
+    ("Visual: a pigeon on a tiled floor", False),
+])
+def test_an_item_without_a_caption_is_offered_to_a_captioning_worker(library, description, offered):
+    for name in ("IMG_0000.jpg", "IMG_0001.jpg", "IMG_0002.jpg"):
+        _give_ai(library, name, "Visual: something already described")
+    _give_ai(library, "IMG_0001.jpg", description)
+
+    jobs = ai_jobs.claim(library, "pc-1", 5, now=1000, captions=True)
+
+    assert [job.filename for job in jobs] == (["IMG_0001.jpg"] if offered else [])
+    assert ai_jobs.pending_count(library, captions=True) == (1 if offered else 0)
+
+
+def test_a_worker_that_does_not_caption_is_offered_what_it_always_was(library):
+    """An older worker would send them back without a caption, marked as done."""
+    _give_ai(library, "IMG_0001.jpg", "Tags: N/A. Visual: N/A")
+
+    jobs = ai_jobs.claim(library, "pc-1", 5, now=1000)
+
+    assert "IMG_0001.jpg" not in [job.filename for job in jobs]
+    assert ai_jobs.pending_count(library) == 2
+
+
+def test_items_without_any_ai_come_before_missing_captions(library):
+    """What was just synced cannot be found at all; a missing caption only ranks worse."""
+    _give_ai(library, "IMG_0002.jpg", "")
+
+    jobs = ai_jobs.claim(library, "pc-1", 5, now=1000, captions=True)
+
+    assert [job.filename for job in jobs] == ["IMG_0001.jpg", "IMG_0000.jpg", "IMG_0002.jpg"]
+
+
+def test_an_item_that_gets_no_caption_is_not_offered_again(library):
+    """Audio, or a frame the model cannot describe: captioning ran and gave nothing."""
+    _give_ai(library, "IMG_0001.jpg", "")
+    (job,) = [j for j in ai_jobs.claim(library, "pc-1", 5, now=time.time(), captions=True)
+              if j.filename == "IMG_0001.jpg"]
+
+    ai_jobs.store_result(library, job.media_id, "pc-1", MODEL,
+                         _result(descricao_ia="Tags: musica", captioned=True))
+
+    assert "IMG_0001.jpg" not in [
+        j.filename for j in ai_jobs.claim(library, "pc-2", 5, now=time.time(), captions=True)
+    ]
+
+
+def test_a_caption_written_by_the_worker_takes_the_item_off_the_queue(library):
+    _give_ai(library, "IMG_0001.jpg", "Tags: N/A. Visual: N/A")
+    (job,) = [j for j in ai_jobs.claim(library, "pc-1", 5, now=time.time(), captions=True)
+              if j.filename == "IMG_0001.jpg"]
+
+    ai_jobs.store_result(library, job.media_id, "pc-1", MODEL,
+                         _result(descricao_ia="Visual: a pigeon on a tiled floor", captioned=True))
+
+    row = library.execute("SELECT descricao_ia FROM memes WHERE arquivo = 'IMG_0001.jpg'").fetchone()
+    assert row[0] == "Visual: a pigeon on a tiled floor"
+    assert library.execute("SELECT COUNT(*) FROM ai_jobs WHERE meme_id = ?", (job.media_id,)).fetchone()[0] == 0
+
+
+def test_the_worker_asks_for_captions_and_says_it_wrote_them(monkeypatch, tmp_path):
+    requests: list[tuple[str, str, dict | None]] = []
+
+    class FakeClient:
+        def __init__(self):
+            self.claims = 0
+
+        def request(self, method, path, json_body=None):
+            requests.append((method, path, json_body))
+            if path.startswith("/api/ai-jobs/claim"):
+                self.claims += 1
+                jobs = [{"id": "1.7", "filename": "a.jpg", "size": 1, "sha256": "", "model_name": MODEL}]
+                return 200, {"jobs": jobs if self.claims == 1 else [], "pending": 0, "options": {}}
+            return 200, {"ok": True}
+
+        def download(self, _path, target):
+            target.write_bytes(b"x")
+
+    monkeypatch.setattr(iris_ai_worker, "CAPTIONS", True)
+    iris_ai_worker.work_once(
+        FakeClient(), process=lambda files, _m, _w: {f.name: _result() for f in files}, log=lambda _m: None,
+    )
+
+    claim = next(path for _m, path, _b in requests if path.startswith("/api/ai-jobs/claim"))
+    result = next(body for _m, path, body in requests if path.endswith("/result"))
+    assert "captions=1" in claim
+    assert result["captioned"] is True

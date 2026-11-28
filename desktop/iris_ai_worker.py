@@ -76,6 +76,9 @@ def _b64(blob: bytes | None) -> str:
 
 # Florence-2 also reads the text of images that have some (merged with EasyOCR).
 FLORENCE_OCR = True
+# Florence-2 describes each image: the caption search reads. Loaded for OCR
+# anyway, so a caption costs one more pass of a model already in memory.
+CAPTIONS = True
 
 
 # Models stay loaded between batches: loading them took longer than the batch.
@@ -88,7 +91,13 @@ def process_batch(files: list[Path], model_name: str, workdir: Path) -> dict[str
     Each result carries what the server stores: the AI columns, both
     embeddings and the faces. A file the pipeline skipped is absent.
     """
-    from core.indexer import IndexerConfig, load_models, process_images, resolve_device
+    from core.indexer import (
+        DEFAULT_CAPTION_MODEL,
+        IndexerConfig,
+        load_models,
+        process_images,
+        resolve_device,
+    )
     from core.indexer_db import init_db
 
     db_path = workdir / "work.db"
@@ -102,7 +111,7 @@ def process_batch(files: list[Path], model_name: str, workdir: Path) -> dict[str
         recursive=False,
         limit=None,
         rebuild_faiss_only=False,
-        caption_model="none",
+        caption_model=DEFAULT_CAPTION_MODEL if CAPTIONS else "none",
         whisper_model="none",
         sample_manifest=None,
         library_name="media",
@@ -111,7 +120,7 @@ def process_batch(files: list[Path], model_name: str, workdir: Path) -> dict[str
         extract_faces=True,
         florence_ocr=FLORENCE_OCR,
     )
-    key = (model_name, config.device, FLORENCE_OCR)
+    key = (model_name, config.device, FLORENCE_OCR, CAPTIONS)
     with _quiet():
         if key not in _models:
             _models.clear()  # a different model: free the GPU before loading it
@@ -204,7 +213,8 @@ def work_once(client: Client, *, batch: int = BATCH, log=print, limit: int | Non
         if remaining is not None and remaining <= 0:
             return finish()
         size = batch if remaining is None else min(batch, remaining)
-        query = f"limit={size}" + (f"&only={only}" if only else "")
+        # Asking for captions also brings items that have AI but no caption.
+        query = f"limit={size}" + (f"&only={only}" if only else "") + ("&captions=1" if CAPTIONS else "")
         status, body = client.request("POST", f"/api/ai-jobs/claim?{query}")
         if status != 200:
             raise SyncError(body.get("detail") or f"HTTP {status}")
@@ -257,6 +267,9 @@ def work_once(client: Client, *, batch: int = BATCH, log=print, limit: int | Non
                     fail(job, "o pipeline não conseguiu processar este arquivo")
                     continue
                 result["sha256"] = job.get("sha256", "")
+                # Tells the server captioning ran: an item still without one is
+                # not offered again for it.
+                result["captioned"] = CAPTIONS
                 status, body = client.request("POST", f"/api/ai-jobs/{job['id']}/result", json_body=result)
                 if status == 200:
                     totals["done"] += 1
@@ -292,7 +305,7 @@ def cmd_login(args) -> None:
 
 
 def cmd_status(args) -> None:
-    status, body = _client().request("GET", "/api/ai-jobs/status")
+    status, body = _client().request("GET", "/api/ai-jobs/status" + ("?captions=1" if CAPTIONS else ""))
     if status != 200:
         raise SyncError(body.get("detail") or f"HTTP {status}")
     print(f"Modelo: {body['model_name']}")
@@ -305,18 +318,23 @@ def cmd_status(args) -> None:
 
 # Set from the command line; otherwise the server's choice applies.
 _FLORENCE_FORCED_OFF = False
+_CAPTIONS_FORCED_OFF = False
 
 
 def _apply_server_options(options: dict) -> None:
-    global FLORENCE_OCR
+    global FLORENCE_OCR, CAPTIONS
     if not _FLORENCE_FORCED_OFF and "florence_ocr" in options:
         FLORENCE_OCR = bool(options["florence_ocr"])
+    if not _CAPTIONS_FORCED_OFF and "captions" in options:
+        CAPTIONS = bool(options["captions"])
 
 
 def _apply_options(args) -> None:
-    global FLORENCE_OCR, VERBOSE, _FLORENCE_FORCED_OFF
+    global FLORENCE_OCR, CAPTIONS, VERBOSE, _FLORENCE_FORCED_OFF, _CAPTIONS_FORCED_OFF
     _FLORENCE_FORCED_OFF = getattr(args, "no_florence_ocr", False)
     FLORENCE_OCR = not _FLORENCE_FORCED_OFF
+    _CAPTIONS_FORCED_OFF = getattr(args, "no_captions", False)
+    CAPTIONS = not _CAPTIONS_FORCED_OFF
     VERBOSE = getattr(args, "verbose", False)
     if not VERBOSE:
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -404,11 +422,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="durante uma troca de modelo: novas = só fotos sem IA; "
                         "processadas = só as que já têm (dá para comparar lado a lado)")
     p.add_argument("--no-florence-ocr", action="store_true", help="só EasyOCR (mais rápido)")
+    p.add_argument("--no-captions", action="store_true",
+                   help="não descrever as imagens (mais rápido; a busca perde a legenda)")
     p.add_argument("--verbose", action="store_true", help="mostrar o log completo do indexador")
     p.set_defaults(func=cmd_once)
     p = commands.add_parser("run", help="processar continuamente (como serviço)")
     p.add_argument("--batch", type=int, default=BATCH)
     p.add_argument("--no-florence-ocr", action="store_true", help="só EasyOCR (mais rápido)")
+    p.add_argument("--no-captions", action="store_true",
+                   help="não descrever as imagens (mais rápido; a busca perde a legenda)")
     p.add_argument("--verbose", action="store_true", help="mostrar o log completo do indexador")
     p.add_argument("--interval", type=int, default=600, help="segundos entre verificações")
     p.set_defaults(func=cmd_run)
