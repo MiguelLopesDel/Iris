@@ -47,7 +47,7 @@ from scripts.backfill_thumb_hash import discover_databases  # noqa: E402
 _CONTAMINADO = (
     "(descricao_ia LIKE '%<loc_%' OR descricao_ia LIKE '%VQA>%' "
     "OR tags LIKE '%<loc_%' OR tags LIKE '%VQA>%' "
-    "OR descricao_ia LIKE '%N/A%')"
+    "OR descricao_ia LIKE '%N/A%' OR descricao_ia LIKE '%Visual: Tags:%')"
 )
 
 _COMMIT_EVERY = 200
@@ -78,18 +78,46 @@ def _limpar_tags(tags: str | None) -> str:
     baixo = tags.lower()
     if any(marca in baixo for marca in _MARCAS_DO_PROMPT):
         return ""
-    return ", ".join(p.strip() for p in tags.split(",") if p.strip())
+    # "N/A" é o texto de quem não tinha modelo, não uma tag.
+    return ", ".join(p.strip() for p in tags.split(",") if p.strip() and p.strip() != "N/A")
 
 
 def _separar_descricao(descricao: str | None) -> tuple[str, str]:
-    """Devolve (tags_embutidas, legenda) do formato ``Tags: X. Visual: Y``."""
+    """Devolve (tags_embutidas, legenda) do formato ``Tags: X. Visual: Y``.
+
+    Uma descrição só de tags ("Tags: N/A, anime/manga", de quem processou sem
+    modelo de legenda) não tem legenda. Tratá-la inteira como legenda gravava
+    "Visual: Tags: N/A, anime/manga": uma legenda falsa, que a busca e a fila
+    do worker tomavam por real, e o item nunca ganhava a sua. Uma legenda que
+    começa com "Tags:" é esse mesmo erro, já gravado, e também não conta.
+    """
     if not descricao:
         return "", ""
-    if "Visual:" not in descricao:
-        return "", descricao.strip()
-    cabeca, _, legenda = descricao.partition("Visual:")
+    texto = descricao.strip()
+    if "Visual:" not in texto:
+        if texto.startswith("Tags:"):
+            return texto.partition("Tags:")[2].strip().rstrip("."), ""
+        return "", texto
+    cabeca, _, legenda = texto.partition("Visual:")
     tags = cabeca.partition("Tags:")[2] if "Tags:" in cabeca else ""
-    return tags.strip().rstrip("."), legenda.strip()
+    legenda = legenda.strip()
+    if legenda.startswith("Tags:") or legenda.startswith("N/A"):
+        legenda = ""
+    return tags.strip().rstrip("."), legenda
+
+
+def _gravar(conn: sqlite3.Connection, lote: list[tuple]) -> int:
+    """Grava um lote já calculado numa transação curta.
+
+    Calcular dentro da transação deixava o banco travado para escrita durante
+    o lote inteiro (perto de um minuto num servidor pequeno), e com o servidor
+    no ar os envios do celular esperavam por ele.
+    """
+    with conn:
+        conn.executemany(
+            "UPDATE memes SET tags = ?, descricao_ia = ?, desc_embedding = ? WHERE id = ?", lote
+        )
+    return len(lote)
 
 
 def reparar(db_path: Path, *, dry_run: bool, limit: int | None) -> None:
@@ -140,6 +168,7 @@ def reparar(db_path: Path, *, dry_run: bool, limit: int | None) -> None:
         ).fetchall()
 
         gravados = 0
+        lote: list[tuple] = []
         for posicao, row in enumerate(tqdm(pendentes, desc="Reparando"), start=1):
             _, legenda = _separar_descricao(row["descricao_ia"])
             tags = _limpar_tags(row["tags"])
@@ -165,13 +194,10 @@ def reparar(db_path: Path, *, dry_run: bool, limit: int | None) -> None:
             )
             desc_emb = modelo.encode([texto], show_progress_bar=False)[0].astype(np.float32)
 
-            conn.execute(
-                "UPDATE memes SET tags = ?, descricao_ia = ?, desc_embedding = ? WHERE id = ?",
-                (tags, descricao, desc_emb.tobytes(), row["id"]),
-            )
-            gravados += 1
-            if posicao % _COMMIT_EVERY == 0:
-                conn.commit()
+            lote.append((tags, descricao, desc_emb.tobytes(), row["id"]))
+            if len(lote) >= _COMMIT_EVERY or posicao == len(pendentes):
+                gravados += _gravar(conn, lote)
+                lote.clear()
         conn.commit()
 
         print(f"\n  reparados: {gravados}")
