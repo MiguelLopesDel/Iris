@@ -111,3 +111,9 @@ def test_the_commit_build_argument_does_not_invalidate_the_dependency_layers() -
     lines = (ROOT / "Dockerfile").read_text().splitlines()
     commit_arg = next(i for i, line in enumerate(lines) if line.startswith("ARG IRIS_COMMIT"))
     assert not any(line.startswith("RUN ") for line in lines[commit_arg:])
+
+def test_personal_and_secret_files_stay_out_of_locally_built_images() -> None:
+    ignored = set((ROOT / ".dockerignore").read_text().split())
+    for entry in (".env", ".release-keys/", "*.jks", ".iris.local", ".iris-dev/",
+                  "docker-compose.override.yml", "data/", "media/", "backups/"):
+        assert entry in ignored, entry

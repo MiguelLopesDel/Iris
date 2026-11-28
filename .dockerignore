@@ -35,3 +35,16 @@ android/
 .android-sdk/
 .android-avd/
 .Trash-*/
+
+# Personal and secret files that live in a working checkout. The published
+# images are built from a clean checkout in CI, but a server that builds its own
+# (staging, `docker compose build`) would otherwise copy them into the image.
+.release-keys/
+*.jks
+*.keystore
+.iris.local
+.iris-dev/
+.iris-load/
+.iris-perf/
+.tools/
+docker-compose.override.yml
