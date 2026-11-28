@@ -1,0 +1,25 @@
+# Staging only, added by scripts/staging.sh on top of the installation's own
+# Compose files. The image supplies the dependencies; the code comes from this
+# checkout, read-only. A change that leaves the dependencies alone then reaches
+# staging with a restart instead of an image build. staging.sh builds again only
+# when something below the code changes (the key in the label: Dockerfile, locks,
+# this file, the top-level layout of the repository).
+#
+# Production never loads this file: it runs the published image as it is.
+services:
+  iris:
+    build:
+      labels:
+        iris.staging.deps: ${IRIS_STAGING_DEPS_KEY:-}
+    environment:
+      # The image records the commit it was built from; the running code is this checkout's.
+      IRIS_COMMIT: ${IRIS_COMMIT:-}
+    volumes:
+      - ./server.py:/app/server.py:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./core:/app/core:ro
+      - ./routers:/app/routers:ro
+      - ./scripts:/app/scripts:ro
+      - ./desktop:/app/desktop:ro
+      - ./static:/app/static:ro
+      - ./templates:/app/templates:ro

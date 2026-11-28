@@ -246,6 +246,7 @@ que estou fazendo, ou é grave?**
 ./scripts/staging.sh update --pr 25 --pr 26       # a main mais esses PRs, só para teste
 ./scripts/staging.sh update --ref <commit>        # um commit específico
 ./scripts/staging.sh update --pr 25 --dry-run     # só verifica e mostra o plano
+./scripts/staging.sh update --rebuild             # refaz a imagem mesmo sem mudança de dependências
 ./scripts/staging.sh rollback                     # volta para a versão anterior
 ./scripts/staging.sh refresh-data --from <backup> # renova os dados a partir de um backup da produção
 ```
@@ -265,6 +266,16 @@ git. A versão com PRs é um commit de merge local, nunca enviado. Um PR que nã
 entra limpo ou um build que falha devolvem o checkout ao commit anterior, sem
 tocar no contêiner em execução. A versão anterior fica guardada em
 `refs/staging/previous`, para o `rollback`.
+
+**Código montado, imagem só para dependências.** A homologação roda o código do
+próprio checkout, montado somente leitura no contêiner
+(`docker-compose.staging-code.yml`); a imagem só traz as dependências. O `update`
+refaz a imagem apenas quando muda algo que as montagens não cobrem: `Dockerfile`,
+`.dockerignore`, os locks, `scripts/check_deps.py`, o próprio overlay, os arquivos
+Compose ou as entradas da raiz do repositório. A chave disso fica num rótulo da
+imagem. No resto, o `update` é só um reinício: um `try` de código chega em segundos,
+sem depender do cache do Docker. Um commit antigo, sem o overlay, sempre gera a
+imagem e roda o código que está nela. A produção nunca carrega o overlay.
 
 **Renovar os dados.** A cópia envelhece: uma homologação sem os embeddings ou
 os rostos que a produção tem não testa busca, semelhantes nem pessoas.
