@@ -140,17 +140,24 @@ def test_hypr_show_moves_to_active_workspace_and_focuses(monkeypatch) -> None:
     assert ("dispatch", "focuswindow", "address:0xABC") in calls
 
 
-def test_kill_orphan_browsers_kills_matching_process() -> None:
-    # A fake "chromium" carrying our window class in argv (an orphan from a crash).
+def test_kill_orphan_browsers_kills_matching_process(tmp_path) -> None:
+    # A fake "chromium" using a profile of its own (an orphan from a crash).
+    # Not our window class: every server start kills processes carrying it, so
+    # with the suite in parallel, a test starting a server in another worker
+    # killed this fake before it was looked for, and the test failed at random.
+    profile = str(tmp_path / "profile")
     proc = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(30)",
-         "chromium", f"--class={bs.WINDOW_CLASS}"]
+         "chromium", f"--user-data-dir={profile}"]
     )
     try:
-        time.sleep(0.3)  # let it show up in /proc
-        assert proc.pid in bs._matching_browser_pids(bs.SHARED_PROFILE_DIR)
+        # Until exec replaces the forked command line, /proc shows pytest's.
+        deadline = time.monotonic() + 5
+        while proc.pid not in bs._matching_browser_pids(profile) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert proc.pid in bs._matching_browser_pids(profile)
 
-        killed = bs.kill_orphan_browsers(bs.SHARED_PROFILE_DIR)
+        killed = bs.kill_orphan_browsers(profile)
 
         assert killed >= 1
         proc.wait(timeout=5)
