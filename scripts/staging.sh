@@ -197,14 +197,18 @@ guard_isolation() {
             || die "$target is not bind-mounted to a host directory; refusing to guess where the data lives."
     done
     foreign="$(foreign_containers)"
+    # Every other container's mounts in one call, as "id<TAB>source": one
+    # inspect per container and mount took most of a minute on a busy host.
+    sources=""
+    if [ -n "$foreign" ]; then
+        # shellcheck disable=SC2086
+        sources="$(docker_cmd inspect --format '{{$id := .Id}}{{range .Mounts}}{{$id}}	{{.Source}}{{"\n"}}{{end}}' $foreign)" \
+            || die "could not inspect the other containers on this host."
+    fi
     while IFS=$'\t' read -r target source; do
         [ -n "$source" ] || continue
-        for id in $foreign; do
-            sources="$(docker_cmd inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$id")"
-            if grep -Fxq -- "$source" <<<"$sources"; then
-                die "$source ($target) is also mounted by container $id of another installation; refusing."
-            fi
-        done
+        id="$(awk -F '\t' -v source="$source" '$2 == source { print substr($1, 1, 12); exit }' <<<"$sources")"
+        [ -z "$id" ] || die "$source ($target) is also mounted by container $id of another installation; refusing."
     done <<<"$mounts"
     for port in $(own_port); do
         [ -n "$port" ] || continue
@@ -259,7 +263,7 @@ deploy() {
     git rev-parse --quiet --verify "$ref^{commit}" >/dev/null || die "unknown ref: $ref"
     say "project $project: $(git rev-parse --short "$ref") ($ref)${prs[*]:+ + PR ${prs[*]}}"
     if [ "$dry_run" = 1 ]; then
-        say "dry run: checks passed; would check out $ref, merge ${prs[*]:-nothing}, build and restart only $project/iris."
+        say "dry run: checks passed; would check out $ref, merge ${prs[*]:-nothing}, build the image if its dependencies changed and restart only $project/iris."
         return 0
     fi
 

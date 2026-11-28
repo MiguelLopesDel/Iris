@@ -84,7 +84,12 @@ case "$*" in
   *"config --format json"*) cat $F/config.json ;;
   "ps -a "*) cat $F/ps-a.txt ;;
   "ps --format"*) cat $F/ps-ports.txt ;;
-  inspect*) id="${{@: -1}}"; cat "$F/inspect-$id.txt" 2>/dev/null || true ;;
+  inspect*)
+    shift 3  # inspect --format FORMAT, then the container ids
+    for id in "$@"; do
+      [ -f "$F/inspect-$id.txt" ] && sed "s/^/$id\t/" "$F/inspect-$id.txt"
+    done
+    true ;;
   *" build iris")
     status="${{FAKE_BUILD_STATUS:-0}}"
     [ "$status" = 0 ] && printf '%s\n' "$IRIS_STAGING_DEPS_KEY" > $F/image-key.txt
