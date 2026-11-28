@@ -103,3 +103,11 @@ def test_remote_access_is_not_tied_to_one_vpn():
     for alternativa in ("zerotier", "wireguard", "proxy reverso"):
         assert alternativa in guide, f"o guia não menciona {alternativa}"
     assert "única camada que publica" not in guide
+
+
+def test_the_commit_build_argument_does_not_invalidate_the_dependency_layers() -> None:
+    # A build argument in scope is part of every later RUN's cache key: declared
+    # before the installs, each new commit reinstalled every dependency.
+    lines = (ROOT / "Dockerfile").read_text().splitlines()
+    commit_arg = next(i for i, line in enumerate(lines) if line.startswith("ARG IRIS_COMMIT"))
+    assert not any(line.startswith("RUN ") for line in lines[commit_arg:])
