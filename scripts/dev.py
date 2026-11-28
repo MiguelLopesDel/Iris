@@ -145,7 +145,8 @@ def run_tests() -> int:
     commands = (
         [sys.executable, "-m", "compileall", "-q", "core", "routers", "scripts", "tests", "server.py"],
         [sys.executable, "-m", "ruff", "check", "core", "routers", "scripts", "tests", "server.py"],
-        [sys.executable, "-m", "pytest", "-q"],
+        # One worker per core, as in CI; the suite has no ordering between files.
+        [sys.executable, "-m", "pytest", "-q", "-n", "auto"],
     )
     for command in commands:
         if subprocess.call(command, cwd=PROJECT_ROOT) != 0:
