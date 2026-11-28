@@ -7,10 +7,9 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torch
 from deep_translator import GoogleTranslator
 from PIL import Image
 
@@ -34,6 +33,11 @@ from core.search_types import (
     parse_query_terms,
 )
 from core.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    # Imported where it is used: importing torch takes most of a server start,
+    # and a model-free server (IRIS_LOAD_MODEL=0) never needs it.
+    import torch
 
 logger = logging.getLogger("iris")
 
@@ -130,6 +134,8 @@ def _torch_cosine_similarity(query: torch.Tensor, candidates: torch.Tensor) -> t
     operation local so gallery, accounts, and API development work with
     ``IRIS_LOAD_MODEL=0``.
     """
+    import torch
+
     query_normalized = torch.nn.functional.normalize(query, p=2, dim=1)
     candidates_normalized = torch.nn.functional.normalize(candidates, p=2, dim=1)
     return query_normalized @ candidates_normalized.T
@@ -679,6 +685,8 @@ class IrisEngine:
         if self.audio_index is None or not self.audio_record_indices:
             return []
         try:
+            import torch
+
             if self._clap_model is None:
                 from transformers import ClapModel, ClapProcessor
                 self._clap_model = ClapModel.from_pretrained(
@@ -1180,6 +1188,8 @@ class IrisEngine:
                     np.linalg.norm(candidate_desc_matrix, axis=1) * query_norm, 1e-12
                 )
         else:
+            import torch
+
             query_tensor = torch.from_numpy(query_embedding).to(self.device)
             image_tensor = torch.from_numpy(candidate_image_matrix).to(self.device).to(
                 query_tensor.dtype
