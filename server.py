@@ -779,13 +779,19 @@ async def lifespan(app: FastAPI):
             # catalog and the search model while the person waits (a minute on
             # a large library on a cold disk).
             registry = app.state.backend_registry
-            threading.Thread(
-                target=lambda: registry.preload(
+
+            def preload() -> None:
+                registry.preload(
                     recently_active_user_ids(app.state.users_db_path, registry.cache_size)
-                ),
-                name="iris-backend-preload",
-                daemon=True,
-            ).start()
+                )
+                if app.state.load_model:
+                    # The first search also loaded the local query translator
+                    # (about 8 s on a small server), with the person waiting.
+                    from core import query_translation
+
+                    query_translation.to_english("bom dia")
+
+            threading.Thread(target=preload, name="iris-backend-preload", daemon=True).start()
         from core.sync_recovery import settle_interrupted_batches, start_pending_upload_recovery
 
         # Before the app accepts requests: a device re-sending a batch upload
