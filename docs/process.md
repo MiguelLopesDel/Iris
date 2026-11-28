@@ -316,8 +316,10 @@ Teste na camada certa:
 
 A CI ainda **compila, mas não executa** os testes instrumentados do Android;
 até estarem nela **(a construir)**, quem abre um PR do app os roda no emulador
-antes do push. A suíte do servidor também pode ficar mais rápida na CI rodando
-em paralelo (`pytest -n auto`) **(a construir)**.
+antes do push. A suíte do servidor roda em paralelo, um processo por núcleo
+(`pytest -n auto`, na CI, em `./iris check` e em `scripts/dev.py test`); um teste
+novo não pode depender de outro arquivo ter rodado antes. Na CI, o smoke da
+instalação limpa roda ao mesmo tempo que a suíte, não depois dela.
 
 Um build que passa não substitui um teste de comportamento. Quando uma verificação
 não pôde ser feita (sem dispositivo, sem rede), isso é dito no PR.

@@ -27,7 +27,8 @@ PYTEST=(python -m pytest -q -rs)
 # Print the top comment block (skip the shebang, stop at the first non-# line).
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
 
-run_standard()    { echo "▶ suíte padrão";                 "${PYTEST[@]}" "$@"; }
+# Um processo por núcleo, como na CI; os arquivos não dependem de ordem.
+run_standard()    { echo "▶ suíte padrão";                 "${PYTEST[@]}" -n auto "$@"; }
 run_model()       { echo "▶ testes com CLIP (lento/GPU)";  IRIS_RUN_MODEL_TESTS=1 "${PYTEST[@]}" tests/test_ui_interactions.py "$@"; }
 run_integration() { echo "▶ dedup pipeline (lento/GPU)";   IRIS_INTEGRATION=1 "${PYTEST[@]}" tests/test_indexer_schema.py "$@"; }
 
